@@ -3,11 +3,14 @@ package media_test
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -150,13 +153,14 @@ func TestInspectRejectsMalformedAndExternallyReferentialContainerXML(t *testing.
 		reason media.CapabilityReason
 	}{
 		{name: "malformed XML", body: `<worksheet><c></worksheet>`, reason: media.CapabilityReasonMalformed},
+		{name: "multiple roots", body: `<worksheet/><worksheet/>`, reason: media.CapabilityReasonMalformed},
 		{name: "external DTD", body: `<!DOCTYPE worksheet SYSTEM "https://example.invalid/sheet.dtd"><worksheet/>`, reason: media.CapabilityReasonExternalReference},
 		{name: "public DTD", body: `<!DOCTYPE worksheet PUBLIC "-//EXAMPLE//DTD Sheet//EN" "sheet.dtd"><worksheet/>`, reason: media.CapabilityReasonExternalReference},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			data := zipBytes(t, []zipEntry{{name: "xl/worksheets/sheet1.xml", body: tt.body}})
+			data := zipBytes(t, validXLSXEntries(zipEntry{name: "xl/worksheets/sheet1.xml", body: tt.body}))
 			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			require.NoError(t, err)
@@ -168,15 +172,45 @@ func TestInspectRejectsMalformedAndExternallyReferentialContainerXML(t *testing.
 
 func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 	t.Parallel()
-	data := zipBytes(t, validEPUBEntries(
-		zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="chapter" href="chapter.xhtml"/></manifest><spine><itemref idref="chapter"/></spine></package>`},
-		zipEntry{name: "OPS/chapter.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/tracker.png"/></body></html>`},
-	))
-	record, err := media.InspectCapability(bytes.NewReader(data),
-		inspectionPolicy(data, "book.epub", "application/epub+zip"))
+	content := []string{
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/tracker.png"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="https://example.invalid/"><body><img src="tracker.png"/></body></html>`,
+		`<?xml-stylesheet href="https://example.invalid/book.css"?><html xmlns="http://www.w3.org/1999/xhtml"/>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img srcset="cover.png 1x, https://example.invalid/cover.png 2x"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body style="background: url(https://example.invalid/paper.png)"/></html>`,
+	}
+	for _, chapter := range content {
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="chapter" href="chapter.xhtml"/></manifest><spine><itemref idref="chapter"/></spine></package>`},
+			zipEntry{name: "OPS/chapter.xhtml", body: chapter},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	}
+}
+
+func TestInspectCountsODSRepeatedCells(t *testing.T) {
+	t.Parallel()
+	data := zipBytes(t, []zipEntry{
+		{name: "mimetype", body: "application/vnd.oasis.opendocument.spreadsheet"},
+		{name: "META-INF/manifest.xml", body: `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>`},
+		{name: "content.xml", body: `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><office:body><office:spreadsheet><table:table><table:table-column table:number-columns-repeated="3"/><table:table-row table:number-rows-repeated="500"><table:table-cell table:number-columns-repeated="200"/></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`},
+	})
+	policy := inspectionPolicy(data, "book.ods", "application/vnd.oasis.opendocument.spreadsheet")
+	policy.MaxCells = 100_000
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	assert.Equal(t, int64(100_000), record.Measurements.Cells)
+
+	policy.MaxCells--
+	record, err = media.InspectCapability(bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
-	assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
 }
 
 func TestInspectCountsFinitePresentationSpreadsheetAndEPUBUnits(t *testing.T) {
@@ -306,6 +340,106 @@ func TestInspectBoundsPDFPagesAndWAVDuration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1_000), record.Measurements.DurationMS)
 	assert.Equal(t, media.CapabilityReasonVisualBounds, record.Reason)
+}
+
+func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
+	t.Parallel()
+	t.Run("xref ignores unreferenced duplicate", func(t *testing.T) {
+		pdf := syntheticPDFObjects("xref-authority", []string{
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		}, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+		policy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
+		policy.MaxPages = 1
+		record, err := media.InspectCapability(bytes.NewReader(pdf), policy)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), record.Measurements.Pages)
+		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
+	})
+
+	buildStreamPDF := func(t *testing.T, decoded []byte) []byte {
+		t.Helper()
+		var compressed bytes.Buffer
+		writer := zlib.NewWriter(&compressed)
+		_, err := writer.Write(decoded)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+		return syntheticPDFObjects("indirect-stream", []string{
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+			fmt.Sprintf("<< /Length 5 0 R /Filter /FlateDecode >>\nstream\n%s\nendstream", compressed.Bytes()),
+			strconv.Itoa(compressed.Len()),
+		})
+	}
+
+	t.Run("indirect stream length", func(t *testing.T) {
+		decoded := []byte("BT /F1 12 Tf 72 720 Td (bounded) Tj ET")
+		pdf := buildStreamPDF(t, decoded)
+		record, err := media.InspectCapability(bytes.NewReader(pdf),
+			inspectionPolicy(pdf, "report.pdf", "application/pdf"))
+		require.NoError(t, err)
+		require.True(t, record.Eligible, record.Reason)
+		assert.Equal(t, int64(len(decoded)), record.Measurements.ExpandedBytes)
+	})
+
+	t.Run("aggregate expansion", func(t *testing.T) {
+		pdf := buildStreamPDF(t, bytes.Repeat([]byte("expanded "), 100_000))
+		policy := inspectionPolicy(pdf, "report.pdf", "application/pdf")
+		policy.MaxExpandedBytes = 128
+		record, err := media.InspectCapability(bytes.NewReader(pdf), policy)
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExpandedBytes, record.Reason)
+	})
+
+	t.Run("xref and object streams", func(t *testing.T) {
+		bodies := []string{
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		}
+		second := len(bodies[0]) + 1
+		third := second + len(bodies[1]) + 1
+		prolog := fmt.Sprintf("1 0 2 %d 3 %d ", second, third)
+		decoded := []byte(prolog + strings.Join(bodies, " "))
+		var compressed bytes.Buffer
+		writer := zlib.NewWriter(&compressed)
+		_, err := writer.Write(decoded)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+
+		var pdf bytes.Buffer
+		_, _ = pdf.WriteString("%PDF-1.5\n")
+		objectStreamOffset := pdf.Len()
+		_, _ = fmt.Fprintf(&pdf, "4 0 obj\n<< /Type /ObjStm /N 3 /First %d /Length %d /Filter /FlateDecode >>\nstream\n", len(prolog), compressed.Len())
+		_, _ = pdf.Write(compressed.Bytes())
+		_, _ = pdf.WriteString("\nendstream\nendobj\n")
+		xrefOffset := pdf.Len()
+		entries := make([]byte, 0, 6*7)
+		appendEntry := func(kind byte, field1 uint32, field2 uint16) {
+			entries = append(entries, kind, byte(field1>>24), byte(field1>>16), byte(field1>>8), byte(field1), byte(field2>>8), byte(field2))
+		}
+		appendEntry(0, 0, math.MaxUint16)
+		appendEntry(2, 4, 0)
+		appendEntry(2, 4, 1)
+		appendEntry(2, 4, 2)
+		appendEntry(1, uint32(objectStreamOffset), 0) // #nosec G115 -- synthetic fixture is bounded
+		appendEntry(1, uint32(xrefOffset), 0)         // #nosec G115 -- synthetic fixture is bounded
+		_, _ = fmt.Fprintf(&pdf, "5 0 obj\n<< /Type /XRef /Size 6 /Root 1 0 R /W [1 4 2] /Length %d >>\nstream\n", len(entries))
+		_, _ = pdf.Write(entries)
+		_, _ = fmt.Fprintf(&pdf, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", xrefOffset)
+
+		data := pdf.Bytes()
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "report.pdf", "application/pdf"))
+		require.NoError(t, err)
+		require.True(t, record.Eligible, record.Reason)
+		assert.Equal(t, int64(1), record.Measurements.Pages)
+		assert.Positive(t, record.Measurements.ExpandedBytes)
+	})
 }
 
 func TestInspectRejectsForgedWAVRateAndTrailingBytes(t *testing.T) {
@@ -480,20 +614,7 @@ func syntheticPDFPages(pageCount int, label string) []byte {
 		"<< /Type /Page /Parent 2 0 R /Note (orphan page object) >>",
 		"<< /Length 11 >>\nstream\n/Type /Page\nendstream",
 	)
-	var output bytes.Buffer
-	_, _ = fmt.Fprintf(&output, "%%PDF-1.4\n%%%x\n", label)
-	offsets := make([]int, len(objects))
-	for index, object := range objects {
-		offsets[index] = output.Len()
-		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
-	}
-	xref := output.Len()
-	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
-	for _, offset := range offsets {
-		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
-	}
-	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
-	return output.Bytes()
+	return syntheticPDFObjects(label, objects)
 }
 
 func syntheticDeepPDF(depth int) []byte {
@@ -511,12 +632,19 @@ func syntheticDeepPDF(depth int) []byte {
 	}
 	objects = append(objects, fmt.Sprintf(
 		"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] >>", depth+1))
+	return syntheticPDFObjects("deep", objects)
+}
+
+func syntheticPDFObjects(label string, objects []string, extraDefinitions ...string) []byte {
 	var output bytes.Buffer
-	_, _ = output.WriteString("%PDF-1.4\n")
+	_, _ = fmt.Fprintf(&output, "%%PDF-1.4\n%%%x\n", label)
 	offsets := make([]int, len(objects))
 	for index, object := range objects {
 		offsets[index] = output.Len()
 		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	for _, definition := range extraDefinitions {
+		_, _ = output.WriteString(definition)
 	}
 	xref := output.Len()
 	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)

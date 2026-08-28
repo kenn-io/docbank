@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"go.kenn.io/docbank/internal/winsecurity"
 )
 
 type spoolDirectory struct {
@@ -15,6 +17,7 @@ type spoolDirectory struct {
 	name     string
 	baseRoot *os.Root
 	root     *os.Root
+	pin      *os.File
 }
 
 func openSpoolDirectory(base string) (*spoolDirectory, error) {
@@ -26,17 +29,19 @@ func openSpoolDirectory(base string) (*spoolDirectory, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := baseRoot.Mkdir(name, 0o700); err != nil {
+	pin, err := winsecurity.MkdirPrivatePinnedAt(baseRoot, name)
+	if err != nil {
 		_ = baseRoot.Close()
 		return nil, err
 	}
 	root, err := baseRoot.OpenRoot(name)
 	if err != nil {
+		_ = pin.Close()
 		_ = baseRoot.Remove(name)
 		_ = baseRoot.Close()
 		return nil, err
 	}
-	return &spoolDirectory{base: base, name: name, baseRoot: baseRoot, root: root}, nil
+	return &spoolDirectory{base: base, name: name, baseRoot: baseRoot, root: root, pin: pin}, nil
 }
 
 func (directory *spoolDirectory) create(name string) (*os.File, error) {
@@ -94,6 +99,10 @@ func (directory *spoolDirectory) cleanup() error {
 		}
 		result = errors.Join(result, directory.root.Close())
 		directory.root = nil
+	}
+	if directory.pin != nil {
+		result = errors.Join(result, directory.pin.Close())
+		directory.pin = nil
 	}
 	if directory.baseRoot != nil {
 		if err := directory.baseRoot.Remove(directory.name); err != nil && !errors.Is(err, os.ErrNotExist) {

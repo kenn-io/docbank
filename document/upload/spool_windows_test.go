@@ -11,7 +11,31 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/winsecurity"
 )
+
+func TestAuthorizeWindowsCreatesRestrictedSpoolFile(t *testing.T) {
+	data := []byte("authoritative bytes\n")
+	record := inspectCapability(t, data)
+	directory := t.TempDir()
+	upload, err := Authorize(t.Context(), Source{
+		Reader: io.NopCloser(bytes.NewReader(data)), Directory: directory,
+		testHook: func(stage authorizeStage, path string) error {
+			if stage != authorizeStageWritten {
+				return nil
+			}
+			file, openErr := winsecurity.OpenRestrictedCurrentUserFile(path)
+			if openErr != nil {
+				return openErr
+			}
+			return file.Close()
+		},
+	}, record, UploadMetadata{Filename: "notes.txt"})
+	require.NoError(t, err)
+	require.NoError(t, upload.Close())
+	assert.Empty(t, spoolEntries(t, directory))
+}
 
 func TestAuthorizeWindowsRejectsReparseReplacement(t *testing.T) {
 	data := []byte("authoritative bytes\n")

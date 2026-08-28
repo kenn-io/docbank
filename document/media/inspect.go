@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -512,49 +513,187 @@ func inspectXML(
 	data []byte, measurements *CapabilityMeasurements, mode xmlMeasurement,
 ) (bool, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
+	depth, roots := 0, 0
+	bases := make([]*url.URL, 0, 8)
+	type odsRow struct {
+		depth, repeat, cells int64
+	}
+	rows := make([]odsRow, 0, 1)
 	for {
 		token, err := decoder.Token()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				if roots != 1 || depth != 0 {
+					return false, errors.New("XML document must contain exactly one root element")
+				}
 				return false, nil
 			}
 			return false, fmt.Errorf("inspect XML token: %w", err)
 		}
-		if directive, ok := token.(xml.Directive); ok &&
-			strings.Contains(strings.ToUpper(string(directive)), "DOCTYPE") {
-			return true, nil
+		switch value := token.(type) {
+		case xml.Directive:
+			if strings.Contains(strings.ToUpper(string(value)), "DOCTYPE") {
+				return true, nil
+			}
+		case xml.ProcInst:
+			if strings.EqualFold(value.Target, "xml-stylesheet") {
+				return true, nil
+			}
+		case xml.CharData:
+			if depth == 0 && len(bytes.TrimSpace(value)) != 0 {
+				return false, errors.New("XML document contains text outside its root element")
+			}
+		case xml.StartElement:
+			if depth == 0 {
+				roots++
+				if roots > 1 {
+					return false, errors.New("XML document contains multiple root elements")
+				}
+			}
+			var inheritedBase *url.URL
+			if len(bases) != 0 {
+				inheritedBase = bases[len(bases)-1]
+			}
+			base, external, attrErr := inspectXMLAttributes(value.Attr, inheritedBase)
+			if attrErr != nil {
+				return false, attrErr
+			}
+			if external {
+				return true, nil
+			}
+			bases = append(bases, base)
+			depth++
+
+			name := strings.ToLower(value.Name.Local)
+			switch {
+			case mode == xmlMeasureOOXMLSheet && name == "c":
+				measurements.Cells = saturatingAdd(measurements.Cells, 1)
+			case mode == xmlMeasureODSSheet && name == "table":
+				measurements.Sheets = saturatingAdd(measurements.Sheets, 1)
+			case mode == xmlMeasureODSSheet && name == "table-row":
+				repeat, repeatErr := xmlPositiveRepeat(value.Attr, "number-rows-repeated")
+				if repeatErr != nil {
+					return false, repeatErr
+				}
+				rows = append(rows, odsRow{depth: int64(depth), repeat: repeat})
+			case mode == xmlMeasureODSSheet && (name == "table-cell" || name == "covered-table-cell"):
+				repeat, repeatErr := xmlPositiveRepeat(value.Attr, "number-columns-repeated")
+				if repeatErr != nil {
+					return false, repeatErr
+				}
+				if len(rows) == 0 {
+					measurements.Cells = saturatingAdd(measurements.Cells, repeat)
+				} else {
+					last := &rows[len(rows)-1]
+					last.cells = saturatingAdd(last.cells, repeat)
+				}
+			case mode == xmlMeasureEPUBPackage && name == "itemref":
+				measurements.SpineItems = saturatingAdd(measurements.SpineItems, 1)
+			case mode == xmlMeasureEPUBPackage && name == "item":
+				measurements.Resources = saturatingAdd(measurements.Resources, 1)
+			}
+		case xml.EndElement:
+			if mode == xmlMeasureODSSheet && strings.EqualFold(value.Name.Local, "table-row") && len(rows) != 0 {
+				row := rows[len(rows)-1]
+				rows = rows[:len(rows)-1]
+				if row.depth == int64(depth) {
+					measurements.Cells = saturatingAddProduct(measurements.Cells, row.cells, row.repeat)
+				}
+			}
+			depth--
+			if depth < 0 || len(bases) == 0 {
+				return false, errors.New("XML document element depth is invalid")
+			}
+			bases = bases[:len(bases)-1]
 		}
-		start, ok := token.(xml.StartElement)
-		if !ok {
+	}
+}
+
+func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.URL, bool, error) {
+	base := inheritedBase
+	for _, attribute := range attributes {
+		if attribute.Name.Space != "http://www.w3.org/XML/1998/namespace" ||
+			!strings.EqualFold(attribute.Name.Local, "base") {
 			continue
 		}
-		switch name := strings.ToLower(start.Name.Local); {
-		case mode == xmlMeasureOOXMLSheet && name == "c":
-			measurements.Cells++
-		case mode == xmlMeasureODSSheet && name == "table":
-			measurements.Sheets++
-		case mode == xmlMeasureODSSheet && name == "table-cell":
-			measurements.Cells++
-		case mode == xmlMeasureEPUBPackage && name == "itemref":
-			measurements.SpineItems++
-		case mode == xmlMeasureEPUBPackage && name == "item":
-			measurements.Resources++
+		value := strings.TrimSpace(attribute.Value)
+		parsed, err := url.Parse(value)
+		if err != nil {
+			return nil, false, fmt.Errorf("inspect XML base URI: %w", err)
 		}
-		for _, attribute := range start.Attr {
-			value := strings.TrimSpace(attribute.Value)
-			name := strings.ToLower(attribute.Name.Local)
-			if name == "targetmode" && strings.EqualFold(value, "External") {
-				return true, nil
+		if strings.HasPrefix(value, "//") || parsed.IsAbs() {
+			return nil, true, nil
+		}
+		if base != nil {
+			parsed = base.ResolveReference(parsed)
+		}
+		base = parsed
+	}
+	for _, attribute := range attributes {
+		value := strings.TrimSpace(attribute.Value)
+		name := strings.ToLower(attribute.Name.Local)
+		switch name {
+		case "targetmode":
+			if strings.EqualFold(value, "External") {
+				return nil, true, nil
 			}
-			if name != "target" && name != "href" && name != "src" && name != "schemalocation" {
-				continue
+		case "style":
+			if hasCSSReference([]byte(value)) {
+				return nil, true, nil
 			}
-			parsed, parseErr := url.Parse(value)
-			if strings.HasPrefix(value, "//") || parseErr == nil && parsed.IsAbs() {
-				return true, nil
+		case "srcset":
+			for candidate := range strings.SplitSeq(value, ",") {
+				fields := strings.Fields(candidate)
+				if len(fields) == 0 || isExternalXMLURI(fields[0], base) {
+					return nil, true, nil
+				}
+			}
+		case "target", "href", "src", "schemalocation":
+			if isExternalXMLURI(value, base) {
+				return nil, true, nil
 			}
 		}
 	}
+	return base, false, nil
+}
+
+func isExternalXMLURI(value string, base *url.URL) bool {
+	if strings.HasPrefix(value, "//") {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.IsAbs() {
+		return true
+	}
+	return base != nil && base.ResolveReference(parsed).IsAbs()
+}
+
+func xmlPositiveRepeat(attributes []xml.Attr, name string) (int64, error) {
+	for _, attribute := range attributes {
+		if !strings.EqualFold(attribute.Name.Local, name) {
+			continue
+		}
+		repeat, err := strconv.ParseInt(strings.TrimSpace(attribute.Value), 10, 64)
+		if err != nil || repeat <= 0 {
+			return 0, fmt.Errorf("ODS %s must be a positive integer", name)
+		}
+		return repeat, nil
+	}
+	return 1, nil
+}
+
+func saturatingAdd(left, right int64) int64 {
+	if right > math.MaxInt64-left {
+		return math.MaxInt64
+	}
+	return left + right
+}
+
+func saturatingAddProduct(total, left, right int64) int64 {
+	if left != 0 && right > math.MaxInt64/left {
+		return math.MaxInt64
+	}
+	return saturatingAdd(total, left*right)
 }
 
 func inspectVisualCapability(data []byte, declaredType string, policy InspectionPolicy) CapabilityRecord {
@@ -587,12 +726,33 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 
 func inspectPDF(data []byte, policy InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
-	pages, err := formatdetect.CountPDFPages(data)
+	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{
+		MaxExpandedBytes: policy.MaxExpandedBytes,
+		MaxEntryBytes:    policy.MaxEntryBytes,
+		MaxEntries:       policy.MaxEntries,
+	})
 	if err != nil {
-		record.Reason = CapabilityReasonMalformed
+		switch {
+		case errors.Is(err, formatdetect.ErrPDFEncrypted):
+			record.Reason = CapabilityReasonEncryptedContainer
+		case errors.Is(err, formatdetect.ErrPDFExpandedBytes):
+			record.Reason = CapabilityReasonExpandedBytes
+		case errors.Is(err, formatdetect.ErrPDFEntryBytes):
+			record.Reason = CapabilityReasonEntryBytes
+		case errors.Is(err, formatdetect.ErrPDFEntryCount):
+			record.Reason = CapabilityReasonEntryCount
+		case errors.Is(err, formatdetect.ErrPDFUnbounded):
+			record.Reason = CapabilityReasonUnboundedFamily
+		default:
+			record.Reason = CapabilityReasonMalformed
+		}
 		return record
 	}
-	record.Measurements.Pages = pages
+	record.Measurements.Pages = measurements.Pages
+	record.Measurements.CompressedBytes = measurements.CompressedBytes
+	record.Measurements.ExpandedBytes = measurements.ExpandedBytes
+	record.Measurements.Entries = measurements.Entries
+	record.Measurements.MaxEntryBytes = measurements.MaxEntryBytes
 	if record.Measurements.Pages <= 0 {
 		record.Reason = CapabilityReasonMalformed
 		return record

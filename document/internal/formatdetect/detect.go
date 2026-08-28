@@ -19,6 +19,11 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/filter"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 const (
@@ -32,7 +37,6 @@ const (
 	maxZIPSingleExpandedByte = uint64(100 << 20)
 	maxPDFTailBytes          = int64(64 << 10)
 	maxPDFXRefBytes          = int64(4 << 10)
-	maxPDFStructuralBytes    = 64 << 20
 	maxPDFTokens             = 1 << 20
 	maxPDFPageTreeDepth      = 256
 	ooxmlContentTypesName    = "[Content_Types].xml"
@@ -157,319 +161,155 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	return errors.New("PDF cross-reference data is invalid")
 }
 
-// CountPDFPages resolves the catalog's page tree and returns its verified leaf
-// count. Stream bodies are removed using their direct Length before tokenizing,
-// so page-like bytes in content streams, strings, comments, or orphan objects
-// cannot inflate the result. PDFs whose stream boundaries cannot be proven
-// locally are rejected rather than estimated.
-func CountPDFPages(data []byte) (int64, error) {
-	structural, err := pdfWithoutStreamData(data)
+var (
+	ErrPDFEncrypted     = errors.New("PDF is encrypted")
+	ErrPDFExpandedBytes = errors.New("PDF expanded bytes exceed the bound")
+	ErrPDFEntryBytes    = errors.New("PDF stream bytes exceed the entry bound")
+	ErrPDFEntryCount    = errors.New("PDF stream count exceeds the entry bound")
+	ErrPDFUnbounded     = errors.New("PDF stream cannot be bounded locally")
+)
+
+// PDFLimits binds parser allocations and decoded stream measurements to one
+// inspection policy.
+type PDFLimits struct {
+	MaxExpandedBytes int64
+	MaxEntryBytes    int64
+	MaxEntries       int64
+}
+
+// PDFMeasurements contains the finite PDF measurements established while
+// resolving the authoritative cross-reference table.
+type PDFMeasurements struct {
+	Pages           int64
+	CompressedBytes int64
+	ExpandedBytes   int64
+	Entries         int64
+	MaxEntryBytes   int64
+}
+
+// InspectPDF validates the authoritative PDF object graph and measures every
+// supported stream under the supplied limits. Opaque image filters are rejected
+// because their decoded size cannot be established without rendering them.
+func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
+	resourceLimits := model.DefaultResourceLimits()
+	resourceLimits.MaxStreamBytes = limits.MaxEntryBytes
+	resourceLimits.MaxDecodeBytes = min(limits.MaxEntryBytes, limits.MaxExpandedBytes)
+	resourceLimits.MaxImageBytes = limits.MaxExpandedBytes
+	resourceLimits.MaxImagePixels = limits.MaxExpandedBytes
+	resourceLimits.MaxObjectCount = min(resourceLimits.MaxObjectCount, len(data)+1)
+	resourceLimits.MaxXRefEntries = min(resourceLimits.MaxXRefEntries, len(data)+1)
+	resourceLimits.MaxObjectStreamCount = min(resourceLimits.MaxObjectStreamCount, len(data)+1)
+	resourceLimits.MaxObjectStreamFirst = min(resourceLimits.MaxObjectStreamFirst, limits.MaxEntryBytes)
+	resourceLimits.MaxRecursionDepth = maxPDFPageTreeDepth
+
+	configuration := &model.Configuration{
+		Reader15:       true,
+		ValidationMode: model.ValidationRelaxed,
+		Offline:        true,
+		Cmd:            model.VALIDATE,
+		Limits:         resourceLimits,
+	}
+	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
 	if err != nil {
-		return 0, err
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+			return PDFMeasurements{}, ErrPDFExpandedBytes
+		}
+		return PDFMeasurements{}, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	tokens, ok := tokenizePDF(structural)
-	if !ok {
-		return 0, errors.New("PDF object syntax is invalid")
+	if context.Encrypt != nil {
+		return PDFMeasurements{}, ErrPDFEncrypted
 	}
 
-	type object struct {
-		dictionary map[string][]string
+	measurements := PDFMeasurements{Pages: int64(context.PageCount)}
+	objectNumbers := make([]int, 0, len(context.Table))
+	for number := range context.Table {
+		objectNumbers = append(objectNumbers, number)
 	}
-	objects := make(map[string]object)
-	for position := 0; position+3 < len(tokens); position++ {
-		if tokens[position+2] != "obj" || !pdfObjectNumber(tokens[position]) || !pdfGeneration(tokens[position+1]) {
+	slices.Sort(objectNumbers)
+	for _, number := range objectNumbers {
+		entry := context.Table[number]
+		if entry == nil || entry.Free {
 			continue
 		}
-		dictionary, _, parsed := parsePDFDictionaryTokens(tokens, position+3, 0)
-		if parsed {
-			objects[pdfReferenceKey(tokens[position], tokens[position+1])] = object{dictionary: dictionary}
-		}
-	}
-
-	var trailer map[string][]string
-	for position, token := range slices.Backward(tokens) {
-		if token != "trailer" {
-			continue
-		}
-		candidate, _, parsed := parsePDFDictionaryTokens(tokens, position+1, 0)
-		if parsed {
-			trailer = candidate
-			break
-		}
-	}
-	if trailer == nil {
-		return 0, errors.New("PDF trailer dictionary is missing")
-	}
-	root, ok := pdfReference(trailer["Root"])
-	if !ok {
-		return 0, errors.New("PDF trailer root is invalid")
-	}
-	catalog, ok := objects[root]
-	if !ok || !pdfDictionaryType(catalog.dictionary, "/Catalog") {
-		return 0, errors.New("PDF catalog is invalid")
-	}
-	pagesRoot, ok := pdfReference(catalog.dictionary["Pages"])
-	if !ok {
-		return 0, errors.New("PDF catalog page tree is invalid")
-	}
-
-	visiting := make(map[string]bool)
-	var walk func(string, string, bool, int) (int64, error)
-	walk = func(reference, parent string, root bool, depth int) (int64, error) {
-		if depth > maxPDFPageTreeDepth {
-			return 0, errors.New("PDF page tree exceeds the nesting bound")
-		}
-		if visiting[reference] {
-			return 0, errors.New("PDF page tree contains a cycle")
-		}
-		item, exists := objects[reference]
-		if !exists {
-			return 0, errors.New("PDF page tree references a missing object")
-		}
-		if !root {
-			declaredParent, parentOK := pdfReference(item.dictionary["Parent"])
-			if !parentOK || declaredParent != parent {
-				return 0, errors.New("PDF page tree parent is invalid")
-			}
-		}
-		switch {
-		case pdfDictionaryType(item.dictionary, "/Page"):
-			return 1, nil
-		case pdfDictionaryType(item.dictionary, "/Pages"):
-			declared, countOK := pdfPositiveInteger(item.dictionary["Count"])
-			children, kidsOK := pdfReferences(item.dictionary["Kids"])
-			if !countOK || declared > math.MaxInt64 || !kidsOK || len(children) == 0 {
-				return 0, errors.New("PDF page tree node is invalid")
-			}
-			visiting[reference] = true
-			var total int64
-			for _, child := range children {
-				count, childErr := walk(child, reference, false, depth+1)
-				if childErr != nil || count > math.MaxInt64-total {
-					delete(visiting, reference)
-					if childErr != nil {
-						return 0, childErr
-					}
-					return 0, errors.New("PDF page count overflows")
-				}
-				total += count
-			}
-			delete(visiting, reference)
-			if uint64(total) != declared {
-				return 0, errors.New("PDF page tree count is inconsistent")
-			}
-			return total, nil
-		default:
-			return 0, errors.New("PDF page tree object has an invalid type")
-		}
-	}
-	return walk(pagesRoot, "", true, 0)
-}
-
-func pdfWithoutStreamData(data []byte) ([]byte, error) {
-	result := make([]byte, 0, min(len(data), maxPDFStructuralBytes))
-	segmentStart, objectStart := 0, -1
-	for position := 0; position < len(data); {
-		start, end, ok := nextPDFLexeme(data, position)
+		stream, ok := pdfStreamDictionary(entry.Object)
 		if !ok {
-			return nil, errors.New("PDF token is unterminated")
-		}
-		if start == end {
-			break
-		}
-		position = end
-		word := string(data[start:end])
-		if word == "obj" {
-			objectStart = start
 			continue
 		}
-		if word == "endobj" {
-			objectStart = -1
-			continue
+		measurements.Entries++
+		if measurements.Entries > limits.MaxEntries {
+			return PDFMeasurements{}, ErrPDFEntryCount
 		}
-		if word != "stream" {
-			continue
+		encodedBytes := int64(len(stream.Raw))
+		if encodedBytes > limits.MaxEntryBytes {
+			return PDFMeasurements{}, ErrPDFEntryBytes
 		}
-		if objectStart < 0 {
-			return nil, errors.New("PDF stream is outside an object")
+		if encodedBytes > math.MaxInt64-measurements.CompressedBytes {
+			return PDFMeasurements{}, ErrPDFEntryBytes
 		}
-		prefixTokens, tokenOK := tokenizePDF(data[objectStart:start])
-		if !tokenOK {
-			return nil, errors.New("PDF stream dictionary is invalid")
+		measurements.CompressedBytes += encodedBytes
+
+		decodedBytes, err := boundedPDFStreamBytes(stream, limits, measurements.ExpandedBytes)
+		if err != nil {
+			return PDFMeasurements{}, fmt.Errorf("measure PDF stream %d: %w", number, err)
 		}
-		dictionaryStart := -1
-		for index, token := range prefixTokens {
-			if token == "<<" {
-				dictionaryStart = index
-				break
-			}
-		}
-		if dictionaryStart < 0 {
-			return nil, errors.New("PDF stream dictionary is missing")
-		}
-		dictionary, _, parsed := parsePDFDictionaryTokens(prefixTokens, dictionaryStart, 0)
-		length, lengthOK := pdfNonnegativeInteger(dictionary["Length"])
-		if !parsed || !lengthOK || length > uint64(len(data)) {
-			return nil, errors.New("PDF stream length is not directly bounded")
-		}
-		bodyStart := end
-		for bodyStart < len(data) && (data[bodyStart] == ' ' || data[bodyStart] == '\t' || data[bodyStart] == '\f' || data[bodyStart] == 0) {
-			bodyStart++
-		}
-		switch {
-		case bodyStart < len(data) && data[bodyStart] == '\r':
-			bodyStart++
-			if bodyStart < len(data) && data[bodyStart] == '\n' {
-				bodyStart++
-			}
-		case bodyStart < len(data) && data[bodyStart] == '\n':
-			bodyStart++
-		default:
-			return nil, errors.New("PDF stream has no line boundary")
-		}
-		bodyLength := int(length) // #nosec G115 -- length is bounded by len(data) above.
-		if bodyLength > len(data)-bodyStart {
-			return nil, errors.New("PDF stream exceeds the document")
-		}
-		bodyEnd := bodyStart + bodyLength
-		endStream := bodyEnd
-		if endStream < len(data) && data[endStream] == '\r' {
-			endStream++
-			if endStream < len(data) && data[endStream] == '\n' {
-				endStream++
-			}
-		} else if endStream < len(data) && data[endStream] == '\n' {
-			endStream++
-		}
-		if endStream+len("endstream") > len(data) || string(data[endStream:endStream+len("endstream")]) != "endstream" {
-			return nil, errors.New("PDF stream end does not match its length")
-		}
-		if bodyStart-segmentStart > maxPDFStructuralBytes-len(result) {
-			return nil, errors.New("PDF object structure exceeds the inspection bound")
-		}
-		result = append(result, data[segmentStart:bodyStart]...)
-		segmentStart = bodyEnd
-		position = bodyEnd
+		measurements.ExpandedBytes += decodedBytes
+		measurements.MaxEntryBytes = max(measurements.MaxEntryBytes, decodedBytes)
 	}
-	if len(data)-segmentStart > maxPDFStructuralBytes-len(result) {
-		return nil, errors.New("PDF object structure exceeds the inspection bound")
-	}
-	return append(result, data[segmentStart:]...), nil
+	return measurements, nil
 }
 
-func nextPDFLexeme(data []byte, position int) (int, int, bool) {
-	for {
-		for position < len(data) && isPDFWhitespace(data[position]) {
-			position++
-		}
-		if position == len(data) {
-			return position, position, true
-		}
-		if data[position] != '%' {
-			break
-		}
-		for position < len(data) && data[position] != '\r' && data[position] != '\n' {
-			position++
-		}
-	}
-	start := position
-	switch data[position] {
-	case '(':
-		depth, escaped := 0, false
-		for ; position < len(data); position++ {
-			char := data[position]
-			if escaped {
-				escaped = false
-				continue
-			}
-			if char == '\\' {
-				escaped = true
-				continue
-			}
-			switch char {
-			case '(':
-				depth++
-			case ')':
-				depth--
-				if depth == 0 {
-					return start, position + 1, true
-				}
-			}
-		}
-		return start, position, false
-	case '<':
-		if position+1 < len(data) && data[position+1] == '<' {
-			return start, position + 2, true
-		}
-		for position++; position < len(data); position++ {
-			if data[position] == '>' {
-				return start, position + 1, true
-			}
-		}
-		return start, position, false
-	case '>':
-		if position+1 < len(data) && data[position+1] == '>' {
-			return start, position + 2, true
-		}
-		return start, position + 1, true
-	case '[', ']', '{', '}':
-		return start, position + 1, true
-	case '/':
-		position++
-	}
-	for position < len(data) && !isPDFTokenBoundary(data[position]) {
-		position++
-	}
-	if position == start || position == start+1 && data[start] == '/' {
-		return start, position, false
-	}
-	return start, position, true
-}
-
-func pdfObjectNumber(value string) bool {
-	number, err := strconv.ParseUint(value, 10, 64)
-	return err == nil && number > 0
-}
-
-func pdfGeneration(value string) bool {
-	generation, err := strconv.ParseUint(value, 10, 16)
-	return err == nil && generation <= 65_535
-}
-
-func pdfReferenceKey(number, generation string) string { return number + " " + generation }
-
-func pdfReference(tokens []string) (string, bool) {
-	if len(tokens) != 3 || tokens[2] != "R" || !pdfObjectNumber(tokens[0]) || !pdfGeneration(tokens[1]) {
-		return "", false
-	}
-	return pdfReferenceKey(tokens[0], tokens[1]), true
-}
-
-func pdfReferences(tokens []string) ([]string, bool) {
-	if len(tokens) < 5 || tokens[0] != "[" || tokens[len(tokens)-1] != "]" || (len(tokens)-2)%3 != 0 {
+func pdfStreamDictionary(object types.Object) (*types.StreamDict, bool) {
+	switch value := object.(type) {
+	case types.StreamDict:
+		return &value, true
+	case *types.StreamDict:
+		return value, true
+	case types.ObjectStreamDict:
+		return &value.StreamDict, true
+	case *types.ObjectStreamDict:
+		return &value.StreamDict, true
+	case types.XRefStreamDict:
+		return &value.StreamDict, true
+	case *types.XRefStreamDict:
+		return &value.StreamDict, true
+	default:
 		return nil, false
 	}
-	references := make([]string, 0, (len(tokens)-2)/3)
-	for position := 1; position < len(tokens)-1; position += 3 {
-		reference, ok := pdfReference(tokens[position : position+3])
-		if !ok {
-			return nil, false
+}
+
+func boundedPDFStreamBytes(stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
+	for _, pipeline := range stream.FilterPipeline {
+		switch pipeline.Name {
+		case filter.DCT, filter.JBIG2, filter.JPX:
+			return 0, ErrPDFUnbounded
 		}
-		references = append(references, reference)
 	}
-	return references, len(references) > 0
-}
-
-func pdfDictionaryType(dictionary map[string][]string, expected string) bool {
-	return len(dictionary["Type"]) == 1 && dictionary["Type"][0] == expected
-}
-
-func pdfNonnegativeInteger(tokens []string) (uint64, bool) {
-	if len(tokens) != 1 {
-		return 0, false
+	remaining := limits.MaxExpandedBytes - expanded
+	if remaining <= 0 && len(stream.Raw) != 0 {
+		return 0, ErrPDFExpandedBytes
 	}
-	value, err := strconv.ParseUint(tokens[0], 10, 64)
-	return value, err == nil
+	decodeLimit := min(limits.MaxEntryBytes, max(remaining, int64(1)))
+	decoded, err := stream.DecodeLengthWithLimit(-1, decodeLimit)
+	if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+		if limits.MaxEntryBytes <= remaining {
+			return 0, ErrPDFEntryBytes
+		}
+		return 0, ErrPDFExpandedBytes
+	}
+	if errors.Is(err, filter.ErrUnsupportedFilter) {
+		return 0, ErrPDFUnbounded
+	}
+	if err != nil {
+		return 0, fmt.Errorf("decode PDF stream: %w", err)
+	}
+	decodedBytes := int64(len(decoded))
+	if decodedBytes > limits.MaxEntryBytes {
+		return 0, ErrPDFEntryBytes
+	}
+	if decodedBytes > remaining {
+		return 0, ErrPDFExpandedBytes
+	}
+	return decodedBytes, nil
 }
 
 func validPDFVersion(version []byte) bool {
