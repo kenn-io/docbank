@@ -300,6 +300,13 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 		{name: "base spends the distance", base: "../", reference: "../../outside"},
 		{name: "base spends more", base: "../../", reference: "../outside"},
 		{name: "base stays inside", base: "../", reference: "../outside", eligible: true},
+		// A base names a document, so only a trailing slash descends a level.
+		{name: "file-like base does not descend", base: "a", reference: "../../../outside"},
+		{name: "file-like base keeps its depth", base: "a", reference: "../outside", eligible: true},
+		{name: "nested file-like base", base: "assets/base.xhtml", reference: "../../../../outside"},
+		{name: "nested file-like base stays inside", base: "assets/base.xhtml",
+			reference: "../../outside", eligible: true},
+		{name: "parent file-like base", base: "../foo", reference: "../../outside"},
 		// Descending by a base means more distance is needed to leave.
 		{name: "base descends and stays inside", base: "images/",
 			reference: "../../../outside", eligible: true},
@@ -482,6 +489,54 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		})
 		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+
+	// A relationship target resolves from the part the relationship describes,
+	// not from the _rels directory holding the file. Real packages point from
+	// xl/_rels and xl/worksheets/_rels at siblings of their source part.
+	relationships := []struct {
+		name, entry, target string
+		eligible            bool
+	}{
+		{name: "workbook rels sibling", entry: "xl/_rels/workbook.xml.rels",
+			target: "worksheets/sheet1.xml", eligible: true},
+		{name: "sheet rels parent", entry: "xl/worksheets/_rels/sheet1.xml.rels",
+			target: "../media/image1.png", eligible: true},
+		{name: "workbook rels escapes", entry: "xl/_rels/workbook.xml.rels",
+			target: "../../outside"},
+		{name: "sheet rels escapes", entry: "xl/worksheets/_rels/sheet1.xml.rels",
+			target: "../../../outside"},
+	}
+	for _, tt := range relationships {
+		t.Run("relationship origin "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validXLSXEntries(zipEntry{name: tt.entry,
+				body: `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+					`<Relationship Id="r1" Target="` + tt.target + `" Type="http://example.test/t"/></Relationships>`}))
+			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+		})
+	}
+
+	// An absolute manifest href names the container root. Joining it with the
+	// package directory pointed the declaration at a different entry and left
+	// the real one undeclared and unscanned.
+	t.Run("absolute manifest href", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+				`<item id="c" href="/chapter.dat" media-type="application/xhtml+xml"/>` +
+				`</manifest><spine><itemref idref="c"/></spine></package>`},
+			zipEntry{name: "chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
+				`<img src="https://example.invalid/t.png"/></body></html>`},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)

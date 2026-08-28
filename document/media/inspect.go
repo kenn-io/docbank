@@ -559,7 +559,7 @@ func (container zipContainer) inspectEntry(
 	isWorksheet, isSlide := container.countsAs(file.Name)
 	if container.isMarkup(file.Name) {
 		external, err := inspectXML(body, measurements, container.measurement(file.Name, isWorksheet),
-			path.Dir(file.Name))
+			referenceOrigin(file.Name))
 		if err != nil {
 			return CapabilityReasonMalformed
 		}
@@ -583,6 +583,17 @@ func (container zipContainer) inspectEntry(
 		measurements.Sheets++
 	}
 	return ""
+}
+
+// referenceOrigin is the directory an entry's references resolve from. A
+// relationship part describes another part, and its targets resolve from that
+// part's directory rather than from the _rels directory holding the file.
+func referenceOrigin(name string) string {
+	directory := path.Dir(name)
+	if path.Base(directory) == "_rels" {
+		return path.Dir(directory)
+	}
+	return directory
 }
 
 // countsAs reports the semantic limit an entry counts toward. A part counts
@@ -886,7 +897,10 @@ func resolveArchiveDir(home, base string) string {
 	if path.IsAbs(candidate) || strings.Contains(candidate, "://") {
 		return ""
 	}
-	return path.Clean(path.Join(home, candidate))
+	// A base names a document, not a directory: references resolve from the
+	// directory holding it. path.Dir gives that for both spellings, descending
+	// a level for "assets/" and staying put for "assets".
+	return path.Clean(path.Join(home, path.Dir(candidate)))
 }
 
 // nonLocatorXMLAttribute reports attributes whose values name a vocabulary
@@ -1542,7 +1556,12 @@ func epubArchivePath(reference, base string) (string, error) {
 	if err != nil {
 		return "", errors.New("EPUB resource path is invalid")
 	}
-	if base != "" && base != "." {
+	// An absolute reference inside a container names the container root, so it
+	// must not be joined with the package directory: that silently renamed it
+	// to a different entry and left the real one undeclared.
+	if rooted, found := strings.CutPrefix(resource, "/"); found {
+		resource = rooted
+	} else if base != "" && base != "." {
 		resource = path.Join(base, resource)
 	}
 	resource = path.Clean(resource)
