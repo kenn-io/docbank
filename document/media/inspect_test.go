@@ -200,6 +200,8 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="http:169.254.169.254/latest/meta-data"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https:/tracker.example"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="http:/\\169.254.169.254\latest"/></body></html>`,
+		// UNC is the Windows spelling of a protocol-relative reference.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\\169.254.169.254\latest\meta-data"/></body></html>`,
 	}
 	for _, chapter := range content {
 		data := zipBytes(t, validEPUBEntries(
@@ -255,6 +257,47 @@ func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
 			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 		})
 	}
+}
+
+// A consumer parses an OOXML part by the type [Content_Types].xml declares,
+// and an EPUB container may declare more than one rendition.
+func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("OOXML declared part", func(t *testing.T) {
+		t.Parallel()
+		contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+			`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+			`<Override PartName="/xl/report.bin" ContentType="application/xml"/></Types>`
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: contentTypes},
+			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+			{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+
+	t.Run("second EPUB rootfile", func(t *testing.T) {
+		t.Parallel()
+		container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` +
+			`<rootfile full-path="OPS/content.opf"/><rootfile full-path="OPS/alt.dat"/></rootfiles></container>`
+		data := zipBytes(t, []zipEntry{
+			{name: "mimetype", body: "application/epub+zip"},
+			{name: "META-INF/container.xml", body: container},
+			{name: "OPS/content.opf", body: `<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>`},
+			{name: "OPS/a.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>`},
+			{name: "OPS/alt.dat", body: `<package><manifest><item id="b" href="https://example.invalid/b.xhtml"/></manifest><spine><itemref idref="b"/></spine></package>`},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
 }
 
 // Treating every unlisted attribute as a locator must not reject the

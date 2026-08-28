@@ -456,15 +456,17 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 			return record
 		}
 	}
-	var epubPackage string
-	var epubDeclared map[string]string
+	var epubPackages map[string]bool
+	var declaredTypes map[string]string
 	if ext == ".epub" {
 		var err error
-		epubPackage, epubDeclared, err = epubPackageManifest(zr.File, policy.MaxEntryBytes)
+		epubPackages, declaredTypes, err = epubPackageManifest(zr.File, policy.MaxEntryBytes)
 		if err != nil {
 			record.Reason = CapabilityReasonMalformed
 			return record
 		}
+	} else {
+		declaredTypes = ooxmlDeclaredTypes(zr.File, policy.MaxEntryBytes)
 	}
 	for _, file := range zr.File {
 		body, readErr := readZIPEntry(file, policy.MaxEntryBytes)
@@ -478,12 +480,12 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 			return record
 		}
 		name := strings.ToLower(file.Name)
-		declared := epubDeclared[file.Name]
+		declared := declaredTypes[file.Name]
 		xmlContent := strings.HasSuffix(name, ".xml") || strings.HasSuffix(name, ".rels") ||
-			strings.HasSuffix(name, ".opf") || ext == ".epub" &&
-			(strings.HasSuffix(name, ".xhtml") || strings.HasSuffix(name, ".html") ||
+			strings.HasSuffix(name, ".opf") || isXMLMediaType(declared) ||
+			ext == ".epub" && (strings.HasSuffix(name, ".xhtml") || strings.HasSuffix(name, ".html") ||
 				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg") ||
-				file.Name == epubPackage || isXMLMediaType(declared))
+				epubPackages[file.Name])
 		if xmlContent {
 			mode := xmlMeasureNone
 			switch {
@@ -491,7 +493,7 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 				mode = xmlMeasureOOXMLSheet
 			case name == "content.xml" && ext == ".ods":
 				mode = xmlMeasureODSSheet
-			case ext == ".epub" && file.Name == epubPackage:
+			case ext == ".epub" && epubPackages[file.Name]:
 				mode = xmlMeasureEPUBPackage
 			}
 			external, xmlErr := inspectXML(body, &record.Measurements, mode)
@@ -769,7 +771,9 @@ func cssTextIsExternal(data []byte, base *url.URL) (bool, error) {
 // such as A1:C3, a settings key such as ooo:view-settings, a compact URI, and
 // a urn are all vocabulary, not locators.
 func isExternalXMLURI(value string, base *url.URL) bool {
-	if strings.HasPrefix(value, "//") {
+	// "//host/path" is protocol-relative; "\\host\path" is the UNC spelling a
+	// Windows consumer resolves to the same network location.
+	if strings.HasPrefix(value, "//") || strings.HasPrefix(value, `\\`) {
 		return true
 	}
 	parsed, err := url.Parse(value)
@@ -1218,7 +1222,9 @@ func hasZIPSignature(data []byte) bool {
 // manifest declares for each resource it names. A reader interprets a resource
 // by its declared type, so inspection must follow that declaration rather than
 // the entry's filename.
-func epubPackageManifest(files []*zip.File, limit int64) (string, map[string]string, error) {
+func epubPackageManifest(
+	files []*zip.File, limit int64,
+) (map[string]bool, map[string]string, error) {
 	var container *zip.File
 	for _, file := range files {
 		if file.Name == "META-INF/container.xml" {
@@ -1227,11 +1233,11 @@ func epubPackageManifest(files []*zip.File, limit int64) (string, map[string]str
 		}
 	}
 	if container == nil {
-		return "", nil, errors.New("EPUB container document is missing")
+		return nil, nil, errors.New("EPUB container document is missing")
 	}
 	body, err := readZIPEntry(container, limit)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
 	var document struct {
 		XMLName   xml.Name `xml:"container"`
@@ -1244,35 +1250,41 @@ func epubPackageManifest(files []*zip.File, limit int64) (string, map[string]str
 	if err := xml.Unmarshal(body, &document); err != nil ||
 		document.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" ||
 		len(document.Rootfiles.Items) == 0 {
-		return "", nil, errors.New("EPUB container document is invalid")
+		return nil, nil, errors.New("EPUB container document is invalid")
 	}
-	packagePath, err := epubArchivePath(document.Rootfiles.Items[0].FullPath, "")
-	if err != nil {
-		return "", nil, err
-	}
-	var packageFile *zip.File
-	for _, file := range files {
-		if file.Name == packagePath {
-			packageFile = file
-			break
+	// A container may declare several renditions. Each one's package document
+	// and manifest is reachable content, so inspect all of them.
+	packages := make(map[string]bool, len(document.Rootfiles.Items))
+	declared := make(map[string]string)
+	for _, rootfile := range document.Rootfiles.Items {
+		packagePath, err := epubArchivePath(rootfile.FullPath, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		var packageFile *zip.File
+		for _, file := range files {
+			if file.Name == packagePath {
+				packageFile = file
+				break
+			}
+		}
+		if packageFile == nil {
+			return nil, nil, errors.New("EPUB package document is missing")
+		}
+		packages[packagePath] = true
+		if err := epubManifestTypes(packageFile, packagePath, limit, declared); err != nil {
+			return nil, nil, err
 		}
 	}
-	if packageFile == nil {
-		return "", nil, errors.New("EPUB package document is missing")
-	}
-	declared, err := epubManifestTypes(packageFile, packagePath, limit)
-	if err != nil {
-		return "", nil, err
-	}
-	return packagePath, declared, nil
+	return packages, declared, nil
 }
 
 func epubManifestTypes(
-	packageFile *zip.File, packagePath string, limit int64,
-) (map[string]string, error) {
+	packageFile *zip.File, packagePath string, limit int64, declared map[string]string,
+) error {
 	body, err := readZIPEntry(packageFile, limit)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var document struct {
 		Manifest struct {
@@ -1283,10 +1295,9 @@ func epubManifestTypes(
 		} `xml:"manifest"`
 	}
 	if err := xml.Unmarshal(body, &document); err != nil {
-		return nil, errors.New("EPUB package document is invalid")
+		return errors.New("EPUB package document is invalid")
 	}
 	base := path.Dir(packagePath)
-	declared := make(map[string]string, len(document.Manifest.Items))
 	for _, item := range document.Manifest.Items {
 		// A query or fragment still names the same archive entry, so strip it
 		// rather than dropping the declaration and leaving the entry unscanned.
@@ -1305,7 +1316,7 @@ func epubManifestTypes(
 		}
 		declared[resource] = strings.ToLower(strings.TrimSpace(item.MediaType))
 	}
-	return declared, nil
+	return nil
 }
 
 // epubArchivePath resolves one EPUB-relative reference to an archive entry
@@ -1330,15 +1341,72 @@ func epubArchivePath(reference, base string) (string, error) {
 	return resource, nil
 }
 
-// isXMLMediaType reports whether a declared EPUB media type makes a reader
-// parse the resource as markup.
+// isXMLMediaType reports whether a declared media type makes a consumer parse
+// the resource as markup. The "+xml" suffix is the structured-syntax suffix
+// every OOXML part type carries.
 func isXMLMediaType(mediaType string) bool {
+	if strings.HasSuffix(mediaType, "+xml") {
+		return true
+	}
 	switch mediaType {
-	case "application/xhtml+xml", "application/xml", "text/xml", "image/svg+xml",
-		"text/html", "application/oebps-package+xml", "application/smil+xml":
+	case "application/xml", "text/xml", "text/html":
 		return true
 	}
 	return false
+}
+
+// ooxmlDeclaredTypes maps each OOXML part to the content type the package
+// declares for it. A part is markup because [Content_Types].xml says so, not
+// because of how it is named.
+func ooxmlDeclaredTypes(files []*zip.File, limit int64) map[string]string {
+	var contentTypes *zip.File
+	for _, file := range files {
+		if file.Name == "[Content_Types].xml" {
+			contentTypes = file
+			break
+		}
+	}
+	if contentTypes == nil {
+		return nil
+	}
+	body, err := readZIPEntry(contentTypes, limit)
+	if err != nil {
+		return nil
+	}
+	var document struct {
+		Defaults []struct {
+			Extension   string `xml:"Extension,attr"`
+			ContentType string `xml:"ContentType,attr"`
+		} `xml:"Default"`
+		Overrides []struct {
+			PartName    string `xml:"PartName,attr"`
+			ContentType string `xml:"ContentType,attr"`
+		} `xml:"Override"`
+	}
+	if err := xml.Unmarshal(body, &document); err != nil {
+		// The part is inspected as XML in its own right; a parse failure is
+		// classified there rather than silently trusted here.
+		return nil
+	}
+	byExtension := make(map[string]string, len(document.Defaults))
+	for _, def := range document.Defaults {
+		byExtension["."+strings.ToLower(strings.TrimSpace(def.Extension))] =
+			strings.ToLower(strings.TrimSpace(def.ContentType))
+	}
+	declared := make(map[string]string, len(files))
+	for _, file := range files {
+		if declaredType, ok := byExtension[strings.ToLower(path.Ext(file.Name))]; ok {
+			declared[file.Name] = declaredType
+		}
+	}
+	for _, override := range document.Overrides {
+		part := strings.TrimPrefix(strings.TrimSpace(override.PartName), "/")
+		if part == "" {
+			continue
+		}
+		declared[part] = strings.ToLower(strings.TrimSpace(override.ContentType))
+	}
+	return declared
 }
 
 func isTextFamily(ext, mediaType string) bool {
