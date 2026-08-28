@@ -227,6 +227,10 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="%5CUsers%5Cvictim%5Csecret.txt"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="%2f%2fhost%2fpath"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\Users/victim/secret.txt"/></body></html>`,
+		// A separator-normalizing consumer reads "/\host" as "//host", so both
+		// mirrored spellings name a host. Only "\/" used to be caught.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="/\host\share\x"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="%2f%5chost%5cshare"/></body></html>`,
 		// A base is a locator too, and is classified by the same rule.
 		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:/secret/"><body><img src="cover.png"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:\secret\"><body><img src="cover.png"/></body></html>`,
@@ -337,6 +341,14 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 		{name: "rooted base descends", base: "/images/", reference: "../../secret"},
 		{name: "rooted base stays inside", base: "/", reference: "images/cover.png",
 			eligible: true},
+		// A trailing dot segment is a step through the tree, not a document
+		// name. Dropping it as one spent a level of the base that a reader
+		// spends, so the origin stayed a directory deeper than the reader's.
+		{name: "base ending in a dot segment", base: "../..", reference: "../outside"},
+		{name: "base of one dot segment", base: "..", reference: "../../outside"},
+		{name: "dot segment inside the base", base: "a/..", reference: "../../../outside"},
+		{name: "base ending in a dot segment stays inside", base: "../..",
+			reference: "outside", eligible: true},
 		{name: "no base", base: "", reference: "../../outside", eligible: true},
 	}
 	for _, tt := range bases {
@@ -697,6 +709,60 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+}
+
+// ODF states each part's type in META-INF/manifest.xml rather than in
+// [Content_Types].xml. Reading only the OOXML and EPUB declarations left an ODF
+// part classified by its file name, so markup under a neutral name went unread.
+func TestInspectFollowsODFManifestDeclarations(t *testing.T) {
+	t.Parallel()
+	const drawing = `<svg xmlns="http://www.w3.org/2000/svg">` +
+		`<image href="https://example.invalid/t.png"/></svg>`
+	odf := func(entryName, declaredPath, declaredType, body string) []zipEntry {
+		declaration := ""
+		if declaredPath != "" {
+			declaration = `<manifest:file-entry manifest:full-path="` + declaredPath +
+				`" manifest:media-type="` + declaredType + `"/>`
+		}
+		return []zipEntry{
+			{name: "mimetype", body: "application/vnd.oasis.opendocument.spreadsheet"},
+			{name: "META-INF/manifest.xml", body: `<manifest:manifest ` +
+				`xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">` +
+				declaration + `</manifest:manifest>`},
+			{name: "content.xml", body: `<office:document-content ` +
+				`xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0">` +
+				`<office:body><office:spreadsheet/></office:body></office:document-content>`},
+			{name: entryName, body: body},
+		}
+	}
+	cases := []struct {
+		name, entry, declaredPath, declaredType, body string
+		eligible                                      bool
+	}{
+		{name: "neutral name declared as markup", entry: "Pictures/image.dat",
+			declaredPath: "Pictures/image.dat", declaredType: "image/svg+xml", body: drawing},
+		{name: "encoded declaration names the part", entry: "Pictures/a b.dat",
+			declaredPath: "Pictures/a%20b.dat", declaredType: "image/svg+xml", body: drawing},
+		// Nothing declares it as markup, so its name decides, as it always did.
+		{name: "undeclared neutral name", entry: "Pictures/image.dat",
+			body: drawing, eligible: true},
+		// A declaration that is not markup must not pull an entry into markup
+		// inspection, or every stored image would be parsed as XML.
+		{name: "declared as an image", entry: "Pictures/image.png",
+			declaredPath: "Pictures/image.png", declaredType: "image/png",
+			body: "\x89PNG\r\n\x1a\n", eligible: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, odf(tt.entry, tt.declaredPath, tt.declaredType, tt.body))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "sheet.ods",
+					"application/vnd.oasis.opendocument.spreadsheet"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
 		})
 	}
 }

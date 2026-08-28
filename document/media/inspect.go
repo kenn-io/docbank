@@ -454,6 +454,8 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 			record.Reason = CapabilityReasonMalformed
 			return record
 		}
+	} else if isODFExtension(ext) {
+		declaredTypes = odfDeclaredTypes(zr.File, policy.MaxEntryBytes)
 	} else {
 		declaredTypes = ooxmlDeclaredTypes(zr.File, policy.MaxEntryBytes)
 	}
@@ -917,9 +919,26 @@ func resolveArchiveDir(home, base string) string {
 		origin, candidate = ".", rooted
 	}
 	// A base names a document, not a directory: references resolve from the
-	// directory holding it. path.Dir gives that for both spellings, descending
-	// a level for "assets/" and staying put for "assets".
-	return path.Clean(path.Join(origin, path.Dir(candidate)))
+	// directory holding it, so the last segment is dropped. That segment is a
+	// name only when there is one. A trailing separator leaves it empty, and a
+	// trailing "." or ".." is a step through the tree that must be walked
+	// rather than discarded: dropping it from "../.." spent one level instead
+	// of two and left the origin a directory deeper than a reader uses.
+	resolved := path.Join(origin, candidate)
+	if namesDirectory(candidate) {
+		return resolved
+	}
+	return path.Dir(resolved)
+}
+
+// namesDirectory reports whether a reference already names a directory rather
+// than a document inside one.
+func namesDirectory(reference string) bool {
+	if strings.HasSuffix(reference, "/") {
+		return true
+	}
+	last := path.Base(reference)
+	return last == "." || last == ".."
 }
 
 // nonLocatorXMLAttribute reports attributes whose values name a vocabulary
@@ -1005,6 +1024,13 @@ func looksExternalText(value string) bool {
 // same place as the literal one and is checked alongside it.
 func namesHostLocation(value string) bool {
 	if namesHostLocationLiterally(value) {
+		return true
+	}
+	// A consumer that reads a backslash as a separator sees "/\host" and
+	// "\/host" as the protocol-relative "//host". The mirrored spelling "\/"
+	// was already caught as a rooted Windows path while "/\" was not, which
+	// left one half of the same idea eligible.
+	if strings.HasPrefix(normalizeReferencePath(value), "//") {
 		return true
 	}
 	decoded, err := url.PathUnescape(value)
@@ -1786,6 +1812,55 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 	return declared
 }
 
+// odfDeclaredTypes maps each ODF part to the content type META-INF/manifest.xml
+// declares for it. ODF states the type of every part it carries, the way OOXML
+// states it in [Content_Types].xml and EPUB states it in the package manifest.
+// Reading only the other two left an ODF part classified by its file name, so a
+// drawing declared as SVG under a name such as "Pictures/image.dat" was stored
+// without ever being read as the markup a renderer parses it as.
+func odfDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
+	var manifest *zip.File
+	for _, file := range files {
+		if file.Name == "META-INF/manifest.xml" {
+			manifest = file
+			break
+		}
+	}
+	if manifest == nil {
+		return nil
+	}
+	body, err := readZIPEntry(manifest, limit)
+	if err != nil {
+		return nil
+	}
+	var document struct {
+		Entries []struct {
+			FullPath  string `xml:"full-path,attr"`
+			MediaType string `xml:"media-type,attr"`
+		} `xml:"file-entry"`
+	}
+	if err := xml.Unmarshal(body, &document); err != nil {
+		// The part is inspected as XML in its own right; a parse failure is
+		// classified there rather than silently trusted here.
+		return nil
+	}
+	declared := make(contentDeclarations, len(document.Entries))
+	for _, entry := range document.Entries {
+		// A full-path is a URI path, so it may be percent-encoded, and the
+		// package root is spelled "/" and names no part.
+		part := strings.TrimSpace(entry.FullPath)
+		if part == "" || part == "/" {
+			continue
+		}
+		declaredType := normalizeDeclaredType(entry.MediaType)
+		declared.add(part, declaredType)
+		if decoded, err := url.PathUnescape(part); err == nil && decoded != part {
+			declared.add(decoded, declaredType)
+		}
+	}
+	return declared
+}
+
 func isTextFamily(ext, mediaType string) bool {
 	candidate, ok := formatdetect.CandidateFormatByMediaType(mediaType)
 	if ok && slices.Contains([]string{
@@ -1801,6 +1876,12 @@ func isZIPFamily(ext, mediaType string, data []byte) bool {
 	return len(data) >= 4 && bytes.Equal(data[:4], []byte("PK\x03\x04")) ||
 		strings.Contains(mediaType, "officedocument") || mediaType == "application/epub+zip" ||
 		slices.Contains([]string{".pptx", ".xlsx", ".ods", ".epub"}, ext)
+}
+
+// isODFExtension reports whether a container states its part types in
+// META-INF/manifest.xml rather than in [Content_Types].xml.
+func isODFExtension(ext string) bool {
+	return slices.Contains([]string{".ods", ".odp"}, ext)
 }
 
 func looksNestedContainer(name string) bool {
