@@ -23,6 +23,7 @@ import (
 	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -86,6 +87,7 @@ type Config struct {
 	SQLite           docsqlite.Driver
 	LooseCompression LooseCompressionOptions
 	StoreBindings    map[string]StoreBinding
+	Processing       ProcessingOptions
 }
 
 // StoreBinding configures one embedded secondary namespace without exposing
@@ -105,10 +107,11 @@ type StoreBinding struct {
 // Vault is one independently locked Docbank namespace. Separate Vault values
 // may be open concurrently when their roots do not overlap.
 type Vault struct {
-	root     *os.Root
-	lock     *home.Lock
-	metadata *store.Store
-	blobs    *blob.Store
+	root       *os.Root
+	lock       *home.Lock
+	metadata   *store.Store
+	blobs      *blob.Store
+	processing *internalprocessing.Service
 
 	lifecycle sync.RWMutex
 	mutation  sync.Mutex
@@ -258,7 +261,57 @@ func openVaultWithRootOpener(
 	if err := blobs.CleanTmp(); err != nil {
 		return nil, err
 	}
-	return &Vault{root: root, lock: lock, metadata: metadata, blobs: blobs}, nil
+	vault := &Vault{root: root, lock: lock, metadata: metadata, blobs: blobs}
+	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
+	for name, profile := range config.Processing.Profiles {
+		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),
+			len(profile.EmbeddingClassifiers))
+		for binding, classifier := range profile.EmbeddingClassifiers {
+			if classifier == nil {
+				continue
+			}
+			classifiers[binding] = func(err error) (internalprocessing.EmbeddingProviderFailure, time.Duration) {
+				class, delay := classifier(err)
+				return internalprocessing.EmbeddingProviderFailure(class), delay
+			}
+		}
+		profiles[name] = internalprocessing.ProfileConfig{Profile: profile.Profile,
+			RenditionProvider:    profile.RenditionProvider,
+			EmbeddingProviders:   profile.EmbeddingProviders,
+			EmbeddingClassifiers: classifiers,
+			Tokenizers:           profile.Tokenizers}
+	}
+	spoolDirectory := config.Processing.SpoolDirectory
+	if spoolDirectory == "" {
+		spoolDirectory = layout.BlobTmpDir()
+	}
+	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
+		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
+		Profiles: profiles, SpoolDirectory: spoolDirectory,
+	})
+	if err != nil {
+		return nil, err
+	}
+	vault.processing = processingService
+	return vault, nil
+}
+
+type embeddedMutationGate struct{ vault *Vault }
+
+func (gate embeddedMutationGate) MutateContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	gate.vault.mutation.Lock()
+	defer gate.vault.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
+}
+
+func (gate embeddedMutationGate) PreserveContext(ctx context.Context, fn func() error) error {
+	return gate.MutateContext(ctx, fn)
 }
 
 // Close waits for active operations and readers, then releases storage and
@@ -900,7 +953,7 @@ func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 	}
 	return store.BlobPhysical{
 		Encoding: encoding, StoredBytes: receipt.StoredSize,
-		PackEligible: receipt.PackEligible, Created: receipt.Created,
+		PackEligible: receipt.PackEligible, MD5: receipt.MD5, Created: receipt.Created,
 	}, nil
 }
 

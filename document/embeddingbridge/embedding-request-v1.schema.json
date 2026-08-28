@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json",
+  "title": "Docbank embedding request manifest v1",
+  "x-docbank-canonicalization": {
+    "name": "docbank-json-v1",
+    "character_encoding": "UTF-8 without a byte-order mark",
+    "whitespace": "No insignificant whitespace before or after tokens.",
+    "object_member_order": {
+      "$": ["contract_version", "descriptor_fingerprint", "policy_fingerprint", "authorization", "inputs", "request_checksum"],
+      "$.authorization": ["provider_id", "descriptor_fingerprint", "policy_fingerprint", "max_batch_items", "max_input_bytes", "max_response_bytes"],
+      "$.inputs[]": ["index", "key", "role", "kind", "byte_length", "sha256", "text", "heading_path", "source_spans", "upload", "file_part", "file_index"],
+      "$.inputs[].source_spans[]": ["unit_index", "char_start", "char_end"],
+      "$.inputs[].upload": ["filename", "media_family", "media_type", "byte_length", "sha256", "capability_record_checksum", "provider_metadata_checksum", "input_kind"]
+    },
+    "arrays": "Preserve manifest array order exactly.",
+    "integers": "Base-10 ASCII digits with a leading minus only for negative values; no leading zero except the value zero. This schema permits no negative request integers.",
+    "strings": "Use JSON quotation marks. Escape quotation mark and reverse solidus. Escape U+0000 through U+001F using \\b, \\f, \\n, \\r, or \\t where applicable and lowercase \\u00xx otherwise. Emit every other Unicode scalar as its UTF-8 bytes without escaping.",
+    "optional_members": "Omit absent optional members. Never emit null. Emit present members in the order defined for their object after skipping absent members.",
+    "checksum": "Omit request_checksum entirely, serialize the remaining manifest with these docbank-json-v1 rules, compute SHA-256 over those exact UTF-8 bytes, encode the digest as 64 lowercase hexadecimal characters, then append request_checksum as the final root member for transmission.",
+    "checksum_vectors": [
+      {
+        "canonical_manifest": "{\"contract_version\":\"docbank-embedding/v1\",\"descriptor_fingerprint\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"policy_fingerprint\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"authorization\":{\"provider_id\":\"synthetic.vector\",\"descriptor_fingerprint\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"policy_fingerprint\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"max_batch_items\":1,\"max_input_bytes\":64,\"max_response_bytes\":16},\"inputs\":[{\"index\":0,\"key\":\"vector-a\",\"role\":\"document\",\"kind\":\"rendition_chunk\",\"byte_length\":22,\"sha256\":\"5aa0924b94846dd796a2130bbb9a63f21721793169cedd7547b1666050dacc12\",\"text\":\"search_document: alpha\",\"heading_path\":[\"Overview\"],\"source_spans\":[{\"unit_index\":0,\"char_start\":0,\"char_end\":5}]}]}",
+        "sha256": "c1051df601b1389603d0f773d51c02960b96d0cec370672bc823d98d30a0d97f"
+      },
+      {
+        "canonical_manifest": "{\"contract_version\":\"docbank-embedding/v1\",\"descriptor_fingerprint\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"policy_fingerprint\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"authorization\":{\"provider_id\":\"synthetic.query\",\"descriptor_fingerprint\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"policy_fingerprint\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"max_batch_items\":1,\"max_input_bytes\":64,\"max_response_bytes\":16},\"inputs\":[{\"index\":0,\"key\":\"vector-b\",\"role\":\"query\",\"kind\":\"query_text\",\"byte_length\":20,\"sha256\":\"1ccc4c7d34c3c140b5a067a8fca62cd86244ba8b39fa4e3b2b85c578558b5020\",\"text\":\"search_query: <β>&\\n\"}]}",
+        "sha256": "01c33c6021a4296d41276c772a9361cfe24854653cff7925adab40bb2110dab3"
+      }
+    ]
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "descriptor_fingerprint",
+    "policy_fingerprint",
+    "authorization",
+    "inputs",
+    "request_checksum"
+  ],
+  "properties": {
+    "contract_version": {"const": "docbank-embedding/v1"},
+    "descriptor_fingerprint": {"$ref": "#/$defs/sha256"},
+    "policy_fingerprint": {"$ref": "#/$defs/sha256"},
+    "authorization": {"$ref": "#/$defs/authorization"},
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/input"}
+    },
+    "request_checksum": {
+      "description": "SHA-256 of the docbank-json-v1 canonical UTF-8 manifest with request_checksum omitted, as defined by x-docbank-canonicalization.",
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stable_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "descriptor_fingerprint",
+        "policy_fingerprint",
+        "max_batch_items",
+        "max_input_bytes",
+        "max_response_bytes"
+      ],
+      "properties": {
+        "provider_id": {"$ref": "#/$defs/stable_id"},
+        "descriptor_fingerprint": {"$ref": "#/$defs/sha256"},
+        "policy_fingerprint": {"$ref": "#/$defs/sha256"},
+        "max_batch_items": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "max_input_bytes": {"type": "integer", "minimum": 1, "maximum": 1073741824},
+        "max_response_bytes": {"type": "integer", "minimum": 1, "maximum": 1073741824}
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "key", "role", "kind", "byte_length", "sha256"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0, "maximum": 9999},
+        "key": {"$ref": "#/$defs/stable_id"},
+        "role": {"enum": ["document", "query"]},
+        "kind": {"enum": ["rendition_chunk", "query_text", "original_file"]},
+        "byte_length": {"type": "integer", "minimum": 1, "maximum": 1073741824},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "text": {"type": "string", "minLength": 1},
+        "heading_path": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {"type": "string", "minLength": 1, "maxLength": 8192}
+        },
+        "source_spans": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {"$ref": "#/$defs/source_span"}
+        },
+        "upload": {"$ref": "#/$defs/upload"},
+        "file_part": {"const": "file"},
+        "file_index": {"type": "integer", "minimum": 0, "maximum": 9999}
+      },
+      "oneOf": [
+        {
+          "required": ["text"],
+          "not": {"anyOf": [{"required": ["upload"]}, {"required": ["file_part"]}, {"required": ["file_index"]}]},
+          "properties": {
+            "role": {"const": "document"},
+            "kind": {"const": "rendition_chunk"}
+          }
+        },
+        {
+          "required": ["text"],
+          "not": {
+            "anyOf": [
+              {"required": ["heading_path"]},
+              {"required": ["source_spans"]},
+              {"required": ["upload"]},
+              {"required": ["file_part"]},
+              {"required": ["file_index"]}
+            ]
+          },
+          "properties": {
+            "role": {"const": "query"},
+            "kind": {"const": "query_text"}
+          }
+        },
+        {
+          "required": ["upload", "file_part", "file_index"],
+          "not": {
+            "anyOf": [
+              {"required": ["text"]},
+              {"required": ["heading_path"]},
+              {"required": ["source_spans"]}
+            ]
+          },
+          "properties": {
+            "role": {"const": "document"},
+            "kind": {"const": "original_file"}
+          }
+        }
+      ]
+    },
+    "source_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_index", "char_start", "char_end"],
+      "properties": {
+        "unit_index": {"type": "integer", "minimum": 0, "maximum": 999999},
+        "char_start": {"type": "integer", "minimum": 0, "maximum": 268435455},
+        "char_end": {"type": "integer", "minimum": 1, "maximum": 268435456}
+      }
+    },
+    "upload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "media_family",
+        "media_type",
+        "byte_length",
+        "sha256",
+        "capability_record_checksum",
+        "provider_metadata_checksum",
+        "input_kind"
+      ],
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[^/\\\\\\x00-\\x1f\\x7f]+$"
+        },
+        "media_family": {"type": "string", "minLength": 1, "maxLength": 63},
+        "media_type": {"type": "string", "minLength": 3, "maxLength": 255},
+        "byte_length": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "capability_record_checksum": {"$ref": "#/$defs/sha256"},
+        "provider_metadata_checksum": {"$ref": "#/$defs/sha256"},
+        "input_kind": {"const": "original_file"}
+      }
+    }
+  }
+}
