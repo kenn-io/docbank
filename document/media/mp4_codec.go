@@ -5,23 +5,33 @@ import (
 	"math"
 )
 
+type mp4CodecConfiguration struct {
+	codec          string
+	nalLengthBytes int
+}
+
 // visualCodecDimensions reads dimensions from an out-of-band codec
 // configuration. avc3/hev1 and the other recognized visual sample-entry kinds
 // can carry configuration changes in media samples, which this metadata-only
 // detector cannot bound, so they fail closed.
-func visualCodecDimensions(kind string, entry []byte) (int64, int64, bool) {
+func visualCodecDimensions(kind string, entry []byte) (mp4CodecConfiguration, int64, int64, bool) {
 	if len(entry) < 78 {
-		return 0, 0, false
+		return mp4CodecConfiguration{}, 0, 0, false
 	}
+	var configuration mp4CodecConfiguration
 	var configKind string
 	var parse func([]byte) (int64, int64, bool)
 	switch kind {
 	case "avc1":
-		configKind, parse = "avcC", avcConfigDimensions
+		configuration.codec, configKind, parse = "h264", "avcC", avcConfigDimensions
 	case "hvc1":
-		configKind, parse = "hvcC", hevcConfigDimensions
+		configuration.codec, configKind, parse = "h265", "hvcC", hevcConfigDimensions
+	case "vp09":
+		configuration.codec, configKind, parse = "vp9", "vpcC", visualEntryDimensions
+	case "av01":
+		configuration.codec, configKind, parse = "av1", "av1C", visualEntryDimensions
 	default:
-		return 0, 0, false
+		return mp4CodecConfiguration{}, 0, 0, false
 	}
 	children := entry[78:]
 	var width, height int64
@@ -29,22 +39,154 @@ func visualCodecDimensions(kind string, entry []byte) (int64, int64, bool) {
 	for offset := 0; offset < len(children); {
 		headerLen, size, ok := mp4BoxHeader(children, offset)
 		if !ok {
-			return 0, 0, false
+			return mp4CodecConfiguration{}, 0, 0, false
 		}
 		if string(children[offset+4:offset+8]) == configKind {
 			configs++
 			if configs > 1 {
-				return 0, 0, false
+				return mp4CodecConfiguration{}, 0, 0, false
 			}
-			codecWidth, codecHeight, ok := parse(children[offset+headerLen : offset+size])
+			config := children[offset+headerLen : offset+size]
+			if (kind == "vp09" && !validVP9Config(config)) || (kind == "av01" && !validAV1Config(config)) {
+				return mp4CodecConfiguration{}, 0, 0, false
+			}
+			codecWidth, codecHeight, ok := parse(config)
 			if !ok {
-				return 0, 0, false
+				return mp4CodecConfiguration{}, 0, 0, false
+			}
+			switch kind {
+			case "avc1":
+				configuration.nalLengthBytes = int(config[4]&0x03) + 1
+			case "hvc1":
+				configuration.nalLengthBytes = int(config[21]&0x03) + 1
+			}
+			if kind == "vp09" || kind == "av01" {
+				codecWidth = int64(binary.BigEndian.Uint16(entry[24:26]))
+				codecHeight = int64(binary.BigEndian.Uint16(entry[26:28]))
 			}
 			width, height = codecWidth, codecHeight
 		}
 		offset += size
 	}
-	return width, height, configs == 1 && width > 0 && height > 0
+	return configuration, width, height, configs == 1 && width > 0 && height > 0
+}
+
+func visualEntryDimensions(config []byte) (int64, int64, bool) {
+	return 1, 1, len(config) > 0
+}
+
+func validVP9Config(config []byte) bool {
+	if len(config) < 12 || config[0] != 1 || config[1] != 0 || config[2] != 0 || config[3] != 0 ||
+		config[4] > 3 {
+		return false
+	}
+	bitDepth := config[6] >> 4
+	if bitDepth != 8 && bitDepth != 10 && bitDepth != 12 || config[6]>>1&0x07 > 3 {
+		return false
+	}
+	initializationDataSize := int(binary.BigEndian.Uint16(config[10:12]))
+	return len(config) == 12+initializationDataSize
+}
+
+func validAV1Config(config []byte) bool {
+	if len(config) < 4 || config[0] != 0x81 || config[3]&0xe0 != 0 ||
+		config[3]&0x10 == 0 && config[3]&0x0f != 0 {
+		return false
+	}
+	return len(config) == 4 || validAV1OBUs(config[4:], false, true)
+}
+
+func validMP4CodecSample(configuration mp4CodecConfiguration, sample []byte) bool {
+	switch configuration.codec {
+	case "h264":
+		return validLengthPrefixedNALSample(sample, configuration.nalLengthBytes, false)
+	case "h265":
+		return validLengthPrefixedNALSample(sample, configuration.nalLengthBytes, true)
+	case "vp9":
+		return len(sample) > 0 && sample[0]&0x03 == 0x02
+	case "av1":
+		return validAV1OBUs(sample, true, false)
+	default:
+		return false
+	}
+}
+
+func validLengthPrefixedNALSample(sample []byte, lengthBytes int, hevc bool) bool {
+	if lengthBytes < 1 || lengthBytes > 4 {
+		return false
+	}
+	hasPicture := false
+	for offset := 0; offset < len(sample); {
+		if offset+lengthBytes > len(sample) {
+			return false
+		}
+		size := uint64(0)
+		for _, value := range sample[offset : offset+lengthBytes] {
+			size = size<<8 | uint64(value)
+		}
+		offset += lengthBytes
+		remaining := uint64(len(sample) - offset) //nolint:gosec // offset is bounded by the sample length
+		if size == 0 || size > remaining {
+			return false
+		}
+		nal := sample[offset : offset+int(size)]
+		if hevc {
+			if len(nal) < 2 || nal[0]&0x80 != 0 || nal[1]&0x07 == 0 {
+				return false
+			}
+			hasPicture = hasPicture || (nal[0]>>1)&0x3f <= 31
+		} else {
+			if nal[0]&0x80 != 0 || nal[0]&0x1f == 0 || nal[0]&0x1f > 23 {
+				return false
+			}
+			nalType := nal[0] & 0x1f
+			hasPicture = hasPicture || nalType >= 1 && nalType <= 5
+		}
+		offset += int(size)
+	}
+	return len(sample) > 0 && hasPicture
+}
+
+func validAV1OBUs(data []byte, requireFrame, requireSequence bool) bool {
+	hasFrame, hasSequence := false, false
+	for offset := 0; offset < len(data); {
+		header := data[offset]
+		offset++
+		obuType := header >> 3 & 0x0f
+		if header&0x81 != 0 || header&0x02 == 0 || obuType == 0 || obuType >= 9 && obuType <= 14 {
+			return false
+		}
+		if header&0x04 != 0 {
+			if offset >= len(data) || data[offset]&0x07 != 0 {
+				return false
+			}
+			offset++
+		}
+		size, sizeBytes, ok := readAV1LEB128(data[offset:])
+		remaining := uint64(len(data) - offset - sizeBytes) //nolint:gosec // offsets are bounded by data above
+		if !ok || size > remaining {
+			return false
+		}
+		offset += sizeBytes
+		if size == 0 && obuType != 2 && obuType != 15 {
+			return false
+		}
+		hasSequence = hasSequence || obuType == 1
+		hasFrame = hasFrame || obuType == 3 || obuType == 6 || obuType == 7
+		offset += int(size) //nolint:gosec // size is bounded by the remaining data above
+	}
+	return len(data) > 0 && (!requireFrame || hasFrame) && (!requireSequence || hasSequence)
+}
+
+func readAV1LEB128(data []byte) (uint64, int, bool) {
+	var value uint64
+	for index := 0; index < len(data) && index < 8; index++ {
+		value |= uint64(data[index]&0x7f) << (index * 7)
+		if data[index]&0x80 == 0 {
+			return value, index + 1, true
+		}
+	}
+	return 0, 0, false
 }
 
 func avcConfigDimensions(config []byte) (int64, int64, bool) {

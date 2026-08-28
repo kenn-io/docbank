@@ -1,0 +1,75 @@
+openapi: 3.1.0
+info:
+  title: Docbank Embedding Bridge
+  version: 1.0.0
+  description: >-
+    Fixed synchronous provider-neutral embedding protocol. Implementations accept
+    one deterministic manifest and zero or more authorization-held files at one
+    same-origin route. The complete result is returned by that request.
+paths:
+  /docbank-embedding/v1/embeddings:
+    post:
+      operationId: embedDocbankInputs
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {$ref: '#/components/schemas/SHA256'}
+        - name: Docbank-Request-Checksum
+          in: header
+          required: true
+          schema: {$ref: '#/components/schemas/SHA256'}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [manifest]
+              properties:
+                manifest: {$ref: './embedding-request-v1.schema.json'}
+                file:
+                  type: array
+                  description: >-
+                    Original files in ascending manifest file_index order. Every
+                    element uses the repeated fixed multipart part name file.
+                  maxItems: 10000
+                  items: {type: string, format: binary}
+            encoding:
+              manifest:
+                contentType: application/vnd.docbank.embedding-manifest+json;version=1
+              file:
+                explode: true
+      responses:
+        '200':
+          description: One ordered, indexed vector for every manifest input.
+          content:
+            application/vnd.docbank.embedding-result+json;version=1:
+              schema: {$ref: './embedding-response-v1.schema.json'}
+        '400': {$ref: '#/components/responses/EmptyError'}
+        '401': {$ref: '#/components/responses/EmptyError'}
+        '403': {$ref: '#/components/responses/EmptyError'}
+        '413': {$ref: '#/components/responses/EmptyError'}
+        '429': {$ref: '#/components/responses/EmptyError'}
+        '500': {$ref: '#/components/responses/EmptyError'}
+        '502': {$ref: '#/components/responses/EmptyError'}
+        '503': {$ref: '#/components/responses/EmptyError'}
+        '504': {$ref: '#/components/responses/EmptyError'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    EmptyError:
+      description: >-
+        Error responses have no protocol body. Clients classify only the status
+        and never retain provider response bytes or upstream messages.
+  schemas:
+    SHA256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
