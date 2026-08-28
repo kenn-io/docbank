@@ -279,10 +279,47 @@ func (generation *Generation) Metadata() GenerationMetadata {
 
 // Search scans the complete generation and returns the exact k nearest rows.
 func (generation *Generation) Search(query []float32, k int) ([]Neighbor, error) {
+	return generation.searchRows(query, nil, k)
+}
+
+// SearchRows performs exact search over exactly the supplied logical rows.
+// Every supplied identity must occur once in this generation, so callers can
+// fence the ANN input before vector scoring begins.
+func (generation *Generation) SearchRows(query []float32, identities []RowIdentity) ([]Neighbor, error) {
 	if generation == nil || len(generation.rows) == 0 {
 		return nil, errors.New("vector index generation is not open")
 	}
-	if k < 1 || k > len(generation.rows) {
+	if len(identities) == 0 {
+		return nil, nil
+	}
+	selected := make(map[RowIdentity]struct{}, len(identities))
+	for _, identity := range identities {
+		if _, duplicate := selected[identity]; duplicate {
+			return nil, errors.New("vector index selected rows contain a duplicate identity")
+		}
+		selected[identity] = struct{}{}
+	}
+	rows := make([]int, 0, len(identities))
+	for index, row := range generation.rows {
+		if _, included := selected[row]; included {
+			rows = append(rows, index)
+		}
+	}
+	if len(rows) != len(selected) {
+		return nil, errors.New("vector index selected row is absent from generation")
+	}
+	return generation.searchRows(query, rows, len(rows))
+}
+
+func (generation *Generation) searchRows(query []float32, rows []int, k int) ([]Neighbor, error) {
+	if generation == nil || len(generation.rows) == 0 {
+		return nil, errors.New("vector index generation is not open")
+	}
+	rowCount := len(generation.rows)
+	if rows != nil {
+		rowCount = len(rows)
+	}
+	if k < 1 || k > rowCount {
 		return nil, errors.New("vector index search k is outside row bounds")
 	}
 	if len(query) != generation.dimension {
@@ -292,9 +329,13 @@ func (generation *Generation) Search(query []float32, k int) ([]Neighbor, error)
 		return nil, fmt.Errorf("vector index query: %w", err)
 	}
 
-	neighbors := make([]Neighbor, len(generation.rows))
-	for index, row := range generation.rows {
-		neighbor := Neighbor{RowIdentity: row}
+	neighbors := make([]Neighbor, rowCount)
+	for position := range rowCount {
+		index := position
+		if rows != nil {
+			index = rows[position]
+		}
+		neighbor := Neighbor{RowIdentity: generation.rows[index]}
 		switch generation.metric {
 		case document.VectorMetricCosine:
 			neighbor.Score = cosine(query, generation.vector(index))
@@ -303,7 +344,7 @@ func (generation *Generation) Search(query []float32, k int) ([]Neighbor, error)
 		case document.VectorMetricL2:
 			neighbor.Distance = euclidean(query, generation.vector(index))
 		}
-		neighbors[index] = neighbor
+		neighbors[position] = neighbor
 	}
 	sort.Slice(neighbors, func(left, right int) bool {
 		if generation.metric == document.VectorMetricL2 {

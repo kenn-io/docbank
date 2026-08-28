@@ -81,7 +81,7 @@ func TestSearcherSemanticUsesExactDescriptorAndExhaustsLeasedGeneration(t *testi
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
 		InputKind: document.EmbeddingInputOriginalFile, BindingRequired: true,
-		ScopedDocuments: 1, CompleteDocuments: 1,
+		ScopedDocuments: 1, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation),
 	}, semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
 		ContentVersionID: "version-semantic", Path: "/semantic.pdf",
 		VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
@@ -133,7 +133,7 @@ func TestSearcherRejectsChangedQueryModelInputBeforeProviderOrIndex(t *testing.T
 				SourceManifestChecksum: strings.Repeat("c", 64),
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
-		ScopedDocuments: 1, CompleteDocuments: 1}}
+		ScopedDocuments: 1, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation)}}
 	provider := &retrievalProvider{descriptor: changed, vector: []float32{1, 0}}
 	searcher, err := NewSearcher(SearcherConfig{Backend: backend,
 		Encoders: &retrievalResolver{provider: provider}, Owner: "retrieval-test",
@@ -338,7 +338,7 @@ func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
 		BindingRequired: required,
-		ScopedDocuments: scoped, CompleteDocuments: 1,
+		ScopedDocuments: scoped, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation),
 	}, semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
 		ContentVersionID: "version-semantic", Path: "/semantic.pdf",
 		VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
@@ -350,6 +350,28 @@ func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 		LeaseDuration: time.Minute, Clock: time.Now})
 	require.NoError(t, err)
 	return searcher, backend, provider, descriptor
+}
+
+func TestSearcherRejectsMissingSourceFenceBeforeEmbedding(t *testing.T) {
+	searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 1)
+	backend.authority.ANNRows = nil
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic,
+		Authorization: retrievalAuthorization(descriptor)})
+	require.ErrorContains(t, err, "source-fenced ANN rows")
+	assert.Zero(t, provider.calls)
+	assert.False(t, backend.releasedAt.IsZero())
+}
+
+func retrievalANNRows(t *testing.T, generation *vectorindex.Generation) []vectorindex.RowIdentity {
+	t.Helper()
+	metadata := generation.Metadata()
+	neighbors, err := generation.Search([]float32{1, 0}, metadata.RowCount)
+	require.NoError(t, err)
+	rows := make([]vectorindex.RowIdentity, len(neighbors))
+	for index, neighbor := range neighbors {
+		rows[index] = neighbor.RowIdentity
+	}
+	return rows
 }
 
 type retrievalBackendStub struct {

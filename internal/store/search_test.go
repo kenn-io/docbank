@@ -91,6 +91,16 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 			_, fingerprints, err := embeddingProfileBindingAuthority(t.Context(), s.db, test.profile, test.binding)
 			require.NoError(t, err)
 			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
+			_, _, _, rows, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
+				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{})
+			require.NoError(t, err)
+			if test.want {
+				require.Len(t, rows, 1)
+				assert.Equal(t, record.VectorSet.ID, rows[0].SetID)
+			} else {
+				assert.NotNil(t, rows)
+				assert.Empty(t, rows, "authority must exclude other bindings before vector scoring")
+			}
 			result, err := s.ResolveSemanticCandidates(t.Context(), test.profile, test.binding, test.kind,
 				record.VectorSpace.ID, source.ManifestChecksum, []vectorindex.Neighbor{{
 					SetID: record.VectorSet.ID, InputKey: versionID,
@@ -340,7 +350,20 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testin
 	assert.False(t, authority.BindingRequired)
 	assert.Equal(t, 2, authority.ScopedDocuments)
 	assert.Equal(t, 1, authority.CompleteDocuments)
+	require.Len(t, authority.ANNRows, 1)
+	assert.Equal(t, record.VectorSet.ID, authority.ANNRows[0].SetID)
+	assert.Equal(t, versionID, authority.ANNRows[0].InputKey)
 	assert.Equal(t, stored.ID, authority.Lease.Generation.ID)
+	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
+		authority.Lease.FencingToken, now))
+
+	authority, err = s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "reader", now, time.Minute, SearchOptions{
+			ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174001"},
+		})
+	require.NoError(t, err)
+	assert.NotNil(t, authority.ANNRows)
+	assert.Empty(t, authority.ANNRows, "excluded versions must not enter vector scoring")
 	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
 		authority.Lease.FencingToken, now))
 }

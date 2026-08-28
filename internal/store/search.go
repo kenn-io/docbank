@@ -499,8 +499,10 @@ type SemanticSearchResolution struct {
 }
 
 // SemanticSearchAuthority pins the exact persisted vector-space descriptor and
-// one active local index generation for a query. Required and Complete count
-// current documents after applying the operator scope.
+// one active local index generation for a query. ANNRows is the source-fenced
+// subset that must be supplied to vector search before it scores any row.
+// Required and Complete count current documents after applying the operator
+// scope.
 type SemanticSearchAuthority struct {
 	VectorSpace       EmbeddingVectorSpaceRecord
 	Lease             VectorIndexReaderLease
@@ -508,6 +510,7 @@ type SemanticSearchAuthority struct {
 	BindingRequired   bool
 	ScopedDocuments   int
 	CompleteDocuments int
+	ANNRows           []vectorindex.RowIdentity
 }
 
 // AcquireSemanticSearchAuthority resolves the query contract from durable E1
@@ -547,7 +550,8 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	release := func() {
 		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
-	current, err := s.CaptureVectorIndexSource(ctx, vectorSpaceID)
+	current, required, complete, annRows, err := s.semanticSearchAuthorityFence(ctx,
+		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
 		release()
 		if err != nil {
@@ -555,27 +559,48 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		}
 		return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
 	}
-	required, complete, err := s.semanticSearchCoverage(ctx, profileFingerprint,
-		bindingID, binding.InputKind, vectorSpaceID, normalized)
-	if err != nil {
-		release()
-		return SemanticSearchAuthority{}, err
-	}
 	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
 		BindingRequired: binding.Activation == document.EmbeddingRequired,
-		ScopedDocuments: required, CompleteDocuments: complete}, nil
+		ScopedDocuments: required, CompleteDocuments: complete, ANNRows: annRows}, nil
 }
 
-func (s *Store) semanticSearchCoverage(ctx context.Context, profileFingerprint, bindingID string,
+func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
-) (required, complete int, retErr error) {
+) (source VectorIndexSource, required, complete int, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var coverageErr error
-		required, complete, coverageErr = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
+		var err error
+		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		if err != nil {
+			return err
+		}
+		required, complete, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
 			bindingID, inputKind, vectorSpaceID, opts)
-		return coverageErr
+		if err != nil {
+			return err
+		}
+		filterSQL, filterArgs := searchFilterSQL(opts)
+		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
+			inputKind, vectorSpaceID, filterSQL, filterArgs)
+		if err != nil {
+			return err
+		}
+		annRows = make([]vectorindex.RowIdentity, 0, len(eligible))
+		for key := range eligible {
+			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
+				InputKey: key.InputID, InputChecksum: key.InputChecksum})
+		}
+		sort.Slice(annRows, func(left, right int) bool {
+			if annRows[left].SetID != annRows[right].SetID {
+				return annRows[left].SetID < annRows[right].SetID
+			}
+			if annRows[left].InputKey != annRows[right].InputKey {
+				return annRows[left].InputKey < annRows[right].InputKey
+			}
+			return annRows[left].InputChecksum < annRows[right].InputChecksum
+		})
+		return nil
 	})
-	return required, complete, err
+	return source, required, complete, annRows, err
 }
 
 func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
