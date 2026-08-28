@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-28
 title: Roadmap
 description: What is implemented today and what each phase adds.
 ---
@@ -16,8 +17,8 @@ appear elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses Kit's shared backup and multi-location packstore engines) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; reusable document normalization, Mistral OCR, media detection, and Voyage multimodal embedding packages are available, while automatic PDF/Office extraction into a Docbank vault remains |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job and storage/backup inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, bounded plain-text extraction, previewed document processing, retained sanitized renditions, source-fenced retrieval, and configured embedding profiles implemented; reusable document normalization, Mistral OCR, media detection, and Voyage multimodal embedding packages are available, while automatic PDF/Office extraction into a Docbank vault remains |
+| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job and storage/backup inspection, document-processing plan/status/rendition inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
 ## Implemented (Phase 1)

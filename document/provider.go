@@ -241,6 +241,14 @@ func validateRenditionProviderRequestAt(
 func RenderRendition(
 	ctx context.Context, provider RenditionProvider, upload AuthorizedUpload,
 	authorization RenditionAuthorization,
+) (RenditionResult, error) {
+	return renderRendition(ctx, provider, upload, authorization, provider.Render)
+}
+
+func renderRendition(
+	ctx context.Context, provider RenditionProvider, upload AuthorizedUpload,
+	authorization RenditionAuthorization,
+	render func(context.Context, AuthorizedUpload, RenditionAuthorization) (RenditionResult, error),
 ) (result RenditionResult, err error) {
 	if nilInterface(upload) {
 		return RenditionResult{}, errors.New("authorized upload is required")
@@ -283,7 +291,7 @@ func RenderRendition(
 	if err := executionCtx.Err(); err != nil {
 		return RenditionResult{}, err
 	}
-	result, err = provider.Render(executionCtx, providerUpload, cloneRenditionAuthorization(sealed))
+	result, err = render(executionCtx, providerUpload, cloneRenditionAuthorization(sealed))
 	_ = providerUpload.Close()
 	if contextErr := ctx.Err(); contextErr != nil {
 		return RenditionResult{}, contextErr
@@ -332,6 +340,19 @@ func RenderRendition(
 func ValidateRenditionResult(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
 ) error {
+	return validateRenditionResult(descriptor, authorization, result, false)
+}
+
+func validateResumedRenditionResult(
+	descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
+) error {
+	return validateRenditionResult(descriptor, authorization, result, true)
+}
+
+func validateRenditionResult(
+	descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
+	allowCompletionAfterExpiry bool,
+) error {
 	if err := validateRenditionDescriptor(descriptor); err != nil {
 		return err
 	}
@@ -363,7 +384,7 @@ func ValidateRenditionResult(
 		authorization, result.Evidence.Artifacts, result.Artifacts); err != nil {
 		return err
 	}
-	if err := validateRenditionReceipt(descriptor, authorization, result.Receipt); err != nil {
+	if err := validateRenditionReceipt(descriptor, authorization, result.Receipt, allowCompletionAfterExpiry); err != nil {
 		return err
 	}
 	return nil
@@ -507,9 +528,11 @@ type RenditionProviderError struct {
 	cause      error
 }
 
-// NewRenditionProviderError constructs a classified provider failure.
+// NewRenditionProviderError constructs a classified provider failure. detail is
+// retained for source compatibility with adapters, but is never rendered or
+// retained so provider response bodies cannot cross this boundary.
 func NewRenditionProviderError(
-	code RenditionErrorCode, retryAfter time.Duration, cause error,
+	code RenditionErrorCode, _ string, retryAfter time.Duration, cause error,
 ) (*RenditionProviderError, error) {
 	providerError := &RenditionProviderError{code: code, retryAfter: retryAfter, cause: cause}
 	if err := validateClassifiedProviderError(providerError); err != nil {
@@ -1062,6 +1085,7 @@ func validateEvidenceArtifactAuthorization(
 
 func validateRenditionReceipt(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, receipt RenditionReceipt,
+	allowCompletionAfterExpiry bool,
 ) error {
 	authorizationFingerprint, err := authorization.Fingerprint()
 	if err != nil {
@@ -1087,7 +1111,8 @@ func validateRenditionReceipt(
 	}
 	authorizedAt, _ := parseRenditionTimestamp(authorization.AuthorizedAt)
 	expiresAt, _ := parseRenditionTimestamp(authorization.ExpiresAt)
-	if startedAt.Before(authorizedAt) || !completedAt.Before(expiresAt) {
+	if startedAt.Before(authorizedAt) || !startedAt.Before(expiresAt) ||
+		!allowCompletionAfterExpiry && !completedAt.Before(expiresAt) {
 		return errors.New("receipt execution is outside the authorization interval")
 	}
 	if len(receipt.Warnings) > maxRenditionWarnings {

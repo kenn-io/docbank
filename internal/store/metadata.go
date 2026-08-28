@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -57,9 +58,9 @@ func (s *MetadataSnapshot) Export(ctx context.Context, w io.Writer) error {
 	return exportMetadataSnapshot(ctx, s, w)
 }
 
-// ExportBackup writes the deterministic logical authority carried by a backup
-// snapshot. It omits blob and extraction-cache rows outside retained document
-// or rendition authority, including uncommitted provider staging.
+// ExportBackup writes deterministic backup authority. It excludes pruned
+// ordinary blobs, rebuildable caches, operational cursors, and uncommitted
+// provider staging while retaining live document and durable derivative authority.
 func (s *MetadataSnapshot) ExportBackup(ctx context.Context, w io.Writer) error {
 	return exportBackupMetadataSnapshot(ctx, s, w)
 }
@@ -101,6 +102,39 @@ type metadataBlob struct {
 	Hash      string `json:"hash"`
 	Size      int64  `json:"size"`
 	CreatedAt string `json:"created_at"`
+}
+
+type metadataOrdinaryBlobAuthorityComplete struct {
+	Type string `json:"type"`
+}
+
+type metadataBlobChecksum struct {
+	Type       string `json:"type"`
+	BlobSHA256 string `json:"blob_sha256"`
+	MD5        string `json:"md5"`
+}
+
+type metadataSourceMetadataGeneration struct {
+	Type                 string `json:"type"`
+	GenerationID         string `json:"generation_id"`
+	SourceSHA256         string `json:"source_sha256"`
+	ContractVersion      string `json:"contract_version"`
+	ExtractorFingerprint string `json:"extractor_fingerprint"`
+	CanonicalJSON        []byte `json:"canonical_json" format:"byte"`
+	Checksum             string `json:"checksum"`
+	CreatedAt            string `json:"created_at"`
+}
+
+type metadataSourceMetadataHead struct {
+	Type         string `json:"type"`
+	SourceSHA256 string `json:"source_sha256"`
+	GenerationID string `json:"generation_id"`
+	PublishedAt  string `json:"published_at"`
+}
+
+type metadataOrdinaryBlobAuthority struct {
+	Type     string `json:"type"`
+	BlobHash string `json:"blob_hash"`
 }
 
 type metadataNode struct {
@@ -216,8 +250,10 @@ type metadataAuditMembership struct {
 }
 
 // BackupBlobAuthorityCTE is the complete blob closure for portable backup:
-// retained document versions, rendition artifacts, staged rendition sources,
-// and no operational cursor or provider-staging rows.
+// retained document versions, rendition artifacts and staged sources,
+// resumable rendition sources, and durable embedding generations and vector
+// sets. Operational cursors, pruned ordinary blobs, cache rows, and
+// uncommitted provider staging are deliberately excluded.
 const BackupBlobAuthorityCTE = `
 WITH backup_authorized_blobs(hash) AS (
 	SELECT blob_hash FROM content_versions
@@ -225,6 +261,13 @@ WITH backup_authorized_blobs(hash) AS (
 	SELECT blob_hash FROM rendition_artifacts
 	UNION
 	SELECT source_sha256 FROM rendition_builds
+	UNION
+	SELECT source_sha256 FROM rendition_jobs
+	UNION
+	SELECT generation_blob_hash FROM embedding_input_generations
+	WHERE generation_blob_hash IS NOT NULL
+	UNION
+	SELECT payload_blob_hash FROM embedding_vector_sets
 )
 `
 
@@ -308,6 +351,15 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportBlobs(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
+	if err := exportBlobChecksums(ctx, tx, write, backupScoped); err != nil {
+		return err
+	}
+	if err := exportSourceMetadata(ctx, tx, write, backupScoped); err != nil {
+		return err
+	}
+	if err := exportOrdinaryBlobAuthority(ctx, tx, write, backupScoped); err != nil {
+		return err
+	}
 	if err := exportNodes(ctx, tx, write); err != nil {
 		return err
 	}
@@ -353,9 +405,7 @@ func newMetadataJSONWriter(w io.Writer) metadataWrite {
 	}
 }
 
-func exportBlobs(
-	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
-) error {
+func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool) error {
 	query := `SELECT hash, size, created_at FROM blobs ORDER BY hash`
 	if backupScoped {
 		query = BackupBlobAuthorityCTE + `
@@ -381,6 +431,170 @@ ORDER BY b.hash`
 		}
 	}
 	return rowsError("blob", rows)
+}
+
+func exportBlobChecksums(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	var checksumTable bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='blob_checksums'
+	)`).Scan(&checksumTable); err != nil {
+		return fmt.Errorf("detecting blob checksum schema: %w", err)
+	}
+	// Released source layouts predate auxiliary checksums. Their deterministic
+	// cutover stream intentionally omits records for a later verified backfill.
+	if !checksumTable {
+		return nil
+	}
+	query := `SELECT blob_sha256,md5 FROM blob_checksums ORDER BY blob_sha256`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+SELECT c.blob_sha256,c.md5 FROM blob_checksums c
+JOIN backup_authorized_blobs a ON a.hash=c.blob_sha256
+ORDER BY c.blob_sha256`
+	}
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("exporting blob checksums: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataBlobChecksum{Type: metadataBlobChecksumType}
+		if err := rows.Scan(&record.BlobSHA256, &record.MD5); err != nil {
+			return fmt.Errorf("scanning blob checksum metadata: %w", err)
+		}
+		if err := validateBlobChecksumRecord(BlobChecksumRecord{
+			BlobSHA256: record.BlobSHA256, MD5: record.MD5,
+		}); err != nil {
+			return fmt.Errorf("validating blob checksum metadata for export: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("blob checksum", rows)
+}
+
+func exportSourceMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool) error {
+	var present bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
+		WHERE type='table' AND name='source_metadata_generations')`).Scan(&present); err != nil {
+		return fmt.Errorf("detecting source metadata schema: %w", err)
+	}
+	if !present {
+		return nil
+	}
+	query := `SELECT generation_id,source_sha256,contract_version,extractor_fingerprint,
+		canonical_json,checksum,created_at FROM source_metadata_generations ORDER BY generation_id`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+SELECT g.generation_id,g.source_sha256,g.contract_version,g.extractor_fingerprint,
+g.canonical_json,g.checksum,g.created_at FROM source_metadata_generations g
+JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_id`
+	}
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("exporting source metadata: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataSourceMetadataGeneration{Type: metadataSourceMetadataGenerationType}
+		if err := rows.Scan(&record.GenerationID, &record.SourceSHA256, &record.ContractVersion,
+			&record.ExtractorFingerprint, &record.CanonicalJSON, &record.Checksum, &record.CreatedAt); err != nil {
+			return err
+		}
+		if err := validateSourceMetadataGenerationRecord(record); err != nil {
+			return fmt.Errorf("validating source metadata for export: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	headQuery := `SELECT source_sha256,generation_id,published_at FROM source_metadata_heads ORDER BY source_sha256`
+	if backupScoped {
+		headQuery = BackupBlobAuthorityCTE + `
+SELECT h.source_sha256,h.generation_id,h.published_at FROM source_metadata_heads h
+JOIN backup_authorized_blobs a ON a.hash=h.source_sha256 ORDER BY h.source_sha256`
+	}
+	heads, err := tx.QueryContext(ctx, headQuery)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = heads.Close() }()
+	for heads.Next() {
+		record := metadataSourceMetadataHead{Type: metadataSourceMetadataHeadType}
+		if err := heads.Scan(&record.SourceSHA256, &record.GenerationID, &record.PublishedAt); err != nil {
+			return err
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return heads.Err()
+}
+
+func validateSourceMetadataGenerationRecord(record metadataSourceMetadataGeneration) error {
+	if record.Type != metadataSourceMetadataGenerationType || record.ContractVersion != document.SourceMetadataContractV1 {
+		return errors.New("invalid source metadata generation record")
+	}
+	metadata, checksum, err := document.DecodeSourceMetadataV1(record.CanonicalJSON)
+	if err != nil {
+		return err
+	}
+	if parsed, parseErr := packstore.ParseHash(record.ExtractorFingerprint); parseErr != nil || parsed.String() != record.ExtractorFingerprint {
+		return errors.New("source metadata extractor fingerprint is invalid")
+	}
+	if metadata.ContractVersion != record.ContractVersion || checksum != record.Checksum ||
+		sourceMetadataGenerationID(record.SourceSHA256, record.ContractVersion, record.ExtractorFingerprint, record.Checksum) != record.GenerationID {
+		return errors.New("source metadata generation identity or checksum does not match canonical evidence")
+	}
+	return nil
+}
+
+func exportOrdinaryBlobAuthority(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	var authorityTable bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='ordinary_blob_authority'
+	)`).Scan(&authorityTable); err != nil {
+		return fmt.Errorf("detecting ordinary blob authority schema: %w", err)
+	}
+	query := `SELECT hash FROM blobs ORDER BY hash`
+	if authorityTable {
+		query = `SELECT blob_hash FROM ordinary_blob_authority ORDER BY blob_hash`
+	}
+	if backupScoped && authorityTable {
+		query = BackupBlobAuthorityCTE + `
+SELECT o.blob_hash FROM ordinary_blob_authority o
+JOIN backup_authorized_blobs a ON a.hash=o.blob_hash
+ORDER BY o.blob_hash`
+	}
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("exporting ordinary blob authority: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		r := metadataOrdinaryBlobAuthority{Type: metadataOrdinaryBlobAuthorityType}
+		if err := rows.Scan(&r.BlobHash); err != nil {
+			return fmt.Errorf("scanning ordinary blob authority: %w", err)
+		}
+		if _, err := packstore.ParseHash(r.BlobHash); err != nil {
+			return fmt.Errorf("ordinary blob authority has invalid hash: %w", err)
+		}
+		if err := write(r); err != nil {
+			return err
+		}
+	}
+	if err := rowsError("ordinary blob authority", rows); err != nil {
+		return err
+	}
+	return write(metadataOrdinaryBlobAuthorityComplete{Type: metadataOrdinaryBlobAuthorityCompleteType})
 }
 
 func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -619,14 +833,22 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 	return s.importMetadata(ctx, r, true)
 }
 
-// ImportMetadataForBackupRestore imports logical metadata before Kit restores
-// physical content. The backup restore must call VerifyRenditionBlobBytes after
-// every loose or packed blob is available and before publishing the target.
-func (s *Store) ImportMetadataForBackupRestore(ctx context.Context, r io.Reader) error {
+// ImportMetadataForRestore imports logical metadata into a private staged
+// restore database. The caller must verify processing blobs after attachment
+// materialization and before publishing that staged database.
+func (s *Store) ImportMetadataForRestore(ctx context.Context, r io.Reader) error {
 	return s.importMetadata(ctx, r, false)
 }
 
-func (s *Store) importMetadata(ctx context.Context, r io.Reader, verifyProcessingBytes bool) error {
+// ImportMetadataForBackupRestore is the compatibility spelling retained for
+// callers introduced with durable derivative restore authority.
+func (s *Store) ImportMetadataForBackupRestore(ctx context.Context, r io.Reader) error {
+	return s.ImportMetadataForRestore(ctx, r)
+}
+
+func (s *Store) importMetadata(
+	ctx context.Context, r io.Reader, verifyProcessingBlobs bool,
+) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -639,9 +861,15 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader, verifyProcessin
 		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
-		header, err := s.importMetadataLines(ctx, tx, r, verifyProcessingBytes)
+		header, explicitOrdinaryAuthority, err := s.importMetadataLines(ctx, tx, r)
 		if err != nil {
 			return err
+		}
+		if !explicitOrdinaryAuthority {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO ordinary_blob_authority(blob_hash)
+				SELECT hash FROM blobs`); err != nil {
+				return fmt.Errorf("normalizing legacy ordinary blob authority: %w", err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
@@ -650,6 +878,11 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader, verifyProcessin
 		}
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
+		}
+		if verifyProcessingBlobs {
+			if err := s.verifyImportedProcessingBlobAuthority(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := rebuildImportedTextExtractionStateTx(ctx, tx); err != nil {
 			return err
@@ -677,6 +910,10 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		SELECT
 		  (SELECT COUNT(*) FROM nodes),
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
+		    + (SELECT COUNT(*) FROM ordinary_blob_authority)
+		    + (SELECT COUNT(*) FROM blob_checksums)
+		    + (SELECT COUNT(*) FROM source_metadata_generations)
+		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
@@ -696,8 +933,25 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM rendition_lexical_segments)
 		    + (SELECT COUNT(*) FROM rendition_attachments)
 		    + (SELECT COUNT(*) FROM rendition_heads)
+		    + (SELECT COUNT(*) FROM rendition_jobs)
+		    + (SELECT COUNT(*) FROM rendition_job_waiters)
 		    + (SELECT COUNT(*) FROM current_rendition_roots)
-		    + (SELECT COUNT(*) FROM derivative_purge_suppressions),
+		    + (SELECT COUNT(*) FROM derivative_purge_suppressions)
+		    + (SELECT COUNT(*) FROM embedding_vector_spaces)
+		    + (SELECT COUNT(*) FROM embedding_input_generations)
+		    + (SELECT COUNT(*) FROM embedding_generation_inputs)
+		    + (SELECT COUNT(*) FROM embedding_vector_sets)
+		    + (SELECT COUNT(*) FROM embedding_vector_rows)
+		    + (SELECT COUNT(*) FROM embedding_sets)
+		    + (SELECT COUNT(*) FROM embedding_heads)
+		    + (SELECT COUNT(*) FROM embedding_failures)
+		    + (SELECT COUNT(*) FROM embedding_corpus_generations)
+		    + (SELECT COUNT(*) FROM embedding_corpus_members)
+		    + (SELECT COUNT(*) FROM processing_consent_grants)
+		    + (SELECT COUNT(*) FROM processing_consent_revocations)
+		    + (SELECT COUNT(*) FROM processing_incarnations
+		       WHERE incarnation_id != (SELECT incarnation_id
+		         FROM current_processing_incarnation WHERE singleton=1)),
 		  (SELECT COUNT(*) FROM blob_locations)
 		    + (SELECT COUNT(*) FROM blob_packs)
 		    + (SELECT COUNT(*) FROM blob_pack_entries)
@@ -739,52 +993,52 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func (s *Store) importMetadataLines(
-	ctx context.Context, tx *sql.Tx, r io.Reader, verifyProcessingBytes bool,
-) (metadataHeader, error) {
+func (s *Store) importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadataHeader, bool, error) {
 	dec := jsontext.NewDecoder(bufio.NewReader(r))
 	rawHeader, err := dec.ReadValue()
 	if err != nil {
-		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, false, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
-		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, false, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	var header metadataHeader
 	if err := decodeMetadataRecord(rawHeader, &header); err != nil {
-		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
+		return metadataHeader{}, false, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if header.Type != "meta" || header.Format != "docbank-metadata" ||
 		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
-		return metadataHeader{}, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
+		return metadataHeader{}, false, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
 			header.Type, header.Format, header.Version, header.NodeSequence)
 	}
 	if err := validateUUIDv4(header.VaultID); err != nil {
-		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
+		return metadataHeader{}, false, fmt.Errorf("invalid metadata vault_id: %w", err)
 	}
+	explicitOrdinaryAuthority := false
 	for record := 2; ; record++ {
 		raw, err := dec.ReadValue()
 		if errors.Is(err, io.EOF) {
-			return header, nil
+			return header, explicitOrdinaryAuthority, nil
 		}
 		if err != nil {
-			return metadataHeader{}, fmt.Errorf("decoding metadata record %d: %w", record, err)
+			return metadataHeader{}, false, fmt.Errorf("decoding metadata record %d: %w", record, err)
 		}
 		var kind struct {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(raw, &kind); err != nil {
-			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
+			return metadataHeader{}, false, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw, verifyProcessingBytes); err != nil {
-			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
+		if kind.Type == metadataOrdinaryBlobAuthorityType || kind.Type == metadataOrdinaryBlobAuthorityCompleteType {
+			explicitOrdinaryAuthority = true
+		}
+		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
+			return metadataHeader{}, false, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
 
-func (s *Store) importMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value, verifyProcessingBytes bool,
-) error {
+func (s *Store) importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
@@ -793,9 +1047,11 @@ func (s *Store) importMetadataRecord(
 		return err
 	}
 	if isProcessingMetadataType(kind) {
-		return s.importProcessingMetadataRecord(ctx, tx, kind, raw, verifyProcessingBytes)
+		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
+	case metadataOrdinaryBlobAuthorityCompleteType:
+		return nil
 	case "blob":
 		var v metadataBlob
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -823,6 +1079,46 @@ func (s *Store) importMetadataRecord(
 			v.Hash, generation, blobLocationKindLoose, looseEncodingRaw, v.Size,
 			v.Size, maxPackEligibleBytes, blobStoreRolePrimary,
 		)
+		return err
+	case metadataBlobChecksumType:
+		var v metadataBlobChecksum
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return ensureBlobChecksumTx(tx, BlobChecksumRecord{
+			BlobSHA256: v.BlobSHA256, MD5: v.MD5,
+		})
+	case metadataSourceMetadataGenerationType:
+		var v metadataSourceMetadataGeneration
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validateSourceMetadataGenerationRecord(v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
+			generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
+		) VALUES(?,?,?,?,?,?,?)`, v.GenerationID, v.SourceSHA256, v.ContractVersion,
+			v.ExtractorFingerprint, v.CanonicalJSON, v.Checksum, v.CreatedAt)
+		return err
+	case metadataSourceMetadataHeadType:
+		var v metadataSourceMetadataHead
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
+			VALUES(?,?,?)`, v.SourceSHA256, v.GenerationID, v.PublishedAt)
+		return err
+	case metadataOrdinaryBlobAuthorityType:
+		var v metadataOrdinaryBlobAuthority
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if _, err := packstore.ParseHash(v.BlobHash); err != nil {
+			return fmt.Errorf("invalid ordinary blob authority hash: %w", err)
+		}
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO ordinary_blob_authority(blob_hash) VALUES(?)`, v.BlobHash)
 		return err
 	case "node":
 		var v metadataNode
@@ -960,31 +1256,41 @@ func (s *Store) importMetadataRecord(
 }
 
 const (
-	metadataTypeField                     = "type"
-	metadataNodeIDField                   = "node_id"
-	metadataSizeField                     = "size"
-	auditVaultIDField                     = "vault_id"
-	auditOperationIDField                 = "operation_id"
-	auditScopeIDField                     = "scope_id"
-	auditOriginField                      = "origin"
-	auditTopologyDeltaField               = "topology_delta"
-	auditWitnessChangeCountField          = "witness_change_count"
-	auditAttachedMetadataChangeCountField = "attached_metadata_change_count"
-	auditEventField                       = "event"
-	metadataIngestType                    = "ingest"
-	metadataProvenanceType                = "provenance"
-	metadataWatchSourceType               = "watch_source"
-	metadataTagRecordType                 = "tag"
-	metadataAuditAuthorityType            = "audit_authority"
-	metadataAuditScopeType                = "audit_scope"
-	metadataAuditMembershipType           = "audit_membership"
-	metadataAuditRecordType               = "audit_record"
+	metadataTypeField                         = "type"
+	metadataNodeIDField                       = "node_id"
+	metadataSizeField                         = "size"
+	auditVaultIDField                         = "vault_id"
+	auditOperationIDField                     = "operation_id"
+	auditScopeIDField                         = "scope_id"
+	auditOriginField                          = "origin"
+	auditTopologyDeltaField                   = "topology_delta"
+	auditWitnessChangeCountField              = "witness_change_count"
+	auditAttachedMetadataChangeCountField     = "attached_metadata_change_count"
+	auditEventField                           = "event"
+	metadataIngestType                        = "ingest"
+	metadataProvenanceType                    = "provenance"
+	metadataWatchSourceType                   = "watch_source"
+	metadataTagRecordType                     = "tag"
+	metadataAuditAuthorityType                = "audit_authority"
+	metadataAuditScopeType                    = "audit_scope"
+	metadataAuditMembershipType               = "audit_membership"
+	metadataAuditRecordType                   = "audit_record"
+	metadataOrdinaryBlobAuthorityType         = "ordinary_blob_authority"
+	metadataOrdinaryBlobAuthorityCompleteType = "ordinary_blob_authority_complete"
+	metadataBlobChecksumType                  = "blob_checksum"
+	metadataSourceMetadataGenerationType      = "source_metadata_generation"
+	metadataSourceMetadataHeadType            = "source_metadata_head"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
+	"blob":                                    {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
+	metadataBlobChecksumType:                  {metadataTypeField, "blob_sha256", "md5"},
+	metadataSourceMetadataGenerationType:      {metadataTypeField, "generation_id", "source_sha256", "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
+	metadataSourceMetadataHeadType:            {metadataTypeField, "source_sha256", "generation_id", "published_at"},
+	metadataOrdinaryBlobAuthorityType:         {metadataTypeField, "blob_hash"},
+	metadataOrdinaryBlobAuthorityCompleteType: {metadataTypeField},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
@@ -997,6 +1303,9 @@ var metadataRequiredFields = map[string][]string{
 	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
 	metadataAuditMembershipType:            {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
 	metadataAuditRecordType:                {metadataTypeField, "digest", "record"},
+	metadataProcessingIncarnationType:      processingMetadataRequiredFields[metadataProcessingIncarnationType],
+	metadataProcessingConsentGrantType:     processingMetadataRequiredFields[metadataProcessingConsentGrantType],
+	metadataProcessingConsentRevokeType:    processingMetadataRequiredFields[metadataProcessingConsentRevokeType],
 	metadataProcessingProfileType:          processingMetadataRequiredFields[metadataProcessingProfileType],
 	metadataRenditionBuildType:             processingMetadataRequiredFields[metadataRenditionBuildType],
 	metadataRenditionArtifactType:          processingMetadataRequiredFields[metadataRenditionArtifactType],
@@ -1007,6 +1316,18 @@ var metadataRequiredFields = map[string][]string{
 	metadataLexicalGenerationType:          processingMetadataRequiredFields[metadataLexicalGenerationType],
 	metadataCurrentRenditionRootType:       processingMetadataRequiredFields[metadataCurrentRenditionRootType],
 	metadataDerivativePurgeSuppressionType: processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
+	metadataRenditionJobType:               processingMetadataRequiredFields[metadataRenditionJobType],
+	metadataRenditionJobWaiterType:         processingMetadataRequiredFields[metadataRenditionJobWaiterType],
+	metadataEmbeddingVectorSpaceType:       processingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
+	metadataEmbeddingGenerationType:        processingMetadataRequiredFields[metadataEmbeddingGenerationType],
+	metadataEmbeddingInputType:             processingMetadataRequiredFields[metadataEmbeddingInputType],
+	metadataEmbeddingVectorSetType:         processingMetadataRequiredFields[metadataEmbeddingVectorSetType],
+	metadataEmbeddingVectorRowType:         processingMetadataRequiredFields[metadataEmbeddingVectorRowType],
+	metadataEmbeddingSetType:               processingMetadataRequiredFields[metadataEmbeddingSetType],
+	metadataEmbeddingHeadType:              processingMetadataRequiredFields[metadataEmbeddingHeadType],
+	metadataEmbeddingFailureType:           processingMetadataRequiredFields[metadataEmbeddingFailureType],
+	metadataEmbeddingCorpusType:            processingMetadataRequiredFields[metadataEmbeddingCorpusType],
+	metadataEmbeddingCorpusMemberType:      processingMetadataRequiredFields[metadataEmbeddingCorpusMemberType],
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -1014,13 +1335,22 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version":                {"mime_type": true, "source_version_id": true},
-	metadataProvenanceType:           {"original_mtime": true, "supersedes": true},
-	"extracted_text":                 {"error": true, "text": true},
-	metadataCurrentRenditionRootType: {"released_at": true},
+	"content_version":                  {"mime_type": true, "source_version_id": true},
+	metadataProvenanceType:             {"original_mtime": true, "supersedes": true},
+	"extracted_text":                   {"error": true, "text": true},
+	metadataCurrentRenditionRootType:   {"released_at": true},
+	metadataProcessingConsentGrantType: {"expires_at": true},
+	metadataRenditionJobType: {
+		"execution_snapshot": true, "claim_owner": true, "lease_expires_at": true,
+		"provider_resume_handle": true, "selected_waiter_id": true,
+		"authorization_grant_id": true, "authorization_incarnation_id": true,
+		"authorization_revocation_fence": true, "lexical_generation_id": true,
+		"failure_code": true,
+	},
 	metadataDerivativePurgeSuppressionType: {
 		"superseded_at": true, "superseding_build_id": true,
 	},
+	metadataEmbeddingGenerationType: {"attachment_id": true},
 }
 
 func decodeMetadataRecord(raw jsontext.Value, dst any) error {
