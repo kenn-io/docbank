@@ -202,6 +202,10 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="http:/\\169.254.169.254\latest"/></body></html>`,
 		// UNC is the Windows spelling of a protocol-relative reference.
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\\169.254.169.254\latest\meta-data"/></body></html>`,
+		// A drive letter parses as a one-letter scheme, which no allowlist holds.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:\secret.txt"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:/secret.txt"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="d:/secret.txt"/></body></html>`,
 	}
 	for _, chapter := range content {
 		data := zipBytes(t, validEPUBEntries(
@@ -240,6 +244,17 @@ func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
 			name: "XHTML with query", href: "chapter.dat?v=1", entry: "chapter.dat",
 			mediaType: "application/xhtml+xml",
 			body:      `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/t.png"/></body></html>`,
+		},
+		{
+			// A parameter does not change how a reader reads the resource.
+			name: "XHTML with charset", href: "chapter.dat", entry: "chapter.dat",
+			mediaType: "application/xhtml+xml; charset=utf-8",
+			body:      `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/t.png"/></body></html>`,
+		},
+		{
+			name: "CSS with charset", href: "style.res", entry: "style.res",
+			mediaType: " Text/CSS ; charset=UTF-8 ",
+			body:      `body { background: url(https://example.invalid/p.png) }`,
 		},
 	}
 	for _, tt := range tests {
@@ -362,6 +377,30 @@ func TestInspectCountsDeclaredOOXMLParts(t *testing.T) {
 		assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
 	})
 
+	// A declaration settles the type in both directions, so a part sitting under
+	// a conventional path is not a worksheet when the package says otherwise.
+	// Excel writes per-sheet relationship parts under that same prefix, and
+	// counting those as sheets overstates a genuine workbook.
+	t.Run("declaration outranks the path", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+				`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+				`<Override PartName="/xl/worksheets/sheet1.xml" ContentType="` + worksheetType + `"/>` +
+				`<Override PartName="/xl/worksheets/notes.xml" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/></Types>`},
+			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+			{name: "xl/worksheets/sheet1.xml", body: `<worksheet><c/></worksheet>`},
+			{name: "xl/worksheets/notes.xml", body: `<notes/>`},
+			{name: "xl/worksheets/_rels/sheet1.xml.rels", body: `<Relationships/>`},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		require.True(t, record.Eligible, record.Reason)
+		assert.Equal(t, int64(1), record.Measurements.Sheets)
+	})
+
 	// Unlike EPUB renditions, which each state a valid reading, an OOXML
 	// Override states the single content type for that part and replaces the
 	// Default its extension would otherwise carry.
@@ -410,9 +449,13 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 	t.Parallel()
 	sheet := `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
 		`<dimension ref="A1:C3"/><c/></worksheet>`
+	// A one-letter prefix is only a drive when a path separator follows it, and
+	// a relationship target may name an absolute part inside the package.
 	relationships := `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 		`<Relationship Id="rId1" Target="worksheets/sheet1.xml" ` +
-		`Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/></Relationships>`
+		`Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/>` +
+		`<Relationship Id="rId2" Target="/xl/styles.xml" Type="http://example.test/styles" name="c:notes"/>` +
+		`</Relationships>`
 	data := zipBytes(t, validXLSXEntries(
 		zipEntry{name: "xl/worksheets/sheet1.xml", body: sheet},
 		zipEntry{name: "xl/_rels/workbook.xml.rels", body: relationships},

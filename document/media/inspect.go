@@ -489,11 +489,12 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg") ||
 				epubPackages[file.Name])
 		// A part counts toward its semantic limit because of what it is, not
-		// where it sits, so the declared content type decides alongside the name.
-		isWorksheet := strings.HasPrefix(name, "xl/worksheets/") ||
-			declaredTypes.contains(file.Name, ooxmlWorksheetType)
-		isSlide := strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") ||
-			declaredTypes.contains(file.Name, ooxmlSlideType)
+		// where it sits. The package states that, so a declared part counts on
+		// its declaration alone and an undeclared one falls back to its name.
+		isWorksheet := declaredTypes.decides(file.Name, ooxmlWorksheetType,
+			strings.HasPrefix(name, "xl/worksheets/") && strings.HasSuffix(name, ".xml"))
+		isSlide := declaredTypes.decides(file.Name, ooxmlSlideType,
+			strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml"))
 		if xmlContent {
 			mode := xmlMeasureNone
 			switch {
@@ -785,6 +786,9 @@ func isExternalXMLURI(value string, base *url.URL) bool {
 	if strings.HasPrefix(value, "//") || strings.HasPrefix(value, `\\`) {
 		return true
 	}
+	if hasDriveLetter(value) {
+		return true
+	}
 	parsed, err := url.Parse(value)
 	if err != nil {
 		return looksExternalText(value)
@@ -805,6 +809,19 @@ func looksExternalText(value string) bool {
 	}
 	scheme, _, found := strings.Cut(lowered, ":")
 	return found && dereferenceableScheme(scheme)
+}
+
+// hasDriveLetter reports whether a value is a Windows drive-absolute path such
+// as "C:\secret.txt". url.Parse reads the drive letter as a scheme, and a
+// single letter is never a dereferenceable one, so the value would otherwise
+// pass as a local reference. A package resource is named relative to the
+// container or by an absolute part name, never by drive.
+func hasDriveLetter(value string) bool {
+	if len(value) < 3 || value[1] != ':' {
+		return false
+	}
+	letter := value[0] | 0x20
+	return letter >= 'a' && letter <= 'z' && (value[2] == '\\' || value[2] == '/')
 }
 
 func externalURL(parsed *url.URL) bool {
@@ -1323,7 +1340,7 @@ func epubManifestTypes(
 			// classifies that when it scans the package document itself.
 			continue
 		}
-		declared.add(resource, strings.ToLower(strings.TrimSpace(item.MediaType)))
+		declared.add(resource, normalizeDeclaredType(item.MediaType))
 	}
 	return nil
 }
@@ -1368,8 +1385,31 @@ func (declarations contentDeclarations) contains(name, mediaType string) bool {
 	return slices.Contains(declarations[name], mediaType)
 }
 
+// decides reports whether an entry is of the given type. A container states the
+// type of every part it names, so a declaration settles the question in both
+// directions: a part declared as something else is not this type whatever its
+// name suggests. Only an entry the container never declared falls back.
+func (declarations contentDeclarations) decides(name, mediaType string, fallback bool) bool {
+	if _, declared := declarations[name]; declared {
+		return declarations.contains(name, mediaType)
+	}
+	return fallback
+}
+
 func (declarations contentDeclarations) anyXML(name string) bool {
 	return slices.ContainsFunc(declarations[name], isXMLMediaType)
+}
+
+// normalizeDeclaredType reduces a declared content type to its bare media type.
+// A parameter such as "; charset=utf-8" does not change how a consumer reads a
+// resource, so it must not change whether inspection reads it either.
+func normalizeDeclaredType(value string) string {
+	lowered := strings.ToLower(strings.TrimSpace(value))
+	parsed, _, err := mime.ParseMediaType(lowered)
+	if err != nil {
+		return lowered
+	}
+	return parsed
 }
 
 // isXMLMediaType reports whether a declared media type makes a consumer parse
@@ -1422,7 +1462,7 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 	byExtension := make(map[string]string, len(document.Defaults))
 	for _, def := range document.Defaults {
 		byExtension["."+strings.ToLower(strings.TrimSpace(def.Extension))] =
-			strings.ToLower(strings.TrimSpace(def.ContentType))
+			normalizeDeclaredType(def.ContentType)
 	}
 	declared := make(contentDeclarations, len(files))
 	for _, file := range files {
@@ -1436,7 +1476,7 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 			continue
 		}
 		// An Override replaces the Default for that part rather than adding to it.
-		declared[part] = []string{strings.ToLower(strings.TrimSpace(override.ContentType))}
+		declared[part] = []string{normalizeDeclaredType(override.ContentType)}
 	}
 	return declared
 }
