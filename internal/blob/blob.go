@@ -4,6 +4,8 @@ package blob
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // Auxiliary MD5 is interoperability metadata; SHA-256 remains authoritative.
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -249,6 +251,7 @@ func ValidateOptions(opts Options) error {
 // WriteReceipt describes the physical result of one logical blob write.
 type WriteReceipt struct {
 	Hash         string
+	MD5          string
 	Size         int64
 	Encoding     packstore.LooseEncoding
 	StoredSize   int64
@@ -572,10 +575,9 @@ func (s *Store) WithMutation(ctx context.Context, fn func() error) error {
 	return errors.Join(fn(), lease.Release())
 }
 
-// WithMaintenance excludes every mutation lease across one logical and
-// physical cleanup boundary. fn must not invoke a Kit maintenance operation,
-// because maintenance leases are deliberately non-reentrant.
-func (s *Store) WithMaintenance(ctx context.Context, fn func() error) error {
+// withMaintenance excludes every mutation lease across one physical cleanup.
+// Callers must acquire any location lock before entering this boundary.
+func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
 	if s.coordinator == nil {
 		return fn()
 	}
@@ -586,10 +588,10 @@ func (s *Store) WithMaintenance(ctx context.Context, fn func() error) error {
 	return errors.Join(fn(), lease.Release())
 }
 
-// withMaintenance is the package-internal spelling retained for placement
-// reconciliation, whose caller also holds the required location lock.
-func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
-	return s.WithMaintenance(ctx, fn)
+// WithMaintenance excludes blob mutations while a higher-level operation
+// rewrites and retires an exact physical object set.
+func (s *Store) WithMaintenance(ctx context.Context, fn func() error) error {
+	return s.withMaintenance(ctx, fn)
 }
 
 // Write streams r into durable canonical loose storage. The caller holds a
@@ -608,7 +610,8 @@ func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, e
 // representation. The caller holds a mutation lease across the subsequent
 // metadata transaction.
 func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
-	result, err := s.loose.Write(ctx, r, packstore.WriteOptions{
+	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
+	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), packstore.WriteOptions{
 		Durability:  packstore.DurablePublication,
 		Dedup:       packstore.VerifyTypeAndSize,
 		MaxBytes:    MaxIngestBytes,
@@ -617,7 +620,9 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
-	return writeReceipt(result), nil
+	receipt := writeReceipt(result)
+	receipt.MD5 = hex.EncodeToString(auxiliary.Sum(nil))
+	return receipt, nil
 }
 
 // RepairContext verifies trusted bytes against one required logical identity
@@ -656,7 +661,8 @@ func (s *Store) repairContext(
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("blob hash %q: %w", hash, ErrInvalidHash)
 	}
-	result, err := s.loose.Repair(ctx, trusted, packstore.LooseIdentity{
+	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
+	result, err := s.loose.Repair(ctx, io.TeeReader(trusted, auxiliary), packstore.LooseIdentity{
 		Hash: parsed, Size: size,
 	}, packstore.RepairOptions{
 		Durability:  packstore.DurablePublication,
@@ -666,7 +672,9 @@ func (s *Store) repairContext(
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("repairing blob %s: %w", hash, err)
 	}
-	return writeReceipt(result), nil
+	receipt := writeReceipt(result)
+	receipt.MD5 = hex.EncodeToString(auxiliary.Sum(nil))
+	return receipt, nil
 }
 
 func writeReceipt(result packstore.WriteResult) WriteReceipt {

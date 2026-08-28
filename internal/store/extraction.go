@@ -533,10 +533,24 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 	if !publishRendition {
 		return nil
 	}
-	if _, err := s.MigrateLegacyPlainText(ctx); err != nil {
+	if err := s.migrateLegacyPlainTextBlob(ctx, result.BlobHash); err != nil {
 		return fmt.Errorf("publishing legacy extraction authority transition: %w", err)
 	}
-	return nil
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM text_extraction_queue
+			 WHERE blob_hash = ?
+			   AND NOT EXISTS(
+			     SELECT 1
+			     FROM content_versions v
+			     JOIN nodes n ON n.current_version_id=v.version_id
+			     WHERE v.blob_hash=? AND n.trashed_at IS NULL
+			   )`, result.BlobHash, result.BlobHash,
+		); err != nil {
+			return fmt.Errorf("finishing published text extraction: %w", err)
+		}
+		return nil
+	})
 }
 
 func hasPublishedLexicalHeadTx(ctx context.Context, tx *sql.Tx) (bool, error) {

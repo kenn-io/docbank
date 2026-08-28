@@ -41,44 +41,42 @@ type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-const authorizedContentRowsQuery = store.BackupBlobAuthorityCTE + `
+const authorizedContentRowsQuery = `
 SELECT b.hash,b.size FROM blobs b
 JOIN backup_authorized_blobs a ON a.hash=b.hash
 ORDER BY b.hash`
 
-const authorizedContentStatsQuery = store.BackupBlobAuthorityCTE + `
+const authorizedContentHashesQuery = `
+SELECT b.hash FROM blobs b
+JOIN backup_authorized_blobs a ON a.hash=b.hash
+ORDER BY b.hash`
+
+const authorizedContentStatsQuery = `
 SELECT COUNT(*),COALESCE(SUM(b.size),0) FROM blobs b
 JOIN backup_authorized_blobs a ON a.hash=b.hash`
 
-const authorizedExtractedTextStatsQuery = store.BackupBlobAuthorityCTE + `
+const authorizedExtractedTextStatsQuery = `
 SELECT COUNT(*) FROM extracted_text e
 JOIN backup_authorized_blobs a ON a.hash=e.blob_hash`
 
-const restoredContentStatsQuery = `SELECT COUNT(*),COALESCE(SUM(size),0) FROM blobs`
-
-const restoredExtractedTextStatsQuery = `SELECT COUNT(*) FROM extracted_text`
-
-// statsScope selects the blob population each fidelity number describes.
-// Capture scopes blob and extracted-text counts to catalog authority so a
-// snapshot never claims unreferenced provider output. Restore recomputes over
-// exactly the tables the snapshot's own metadata stream rebuilt: scoped
-// snapshots carry only authorized rows, so the full-table recount matches the
-// scoped manifest, while pre-scope v1 snapshots carried every row and keep
-// restoring against their unscoped recorded stats.
-type statsScope struct {
-	blobs         string
-	extractedText string
+func backupBlobAuthorityCTE(ctx context.Context, q rowQuerier) (string, error) {
+	var present bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='ordinary_blob_authority'
+	)`).Scan(&present); err != nil {
+		return "", fmt.Errorf("backupapp: detecting backup authority schema: %w", err)
+	}
+	if !present {
+		return `WITH backup_authorized_blobs(hash) AS (SELECT hash FROM blobs)`, nil
+	}
+	return store.BackupBlobAuthorityCTE, nil
 }
 
-var captureStatsScope = statsScope{
-	blobs: authorizedContentStatsQuery, extractedText: authorizedExtractedTextStatsQuery,
-}
-
-var restoredStatsScope = statsScope{
-	blobs: restoredContentStatsQuery, extractedText: restoredExtractedTextStatsQuery,
-}
-
-func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, error) {
+func computeStats(ctx context.Context, q rowQuerier) (Stats, error) {
+	authorityCTE, err := backupBlobAuthorityCTE(ctx, q)
+	if err != nil {
+		return Stats{}, err
+	}
 	var stats Stats
 	counts := []struct {
 		dst   *int64
@@ -99,12 +97,12 @@ func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, e
 			return Stats{}, fmt.Errorf("backupapp: stats query %q: %w", count.query, err)
 		}
 	}
-	if err := q.QueryRowContext(ctx, scope.blobs).Scan(
+	if err := q.QueryRowContext(ctx, authorityCTE+authorizedContentStatsQuery).Scan(
 		&stats.Blobs, &stats.BlobBytes,
 	); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: blob stats: %w", err)
 	}
-	if err := q.QueryRowContext(ctx, scope.extractedText).Scan(&stats.ExtractedText); err != nil {
+	if err := q.QueryRowContext(ctx, authorityCTE+authorizedExtractedTextStatsQuery).Scan(&stats.ExtractedText); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: extracted text stats: %w", err)
 	}
 	derivatives, hasDerivatives, err := computeDerivativeAuthorityStats(ctx, q)
@@ -169,7 +167,11 @@ func (a *App) ExcludedPaths() []string {
 type frozenView struct{ tx rowQuerier }
 
 func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, error) {
-	rows, err := v.tx.QueryContext(ctx, authorizedContentRowsQuery)
+	authorityCTE, err := backupBlobAuthorityCTE(ctx, v.tx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := v.tx.QueryContext(ctx, authorityCTE+authorizedContentRowsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: listing frozen blobs: %w", err)
 	}
@@ -195,7 +197,7 @@ func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, erro
 }
 
 func (v *frozenView) Stats(ctx context.Context) (jsontext.Value, error) {
-	stats, err := computeStats(ctx, v.tx, captureStatsScope)
+	stats, err := computeStats(ctx, v.tx)
 	if err != nil {
 		return nil, err
 	}
@@ -218,12 +220,11 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 			return nil, errors.New("backupapp: snapshot contains packed blob authority; use backupapp.Restore")
 		}
 	}
-	// The restored database is rebuilt from the snapshot's own metadata
-	// stream, which capture already scoped to catalog authority. Recomputing
-	// over its complete blobs table therefore matches scoped snapshots while
-	// pre-scope v1 snapshots, whose streams carried every blob row, keep the
-	// placement and count fidelity their manifests recorded.
-	rows, err := db.QueryContext(ctx, `SELECT hash FROM blobs ORDER BY hash`)
+	authorityCTE, err := backupBlobAuthorityCTE(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, authorityCTE+authorizedContentHashesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: listing restored blobs: %w", err)
 	}
@@ -247,7 +248,7 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 }
 
 func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
-	stats, err := computeStats(ctx, db, restoredStatsScope)
+	stats, err := computeStats(ctx, db)
 	if err != nil {
 		return nil, err
 	}
