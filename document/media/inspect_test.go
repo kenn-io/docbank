@@ -219,19 +219,25 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, href, mediaType, body string
+		name, href, entry, mediaType, body string
 	}{
 		{
-			name: "XHTML", href: "chapter.dat", mediaType: "application/xhtml+xml",
+			name: "XHTML", href: "chapter.dat", entry: "chapter.dat", mediaType: "application/xhtml+xml",
 			body: `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/t.png"/></body></html>`,
 		},
 		{
-			name: "SVG", href: "art.bin", mediaType: "image/svg+xml",
+			name: "SVG", href: "art.bin", entry: "art.bin", mediaType: "image/svg+xml",
 			body: `<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.invalid/i.png"/></svg>`,
 		},
 		{
-			name: "CSS", href: "style.res", mediaType: "text/css",
+			name: "CSS", href: "style.res", entry: "style.res", mediaType: "text/css",
 			body: `body { background: url(https://example.invalid/p.png) }`,
+		},
+		{
+			// A query or fragment names the same archive entry.
+			name: "XHTML with query", href: "chapter.dat?v=1", entry: "chapter.dat",
+			mediaType: "application/xhtml+xml",
+			body:      `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https://example.invalid/t.png"/></body></html>`,
 		},
 	}
 	for _, tt := range tests {
@@ -240,7 +246,7 @@ func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
 			data := zipBytes(t, validEPUBEntries(
 				zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="c" href="` +
 					tt.href + `" media-type="` + tt.mediaType + `"/></manifest><spine><itemref idref="c"/></spine></package>`},
-				zipEntry{name: "OPS/" + tt.href, body: tt.body},
+				zipEntry{name: "OPS/" + tt.entry, body: tt.body},
 			))
 			record, err := media.InspectCapability(bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))

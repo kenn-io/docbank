@@ -1288,7 +1288,16 @@ func epubManifestTypes(
 	base := path.Dir(packagePath)
 	declared := make(map[string]string, len(document.Manifest.Items))
 	for _, item := range document.Manifest.Items {
-		resource, err := epubArchivePath(item.HRef, base)
+		// A query or fragment still names the same archive entry, so strip it
+		// rather than dropping the declaration and leaving the entry unscanned.
+		href := item.HRef
+		if index := strings.IndexAny(href, "?#"); index >= 0 {
+			href = href[:index]
+		}
+		if href == "" {
+			continue
+		}
+		resource, err := epubArchivePath(href, base)
 		if err != nil {
 			// A manifest may name a remote or absolute resource. inspectXML
 			// classifies that when it scans the package document itself.
