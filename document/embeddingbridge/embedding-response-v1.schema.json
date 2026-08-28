@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docbank.invalid/contracts/docbank-embedding/v1/response.schema.json",
+  "title": "Docbank embedding response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "descriptor_fingerprint",
+    "policy_fingerprint",
+    "request_checksum",
+    "vectors"
+  ],
+  "properties": {
+    "contract_version": {"const": "docbank-embedding/v1"},
+    "descriptor_fingerprint": {"$ref": "#/$defs/sha256"},
+    "policy_fingerprint": {"$ref": "#/$defs/sha256"},
+    "request_checksum": {"$ref": "#/$defs/sha256"},
+    "vectors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "description": "Exactly one item per request input, in request order; index equals its zero-based array position.",
+      "items": {"$ref": "#/$defs/vector"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stable_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "vector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "index", "values"],
+      "properties": {
+        "key": {"$ref": "#/$defs/stable_id"},
+        "index": {"type": "integer", "minimum": 0, "maximum": 9999},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000000,
+          "items": {"type": "number"}
+        }
+      }
+    }
+  }
+}
