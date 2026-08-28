@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -55,6 +56,7 @@ type Deps struct {
 	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
 	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry  *blob.Registry   // nil keeps storage-registry routes read-only to the primary
+	Processing    *processing.Service
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -141,6 +143,7 @@ func NewServer(d Deps) *Server {
 	registerProvenanceRoutes(humaAPI, d)
 	registerTagRoutes(humaAPI, d, g)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
+	registerProcessingRoutes(humaAPI, d)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)

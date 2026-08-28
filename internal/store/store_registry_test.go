@@ -138,6 +138,26 @@ func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
 	)
 }
 
+func TestBlobStoreDetachRequiresCompletedGCLooseRetirement(t *testing.T) {
+	s := newTestStore(t)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
+	_, err = s.db.ExecContext(t.Context(), `
+		INSERT INTO gc_loose_retirements(store_id,blob_hash,loose_encoding)
+		VALUES(?,?,?)`, secondary.ID, fakeHash("93"), packstore.LooseEncodingRaw)
+	require.NoError(t, err)
+
+	require.ErrorIs(
+		t, s.DetachBlobStore(t.Context(), secondary.ID), ErrBlobStoreNotEmpty,
+	)
+	active, err := s.BlobStoreBySelector(t.Context(), secondary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, blobStoreLifecycleActive, active.Lifecycle)
+}
+
 func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
@@ -384,6 +404,49 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	detached, err := s.BlobStoreBySelector(ctx, secondary.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "detached", detached.Lifecycle)
+}
+
+func TestBlobStoreEvacuationAdoptsPendingGCLooseRetirement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	primary, err := s.PrimaryBlobStore(ctx)
+	require.NoError(t, err)
+	secondary, err := s.PrepareSecondaryBlobStore(
+		"archive", "filesystem", "archive_nas",
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+	operation, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: storageOperationKindEvacuate, RequestDigest: fakeHash("f1"),
+		SourceStoreID: secondary.ID,
+		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	hash := fakeHash("f2")
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO gc_loose_retirements(store_id,blob_hash,loose_encoding)
+		VALUES(?,?,?)`, secondary.ID, hash, packstore.LooseEncodingRaw)
+	require.NoError(t, err)
+
+	finalized, err := s.FinalizeBlobStoreEvacuation(
+		ctx, operation.ID, secondary.ID, primary.ID,
+	)
+	require.NoError(t, err)
+	assert.False(t, finalized.Detached)
+	cleanups, err := s.StorageOperationCleanups(ctx, operation.ID)
+	require.NoError(t, err)
+	require.Equal(t, []StorageOperationCleanup{{
+		StoreID: secondary.ID,
+		Ref: packstore.ObjectRef{
+			LooseHash: packstore.Hash(hash), LooseEncoding: packstore.LooseEncodingRaw,
+		},
+	}}, cleanups)
+	pending, err := s.PendingGCLooseRetirements(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "evacuation owns the transferred durable cleanup")
 }
 
 func TestBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T) {
