@@ -56,15 +56,32 @@ type authorizedUpload struct {
 	cleanup  func() error
 	stop     func() bool
 	closed   bool
+	cause    error
 }
 
 func (upload *authorizedUpload) Read(buffer []byte) (int, error) {
 	upload.mu.Lock()
 	defer upload.mu.Unlock()
 	if upload.closed || upload.reader == nil {
+		if upload.cause != nil {
+			return 0, upload.cause
+		}
 		return 0, os.ErrClosed
 	}
 	return upload.reader.Read(buffer)
+}
+
+// closeCancelled closes the upload and records why. Cancellation can land
+// between the context check in Authorize and the caller receiving the upload,
+// so the reason has to survive the handoff: without it the caller reads a bare
+// os.ErrClosed and cannot tell a cancelled upload from a misused one.
+func (upload *authorizedUpload) closeCancelled(cause error) error {
+	upload.mu.Lock()
+	if !upload.closed && upload.cause == nil {
+		upload.cause = cause
+	}
+	upload.mu.Unlock()
+	return upload.Close()
 }
 
 func (upload *authorizedUpload) Close() error {
@@ -261,11 +278,11 @@ func Authorize(
 	readerOpen = false
 	cleanupDirectory = false
 	result.mu.Lock()
-	result.stop = context.AfterFunc(ctx, func() { _ = result.Close() })
+	result.stop = context.AfterFunc(ctx, func() { _ = result.closeCancelled(context.Cause(ctx)) })
 	contextErr := ctx.Err()
 	result.mu.Unlock()
 	if contextErr != nil {
-		_ = result.Close()
+		_ = result.closeCancelled(context.Cause(ctx))
 		return nil, contextErr
 	}
 	authorized = result

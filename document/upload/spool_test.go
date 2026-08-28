@@ -227,10 +227,14 @@ func TestAuthorizeCancellationClosesReturnedUpload(t *testing.T) {
 	}, record, UploadMetadata{Filename: "notes.txt"})
 	require.NoError(t, err)
 	cancel()
+	var readErr error
 	require.Eventually(t, func() bool {
-		_, readErr := upload.Read(make([]byte, 1))
+		_, readErr = upload.Read(make([]byte, 1))
 		return readErr != nil
 	}, 5*time.Second, 10*time.Millisecond)
+	// Cancellation can land after the caller already holds the upload, so the
+	// reason must survive the handoff rather than surfacing as os.ErrClosed.
+	require.ErrorIs(t, readErr, context.Canceled)
 	require.NoError(t, upload.Close())
 	assert.Empty(t, spoolEntries(t, directory))
 }

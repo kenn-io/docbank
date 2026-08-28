@@ -134,6 +134,29 @@ Key assumptions reviewers MUST account for:
    encrypted, any path that exposes storage credentials, or any weakening of
    configured storage transport or authentication.
 
+14. STACKED WORK LANDS UNWIRED ON PURPOSE: a PR that declares itself part
+   of a stack (for example "Part of #176. Stacks on #189.") adds the
+   capability first and the caller in a later branch. New exported API with
+   no production caller is therefore the plan, not a gap, and an existing
+   flow that still uses the older path is the state that later branch will
+   change. Do not report "not wired into production", "no production
+   callers", or "the old flow is still used" as a security finding against
+   such a PR; the safeguard cannot protect a caller that this branch does
+   not claim to add. DO flag a caller this branch does add that bypasses
+   the new path, and DO flag an unwired API whose own contract is wrong.
+
+15. STATIC CONTENT SCANNING IS BEST-EFFORT: the document inspector screens
+   markup, stylesheets, and PDF structure for references that leave the
+   document. It reduces exposure and is deliberately not a complete
+   sanitizer: scripted, entity-split, and consumer-specific references stay
+   out of reach, and the enforceable boundary is the rendition provider
+   contract plus the sealed capability record. Report a missed reference
+   class once, with the concrete path a consumer would dereference. Do not
+   re-file each newly imagined attribute, element, or filename spelling as
+   a separate finding, and do not treat the absence of an exhaustive
+   allowlist as a vulnerability. DO flag a change that stops classifying a
+   reference form the inspector already covered.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
