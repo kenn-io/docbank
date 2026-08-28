@@ -19,16 +19,19 @@ import (
 )
 
 const (
-	maxBrowserItems = 1000
-	maxSearchItems  = 1000
-	maxHistoryItems = 100
-	maxJobItems     = 1000
-	maxTrashItems   = 1000
-	maxBackupItems  = 1000
-	nodeKindDir     = "dir"
-	nodeKindFile    = "file"
-	keyCtrlC        = "ctrl+c"
-	keyEscape       = "esc"
+	maxBrowserItems          = 1000
+	maxSearchItems           = 1000
+	maxHistoryItems          = 100
+	maxJobItems              = 1000
+	maxTrashItems            = 1000
+	maxBackupItems           = 1000
+	maxProcessingSearchItems = 20
+	nodeKindDir              = "dir"
+	nodeKindFile             = "file"
+	keyCtrlC                 = "ctrl+c"
+	keyEscape                = "esc"
+	keyEnter                 = "enter"
+	searchPlaceholder        = "search names and extracted text"
 )
 
 // Backend is the bounded daemon surface needed by the TUI.
@@ -42,12 +45,26 @@ type Backend interface {
 	Jobs(ctx context.Context) ([]api.Job, error)
 	Info(ctx context.Context) (api.VaultInfo, error)
 	BackupList(ctx context.Context) ([]api.BackupSnapshot, error)
+	ProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
+	PlanProcessing(ctx context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error)
+	DocumentCoverage(ctx context.Context, profile string, fence api.DocumentSourceFence) (api.CoverageReport, error)
+	SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error)
+	StartProcessingStream(ctx context.Context, request api.StartProcessingRequest) (ProcessingEventStream, error)
+	ProcessingStatus(ctx context.Context, jobID string) (api.ProcessingStatus, error)
+	RenditionForSelector(ctx context.Context, selector api.ProcessingSelector, maxBytes int64) (Rendition, error)
 	TrashPage(ctx context.Context, limit, offset int) (api.TrashPage, error)
 	Trash(ctx context.Context, nodeID, revision int64) (api.Node, error)
 	Restore(ctx context.Context, nodeID, revision int64) (api.Node, error)
 	AuditHistory(
 		ctx context.Context, path string, nodeID int64, limit int, cursor string,
 	) (api.AuditEventPage, error)
+}
+
+// ProcessingEventStream is the bounded live processing sequence consumed by
+// the TUI. Implementations return one durable job event and one terminal event.
+type ProcessingEventStream interface {
+	Next() (api.ProcessingJobEvent, error)
+	Close() error
 }
 
 type viewMode uint8
@@ -142,6 +159,59 @@ type operationsBackupsLoadedMsg struct {
 	err       error
 }
 
+type processingProfilesLoadedMsg struct {
+	requestID uint64
+	profiles  []api.ProcessingProfileSummary
+	err       error
+}
+
+type processingPlanLoadedMsg struct {
+	requestID uint64
+	plan      api.ProcessingPlan
+	err       error
+}
+
+type processingCoverageLoadedMsg struct {
+	requestID uint64
+	report    api.CoverageReport
+	err       error
+}
+
+type processingSearchLoadedMsg struct {
+	requestID uint64
+	report    api.DocumentSearchReport
+	err       error
+}
+
+type Rendition struct {
+	Markdown, AttachmentID, BuildID, ArtifactID, SHA256, Completeness string
+	Size                                                              int64
+	Warnings                                                          []string
+}
+type processingStartedMsg struct {
+	requestID uint64
+	streamID  uint64
+	event     api.ProcessingJobEvent
+	stream    ProcessingEventStream
+	err       error
+}
+type processingTerminalMsg struct {
+	requestID uint64
+	streamID  uint64
+	event     api.ProcessingJobEvent
+	err       error
+}
+type processingStatusLoadedMsg struct {
+	requestID uint64
+	status    api.ProcessingStatus
+	err       error
+}
+type processingRenditionLoadedMsg struct {
+	requestID uint64
+	rendition Rendition
+	err       error
+}
+
 type trashLoadedMsg struct {
 	requestID uint64
 	page      api.TrashPage
@@ -232,64 +302,87 @@ type Model struct {
 	searchQuery  string
 	searchReturn *location
 
-	requestID            uint64
-	loading              bool
-	err                  error
-	quitting             bool
-	helpOpen             bool
-	detailOpen           bool
-	detailOffset         int
-	detailNode           row
-	detailTags           []api.Tag
-	detailTagsTotal      int
-	detailTagsLoading    bool
-	detailTagsErr        error
-	detailRequestID      uint64
-	jobsOpen             bool
-	jobs                 []api.Job
-	jobsTotal            int
-	jobsRunning          int
-	jobsCursor           int
-	jobsOffset           int
-	jobsLoading          bool
-	jobsErr              error
-	jobsRequestID        uint64
-	jobDetail            bool
-	jobDetailOffset      int
-	operationsOpen       bool
-	operationsInfo       api.VaultInfo
-	operationsSnapshots  []api.BackupSnapshot
-	operationsTotal      int
-	operationsOffset     int
-	operationsInfoBusy   bool
-	operationsBackupBusy bool
-	operationsStorageErr error
-	operationsBackupErr  error
-	operationsRequestID  uint64
-	trashOpen            bool
-	trashItems           []api.Node
-	trashTotal           int
-	trashCursor          int
-	trashOffset          int
-	trashChanged         bool
-	trashLoading         bool
-	trashErr             error
-	trashRequestID       uint64
-	confirmation         *mutationConfirmation
-	mutationRunning      bool
-	mutationRequestID    uint64
-	notice               string
-	historyOpen          bool
-	historyNode          row
-	historyPages         []api.AuditEventPage
-	historyPage          int
-	historyTotal         int
-	historyCursor        int
-	historyOffset        int
-	historyDetail        bool
-	historyDetailOffset  int
-	spinnerFrame         int
-	spinnerActive        bool
+	requestID              uint64
+	loading                bool
+	err                    error
+	quitting               bool
+	helpOpen               bool
+	detailOpen             bool
+	detailOffset           int
+	detailNode             row
+	detailTags             []api.Tag
+	detailTagsTotal        int
+	detailTagsLoading      bool
+	detailTagsErr          error
+	detailRequestID        uint64
+	jobsOpen               bool
+	jobs                   []api.Job
+	jobsTotal              int
+	jobsRunning            int
+	jobsCursor             int
+	jobsOffset             int
+	jobsLoading            bool
+	jobsErr                error
+	jobsRequestID          uint64
+	jobDetail              bool
+	jobDetailOffset        int
+	operationsOpen         bool
+	operationsInfo         api.VaultInfo
+	operationsSnapshots    []api.BackupSnapshot
+	operationsTotal        int
+	operationsOffset       int
+	operationsInfoBusy     bool
+	operationsBackupBusy   bool
+	operationsStorageErr   error
+	operationsBackupErr    error
+	operationsRequestID    uint64
+	processingOpen         bool
+	processingNode         row
+	processingProfiles     []api.ProcessingProfileSummary
+	processingProfile      int
+	processingPlan         *api.ProcessingPlan
+	processingCoverage     *api.CoverageReport
+	processingLoading      bool
+	processingErr          error
+	processingRequestID    uint64
+	processingOffset       int
+	processingSearching    bool
+	processingSearch       string
+	processingSearchBusy   bool
+	processingSearchErr    error
+	processingSearchReport *api.DocumentSearchReport
+	processingJob          *api.ProcessingJob
+	processingStatus       *api.ProcessingStatus
+	processingRendition    *Rendition
+	processingRenditionErr error
+	processingConfirmation *api.ProcessingPlan
+	processingStarting     bool
+	processingStreamID     uint64
+	processingCancel       context.CancelFunc
+	trashOpen              bool
+	trashItems             []api.Node
+	trashTotal             int
+	trashCursor            int
+	trashOffset            int
+	trashChanged           bool
+	trashLoading           bool
+	trashErr               error
+	trashRequestID         uint64
+	confirmation           *mutationConfirmation
+	mutationRunning        bool
+	mutationRequestID      uint64
+	notice                 string
+	historyOpen            bool
+	historyNode            row
+	historyPages           []api.AuditEventPage
+	historyPage            int
+	historyTotal           int
+	historyCursor          int
+	historyOffset          int
+	historyDetail          bool
+	historyDetailOffset    int
+	spinnerFrame           int
+	spinnerActive          bool
 
 	width  int
 	height int
@@ -303,7 +396,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 	}
 	input := textinput.New()
 	input.Prompt = "/ "
-	input.Placeholder = "search names and extracted text"
+	input.Placeholder = searchPlaceholder
 	input.CharLimit = 512
 	input.SetWidth(48)
 	return Model{
@@ -331,6 +424,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampJobsSelection()
 		m.clampJobDetailOffset()
 		m.clampOperationsOffset()
+		m.clampProcessingOffset()
 		m.clampTrashSelection()
 		m.clampHistorySelection()
 		m.clampHistoryDetailOffset()
@@ -403,6 +497,113 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.operationsSnapshots = snapshots[:min(len(snapshots), maxBackupItems)]
 		}
 		m.clampOperationsOffset()
+		return m, nil
+	case processingProfilesLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.processingLoading = false
+			m.processingErr = msg.err
+			return m, nil
+		}
+		m.processingProfiles = msg.profiles
+		if len(msg.profiles) == 0 {
+			m.processingLoading = false
+			return m, nil
+		}
+		m.processingProfile = min(m.processingProfile, len(msg.profiles)-1)
+		return m, m.loadProcessingPlan(msg.profiles[m.processingProfile].Name, msg.requestID)
+	case processingPlanLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.processingLoading = false
+			m.processingErr = msg.err
+			return m, nil
+		}
+		m.processingPlan = &msg.plan
+		return m, m.loadProcessingCoverage(msg.plan, msg.requestID)
+	case processingCoverageLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID {
+			return m, nil
+		}
+		m.processingLoading = false
+		m.processingErr = msg.err
+		if msg.err == nil {
+			m.processingCoverage = &msg.report
+		}
+		return m, nil
+	case processingSearchLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID {
+			return m, nil
+		}
+		m.processingSearchBusy = false
+		m.processingSearchErr = msg.err
+		if msg.err == nil {
+			m.processingSearchReport = &msg.report
+		}
+		return m, nil
+	case processingStartedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.streamID != m.processingStreamID {
+			if msg.stream != nil {
+				_ = msg.stream.Close()
+			}
+			return m, nil
+		}
+		m.processingStarting = false
+		if msg.err != nil {
+			m.finishProcessingStream(msg.streamID)
+			m.processingErr = msg.err
+			return m, nil
+		}
+		if msg.event.Job == nil || msg.stream == nil {
+			m.finishProcessingStream(msg.streamID)
+			m.processingErr = errors.New("processing stream returned no durable job")
+			return m, nil
+		}
+		job := *msg.event.Job
+		m.processingJob = &job
+		m.processingStatus = &api.ProcessingStatus{
+			JobID: job.ID, State: "running", Phase: "queued",
+			EmbeddingJobIDs: append([]string(nil), job.EmbeddingJobIDs...),
+		}
+		return m, m.waitProcessingTerminal(msg.stream, msg.requestID, msg.streamID)
+	case processingTerminalMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.streamID != m.processingStreamID {
+			return m, nil
+		}
+		m.finishProcessingStream(msg.streamID)
+		if msg.err != nil {
+			m.processingErr = msg.err
+			return m, nil
+		}
+		if msg.event.Status == nil {
+			m.processingErr = errors.New("processing stream returned no terminal status")
+			return m, nil
+		}
+		status := *msg.event.Status
+		m.processingStatus = &status
+		return m, nil
+	case processingStatusLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.processingErr = msg.err
+			return m, nil
+		}
+		m.processingStatus = &msg.status
+		return m, nil
+	case processingRenditionLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID {
+			return m, nil
+		}
+		m.processingRenditionErr = msg.err
+		if msg.err == nil {
+			m.processingRendition = &msg.rendition
+		}
 		return m, nil
 	case trashLoadedMsg:
 		if !m.trashOpen || msg.requestID != m.trashRequestID {
@@ -489,7 +690,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.removeTrashedRows(target)
 		return m.reloadCurrent()
 	case spinnerTickMsg:
-		if !m.loading && !m.jobsLoading &&
+		if !m.loading && !m.jobsLoading && !m.processingLoading && !m.processingStarting && !m.processingSearchBusy &&
 			!m.operationsInfoBusy && !m.operationsBackupBusy &&
 			!m.trashLoading && !m.mutationRunning {
 			m.spinnerActive = false
@@ -502,6 +703,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpOpen = false
 			return m, nil
 		}
+		if m.processingConfirmation != nil {
+			return m.updateProcessingConfirmationKeys(msg)
+		}
 		if m.confirmation != nil {
 			return m.updateConfirmationKeys(msg)
 		}
@@ -510,6 +714,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.operationsOpen {
 			return m.updateOperationsKeys(msg)
+		}
+		if m.processingOpen {
+			return m.updateProcessingKeys(msg)
 		}
 		if m.jobsOpen {
 			return m.updateJobsKeys(msg)
@@ -541,7 +748,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.searching = false
 		m.searchInput.Blur()
 		return m, nil
-	case "enter":
+	case keyEnter:
 		query := strings.TrimSpace(m.searchInput.Value())
 		if query == "" {
 			m.searching = false
@@ -572,6 +779,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			state := m.snapshot()
 			m.searchReturn = &state
 		}
+		m.searchInput.Placeholder = searchPlaceholder
 		m.searching = true
 		return m, m.searchInput.Focus()
 	case "?":
@@ -631,6 +839,31 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.loadOperationsInfo(m.operationsRequestID),
 			m.loadOperationsBackups(m.operationsRequestID),
 		)
+	case "P":
+		selected, ok := m.selected()
+		if !ok || selected.node.Kind != nodeKindFile || selected.node.CurrentVersionID == "" {
+			return m, nil
+		}
+		m.cancelProcessingStream()
+		m.processingOpen = true
+		m.processingNode = selected
+		m.processingProfiles = nil
+		m.processingProfile = 0
+		m.processingPlan = nil
+		m.processingCoverage = nil
+		m.processingLoading = true
+		m.processingErr = nil
+		m.processingSearching = false
+		m.processingSearch = ""
+		m.processingSearchBusy = false
+		m.processingSearchErr = nil
+		m.processingSearchReport = nil
+		m.processingJob, m.processingStatus, m.processingRendition, m.processingRenditionErr = nil, nil, nil, nil
+		m.processingConfirmation = nil
+		m.processingStarting = false
+		m.processingOffset = 0
+		m.processingRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadProcessingProfiles(m.processingRequestID))
 	case "s":
 		m.cycleSortField()
 		m.sortRowsPreservingSelection()
@@ -700,7 +933,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.rows) - 1
 			m.clampSelection()
 		}
-	case "enter", "right", "l":
+	case keyEnter, "right", "l":
 		selected, ok := m.selected()
 		if ok && selected.node.Kind != nodeKindDir {
 			return m.openDetail()
@@ -740,7 +973,7 @@ func (m Model) updateConfirmationKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.confirmation = nil
 		}
 		return m, nil
-	case "enter":
+	case keyEnter:
 		if m.mutationRunning || m.confirmation == nil {
 			return m, nil
 		}
@@ -806,7 +1039,7 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.trashCursor = len(m.trashItems) - 1
 			m.clampTrashSelection()
 		}
-	case "enter":
+	case keyEnter:
 		selected, ok := m.selectedTrash()
 		if !ok {
 			return m, nil
@@ -847,7 +1080,7 @@ func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.jobsOpen = false
 		m.jobsLoading = false
 		m.jobsRequestID++
-	case "enter", "i":
+	case keyEnter, "i":
 		if _, ok := m.selectedJob(); ok {
 			m.jobDetail = true
 			m.jobDetailOffset = 0
@@ -921,6 +1154,146 @@ func (m Model) updateOperationsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.processingSearching {
+		switch msg.String() {
+		case keyCtrlC:
+			m.cancelProcessingStream()
+			m.quitting = true
+			return m, tea.Quit
+		case keyEscape:
+			m.processingSearching = false
+			m.searchInput.Blur()
+			return m, nil
+		case keyEnter:
+			query := strings.TrimSpace(m.searchInput.Value())
+			if query == "" || m.processingPlan == nil {
+				return m, nil
+			}
+			m.processingSearching = false
+			m.searchInput.Blur()
+			m.processingSearch = query
+			m.processingSearchBusy = true
+			m.processingSearchErr = nil
+			m.processingSearchReport = nil
+			return m, tea.Batch(m.startSpinner(), m.loadProcessingSearch(m.processingRequestID, query))
+		default:
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			return m, cmd
+		}
+	}
+	switch msg.String() {
+	case "q", keyCtrlC:
+		m.cancelProcessingStream()
+		m.quitting = true
+		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+		return m, nil
+	case keyEscape, "backspace", "left", "h":
+		m.cancelProcessingStream()
+		m.processingOpen = false
+		m.processingLoading = false
+		m.processingSearchBusy = false
+		m.searchInput.Placeholder = searchPlaceholder
+		m.processingRequestID++
+		return m, nil
+	case "r":
+		m.cancelProcessingStream()
+		m.processingLoading = true
+		m.processingErr = nil
+		m.processingCoverage = nil
+		m.clearProcessingSearch()
+		m.processingOffset = 0
+		m.processingRequestID++
+		commands := []tea.Cmd{m.startSpinner(), m.loadProcessingProfiles(m.processingRequestID)}
+		if m.processingJob != nil {
+			commands = append(commands, m.loadProcessingStatus(m.processingJob.ID, m.processingRequestID))
+		}
+		return m, tea.Batch(commands...)
+	case "[", "]":
+		if len(m.processingProfiles) < 2 {
+			return m, nil
+		}
+		m.cancelProcessingStream()
+		if msg.String() == "[" {
+			m.processingProfile = (m.processingProfile + len(m.processingProfiles) - 1) % len(m.processingProfiles)
+		} else {
+			m.processingProfile = (m.processingProfile + 1) % len(m.processingProfiles)
+		}
+		m.processingLoading, m.processingErr, m.processingCoverage = true, nil, nil
+		m.clearProcessingSearch()
+		m.processingJob, m.processingStatus, m.processingRendition, m.processingRenditionErr = nil, nil, nil, nil
+		m.processingConfirmation = nil
+		m.processingStarting = false
+		m.processingRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadProcessingPlan(m.processingProfiles[m.processingProfile].Name, m.processingRequestID))
+	case "b":
+		if m.processingPlan == nil {
+			return m, nil
+		}
+		if m.processingPlan.ConsentRequired {
+			plan := *m.processingPlan
+			m.processingConfirmation = &plan
+			return m, nil
+		}
+		return m, tea.Batch(m.startSpinner(), m.beginProcessing(*m.processingPlan, m.processingRequestID, false))
+	case "R":
+		if m.processingPlan == nil {
+			return m, nil
+		}
+		m.processingRendition, m.processingRenditionErr = nil, nil
+		return m, tea.Batch(m.startSpinner(), m.loadProcessingRendition(*m.processingPlan, m.processingRequestID))
+	case "up", "k":
+		m.processingOffset--
+		m.clampProcessingOffset()
+	case "down", "j":
+		m.processingOffset++
+		m.clampProcessingOffset()
+	case "pgup":
+		m.processingOffset -= m.processingViewportHeight()
+		m.clampProcessingOffset()
+	case "pgdown":
+		m.processingOffset += m.processingViewportHeight()
+		m.clampProcessingOffset()
+	case "home", "g":
+		m.processingOffset = 0
+	case "end", "G":
+		m.processingOffset = max(len(m.processingLines(m.width))-m.processingViewportHeight(), 0)
+	case "/":
+		if m.processingPlan == nil {
+			return m, nil
+		}
+		m.processingSearching = true
+		m.searchInput.SetValue("")
+		m.searchInput.Placeholder = "search this exact document version"
+		return m, m.searchInput.Focus()
+	}
+	return m, nil
+}
+
+func (m Model) updateProcessingConfirmationKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", keyCtrlC:
+		m.cancelProcessingStream()
+		m.quitting = true
+		return m, tea.Quit
+	case keyEscape:
+		m.processingConfirmation = nil
+		return m, nil
+	case keyEnter:
+		if m.processingConfirmation == nil {
+			return m, nil
+		}
+		plan := *m.processingConfirmation
+		m.processingConfirmation = nil
+		m.processingErr = nil
+		return m, tea.Batch(m.startSpinner(), m.beginProcessing(plan, m.processingRequestID, true))
+	}
+	return m, nil
+}
+
 func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", keyCtrlC:
@@ -928,7 +1301,7 @@ func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case "enter", "i", keyEscape, "backspace", "left", "h":
+	case keyEnter, "i", keyEscape, "backspace", "left", "h":
 		m.jobDetail = false
 		m.jobDetailOffset = 0
 	case "up", "k":
@@ -965,7 +1338,7 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.requestID++
 		m.closeHistory()
 		return m, nil
-	case "enter", "i":
+	case keyEnter, "i":
 		if _, ok := m.selectedHistoryEvent(); ok {
 			m.cancelPendingHistoryLoad()
 			m.historyDetail = true
@@ -1036,7 +1409,7 @@ func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "i", "enter", keyEscape, "left", "h", "backspace":
+	case "i", keyEnter, keyEscape, "left", "h", "backspace":
 		m.historyDetail = false
 		m.historyDetailOffset = 0
 	case "up", "k":
@@ -1069,7 +1442,7 @@ func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "i", "enter", keyEscape, "left", "h", "backspace":
+	case "i", keyEnter, keyEscape, "left", "h", "backspace":
 		m.detailOpen = false
 		m.detailOffset = 0
 		m.detailRequestID++
@@ -1149,6 +1522,141 @@ func (m Model) loadOperationsBackups(requestID uint64) tea.Cmd {
 		return operationsBackupsLoadedMsg{
 			requestID: requestID, snapshots: snapshots, err: err,
 		}
+	}
+}
+
+func (m *Model) clearProcessingSearch() {
+	m.processingSearchBusy = false
+	m.processingSearchErr = nil
+	m.processingSearchReport = nil
+}
+
+func (m Model) loadProcessingProfiles(requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		profiles, err := backend.ProcessingProfiles(ctx)
+		return processingProfilesLoadedMsg{requestID: requestID, profiles: profiles, err: err}
+	}
+}
+
+func (m Model) loadProcessingPlan(profile string, requestID uint64) tea.Cmd {
+	ctx, backend, node := m.ctx, m.backend, m.processingNode.node
+	return func() tea.Msg {
+		plan, err := backend.PlanProcessing(ctx, api.ProcessingPlanRequest{Selector: api.ProcessingSelector{
+			NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: profile,
+		}})
+		return processingPlanLoadedMsg{requestID: requestID, plan: plan, err: err}
+	}
+}
+
+func (m Model) loadProcessingCoverage(plan api.ProcessingPlan, requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		report, err := backend.DocumentCoverage(ctx, plan.Selector.Profile, api.DocumentSourceFence{
+			VaultUID: plan.VaultUID, ContentVersionIDs: []string{plan.Selector.ContentVersionID},
+		})
+		return processingCoverageLoadedMsg{requestID: requestID, report: report, err: err}
+	}
+}
+
+func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
+	ctx, backend, plan := m.ctx, m.backend, m.processingPlan
+	return func() tea.Msg {
+		if plan == nil {
+			return processingSearchLoadedMsg{requestID: requestID, err: errors.New("processing plan is unavailable")}
+		}
+		binding := ""
+		for _, profile := range m.processingProfiles {
+			if profile.Name == plan.Selector.Profile && len(profile.EmbeddingBindings) > 0 {
+				binding = profile.EmbeddingBindings[0]
+				break
+			}
+		}
+		report, err := backend.SearchDocuments(ctx, api.DocumentSearchRequest{
+			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,
+			BindingID: binding, Fence: api.DocumentSourceFence{
+				VaultUID: plan.VaultUID, ContentVersionIDs: []string{plan.Selector.ContentVersionID},
+			}, Explain: true,
+		})
+		return processingSearchLoadedMsg{requestID: requestID, report: report, err: err}
+	}
+}
+
+func (m Model) startProcessing(plan api.ProcessingPlan, requestID uint64, consent bool) tea.Cmd {
+	return m.startProcessingWithContext(m.ctx, plan, requestID, m.processingStreamID, consent)
+}
+
+func (m *Model) beginProcessing(plan api.ProcessingPlan, requestID uint64, consent bool) tea.Cmd {
+	m.cancelProcessingStream()
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.processingCancel = cancel
+	m.processingStarting = true
+	return m.startProcessingWithContext(ctx, plan, requestID, m.processingStreamID, consent)
+}
+
+func (m *Model) cancelProcessingStream() {
+	if m.processingCancel != nil {
+		m.processingCancel()
+		m.processingCancel = nil
+	}
+	m.processingStreamID++
+	m.processingStarting = false
+}
+
+func (m *Model) finishProcessingStream(streamID uint64) {
+	if streamID != m.processingStreamID {
+		return
+	}
+	if m.processingCancel != nil {
+		m.processingCancel()
+		m.processingCancel = nil
+	}
+	m.processingStreamID++
+}
+
+func (m Model) startProcessingWithContext(
+	ctx context.Context, plan api.ProcessingPlan, requestID, streamID uint64, consent bool,
+) tea.Cmd {
+	backend := m.backend
+	return func() tea.Msg {
+		stream, err := backend.StartProcessingStream(ctx, api.StartProcessingRequest{
+			Selector: plan.Selector, PlanFingerprint: plan.Fingerprint, Consent: consent,
+		})
+		if err != nil {
+			return processingStartedMsg{requestID: requestID, streamID: streamID, err: err}
+		}
+		event, err := stream.Next()
+		if err != nil {
+			_ = stream.Close()
+			return processingStartedMsg{requestID: requestID, streamID: streamID, err: err}
+		}
+		return processingStartedMsg{requestID: requestID, streamID: streamID, event: event, stream: stream}
+	}
+}
+
+func (m Model) waitProcessingTerminal(
+	stream ProcessingEventStream, requestID, streamID uint64,
+) tea.Cmd {
+	return func() tea.Msg {
+		defer func() { _ = stream.Close() }()
+		event, err := stream.Next()
+		return processingTerminalMsg{requestID: requestID, streamID: streamID, event: event, err: err}
+	}
+}
+
+func (m Model) loadProcessingStatus(jobID string, requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		status, err := backend.ProcessingStatus(ctx, jobID)
+		return processingStatusLoadedMsg{requestID: requestID, status: status, err: err}
+	}
+}
+
+func (m Model) loadProcessingRendition(plan api.ProcessingPlan, requestID uint64) tea.Cmd {
+	ctx, backend := m.ctx, m.backend
+	return func() tea.Msg {
+		rendition, err := backend.RenditionForSelector(ctx, plan.Selector, 256<<10)
+		return processingRenditionLoadedMsg{requestID: requestID, rendition: rendition, err: err}
 	}
 }
 
@@ -1647,6 +2155,15 @@ func (m Model) historyViewportHeight() int {
 
 func (m Model) operationsViewportHeight() int {
 	return m.bodyViewportHeight()
+}
+
+func (m Model) processingViewportHeight() int {
+	return m.bodyViewportHeight()
+}
+
+func (m *Model) clampProcessingOffset() {
+	maximum := max(len(m.processingLines(m.width))-m.processingViewportHeight(), 0)
+	m.processingOffset = min(max(m.processingOffset, 0), maximum)
 }
 
 func (m *Model) clampOperationsOffset() {
