@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 const (
@@ -112,7 +113,7 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 		clone := *config.HTTPClient
 		httpClient = &clone
 	}
-	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	httpClient.CheckRedirect = providerhttp.RefuseRedirects
 	return &Client{
 		policy: policy, apiKey: config.APIKey, timeout: config.Timeout, maxRetries: config.MaxRetries,
 		retryBaseDelay: config.RetryBaseDelay, http: httpClient, now: time.Now,

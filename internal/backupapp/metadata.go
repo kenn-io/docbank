@@ -138,15 +138,10 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	if len(classes) == 0 {
 		return nil, false, nil
 	}
-	// Class names are the exact rendition_artifacts.role values the catalog
-	// persists (document.EvidenceArtifact* constants plus the two catalog-local
-	// roles); lexical_projection is synthesized above from segment rows.
 	ordered := []string{
 		"normalized_evidence", "sanitized_markdown",
-		string(document.EvidenceArtifactImage),
-		string(document.EvidenceArtifactMarkdown),
-		string(document.EvidenceArtifactStructured),
-		string(document.EvidenceArtifactTranscript),
+		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
+		string(document.EvidenceArtifactStructured), string(document.EvidenceArtifactTranscript),
 		"lexical_projection",
 	}
 	result := &DerivativeAuthorityStats{
@@ -296,7 +291,7 @@ func (r metadataRestorer) RestoreMetadata(
 			resultErr = errors.Join(resultErr, target.Close())
 		}
 	}()
-	if err := target.ImportMetadataForBackupRestore(ctx, metadata); err != nil {
+	if err := target.ImportMetadataForRestore(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: importing metadata JSONL: %w", err)
 	}
 	if err := target.Checkpoint(ctx); err != nil {
