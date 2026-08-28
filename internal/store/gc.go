@@ -45,6 +45,16 @@ type DerivativeBuildGC struct {
 	ArtifactBlobHashes []string
 }
 
+// EmbeddingSetGC identifies one complete embedding disclosure unit whose
+// heads, eligible source, corpus manifests, and pins have all disappeared.
+type EmbeddingSetGC struct {
+	SetID              string
+	InputGenerationID  string
+	VectorSetID        string
+	PayloadBlobHash    string
+	GenerationBlobHash string
+}
+
 // CurrentRenditionRootKind identifies the producer retaining an exact current
 // rendition build or lexical generation.
 type CurrentRenditionRootKind string
@@ -58,6 +68,8 @@ const (
 	RenditionRootReaderLease CurrentRenditionRootKind = "reader_lease"
 	RenditionRootWorkerLease CurrentRenditionRootKind = "worker_lease"
 	RenditionRootBackupPin   CurrentRenditionRootKind = "backup_pin"
+	RenditionRootPolicyPin   CurrentRenditionRootKind = "policy_pin"
+	RenditionRootRestorePin  CurrentRenditionRootKind = "restore_pin"
 )
 
 // CurrentRenditionTargetKind distinguishes immutable catalog builds from
@@ -65,8 +77,12 @@ const (
 type CurrentRenditionTargetKind string
 
 const (
-	RenditionRootBuild             CurrentRenditionTargetKind = "rendition_build"
-	RenditionRootLexicalGeneration CurrentRenditionTargetKind = "lexical_generation"
+	RenditionRootBuild               CurrentRenditionTargetKind = "rendition_build"
+	RenditionRootLexicalGeneration   CurrentRenditionTargetKind = "lexical_generation"
+	RenditionRootEmbeddingSet        CurrentRenditionTargetKind = "embedding_set"
+	RenditionRootEmbeddingGeneration CurrentRenditionTargetKind = "embedding_input_generation"
+	RenditionRootEmbeddingVectorSet  CurrentRenditionTargetKind = "embedding_vector_set"
+	RenditionRootEmbeddingPayload    CurrentRenditionTargetKind = "embedding_payload"
 )
 
 // CurrentRenditionRoot is one fenced exact-root grant. Reader and worker
@@ -84,11 +100,24 @@ type CurrentRenditionRoot struct {
 // ErrCurrentRenditionRootFenced reports a stale create, renewal, or release.
 var ErrCurrentRenditionRootFenced = errors.New("current rendition root is fenced")
 
+// CurrentEmbeddingRoot exposes the same fenced root protocol for embedding
+// authority. The alias preserves one root ledger and one release/expiry model.
+type CurrentEmbeddingRoot = CurrentRenditionRoot
+
+func (s *Store) PutCurrentEmbeddingRoot(ctx context.Context, root CurrentEmbeddingRoot) error {
+	return s.PutCurrentRenditionRoot(ctx, root)
+}
+
+func (s *Store) ReleaseCurrentEmbeddingRoot(ctx context.Context, rootID string, fencingToken int64) (bool, error) {
+	return s.ReleaseCurrentRenditionRoot(ctx, rootID, fencingToken)
+}
+
 // DerivativeGCPlan is a deterministic inventory of unreachable rendition
 // builds and lexical generations. Planning never mutates live authority.
 type DerivativeGCPlan struct {
 	Builds             []DerivativeBuildGC
 	LexicalGenerations []string
+	EmbeddingSets      []EmbeddingSetGC
 	ExpiredRootIDs     []string
 }
 
@@ -107,20 +136,25 @@ type PurgeRequest struct {
 // PhysicalDerivativeBlobsPendingGC. Immutable backup repositories are outside
 // this mutation boundary and are never rewritten.
 type PurgeReport struct {
-	RemovedHeads                     int
-	RemovedAttachments               int
-	RemovedBuilds                    int
-	RemovedArtifacts                 int
-	RemovedUnits                     int
-	RemovedLexicalSegments           int
-	RemovedLexicalGenerations        int
-	RemovedLexicalRows               int
-	RemovedLegacyCacheRows           int
-	ExpiredRootsRemoved              int
-	RetainedBuildIDs                 []string
-	RetainedLexicalGenerations       []string
-	PhysicalDerivativeBlobsPendingGC []string
-	ImmutableBackupCopiesUntouched   bool
+	RemovedHeads                      int
+	RemovedAttachments                int
+	RemovedBuilds                     int
+	RemovedArtifacts                  int
+	RemovedUnits                      int
+	RemovedLexicalSegments            int
+	RemovedLexicalGenerations         int
+	RemovedLexicalRows                int
+	RemovedLegacyCacheRows            int
+	RemovedEmbeddingHeads             int
+	RemovedEmbeddingSets              int
+	RemovedEmbeddingInputGenerations  int
+	RemovedEmbeddingVectorSets        int
+	RemovedEmbeddingCorpusGenerations int
+	ExpiredRootsRemoved               int
+	RetainedBuildIDs                  []string
+	RetainedLexicalGenerations        []string
+	PhysicalDerivativeBlobsPendingGC  []string
+	ImmutableBackupCopiesUntouched    bool
 }
 
 type purgeAttachment struct {
@@ -221,6 +255,18 @@ func (s *Store) PurgeDerivatives(
 		attachmentSet := stringSet(request.AttachmentIDs)
 		explicitBuilds := stringSet(request.BuildIDs)
 		requestedBuilds := stringSet(request.BuildIDs)
+		rootedEmbeddingAttachments := make(map[string]struct{})
+		embeddingPayloads, err := purgeEmbeddingCatalogTx(
+			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All,
+			&report, rootedEmbeddingAttachments)
+		if err != nil {
+			return err
+		}
+		jobPurgeScopes, err := purgeRenditionJobWaitersTx(
+			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All, asOf)
+		if err != nil {
+			return err
+		}
 		attachments, err := renditionAttachmentsForPurgeTx(ctx, tx)
 		if err != nil {
 			return err
@@ -255,6 +301,9 @@ func (s *Store) PurgeDerivatives(
 				return err
 			}
 			report.RemovedHeads += count
+			if _, rooted := rootedEmbeddingAttachments[attachment.id]; rooted {
+				continue
+			}
 			result, err = tx.ExecContext(ctx,
 				`DELETE FROM rendition_attachments WHERE attachment_id=?`, attachment.id)
 			if err != nil {
@@ -309,6 +358,12 @@ func (s *Store) PurgeDerivatives(
 		if err != nil {
 			return err
 		}
+		jobSuppressionChanges, err := installDerivativePurgeSuppressionRecordsTx(
+			ctx, tx, jobPurgeScopes)
+		if err != nil {
+			return err
+		}
+		suppressionChanges = append(suppressionChanges, jobSuppressionChanges...)
 		legacyVersionSet := make(map[string]struct{}, len(versionSet)+len(selected))
 		for versionID := range versionSet {
 			legacyVersionSet[versionID] = struct{}{}
@@ -490,6 +545,9 @@ func (s *Store) PurgeDerivatives(
 		}
 
 		artifactBlobs := make(map[string]struct{})
+		for _, hash := range embeddingPayloads {
+			artifactBlobs[hash] = struct{}{}
+		}
 		if err := func() (retErr error) {
 			stagedRows, err := tx.QueryContext(ctx,
 				`SELECT blob_hash FROM rendition_blob_staging ORDER BY blob_hash`)
@@ -594,10 +652,14 @@ func (s *Store) PurgeDerivatives(
 		for hash := range artifactBlobs {
 			var reachable bool
 			if err := tx.QueryRowContext(ctx, `SELECT
+				EXISTS(SELECT 1 FROM ordinary_blob_authority WHERE blob_hash=?) OR
 				EXISTS(SELECT 1 FROM content_versions WHERE blob_hash=?) OR
 				EXISTS(SELECT 1 FROM rendition_artifacts WHERE blob_hash=?) OR
-				EXISTS(SELECT 1 FROM rendition_builds WHERE source_sha256=?)`,
-				hash, hash, hash).Scan(&reachable); err != nil {
+				EXISTS(SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=?) OR
+				EXISTS(SELECT 1 FROM embedding_input_generations WHERE generation_blob_hash=?) OR
+				EXISTS(SELECT 1 FROM rendition_builds WHERE source_sha256=?) OR
+				EXISTS(SELECT 1 FROM rendition_jobs WHERE source_sha256=?)`,
+				hash, hash, hash, hash, hash, hash, hash).Scan(&reachable); err != nil {
 				return fmt.Errorf("checking purged derivative blob %s reachability: %w", hash, err)
 			}
 			if !reachable {
@@ -608,9 +670,13 @@ func (s *Store) PurgeDerivatives(
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM derivative_blob_purge_pending
-			WHERE EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash=derivative_blob_purge_pending.blob_hash)
+			WHERE EXISTS (SELECT 1 FROM ordinary_blob_authority o WHERE o.blob_hash=derivative_blob_purge_pending.blob_hash)
+			   OR EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash=derivative_blob_purge_pending.blob_hash)
 			   OR EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash=derivative_blob_purge_pending.blob_hash)
-			   OR EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256=derivative_blob_purge_pending.blob_hash)`); err != nil {
+			   OR EXISTS (SELECT 1 FROM embedding_vector_sets e WHERE e.payload_blob_hash=derivative_blob_purge_pending.blob_hash)
+			   OR EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_blob_hash=derivative_blob_purge_pending.blob_hash)
+			   OR EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256=derivative_blob_purge_pending.blob_hash)
+			   OR EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256=derivative_blob_purge_pending.blob_hash)`); err != nil {
 			return fmt.Errorf("reconciling derivative blob purge targets: %w", err)
 		}
 		if err := func() (retErr error) {
@@ -760,6 +826,201 @@ func stringSet(values []string) map[string]struct{} {
 	return result
 }
 
+func purgeEmbeddingCatalogTx(
+	ctx context.Context, tx *sql.Tx, versionSet, attachmentSet, buildSet map[string]struct{},
+	all bool, report *PurgeReport, rootedAttachments map[string]struct{},
+) (_ []string, retErr error) {
+	rows, err := tx.QueryContext(ctx, `SELECT s.embedding_set_id,s.content_version_id,
+		s.input_generation_id,s.vector_set_id,s.vector_space_id,v.payload_blob_hash,
+		COALESCE(g.generation_blob_hash,''),
+		COALESCE(g.attachment_id,''),COALESCE(a.build_id,'')
+		FROM embedding_sets s
+		JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
+		JOIN embedding_vector_sets v ON v.vector_set_id=s.vector_set_id
+		LEFT JOIN rendition_attachments a ON a.attachment_id=g.attachment_id
+		ORDER BY s.embedding_set_id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing embedding sets for derivative purge: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	type embeddingPurgeSet struct {
+		id, versionID, generationID, vectorSetID, vectorSpaceID, payload, generationBlob, attachmentID, buildID string
+		explicit                                                                                                bool
+	}
+	var catalogSets []embeddingPurgeSet
+	for rows.Next() {
+		var candidate embeddingPurgeSet
+		if err := rows.Scan(&candidate.id, &candidate.versionID, &candidate.generationID,
+			&candidate.vectorSetID, &candidate.vectorSpaceID, &candidate.payload,
+			&candidate.generationBlob,
+			&candidate.attachmentID, &candidate.buildID); err != nil {
+			return nil, fmt.Errorf("scanning embedding set for derivative purge: %w", err)
+		}
+		_, versionSelected := versionSet[candidate.versionID]
+		_, attachmentSelected := attachmentSet[candidate.attachmentID]
+		_, buildSelected := buildSet[candidate.buildID]
+		candidate.explicit = all || versionSelected ||
+			(candidate.attachmentID != "" && attachmentSelected) ||
+			(candidate.buildID != "" && buildSelected)
+		catalogSets = append(catalogSets, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing embedding sets for derivative purge: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("closing embedding set purge selection: %w", err)
+	}
+	var candidates []embeddingPurgeSet
+	for _, candidate := range catalogSets {
+		var rooted bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM current_rendition_roots r
+			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?) AND (
+				(r.target_kind='embedding_set' AND r.target_id=?) OR
+				(r.target_kind='embedding_input_generation' AND r.target_id=?) OR
+				(r.target_kind='embedding_vector_set' AND r.target_id=?) OR
+				(r.target_kind='embedding_payload' AND r.target_id=?)
+			))`, nowRFC3339(), candidate.id, candidate.generationID,
+			candidate.vectorSetID, candidate.payload).Scan(&rooted); err != nil {
+			return nil, fmt.Errorf("checking embedding set roots: %w", err)
+		}
+		if rooted {
+			if candidate.explicit {
+				result, err := tx.ExecContext(ctx,
+					`DELETE FROM embedding_heads WHERE embedding_set_id=?`, candidate.id)
+				if err != nil {
+					return nil, fmt.Errorf("removing rooted embedding head: %w", err)
+				}
+				count, err := rowsAffectedInt(result)
+				if err != nil {
+					return nil, err
+				}
+				report.RemovedEmbeddingHeads += count
+			}
+			if candidate.attachmentID != "" {
+				rootedAttachments[candidate.attachmentID] = struct{}{}
+			}
+			continue
+		}
+		if !candidate.explicit {
+			var collectable bool
+			if err := tx.QueryRowContext(ctx, `SELECT
+				NOT EXISTS(SELECT 1 FROM embedding_heads WHERE embedding_set_id=?)
+				AND NOT EXISTS(SELECT 1 FROM embedding_corpus_members WHERE embedding_set_id=?)
+				AND NOT EXISTS(
+					SELECT 1 FROM content_versions cv
+					JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+					 AND n.trashed_at IS NULL
+					WHERE cv.version_id=? AND (
+						?='' OR EXISTS(SELECT 1 FROM rendition_heads rh
+							WHERE rh.content_version_id=? AND rh.attachment_id=?)
+					)
+				)`, candidate.id, candidate.id, candidate.versionID, candidate.attachmentID,
+				candidate.versionID, candidate.attachmentID).Scan(&collectable); err != nil {
+				return nil, fmt.Errorf("checking embedding set reachability: %w", err)
+			}
+			if !collectable {
+				continue
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	payloads := make(map[string]struct{})
+	for _, candidate := range candidates {
+		corpusIDs, err := stringColumnTx(ctx, tx, "embedding corpora for purge",
+			`SELECT corpus_generation_id FROM embedding_corpus_members
+			 WHERE embedding_set_id=? ORDER BY corpus_generation_id`, candidate.id)
+		if err != nil {
+			return nil, err
+		}
+		for _, corpusID := range corpusIDs {
+			result, err := tx.ExecContext(ctx,
+				`DELETE FROM embedding_corpus_generations WHERE corpus_generation_id=?`, corpusID)
+			if err != nil {
+				return nil, fmt.Errorf("removing embedding corpus generation: %w", err)
+			}
+			count, err := rowsAffectedInt(result)
+			if err != nil {
+				return nil, err
+			}
+			report.RemovedEmbeddingCorpusGenerations += count
+		}
+		result, err := tx.ExecContext(ctx,
+			`DELETE FROM embedding_heads WHERE embedding_set_id=?`, candidate.id)
+		if err != nil {
+			return nil, fmt.Errorf("removing embedding head: %w", err)
+		}
+		count, err := rowsAffectedInt(result)
+		if err != nil {
+			return nil, err
+		}
+		report.RemovedEmbeddingHeads += count
+		result, err = tx.ExecContext(ctx,
+			`DELETE FROM embedding_sets WHERE embedding_set_id=?`, candidate.id)
+		if err != nil {
+			return nil, fmt.Errorf("removing embedding set: %w", err)
+		}
+		count, err = rowsAffectedInt(result)
+		if err != nil {
+			return nil, err
+		}
+		report.RemovedEmbeddingSets += count
+
+		result, err = tx.ExecContext(ctx, `DELETE FROM embedding_input_generations
+			WHERE generation_id=? AND NOT EXISTS(
+			 SELECT 1 FROM embedding_sets WHERE input_generation_id=?)`,
+			candidate.generationID, candidate.generationID)
+		if err != nil {
+			return nil, fmt.Errorf("removing embedding input generation: %w", err)
+		}
+		count, err = rowsAffectedInt(result)
+		if err != nil {
+			return nil, err
+		}
+		report.RemovedEmbeddingInputGenerations += count
+		if count != 0 && candidate.generationBlob != "" {
+			payloads[candidate.generationBlob] = struct{}{}
+		}
+
+		result, err = tx.ExecContext(ctx, `DELETE FROM embedding_vector_sets
+			WHERE vector_set_id=? AND NOT EXISTS(
+			 SELECT 1 FROM embedding_sets WHERE vector_set_id=?)`,
+			candidate.vectorSetID, candidate.vectorSetID)
+		if err != nil {
+			return nil, fmt.Errorf("removing embedding vector set: %w", err)
+		}
+		count, err = rowsAffectedInt(result)
+		if err != nil {
+			return nil, err
+		}
+		report.RemovedEmbeddingVectorSets += count
+		if count != 0 {
+			payloads[candidate.payload] = struct{}{}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_vector_spaces
+			WHERE vector_space_id=? AND NOT EXISTS(
+			 SELECT 1 FROM embedding_sets WHERE vector_space_id=?)
+			 AND NOT EXISTS(SELECT 1 FROM embedding_corpus_generations WHERE vector_space_id=?)`,
+			candidate.vectorSpaceID, candidate.vectorSpaceID, candidate.vectorSpaceID); err != nil {
+			return nil, fmt.Errorf("removing unreferenced embedding vector space: %w", err)
+		}
+	}
+	if all {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures`); err != nil {
+			return nil, fmt.Errorf("removing embedding failures: %w", err)
+		}
+	} else {
+		for versionID := range versionSet {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM embedding_failures WHERE content_version_id=?`, versionID); err != nil {
+				return nil, fmt.Errorf("removing embedding failure: %w", err)
+			}
+		}
+	}
+	return derivativeSortedKeys(payloads), nil
+}
+
 func derivativeSortedKeys[V any](values map[string]V) []string {
 	result := make([]string, 0, len(values))
 	for value := range values {
@@ -894,7 +1155,8 @@ func validateCurrentRenditionRoot(root CurrentRenditionRoot) error {
 	}
 	switch root.Kind {
 	case RenditionRootAttachment, RenditionRootHead, RenditionRootRetention,
-		RenditionRootAudit, RenditionRootJob, RenditionRootBackupPin:
+		RenditionRootAudit, RenditionRootJob, RenditionRootBackupPin,
+		RenditionRootPolicyPin, RenditionRootRestorePin:
 		if root.ExpiresAt != "" {
 			return errors.New("non-lease current rendition root must not expire")
 		}
@@ -909,7 +1171,8 @@ func validateCurrentRenditionRoot(root CurrentRenditionRoot) error {
 		return fmt.Errorf("current rendition root kind %q is invalid", root.Kind)
 	}
 	switch root.TargetKind {
-	case RenditionRootBuild, RenditionRootLexicalGeneration:
+	case RenditionRootBuild, RenditionRootLexicalGeneration, RenditionRootEmbeddingSet,
+		RenditionRootEmbeddingGeneration, RenditionRootEmbeddingVectorSet, RenditionRootEmbeddingPayload:
 	default:
 		return fmt.Errorf("current rendition target kind %q is invalid", root.TargetKind)
 	}
@@ -940,6 +1203,26 @@ func requireCurrentRenditionTargetTx(
 			)`, root.TargetID).Scan(&present); err != nil {
 				return fmt.Errorf("checking current lexical generation root: %w", err)
 			}
+		}
+	case RenditionRootEmbeddingSet:
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_sets WHERE embedding_set_id=?)`, root.TargetID).Scan(&present)
+		if err != nil {
+			return fmt.Errorf("checking embedding set root: %w", err)
+		}
+	case RenditionRootEmbeddingGeneration:
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_input_generations WHERE generation_id=?)`, root.TargetID).Scan(&present)
+		if err != nil {
+			return fmt.Errorf("checking embedding generation root: %w", err)
+		}
+	case RenditionRootEmbeddingVectorSet:
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=?)`, root.TargetID).Scan(&present)
+		if err != nil {
+			return fmt.Errorf("checking embedding vector-set root: %w", err)
+		}
+	case RenditionRootEmbeddingPayload:
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=?)`, root.TargetID).Scan(&present)
+		if err != nil {
+			return fmt.Errorf("checking embedding payload root: %w", err)
 		}
 	}
 	if !present {
@@ -1075,6 +1358,55 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 			plan.Builds = candidates
 		}
 	}
+	embeddingRows, err := tx.QueryContext(ctx, `
+		SELECT s.embedding_set_id,s.input_generation_id,s.vector_set_id,v.payload_blob_hash,
+		       COALESCE(g.generation_blob_hash,'')
+		FROM embedding_sets s
+		JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
+		JOIN embedding_vector_sets v ON v.vector_set_id=s.vector_set_id
+		WHERE NOT EXISTS (SELECT 1 FROM embedding_heads h WHERE h.embedding_set_id=s.embedding_set_id)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_corpus_members m WHERE m.embedding_set_id=s.embedding_set_id)
+		  AND NOT EXISTS (
+			SELECT 1 FROM current_rendition_roots r
+			WHERE r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?) AND (
+				(r.target_kind='embedding_set' AND r.target_id=s.embedding_set_id) OR
+				(r.target_kind='embedding_input_generation' AND r.target_id=s.input_generation_id) OR
+				(r.target_kind='embedding_vector_set' AND r.target_id=s.vector_set_id) OR
+				(r.target_kind='embedding_payload' AND r.target_id=v.payload_blob_hash)
+			)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM content_versions cv
+			JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+			 AND n.trashed_at IS NULL
+			WHERE cv.version_id=s.content_version_id AND (
+				g.attachment_id IS NULL OR EXISTS(
+					SELECT 1 FROM rendition_heads rh
+					WHERE rh.content_version_id=s.content_version_id
+					  AND rh.profile_fingerprint=s.profile_fingerprint
+					  AND rh.attachment_id=g.attachment_id
+				)
+			)
+		  )
+		ORDER BY s.embedding_set_id`, asOf)
+	if err != nil {
+		return DerivativeGCPlan{}, fmt.Errorf("planning embedding sets: %w", err)
+	}
+	defer func() { _ = embeddingRows.Close() }()
+	for embeddingRows.Next() {
+		var candidate EmbeddingSetGC
+		if err := embeddingRows.Scan(&candidate.SetID, &candidate.InputGenerationID,
+			&candidate.VectorSetID, &candidate.PayloadBlobHash, &candidate.GenerationBlobHash); err != nil {
+			return DerivativeGCPlan{}, fmt.Errorf("scanning embedding set candidate: %w", err)
+		}
+		plan.EmbeddingSets = append(plan.EmbeddingSets, candidate)
+	}
+	if err := embeddingRows.Err(); err != nil {
+		return DerivativeGCPlan{}, fmt.Errorf("planning embedding sets: %w", err)
+	}
+	if err := embeddingRows.Close(); err != nil {
+		return DerivativeGCPlan{}, fmt.Errorf("closing embedding set candidates: %w", err)
+	}
 	expiredRows, err := tx.QueryContext(ctx, `
 		SELECT root_id FROM current_rendition_roots
 		WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=? ORDER BY root_id`, asOf)
@@ -1101,6 +1433,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 	active = false
 	return plan, nil
 }
+
 func pageLimitWithSentinel(limit int) (int, error) {
 	if limit <= 0 {
 		return 0, errors.New("page limit must be positive")
@@ -1219,8 +1552,11 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
 		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets e WHERE e.payload_blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending p
 		                  WHERE p.blob_hash = b.hash)
 		ORDER BY b.hash`)
@@ -1238,9 +1574,13 @@ func (s *Store) UnreachableDerivativePurgeBlobs(ctx context.Context) ([]BlobInfo
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
 		JOIN derivative_blob_purge_pending p ON p.blob_hash = b.hash
-		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
+		WHERE NOT EXISTS (SELECT 1 FROM ordinary_blob_authority o WHERE o.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets e WHERE e.payload_blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding pending derivative purge blobs: %w", err)
@@ -1311,8 +1651,11 @@ const unreachableBlobsStartPageSQL = `
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets e WHERE e.payload_blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
 	                       WHERE d.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
@@ -1329,8 +1672,11 @@ const unreachableBlobsResumePageSQL = `
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets e WHERE e.payload_blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM embedding_input_generations g WHERE g.generation_blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
 	                       WHERE d.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`

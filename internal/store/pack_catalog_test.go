@@ -211,7 +211,8 @@ func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
 	assert.Equal(t, "packed", physical.Kind)
 
 	references, err := s.RepairBlobAuthority(ctx, hash, 20,
-		BlobPhysical{Encoding: "zstd", StoredBytes: 8, PackEligible: true})
+		BlobPhysical{Encoding: "zstd", StoredBytes: 8, PackEligible: true,
+			MD5: "f6fdffe48c908deb0f4c3bd36c032e72"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), references)
 	physical, err = s.PhysicalContent(ctx, hash)
@@ -229,6 +230,9 @@ func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM blob_pack_entries WHERE blob_hash = ?`, hash).Scan(&mappings))
 	assert.Zero(t, mappings)
+	checksum, err := s.BlobChecksums(ctx, hash)
+	require.NoError(t, err)
+	assert.Equal(t, "f6fdffe48c908deb0f4c3bd36c032e72", checksum.MD5)
 }
 
 func TestRepairBlobAuthorityRequiresExistingMembership(t *testing.T) {

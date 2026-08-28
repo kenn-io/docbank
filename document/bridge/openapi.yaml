@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: Docbank Rendition Bridge
+  version: 1.0.0
+  description: Fixed provider-neutral rendition protocol. Implementations must refuse redirects and arbitrary result URLs.
+paths:
+  /docbank-rendition/v1/jobs:
+    post:
+      operationId: submitRenditionJob
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {$ref: '#/components/schemas/SHA256'}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [authorization, source]
+              properties:
+                authorization:
+                  $ref: '#/components/schemas/AuthorizationManifest'
+                source:
+                  type: string
+                  format: binary
+            encoding:
+              authorization:
+                contentType: application/vnd.docbank.rendition-authorization+json;version=1
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        '202': {$ref: '#/components/responses/Job'}
+        '400': {$ref: '#/components/responses/Job'}
+        '401': {$ref: '#/components/responses/Job'}
+        '403': {$ref: '#/components/responses/Job'}
+        '429': {$ref: '#/components/responses/Job'}
+        '500': {$ref: '#/components/responses/Job'}
+        '503': {$ref: '#/components/responses/Job'}
+  /docbank-rendition/v1/jobs/{job_id}:
+    parameters:
+      - $ref: '#/components/parameters/JobID'
+    get:
+      operationId: getRenditionJob
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        '202': {$ref: '#/components/responses/Job'}
+        '404': {$ref: '#/components/responses/JobMissing'}
+        '410': {$ref: '#/components/responses/JobMissing'}
+        '429': {$ref: '#/components/responses/Job'}
+        '503': {$ref: '#/components/responses/Job'}
+    delete:
+      operationId: cancelRenditionJob
+      responses:
+        '200': {$ref: '#/components/responses/Job'}
+        '204': {description: Job cancellation is complete or was already complete.}
+        '404': {description: The job is already absent.}
+        '410': {description: The job result already expired.}
+  /docbank-rendition/v1/jobs/{job_id}/artifacts/{artifact_id}:
+    parameters:
+      - $ref: '#/components/parameters/JobID'
+      - name: artifact_id
+        in: path
+        required: true
+        schema: {$ref: '#/components/schemas/StableID'}
+    get:
+      operationId: getRenditionArtifact
+      description: Returns bytes only from this fixed same-origin route. Job manifests never contain URLs.
+      responses:
+        '200':
+          description: Exact artifact bytes with the media type declared by the completed job.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '404': {description: Artifact or job is unknown.}
+        '410': {description: Artifact result expired.}
+components:
+  parameters:
+    JobID:
+      name: job_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/StableID'}
+  responses:
+    Job:
+      description: Bounded rendition job state.
+      content:
+        application/vnd.docbank.rendition-job+json;version=1:
+          schema: {$ref: '#/components/schemas/JobEnvelope'}
+    JobMissing:
+      description: Job is unknown or its result expired.
+  schemas:
+    SHA256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+    StableID:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._-]+$'
+    AuthorizationManifest:
+      type: object
+      additionalProperties: false
+      required: [contract_version, source, authorization]
+      properties:
+        contract_version: {const: docbank-rendition/v1}
+        source:
+          type: object
+          additionalProperties: false
+          required: [filename, media_family, media_type, byte_length, sha256, capability_record_checksum, provider_metadata_checksum, input_kind]
+          properties:
+            filename: {type: string, minLength: 1, maxLength: 255}
+            media_family: {type: string, minLength: 1, maxLength: 63}
+            media_type: {type: string, minLength: 3, maxLength: 255}
+            byte_length: {type: integer, minimum: 1}
+            sha256: {$ref: '#/components/schemas/SHA256'}
+            capability_record_checksum: {$ref: '#/components/schemas/SHA256'}
+            provider_metadata_checksum: {$ref: '#/components/schemas/SHA256'}
+            input_kind: {enum: [original_file, derived_upload]}
+        authorization:
+          type: object
+          description: Exact canonical RenditionAuthorization from Docbank core.
+          additionalProperties: false
+          required: [provider_id, descriptor_fingerprint, policy_fingerprint, rendition_request_fingerprint, source_sha256, source_bytes, capability_record_checksum, provider_metadata_checksum, media_family, media_type, input_kind, allowed_artifact_roles, max_provider_markdown_bytes, max_artifact_bytes, max_artifacts, max_total_result_bytes, authorized_at, expires_at]
+          properties:
+            provider_id: {$ref: '#/components/schemas/StableID'}
+            descriptor_fingerprint: {$ref: '#/components/schemas/SHA256'}
+            policy_fingerprint: {$ref: '#/components/schemas/SHA256'}
+            rendition_request_fingerprint: {$ref: '#/components/schemas/SHA256'}
+            source_sha256: {$ref: '#/components/schemas/SHA256'}
+            source_bytes: {type: integer, minimum: 1}
+            capability_record_checksum: {$ref: '#/components/schemas/SHA256'}
+            provider_metadata_checksum: {$ref: '#/components/schemas/SHA256'}
+            media_family: {type: string, minLength: 1, maxLength: 63}
+            media_type: {type: string, minLength: 3, maxLength: 255}
+            input_kind: {enum: [original_file, derived_upload]}
+            allowed_artifact_roles:
+              type: array
+              uniqueItems: true
+              maxItems: 16
+              items: {enum: [provider_image, provider_markdown, structured_evidence, provider_transcript]}
+            max_provider_markdown_bytes: {type: integer, minimum: 0}
+            max_artifact_bytes: {type: integer, minimum: 0}
+            max_artifacts: {type: integer, minimum: 0}
+            max_total_result_bytes: {type: integer, minimum: 1}
+            authorized_at: {type: string, format: date-time}
+            expires_at: {type: string, format: date-time}
+    JobEnvelope:
+      type: object
+      description: Top-level unknown fields are reserved for minor-version forward compatibility. Nested result and artifact records stay closed.
+      required: [contract_version, status, job_id, source_sha256, adapter_id, descriptor_fingerprint, policy_fingerprint]
+      properties:
+        contract_version: {const: docbank-rendition/v1}
+        status: {enum: [queued, running, completed, failed, canceled]}
+        job_id: {$ref: '#/components/schemas/StableID'}
+        source_sha256: {$ref: '#/components/schemas/SHA256'}
+        adapter_id: {$ref: '#/components/schemas/StableID'}
+        descriptor_fingerprint: {$ref: '#/components/schemas/SHA256'}
+        policy_fingerprint: {$ref: '#/components/schemas/SHA256'}
+        retry_after_millis: {type: integer, minimum: 0}
+        result: {$ref: '#/components/schemas/CompletedResult'}
+        error: {$ref: '#/components/schemas/StableError'}
+    CompletedResult:
+      type: object
+      additionalProperties: false
+      required: [evidence, receipt]
+      properties:
+        evidence: {$ref: '#/components/schemas/EvidencePayload'}
+        provider_markdown: {$ref: '#/components/schemas/InlinePayload'}
+        artifacts:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/ArtifactPayload'}
+        receipt: {type: object}
+    EvidencePayload:
+      type: object
+      additionalProperties: false
+      required: [media_type, byte_length, sha256, inline]
+      properties:
+        media_type: {const: 'application/vnd.docbank.source-evidence+json;version=1'}
+        byte_length: {type: integer, minimum: 2}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+        inline: {$ref: './source-evidence-v1.schema.json'}
+    InlinePayload:
+      type: object
+      additionalProperties: false
+      required: [media_type, byte_length, sha256, inline_base64]
+      properties:
+        media_type: {type: string, minLength: 3, maxLength: 255}
+        byte_length: {type: integer, minimum: 0}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+        inline_base64: {type: string, contentEncoding: base64}
+    ArtifactPayload:
+      type: object
+      additionalProperties: false
+      required: [role, media_type, byte_length, sha256, location]
+      properties:
+        role: {enum: [provider_image, provider_markdown, structured_evidence, provider_transcript]}
+        media_type: {type: string, minLength: 3, maxLength: 255}
+        byte_length: {type: integer, minimum: 0}
+        sha256: {$ref: '#/components/schemas/SHA256'}
+        location: {enum: [inline, result]}
+        inline_base64: {type: string, contentEncoding: base64}
+        artifact_id: {$ref: '#/components/schemas/StableID'}
+      oneOf:
+        - required: [inline_base64]
+          not: {required: [artifact_id]}
+        - required: [artifact_id]
+          not: {required: [inline_base64]}
+    StableError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {enum: [unsupported_input, policy_rejected, authentication, capacity, rate_limited, transient, malformed_evidence, unknown_job, canceled, ambiguous_submission]}
+        message: {type: string, minLength: 1, maxLength: 1024}
+        retry_after_millis: {type: integer, minimum: 0}

@@ -76,6 +76,20 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 	_, err = DetectFormat(bytes.NewReader(prefixStreamType), int64(len(prefixStreamType)), "application/pdf")
 	require.ErrorContains(err, "cross-reference data")
 
+	for name, malformedStream := range map[string][]byte{
+		"short stream": testPDFXRefStreamWith(func(entries []byte, _ []int) []byte {
+			return entries[:7]
+		}),
+		"forged root entry": testPDFXRefStreamWith(func(entries []byte, offsets []int) []byte {
+			putTestXRefEntry(entries, 1, 1, uint32(offsets[2]), 0)
+			return entries
+		}),
+	} {
+		_, detectErr := DetectFormat(
+			bytes.NewReader(malformedStream), int64(len(malformedStream)), "application/pdf")
+		require.ErrorContains(detectErr, "cross-reference data", name)
+	}
+
 	polyglotPDF := append(testPDF("polyglot"), []byte("PK\x03\x04synthetic")...)
 	_, err = DetectFormat(bytes.NewReader(polyglotPDF), int64(len(polyglotPDF)), "application/pdf")
 	require.ErrorContains(err, "not final")

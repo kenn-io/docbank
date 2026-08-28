@@ -110,7 +110,7 @@ func TestClientRetriesHTTPClientTimeout(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
 	assert.Equal(t, 2, ocr.MetricsFromError(err).Requests)
-	assert.Equal(t, int32(2), requests.Load())
+	require.Eventually(t, func() bool { return requests.Load() == 2 }, time.Second, time.Millisecond)
 }
 
 func TestClientDoesNotRetryUnsuitableInput(t *testing.T) {

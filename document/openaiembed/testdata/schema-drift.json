@@ -1,0 +1,1 @@
+{"object":"list","data":[{"object":"embedding","embedding":[1,0,0],"index":0}],"model":"synthetic-model","usage":{"prompt_tokens":3,"total_tokens":3},"provider_private_extension":"must fail closed"}
