@@ -894,9 +894,9 @@ type xmlScope struct {
 	home string
 }
 
-// resolveArchiveDir moves an archive directory by a base reference. An absolute
-// or host-bearing base names nothing inside the archive, so containment stops
-// applying and the directory is cleared.
+// resolveArchiveDir moves an archive directory by a base reference. A rooted
+// base names a directory from the container root; only a base carrying a scheme
+// names nothing inside the archive, and clears the directory.
 func resolveArchiveDir(home, base string) string {
 	if home == "" {
 		return ""
@@ -905,13 +905,21 @@ func resolveArchiveDir(home, base string) string {
 	if candidate == "" {
 		return home
 	}
-	if path.IsAbs(candidate) || strings.Contains(candidate, "://") {
+	if strings.Contains(candidate, "://") {
 		return ""
+	}
+	// A rooted base names its directory from the container root, so it replaces
+	// the current origin rather than moving it. Reporting no origin instead
+	// meant later references were measured against no container at all, which
+	// reads every one of them as contained.
+	origin := home
+	if rooted, found := strings.CutPrefix(candidate, "/"); found {
+		origin, candidate = ".", rooted
 	}
 	// A base names a document, not a directory: references resolve from the
 	// directory holding it. path.Dir gives that for both spellings, descending
 	// a level for "assets/" and staying put for "assets".
-	return path.Clean(path.Join(home, path.Dir(candidate)))
+	return path.Clean(path.Join(origin, path.Dir(candidate)))
 }
 
 // nonLocatorXMLAttribute reports attributes whose values name a vocabulary

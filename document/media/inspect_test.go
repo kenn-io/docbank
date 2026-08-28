@@ -331,6 +331,12 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 		// Landing on the root's own parent leaves the container too, and Clean
 		// spells that one place without the trailing separator.
 		{name: "reference lands on the root parent", base: "", reference: "../../.."},
+		// A rooted base moves the origin to the container root. Reporting no
+		// origin instead left later references measured against no container.
+		{name: "rooted base measures from the root", base: "/", reference: "../secret"},
+		{name: "rooted base descends", base: "/images/", reference: "../../secret"},
+		{name: "rooted base stays inside", base: "/", reference: "images/cover.png",
+			eligible: true},
 		{name: "no base", base: "", reference: "../../outside", eligible: true},
 	}
 	for _, tt := range bases {
@@ -560,13 +566,18 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 	// resource is declared at every path one of them may resolve it to. The
 	// declaration for an absent path is inert; a missing one would leave a
 	// reachable resource unscanned.
-	for _, base := range []string{"../other/", "other/"} {
+	// A rooted base names its directory from the container root rather than
+	// from the package directory, and is the spelling that used to leave the
+	// item declared nowhere at all.
+	manifestTargets := map[string]string{
+		"../other/": "other/chapter.dat",
+		"other/":    "OPS/other/chapter.dat",
+		"/other/":   "other/chapter.dat",
+		"/":         "chapter.dat",
+	}
+	for base, target := range manifestTargets {
 		t.Run("manifest xml:base "+base, func(t *testing.T) {
 			t.Parallel()
-			target := "other/chapter.dat"
-			if base == "other/" {
-				target = "OPS/other/chapter.dat"
-			}
 			data := zipBytes(t, validEPUBEntries(
 				zipEntry{name: "OPS/content.opf", body: `<package xml:base="` + base + `"><manifest>` +
 					`<item id="c" href="chapter.dat" media-type="application/xhtml+xml"/>` +
