@@ -967,12 +967,7 @@ func cssTextIsExternal(data []byte, base *url.URL, home string) (bool, error) {
 // such as A1:C3, a settings key such as ooo:view-settings, a compact URI, and
 // a urn are all vocabulary, not locators.
 func isExternalXMLURI(value string, base *url.URL, home string) bool {
-	// "//host/path" is protocol-relative; "\\host\path" is the UNC spelling a
-	// Windows consumer resolves to the same network location.
-	if strings.HasPrefix(value, "//") || strings.HasPrefix(value, `\\`) {
-		return true
-	}
-	if hasDriveLetter(value) || hasRootedBackslash(value) || escapesArchive(value, home) {
+	if namesHostLocation(value) || escapesArchive(value, home) {
 		return true
 	}
 	parsed, err := url.Parse(value)
@@ -995,6 +990,24 @@ func looksExternalText(value string) bool {
 	}
 	scheme, _, found := strings.Cut(lowered, ":")
 	return found && dereferenceableScheme(scheme)
+}
+
+// namesHostLocation reports whether a value names a place outside the document
+// by network authority or by Windows filesystem path. A consumer decodes a
+// reference before resolving it, so the percent-encoded spelling names the
+// same place as the literal one and is checked alongside it.
+func namesHostLocation(value string) bool {
+	if namesHostLocationLiterally(value) {
+		return true
+	}
+	decoded, err := url.PathUnescape(value)
+	return err == nil && decoded != value && namesHostLocationLiterally(decoded)
+}
+
+func namesHostLocationLiterally(value string) bool {
+	// "//host/path" is protocol-relative; the UNC spelling "\\host\path" is
+	// caught as a rooted Windows path.
+	return strings.HasPrefix(value, "//") || hasDriveLetter(value) || hasRootedBackslash(value)
 }
 
 // hasRootedBackslash reports whether a value is a Windows path rooted on the
@@ -1538,10 +1551,13 @@ func epubManifestTypes(
 		return err
 	}
 	var document struct {
+		Base     string `xml:"http://www.w3.org/XML/1998/namespace base,attr"`
 		Manifest struct {
+			Base  string `xml:"http://www.w3.org/XML/1998/namespace base,attr"`
 			Items []struct {
 				HRef      string `xml:"href,attr"`
 				MediaType string `xml:"media-type,attr"`
+				Base      string `xml:"http://www.w3.org/XML/1998/namespace base,attr"`
 			} `xml:"item"`
 		} `xml:"manifest"`
 	}
@@ -1559,15 +1575,43 @@ func epubManifestTypes(
 		if href == "" {
 			continue
 		}
-		resource, err := epubArchivePath(href, base)
-		if err != nil {
-			// A manifest may name a remote or absolute resource. inspectXML
-			// classifies that when it scans the package document itself.
-			continue
+		declaredType := normalizeDeclaredType(item.MediaType)
+		// Readers disagree about whether xml:base applies here, so declare the
+		// item at every path one of them may resolve it to. A declaration for a
+		// path that holds no entry is inert, while a missing one leaves a
+		// reachable resource unscanned.
+		for _, directory := range manifestBases(base, document.Base, document.Manifest.Base, item.Base) {
+			resource, err := epubArchivePath(href, directory)
+			if err != nil {
+				// A manifest may name a remote or absolute resource. inspectXML
+				// classifies that when it scans the package document itself.
+				continue
+			}
+			declared.add(resource, declaredType)
 		}
-		declared.add(resource, normalizeDeclaredType(item.MediaType))
 	}
 	return nil
+}
+
+// manifestBases returns each directory a manifest item may resolve against:
+// the package document's own directory, and the directory an inherited
+// xml:base chain would move it to.
+func manifestBases(packageDir string, bases ...string) []string {
+	directories := []string{packageDir}
+	shifted := packageDir
+	for _, base := range bases {
+		if strings.TrimSpace(base) == "" {
+			continue
+		}
+		shifted = resolveArchiveDir(shifted, strings.TrimSpace(base))
+		if shifted == "" {
+			return directories
+		}
+	}
+	if shifted != packageDir {
+		directories = append(directories, shifted)
+	}
+	return directories
 }
 
 // epubArchivePath resolves one EPUB-relative reference to an archive entry

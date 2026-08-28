@@ -220,6 +220,10 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:\secret.txt"/></body></html>`,
 		// A backslash-rooted path is the third spelling of the same idea.
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\Users\victim\secret.txt"/></body></html>`,
+		// A consumer decodes before resolving, so each spelling also encodes.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C%3A%5Csecret.txt"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="%5CUsers%5Cvictim%5Csecret.txt"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="%2f%2fhost%2fpath"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\Users/victim/secret.txt"/></body></html>`,
 		// A base is a locator too, and is classified by the same rule.
 		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:/secret/"><body><img src="cover.png"/></body></html>`,
@@ -540,6 +544,50 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		})
 	}
 
+	// Readers disagree about whether xml:base applies to a manifest item, so a
+	// resource is declared at every path one of them may resolve it to. The
+	// declaration for an absent path is inert; a missing one would leave a
+	// reachable resource unscanned.
+	for _, base := range []string{"../other/", "other/"} {
+		t.Run("manifest xml:base "+base, func(t *testing.T) {
+			t.Parallel()
+			target := "other/chapter.dat"
+			if base == "other/" {
+				target = "OPS/other/chapter.dat"
+			}
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package xml:base="` + base + `"><manifest>` +
+					`<item id="c" href="chapter.dat" media-type="application/xhtml+xml"/>` +
+					`</manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: target, body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
+					`<img src="https://example.invalid/t.png"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
+	// The package directory stays in use, so an item without any base still
+	// resolves the way it always did.
+	t.Run("manifest without xml:base", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+				`<item id="c" href="chapter.dat" media-type="application/xhtml+xml"/>` +
+				`</manifest><spine><itemref idref="c"/></spine></package>`},
+			zipEntry{name: "OPS/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
+				`<img src="https://example.invalid/t.png"/></body></html>`},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+
 	// An absolute manifest href names the container root. Joining it with the
 	// package directory pointed the declaration at a different entry and left
 	// the real one undeclared and unscanned.
@@ -749,6 +797,7 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 	chapter := `<html xmlns="http://www.w3.org/1999/xhtml" xml:base="../Images/"><head>` +
 		`<meta property="dcterms:modified" content="2026-01-01T00:00:00Z"/>` +
 		`<meta property="formula" content="\frac{1}{2}"/>` +
+		`<meta property="coverage" content="100% cover"/>` +
 		`<style>body { background: url(../Images/cover.png) }</style></head>` +
 		`<body><p style="opacity: 0%">text</p></body></html>`
 	data = zipBytes(t, validEPUBEntries(
