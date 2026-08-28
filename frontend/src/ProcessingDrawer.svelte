@@ -44,12 +44,27 @@
   let query = $state("");
   let searching = $state(false);
   let searchReport = $state<DocumentSearchReport | null>(null);
+  let processingController: AbortController | null = null;
   let generation = 0;
 
   onMount(() => {
     void loadProfiles();
-    return () => { generation += 1; };
+    return () => {
+      generation += 1;
+      cancelProcessing();
+    };
   });
+
+  function cancelProcessing(): void {
+    processingController?.abort();
+    processingController = null;
+    running = false;
+  }
+
+  function closeDrawer(): void {
+    cancelProcessing();
+    onclose();
+  }
 
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
@@ -78,6 +93,7 @@
 
   async function preview(existingRequest?: number): Promise<void> {
     if (!node.current_version_id || !profileName) return;
+    cancelProcessing();
     const request = existingRequest ?? ++generation;
     loading = true;
     error = "";
@@ -107,25 +123,32 @@
 
   async function execute(): Promise<void> {
     if (!plan || !node.current_version_id) return;
-    const request = generation;
+    cancelProcessing();
+    const active = new AbortController();
+    processingController = active;
     running = true;
     error = "";
     job = null;
     status = null;
     try {
-      const result = await startProcessing(session, plan.selector, plan.fingerprint, plan.consent_required, (accepted) => {
-        if (request === generation) job = accepted;
-      });
-      if (request !== generation) return;
+      const result = await startProcessing(session, plan.selector, plan.fingerprint, plan.profile_fingerprint, plan.consent_required, (event) => {
+        if (processingController === active && event.job) job = event.job;
+      }, active.signal);
+      if (processingController !== active) return;
       job = result.job;
       status = result.status;
-      const nextCoverage = await documentCoverage(session, profileName, plan.vault_uid, [node.current_version_id]);
-      if (request !== generation) return;
+      const nextCoverage = await documentCoverage(session, profileName, plan.vault_uid, [node.current_version_id], active.signal);
+      if (processingController !== active) return;
       coverage = nextCoverage;
     } catch (cause) {
-      if (request === generation) handleFailure(cause);
+      if (processingController === active && !(cause instanceof DOMException && cause.name === "AbortError")) {
+        handleFailure(cause);
+      }
     } finally {
-      if (request === generation) running = false;
+      if (processingController === active) {
+        processingController = null;
+        running = false;
+      }
     }
   }
 
@@ -191,9 +214,14 @@
       case "revoked": return "Consent revoked";
     }
   }
+
+  function previousGenerationServes(report: CoverageReport): boolean {
+    return report.renditions.previous_generation_serving > 0 ||
+      report.embeddings.some((item) => item.previous_generation_serving > 0);
+  }
 </script>
 
-<DetailDrawer width="min(900px, 100vw)" ariaLabel="Document processing and coverage" {onclose}>
+<DetailDrawer width="min(900px, 100vw)" ariaLabel="Document processing and coverage" onclose={closeDrawer}>
   {#snippet header()}
     <div class="drawer-heading">
       <div>
@@ -205,7 +233,7 @@
         <IconButton size="sm" ariaLabel="Refresh processing plan" disabled={loading || running} onclick={() => void preview()}>
           <RefreshCwIcon size="14" aria-hidden="true" />
         </IconButton>
-        <IconButton size="sm" ariaLabel="Close document processing" onclick={onclose}>
+        <IconButton size="sm" ariaLabel="Close document processing" onclick={closeDrawer}>
           <XIcon size="14" aria-hidden="true" />
         </IconButton>
       </div>
@@ -238,6 +266,15 @@
               {#snippet actions()}<Chip size="xs" tone={hop.trust_boundary === "local_process" || hop.trust_boundary === "operator_network" ? "success" : "warning"}>{boundaryLabel(hop.trust_boundary)}</Chip>{/snippet}
               <p>{hop.input_classes.join(", ")}</p>
               {#if hop.disclose_filename}<p>Disclosed filename: {hop.filename}</p>{/if}
+              <p>{hop.runtime_disclosure.immediate_processor} → {hop.runtime_disclosure.ultimate_processor}</p>
+              <small>{hop.runtime_disclosure.endpoint}</small>
+              <small>Deployment {hop.runtime_disclosure.deployment}</small>
+              {#if hop.runtime_disclosure.model || hop.runtime_disclosure.model_revision}
+                <small>{hop.runtime_disclosure.model ?? ""}{hop.runtime_disclosure.model && hop.runtime_disclosure.model_revision ? "@" : ""}{hop.runtime_disclosure.model_revision ?? ""}</small>
+              {/if}
+              {#if hop.runtime_disclosure.vector_space}<small>Vector space {hop.runtime_disclosure.vector_space}</small>{/if}
+              <small>Provider metadata: {hop.runtime_disclosure.metadata_classes.join(", ") || "none"}</small>
+              <small>Retained artifacts: {hop.runtime_disclosure.retained_artifact_roles.join(", ") || "none"}</small>
               <small>{boundaryDetail(hop.trust_boundary)}</small>
             </Card>
           {/each}
@@ -277,10 +314,10 @@
       {#if coverage}
         <section aria-label="Document processing coverage">
           <div class="section-heading"><div><span>COVERAGE</span><strong>{coverage.state}</strong></div></div>
-          {#if coverage.state === "rebuilding"}<p>Previous complete generation remains available while the rebuild runs.</p>{/if}
+          {#if coverage.state === "rebuilding" && previousGenerationServes(coverage)}<p>Previous complete generation remains available while the rebuild runs.</p>{/if}
           <div class="coverage-list">
-            <div><strong>Rendition · {coverage.renditions.state}</strong><span>{coverage.renditions.complete}/{coverage.renditions.total} complete</span></div>
-            {#each coverage.embeddings as item}<div><strong>{item.name} · {item.state}</strong><span>{item.required ? "Required" : "Optional"} · {item.complete}/{item.total} complete</span></div>{/each}
+            <div><strong>Rendition · {coverage.renditions.state}</strong><span>{coverage.renditions.complete}/{coverage.renditions.total} complete · {coverage.renditions.rebuilding} rebuilding</span></div>
+            {#each coverage.embeddings as item}<div><strong>{item.name} · {item.state}</strong><span>{item.required ? "Required" : "Optional"} · {item.complete}/{item.total} complete · {item.rebuilding} rebuilding</span></div>{/each}
           </div>
         </section>
       {/if}
@@ -324,6 +361,8 @@
   .profile-row label { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); }
   select { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text-primary); }
   .flow-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+  .flow-list p, .flow-list small { overflow-wrap: anywhere; }
+  .flow-list small { display: block; }
   .retention-warning { padding: var(--space-3); border-left: 3px solid var(--accent-amber); background: color-mix(in srgb, var(--accent-amber) 8%, transparent); }
   .consent-copy { color: var(--text-muted); }
   .coverage-list { display: grid; gap: var(--space-2); }

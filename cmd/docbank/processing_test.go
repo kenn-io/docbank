@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -46,7 +49,12 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 				ProfileFingerprint: profileFingerprint,
 				Flow: []api.ProcessingFlowHop{{Capability: "rendition", ProviderID: "docling-local",
 					TrustBoundary: "private-network", InputClasses: []string{"document_bytes"},
-					DiscloseFilename: true, Filename: "report.pdf"}},
+					DiscloseFilename: true, Filename: "report.pdf",
+					RuntimeDisclosure: api.ProcessingRuntimeDisclosure{
+						ImmediateProcessor: "docbank rendition adapter", UltimateProcessor: "Docling Serve",
+						Endpoint: "http://docling.internal:5001", Deployment: strings.Repeat("e", 64),
+						Model: "layout", ModelRevision: "2026.08", MetadataClasses: []string{"synthetic_filename"},
+						RetainedArtifactRoles: []string{"sanitized_markdown"}}}},
 				DisclosedClasses: []string{"document_bytes"}, RetainedClasses: []string{"sanitized_markdown"},
 				Estimate:        api.ProcessingEstimate{SourceBytes: 1024, ProviderCalls: 1, VectorSpaces: 1},
 				ConsentRequired: true, BackupConsequence: "retained derivatives enter future snapshots",
@@ -82,6 +90,10 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 	require.NoError(t, runProcessingPlan(planCommand, c, "id:42", "private", false))
 	assert.Contains(t, planOutput.String(), "docling-local")
 	assert.Contains(t, planOutput.String(), "private-network")
+	assert.Contains(t, planOutput.String(), "Docling Serve")
+	assert.Contains(t, planOutput.String(), "http://docling.internal:5001")
+	assert.Contains(t, planOutput.String(), "layout@2026.08")
+	assert.Contains(t, planOutput.String(), "synthetic_filename")
 	assert.Contains(t, planOutput.String(), "sanitized_markdown")
 	assert.Contains(t, planOutput.String(), "report.pdf")
 	assert.Contains(t, planOutput.String(), planFingerprint)
@@ -112,6 +124,68 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 	assert.Equal(t, "partial", status.State)
 }
 
+func TestProcessingCLINDJSONFlushesDurableJobBeforeTerminalStatus(t *testing.T) {
+	jobID := strings.Repeat("a", 64)
+	profileFingerprint := strings.Repeat("b", 64)
+	terminalRelease := make(chan struct{})
+	jobFlushed := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(terminalRelease) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.Method + " " + request.URL.Path {
+		case "GET /api/v1/nodes/42":
+			w.Header().Set("Content-Type", "application/json")
+			if !assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file",
+				CurrentVersionID: processingTestVersionID})) {
+				return
+			}
+		case "POST /api/v1/processing/plans":
+			assert.NoError(t, json.MarshalWrite(w, api.ProcessingPlan{Fingerprint: strings.Repeat("c", 64),
+				Selector:           api.ProcessingSelector{NodeID: 42, ContentVersionID: processingTestVersionID, Profile: "private"},
+				ProfileFingerprint: profileFingerprint}))
+		case "POST /api/v1/processing/jobs":
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			job := api.ProcessingJob{ID: jobID, EmbeddingJobIDs: []string{},
+				ProfileFingerprint: profileFingerprint, ContentVersionID: processingTestVersionID}
+			if !assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job})) {
+				return
+			}
+			flusher, ok := w.(http.Flusher)
+			if !assert.True(t, ok) {
+				return
+			}
+			flusher.Flush()
+			close(jobFlushed)
+			<-terminalRelease
+			status := api.ProcessingStatus{JobID: jobID, State: "completed", Phase: "published",
+				EmbeddingJobIDs: []string{}}
+			assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 2, Type: "status",
+				Status: &status, Terminal: true}))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c := client.New(server.URL, "test-key")
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	output := &synchronizedBuffer{}
+	command.SetOut(output)
+	command.SetErr(output)
+	done := make(chan error, 1)
+	go func() {
+		done <- runProcessingBuild(command, c, "id:42", "private", strings.Repeat("c", 64), true, false, true)
+	}()
+
+	<-jobFlushed
+	require.Eventually(t, func() bool { return strings.Contains(output.String(), `"type":"job"`) },
+		time.Second, 10*time.Millisecond, "the durable job event must be observable while terminal delivery is blocked")
+	releaseOnce.Do(func() { close(terminalRelease) })
+	require.NoError(t, <-done)
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	require.Len(t, lines, 2)
+}
+
 func TestProcessingCLIBuildRequiresReviewedFingerprintAndConsent(t *testing.T) {
 	command, _ := processingTestCommand()
 	err := runProcessingBuild(command, client.New("http://127.0.0.1:1", "test-key"),
@@ -133,10 +207,14 @@ func TestProcessingCLIBuildFailureIncludesDurableJobID(t *testing.T) {
 				case "/api/v1/nodes/42":
 					assert.NoError(t, json.MarshalWrite(w, api.Node{
 						ID: 42, Kind: "file", CurrentVersionID: processingTestVersionID}))
+				case "/api/v1/processing/plans":
+					assert.NoError(t, json.MarshalWrite(w, api.ProcessingPlan{Fingerprint: strings.Repeat("b", 64),
+						Selector:           api.ProcessingSelector{NodeID: 42, ContentVersionID: processingTestVersionID, Profile: "private"},
+						ProfileFingerprint: strings.Repeat("c", 64)}))
 				case "/api/v1/processing/jobs":
 					w.Header().Set("Content-Type", "application/x-ndjson")
 					assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
-						Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID}}))
+						Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID, ContentVersionID: processingTestVersionID, ProfileFingerprint: strings.Repeat("c", 64)}}))
 					if !truncated {
 						assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
 							Sequence: 2, Type: "status", Terminal: true, Status: &api.ProcessingStatus{
@@ -183,4 +261,56 @@ func processingTestCommand() (*cobra.Command, *bytes.Buffer) {
 	command.SetOut(&output)
 	command.SetErr(&output)
 	return command, &output
+}
+
+type synchronizedBuffer struct {
+	mu   sync.Mutex
+	data bytes.Buffer
+}
+
+func (buffer *synchronizedBuffer) Write(value []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	written, err := buffer.data.Write(value)
+	if err != nil {
+		return written, fmt.Errorf("writing synchronized test output: %w", err)
+	}
+	return written, nil
+}
+
+func (buffer *synchronizedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.data.String()
+}
+
+func TestProcessingCLIBuildRejectsChangedPlanBeforeStarting(t *testing.T) {
+	for _, changeSelector := range []bool{false, true} {
+		t.Run(strconv.FormatBool(changeSelector), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/v1/nodes/42":
+					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", CurrentVersionID: processingTestVersionID}))
+				case "/api/v1/processing/plans":
+					plan := api.ProcessingPlan{Fingerprint: strings.Repeat("b", 64), ProfileFingerprint: strings.Repeat("c", 64),
+						Selector: api.ProcessingSelector{NodeID: 42, ContentVersionID: processingTestVersionID, Profile: "private"}}
+					if changeSelector {
+						plan.Selector.NodeID = 43
+					} else {
+						plan.Fingerprint = strings.Repeat("d", 64)
+					}
+					assert.NoError(t, json.MarshalWrite(w, plan))
+				default:
+					t.Error("processing must not start after the reviewed plan changes")
+					http.NotFound(w, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+			command, _ := processingTestCommand()
+			err := runProcessingBuild(command, client.New(server.URL, "test-key"),
+				"id:42", "private", strings.Repeat("b", 64), true, false, false)
+			require.ErrorIs(t, err, client.ErrProcessingPlanChanged)
+		})
+	}
 }

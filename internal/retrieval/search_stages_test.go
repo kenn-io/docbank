@@ -288,6 +288,48 @@ func TestSearcherRerankingAuthorizationPrecedesProviderEgress(t *testing.T) {
 	assert.Equal(t, DegradationRerankingDegraded, report.Degradations[0])
 }
 
+func TestSearcherRerankOnlyRevalidatesRevokedEvidenceBeforeProviderEgress(t *testing.T) {
+	t.Parallel()
+
+	reranker := &stageReranker{}
+	searcher, backend := stageSearcher(t, func(config *SearcherConfig) {
+		config.Reranking = RerankingConfig{Enabled: true,
+			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 2}, Provider: reranker,
+			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+	})
+	backend.hits = []store.ExplainedLexicalCandidate{
+		{Node: store.Node{ID: 1, CurrentVersionID: "version-1", Name: "one"}, Path: "/one",
+			EvidenceKind: "rendition_segment", BuildID: "build-1", SegmentID: "segment-1", Excerpt: "still visible"},
+		{Node: store.Node{ID: 2, CurrentVersionID: "version-2", Name: "two"}, Path: "/two",
+			EvidenceKind: "rendition_segment", BuildID: "build-2", SegmentID: "segment-2", Excerpt: "revoked excerpt"},
+	}
+	backend.revalidated = []store.RevalidatedSearchCandidate{{NodeID: 1, ContentVersionID: "version-1"}}
+
+	report, err := searcher.Search(t.Context(), Query{Text: "original", Mode: ModeLexical, Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Len(t, reranker.candidates, 1)
+	assert.Equal(t, int64(1), reranker.candidates[0].Document.NodeID)
+	assert.NotContains(t, fmt.Sprintf("%#v", reranker.candidates), "revoked excerpt")
+	assert.Equal(t, 1, backend.revalidationCalls)
+}
+
+func TestSearcherRerankOnlyFailsClosedWithoutCandidateRevalidation(t *testing.T) {
+	t.Parallel()
+
+	backend := &nonRevalidatingStageBackend{inner: &stageBackend{}}
+	reranker := &stageReranker{}
+	searcher, err := NewSearcher(SearcherConfig{Backend: backend, Owner: "retrieval-test",
+		LeaseDuration: time.Minute, Clock: time.Now, Reranking: RerankingConfig{Enabled: true,
+			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 2}, Provider: reranker,
+			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}})
+	require.NoError(t, err)
+
+	_, err = searcher.Search(t.Context(), Query{Text: "original", Mode: ModeLexical, Limit: 2})
+	require.ErrorIs(t, err, ErrRerankingFailed)
+	assert.Zero(t, reranker.calls)
+}
+
 func TestMergeVariantReportsConservativelyAggregatesCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -433,6 +475,20 @@ type stageBackend struct {
 	errForQuery          map[string]error
 	cancelForQuery       string
 	cancel               context.CancelFunc
+}
+
+type nonRevalidatingStageBackend struct{ inner *stageBackend }
+
+func (backend *nonRevalidatingStageBackend) NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error) {
+	return backend.inner.NormalizeSearchOptions(ctx, options)
+}
+
+func (backend *nonRevalidatingStageBackend) VaultID() string { return backend.inner.VaultID() }
+
+func (backend *nonRevalidatingStageBackend) SearchExplainedLexicalCandidates(ctx context.Context,
+	query string, limit int, scope store.SearchOptions,
+) ([]store.ExplainedLexicalCandidate, bool, error) {
+	return backend.inner.SearchExplainedLexicalCandidates(ctx, query, limit, scope)
 }
 
 func (backend *stageBackend) VaultID() string { return "vault" }

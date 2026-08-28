@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -18,48 +19,49 @@ import (
 )
 
 type fakeBackend struct {
-	nodes                 map[string]api.Node
-	children              map[int64]api.NodePage
-	search                api.SearchReport
-	err                   error
-	childLimit            int
-	searchMax             int
-	nodeIDs               []int64
-	statPaths             []string
-	history               map[string]api.AuditEventPage
-	historyErr            error
-	historyIDs            []int64
-	historyCursors        []string
-	tags                  map[int64]api.TagPage
-	tagNodeIDs            []int64
-	jobs                  []api.Job
-	jobsErr               error
-	jobCalls              int
-	info                  api.VaultInfo
-	infoErr               error
-	infoCalls             int
-	snapshots             []api.BackupSnapshot
-	backupErr             error
-	backupCalls           int
-	profiles              []api.ProcessingProfileSummary
-	profileCalls          int
-	plan                  api.ProcessingPlan
-	plans                 map[string]api.ProcessingPlan
-	planCalls             int
-	coverage              api.CoverageReport
-	coverageCalls         int
-	processingSearch      api.DocumentSearchReport
-	processingSearchCalls int
-	processingJob         api.ProcessingJob
-	processingStatus      api.ProcessingStatus
-	rendition             Rendition
-	processingStarts      []api.StartProcessingRequest
-	trash                 api.TrashPage
-	trashCalls            int
-	trashed               []api.Node
-	restored              []api.Node
-	mutationErr           error
-	mutationReceiptErr    error
+	nodes                     map[string]api.Node
+	children                  map[int64]api.NodePage
+	search                    api.SearchReport
+	err                       error
+	childLimit                int
+	searchMax                 int
+	nodeIDs                   []int64
+	statPaths                 []string
+	history                   map[string]api.AuditEventPage
+	historyErr                error
+	historyIDs                []int64
+	historyCursors            []string
+	tags                      map[int64]api.TagPage
+	tagNodeIDs                []int64
+	jobs                      []api.Job
+	jobsErr                   error
+	jobCalls                  int
+	info                      api.VaultInfo
+	infoErr                   error
+	infoCalls                 int
+	snapshots                 []api.BackupSnapshot
+	backupErr                 error
+	backupCalls               int
+	profiles                  []api.ProcessingProfileSummary
+	profileCalls              int
+	plan                      api.ProcessingPlan
+	plans                     map[string]api.ProcessingPlan
+	planCalls                 int
+	coverage                  api.CoverageReport
+	coverageCalls             int
+	processingSearch          api.DocumentSearchReport
+	processingSearchCalls     int
+	processingJob             api.ProcessingJob
+	processingStatus          api.ProcessingStatus
+	processingTerminalRelease <-chan struct{}
+	rendition                 Rendition
+	processingStarts          []api.StartProcessingRequest
+	trash                     api.TrashPage
+	trashCalls                int
+	trashed                   []api.Node
+	restored                  []api.Node
+	mutationErr               error
+	mutationReceiptErr        error
 }
 
 func newFakeBackend() *fakeBackend {
@@ -183,8 +185,14 @@ func newFakeBackend() *fakeBackend {
 			Selector:           api.ProcessingSelector{NodeID: readme.ID, ContentVersionID: readme.CurrentVersionID, Profile: "private"},
 			ProfileFingerprint: strings.Repeat("a", 64),
 			Flow: []api.ProcessingFlowHop{
-				{Capability: "rendition", ProviderID: "docling-local", TrustBoundary: "operator_network", InputClasses: []string{"original_file"}},
-				{Capability: "embedding", ProviderID: "local-embed", TrustBoundary: "local_process", InputClasses: []string{"rendition_chunk"}},
+				{Capability: "rendition", ProviderID: "docling-local", TrustBoundary: "operator_network", InputClasses: []string{"original_file"},
+					RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "docbank adapter", UltimateProcessor: "Docling Serve",
+						Endpoint: "http://docling.internal:5001", Deployment: strings.Repeat("d", 64), Model: "layout", ModelRevision: "2026.08",
+						MetadataClasses: []string{"synthetic_filename"}, RetainedArtifactRoles: []string{"sanitized_markdown"}}},
+				{Capability: "embedding", ProviderID: "local-embed", TrustBoundary: "local_process", InputClasses: []string{"rendition_chunk"},
+					RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "local-embed", UltimateProcessor: "local-embed",
+						Endpoint: "in-process", Deployment: strings.Repeat("e", 64), Model: "nomic", ModelRevision: "v1", VectorSpace: strings.Repeat("f", 64),
+						MetadataClasses: []string{"chunk_key"}, RetainedArtifactRoles: []string{"embedding_vector_set"}}},
 			},
 			DisclosedClasses: []string{"original_file", "rendition_chunk"},
 			RetainedClasses:  []string{"sanitized_markdown", "embedding_vector_set"},
@@ -337,13 +345,46 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 	return f.processingSearch, nil
 }
 
-func (f *fakeBackend) StartProcessing(_ context.Context, request api.StartProcessingRequest) (api.ProcessingJob, error) {
+func (f *fakeBackend) StartProcessingStream(ctx context.Context, request api.StartProcessingRequest, profileFingerprint string) (ProcessingEventStream, error) {
 	f.processingStarts = append(f.processingStarts, request)
-	if request.Selector != f.plan.Selector || request.PlanFingerprint != f.plan.Fingerprint || request.Consent != f.plan.ConsentRequired {
-		return api.ProcessingJob{}, errors.New("unexpected processing start")
+	if request.Selector != f.plan.Selector || request.PlanFingerprint != f.plan.Fingerprint || request.Consent != f.plan.ConsentRequired || profileFingerprint != f.plan.ProfileFingerprint {
+		return nil, errors.New("unexpected processing start")
 	}
-	return f.processingJob, nil
+	job, status := f.processingJob, f.processingStatus
+	return &fakeProcessingEventStream{
+		events: []api.ProcessingJobEvent{
+			{Sequence: 1, Type: "job", Job: &job},
+			{Sequence: 2, Type: "status", Status: &status, Terminal: true},
+		},
+		terminalRelease: f.processingTerminalRelease,
+		ctx:             ctx,
+	}, nil
 }
+
+type fakeProcessingEventStream struct {
+	events          []api.ProcessingJobEvent
+	terminalRelease <-chan struct{}
+	ctx             context.Context
+	next            int
+}
+
+func (stream *fakeProcessingEventStream) Next() (api.ProcessingJobEvent, error) {
+	if stream.next >= len(stream.events) {
+		return api.ProcessingJobEvent{}, errors.New("processing stream exhausted")
+	}
+	if stream.next == 1 && stream.terminalRelease != nil {
+		select {
+		case <-stream.terminalRelease:
+		case <-stream.ctx.Done():
+			return api.ProcessingJobEvent{}, stream.ctx.Err()
+		}
+	}
+	event := stream.events[stream.next]
+	stream.next++
+	return event, nil
+}
+
+func (stream *fakeProcessingEventStream) Close() error { return nil }
 
 func (f *fakeBackend) ProcessingStatus(_ context.Context, jobID string) (api.ProcessingStatus, error) {
 	if jobID != f.processingJob.ID {
@@ -1409,7 +1450,7 @@ func TestProcessingRunErrorPreservesCoverage(t *testing.T) {
 	model.processingProfiles = backend.profiles
 	model.processingPlan, model.processingCoverage = &backend.plan, &backend.coverage
 	model, _ = updateModel(t, model, processingStartedMsg{
-		requestID: model.processingRequestID, err: errors.New("processing consent expired"),
+		requestID: model.processingRequestID, streamID: model.processingStreamID, err: errors.New("processing consent expired"),
 	})
 	content := strings.Join(model.processingLines(100), "\n")
 	assert.Contains(t, content, "processing consent expired")
@@ -1435,8 +1476,10 @@ func TestProcessingStatusDoesNotCrossRuns(t *testing.T) {
 			model, _ = updateModel(t, model, runeKey('b'))
 			backend.processingJob.ID = nextID
 			backend.processingStatus = api.ProcessingStatus{JobID: nextID, State: "completed"}
-			model, cmd := updateModel(t, model, processingStartedMsg{
-				requestID: model.processingRequestID, job: backend.processingJob,
+			model.processingJob = &backend.processingJob
+			model, cmd := updateModel(t, model, processingTerminalMsg{
+				requestID: model.processingRequestID, streamID: model.processingStreamID,
+				event: api.ProcessingJobEvent{Status: &backend.processingStatus},
 			})
 			model = runModelCommand(t, model, cmd)
 			for _, delayed := range []tea.Msg{earlier, earlierError} {
@@ -1472,7 +1515,7 @@ func TestProcessingRerunClearsPreviousJob(t *testing.T) {
 			require.NoError(t, model.processingStatusErr)
 			model, _ = updateModel(t, model, delayed)
 			model, _ = updateModel(t, model, processingStartedMsg{
-				requestID: model.processingRequestID, err: errors.New("processing consent expired"),
+				requestID: model.processingRequestID, streamID: model.processingStreamID, err: errors.New("processing consent expired"),
 			})
 			assert.Nil(t, model.processingJob)
 			assert.Nil(t, model.processingStatus)
@@ -1504,8 +1547,10 @@ func TestProcessingRunRefreshesCoverage(t *testing.T) {
 	model.processingOpen = true
 	model.processingPlan = &backend.plan
 	model.processingCoverage = &api.CoverageReport{State: "unavailable"}
-	model, cmd := updateModel(t, model, processingStartedMsg{
-		requestID: model.processingRequestID, job: backend.processingJob,
+	model.processingJob = &backend.processingJob
+	model, cmd := updateModel(t, model, processingTerminalMsg{
+		requestID: model.processingRequestID, streamID: model.processingStreamID,
+		event: api.ProcessingJobEvent{Status: &backend.processingStatus},
 	})
 	require.NotNil(t, cmd)
 	model, _ = updateModel(t, model, runeKey('b'))
@@ -1681,8 +1726,9 @@ func TestProcessingInterruptedStartRetainsAcceptedJob(t *testing.T) {
 	model.processingOpen = true
 	model.processingProfiles = backend.profiles
 	model.processingPlan = &backend.plan
-	model, cmd := updateModel(t, model, processingStartedMsg{
-		requestID: model.processingRequestID, job: backend.processingJob,
+	model.processingJob = &backend.processingJob
+	model, cmd := updateModel(t, model, processingTerminalMsg{
+		requestID: model.processingRequestID, streamID: model.processingStreamID,
 		err: errors.New("decoding processing status event: unexpected EOF"),
 	})
 	require.NotNil(t, model.processingJob)
@@ -1738,6 +1784,11 @@ func TestProcessingViewShowsPrivateFlowAndIndependentCoverage(t *testing.T) {
 	assert.Contains(t, content, "Profile: private")
 	assert.Contains(t, content, "Private network")
 	assert.Contains(t, content, "Local process")
+	assert.Contains(t, content, "Docling Serve")
+	assert.Contains(t, content, "http://docling.internal:5001")
+	assert.Contains(t, content, "layout@2026.08")
+	assert.Contains(t, content, "synthetic_filename")
+	assert.Contains(t, content, "nomic@v1")
 	assert.Contains(t, content, "Rendition · required · complete · 1/1 complete")
 	assert.Contains(t, content, "semantic · optional · unavailable · 0/1 complete")
 	assert.Contains(t, content, "unavailable: 1")
@@ -1758,7 +1809,7 @@ func TestProcessingViewMakesHostedRebuildAndDegradedProvenanceExplicit(t *testin
 	}}
 	backend.coverage.State = "rebuilding"
 	backend.coverage.Renditions = api.CoverageClass{Name: "rendition", State: "ineligible", Ineligible: 1, Total: 1}
-	backend.coverage.Embeddings = []api.CoverageClass{{Name: "direct-file", Required: true, State: "unavailable", Unavailable: 1, Total: 1}}
+	backend.coverage.Embeddings = []api.CoverageClass{{Name: "direct-file", Required: true, State: "rebuilding", Rebuilding: 1, PreviousGenerationServing: 1, Total: 1}}
 	backend.processingSearch = api.DocumentSearchReport{
 		ActualMode: "semantic", Coverage: api.DocumentSearchCoverage{BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 		Degradations: []string{"degraded_provenance"},
@@ -1779,7 +1830,7 @@ func TestProcessingViewMakesHostedRebuildAndDegradedProvenanceExplicit(t *testin
 	assert.Contains(t, content, "Hosted provider")
 	assert.Contains(t, content, "Document data leaves this machine for this step")
 	assert.Contains(t, content, "Previous complete generation remains available while the rebuild runs")
-	assert.Contains(t, content, "direct-file · required · unavailable")
+	assert.Contains(t, content, "direct-file · required · rebuilding")
 
 	model, cmd = updateModel(t, model, runeKey('/'))
 	require.NotNil(t, cmd)
@@ -1843,6 +1894,76 @@ func TestProcessingViewSelectsProfilesAndShowsRunStatusAndRendition(t *testing.T
 	assert.Contains(t, content, "Build: "+backend.rendition.BuildID)
 	assert.Contains(t, content, "SHA-256: "+backend.rendition.SHA256)
 	assert.Contains(t, content, "Warning: degraded_provenance")
+}
+
+func TestProcessingRunExposesDurableJobBeforeBlockedTerminalStatus(t *testing.T) {
+	backend := newFakeBackend()
+	terminalRelease := make(chan struct{})
+	backend.processingTerminalRelease = terminalRelease
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	require.NotNil(t, model.processingPlan)
+
+	start := model.beginProcessing(*model.processingPlan, model.processingRequestID, true)
+	started := make(chan tea.Msg, 1)
+	go func() {
+		started <- start()
+	}()
+	var startMsg tea.Msg
+	select {
+	case startMsg = <-started:
+	case <-time.After(250 * time.Millisecond):
+		close(terminalRelease)
+		<-started
+		t.Fatal("the TUI did not receive the durable job while terminal status was blocked")
+	}
+	model, terminalCmd := updateModel(t, model, startMsg)
+	require.NotNil(t, model.processingJob)
+	assert.Equal(t, backend.processingJob.ID, model.processingJob.ID)
+	require.NotNil(t, model.processingStatus)
+	assert.Equal(t, "running", model.processingStatus.State)
+	require.NotNil(t, terminalCmd)
+
+	close(terminalRelease)
+	model = runModelCommand(t, model, terminalCmd)
+	require.NotNil(t, model.processingStatus)
+	assert.Equal(t, "completed", model.processingStatus.State)
+	assert.Equal(t, "published", model.processingStatus.Phase)
+}
+
+func TestClosingProcessingViewCancelsBlockedTerminalStatus(t *testing.T) {
+	backend := newFakeBackend()
+	backend.processingTerminalRelease = make(chan struct{})
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.cursor = 1
+	model, cmd := updateModel(t, model, runeKey('P'))
+	model = runModelCommand(t, model, cmd)
+	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+	require.NotNil(t, model.processingPlan)
+
+	startMsg := model.beginProcessing(*model.processingPlan, model.processingRequestID, true)()
+	model, terminalCmd := updateModel(t, model, startMsg)
+	require.NotNil(t, model.processingJob)
+	require.NotNil(t, terminalCmd)
+	terminal := make(chan tea.Msg, 1)
+	go func() { terminal <- terminalCmd() }()
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.False(t, model.processingOpen)
+	select {
+	case msg := <-terminal:
+		terminalMsg, ok := msg.(processingTerminalMsg)
+		require.True(t, ok)
+		require.ErrorIs(t, terminalMsg.err, context.Canceled)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("closing the processing view did not cancel its blocked status stream")
+	}
 }
 
 func TestProcessingBuildRequiresExplicitConsentConfirmation(t *testing.T) {

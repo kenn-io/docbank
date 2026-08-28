@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"mime"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
@@ -56,7 +58,9 @@ var (
 type ProfileConfig struct {
 	Profile              document.ProcessingProfileV1
 	RenditionProvider    document.RenditionProvider
+	RenditionDisclosure  RuntimeDisclosure
 	EmbeddingProviders   map[string]document.EmbeddingProvider
+	EmbeddingDisclosures map[string]RuntimeDisclosure
 	EmbeddingClassifiers map[string]func(error) (EmbeddingProviderFailure, time.Duration)
 	Tokenizers           map[string]document.Tokenizer
 }
@@ -83,6 +87,8 @@ type configuredProfile struct {
 	embedders         map[string]document.EmbeddingProvider
 	embeddingRuntimes map[string]*ProviderEmbeddingRuntime
 	tokenizers        map[string]document.Tokenizer
+	renderDisclosure  RuntimeDisclosure
+	embedDisclosures  map[string]RuntimeDisclosure
 }
 
 type Service struct {
@@ -118,12 +124,28 @@ type Selector struct {
 }
 
 type FlowHop struct {
-	Capability       string
-	ProviderID       string
-	TrustBoundary    string
-	InputClasses     []string
-	DiscloseFilename bool
-	Filename         string
+	Capability        string
+	ProviderID        string
+	TrustBoundary     string
+	InputClasses      []string
+	DiscloseFilename  bool
+	Filename          string
+	RuntimeDisclosure RuntimeDisclosure
+}
+
+// RuntimeDisclosure is the complete sanitized runtime identity and data policy
+// reviewed for one provider hop. It never contains credential bindings or
+// secret-source names.
+type RuntimeDisclosure struct {
+	ImmediateProcessor    string
+	UltimateProcessor     string
+	Endpoint              string
+	Deployment            string
+	Model                 string
+	ModelRevision         string
+	VectorSpace           string
+	MetadataClasses       []string
+	RetainedArtifactRoles []string
 }
 
 type Estimate struct {
@@ -252,10 +274,11 @@ type SourceFence struct {
 }
 
 type CoverageClass struct {
-	Name, State                  string
-	Required                     bool
-	Complete, Unavailable, Stale int
-	Ineligible, Total            int
+	Name, State                             string
+	Required                                bool
+	Complete, Unavailable, Stale            int
+	Ineligible, Rebuilding, PreviousServing int
+	Total                                   int
 }
 
 type Coverage struct {
@@ -321,6 +344,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 			embedders:         make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
 			embeddingRuntimes: make(map[string]*ProviderEmbeddingRuntime, len(profile.Embeddings)),
 			tokenizers:        make(map[string]document.Tokenizer, len(supplied.Tokenizers)),
+			embedDisclosures:  make(map[string]RuntimeDisclosure, len(supplied.EmbeddingProviders)),
 			record: store.ProcessingProfileRecord{Fingerprint: fingerprints.Profile,
 				CanonicalProfile: jsontext.Value(canonical), RenditionRequestFingerprint: fingerprints.RenditionRequest,
 				EvidenceLexicalFingerprint:     fingerprints.EvidenceLexical,
@@ -343,6 +367,11 @@ func NewService(config ServiceConfig) (*Service, error) {
 			case document.RenditionTrustLocalProcess, document.RenditionTrustOperatorNetwork, document.RenditionTrustHostedProvider:
 			default:
 				return nil, fmt.Errorf("processing profile %q rendition provider has an invalid trust boundary", name)
+			}
+			configured.renderDisclosure, err = renditionRuntimeDisclosure(
+				supplied.RenditionDisclosure, *profile.Rendition, descriptor, profile.RetentionDisclosure)
+			if err != nil {
+				return nil, fmt.Errorf("processing profile %q rendition disclosure: %w", name, err)
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
@@ -371,6 +400,14 @@ func NewService(config ServiceConfig) (*Service, error) {
 			default:
 				return nil, fmt.Errorf("processing profile %q embedding %q has an invalid trust boundary", name, binding.Name)
 			}
+			disclosure, disclosureErr := embeddingRuntimeDisclosure(
+				supplied.EmbeddingDisclosures[binding.Name], binding, descriptor,
+				fingerprints.VectorSpace[binding.Name])
+			if disclosureErr != nil {
+				return nil, fmt.Errorf("processing profile %q embedding %q disclosure: %w",
+					name, binding.Name, disclosureErr)
+			}
+			configured.embedDisclosures[binding.Name] = disclosure
 			classifier := supplied.EmbeddingClassifiers[binding.Name]
 			if classifier == nil {
 				classifier = classifyEmbeddingProviderError
@@ -507,10 +544,11 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 		BackupConsequence: "retained derivatives are included in catalog-authorized backups"}
 	if profile.portable.Rendition != nil {
 		hop := FlowHop{Capability: "rendition",
-			ProviderID:       profile.portable.Rendition.Descriptor.ID,
-			TrustBoundary:    profile.portable.Rendition.TrustBoundary,
-			InputClasses:     []string{string(document.RenditionInputOriginalFile)},
-			DiscloseFilename: profile.portable.Rendition.DiscloseFilename}
+			ProviderID:        profile.portable.Rendition.Descriptor.ID,
+			TrustBoundary:     profile.portable.Rendition.TrustBoundary,
+			InputClasses:      []string{string(document.RenditionInputOriginalFile)},
+			RuntimeDisclosure: profile.renderDisclosure,
+			DiscloseFilename:  profile.portable.Rendition.DiscloseFilename}
 		if hop.DiscloseFilename {
 			hop.Filename = syntheticFilename(node.Name, version.MimeType, true)
 			hop.InputClasses = append(hop.InputClasses, "filename")
@@ -533,14 +571,20 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 		}
 	}
 	for _, binding := range profile.portable.Embeddings {
+		disclosure := profile.embedDisclosures[binding.Name]
 		plan.Flow = append(plan.Flow, FlowHop{Capability: "embedding", ProviderID: binding.Descriptor.ID,
-			TrustBoundary: binding.TrustBoundary, InputClasses: []string{string(binding.InputKind)}})
+			TrustBoundary: binding.TrustBoundary, InputClasses: []string{string(binding.InputKind)},
+			RuntimeDisclosure: disclosure})
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(binding.InputKind))
 		plan.Estimate.ProviderCalls++
 		plan.RetainedClasses = append(plan.RetainedClasses, "embedding_vector_set")
 		if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+			queryDisclosure := disclosure
+			queryDisclosure.MetadataClasses = []string{"query_role"}
+			queryDisclosure.RetainedArtifactRoles = nil
 			plan.Flow = append(plan.Flow, FlowHop{Capability: "query_embedding", ProviderID: binding.Descriptor.ID,
-				TrustBoundary: binding.TrustBoundary, InputClasses: []string{"query_text"}})
+				TrustBoundary: binding.TrustBoundary, InputClasses: []string{"query_text"},
+				RuntimeDisclosure: queryDisclosure})
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "query_text")
 		}
 	}
@@ -1152,100 +1196,56 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	if err != nil {
 		return Coverage{}, err
 	}
+	bindings := make([]store.ProcessingCoverageBinding, len(profile.portable.Embeddings))
+	for i, binding := range profile.portable.Embeddings {
+		bindings[i] = store.ProcessingCoverageBinding{BindingID: binding.Name,
+			Required: binding.Activation == document.EmbeddingRequired}
+	}
+	snapshot, err := service.catalog.ProcessingCoverage(ctx, store.ProcessingCoverageScope{
+		ContentVersionIDs: ids, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: bindings,
+	})
+	if err != nil {
+		return Coverage{}, err
+	}
+	toClass := func(item store.ProcessingClassCoverage) CoverageClass {
+		return CoverageClass{Name: item.Name, Required: item.Required, State: item.State,
+			Complete: item.Complete, Unavailable: item.Unavailable, Stale: item.Stale,
+			Ineligible: item.Ineligible, Rebuilding: item.Rebuilding,
+			PreviousServing: item.PreviousGenerationServing, Total: item.Total}
+	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
-		State: "complete", Renditions: CoverageClass{Name: "rendition", Required: profile.portable.Rendition != nil,
-			State: "not_required", Total: len(ids)}}
+		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
 	if profile.portable.Rendition != nil {
-		for _, id := range ids {
-			version, err := service.catalog.ContentVersionByID(ctx, id)
-			var node store.Node
-			if err == nil {
-				node, err = service.catalog.NodeByID(ctx, version.NodeID)
-			}
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return Coverage{}, err
-			}
-			if errors.Is(err, store.ErrNotFound) || node.CurrentVersionID != id || node.TrashedAt != nil {
-				report.Renditions.Stale++
-				continue
-			}
-			if _, err := service.catalog.ActiveRendition(ctx, id, profile.record.Fingerprint); err == nil {
-				report.Renditions.Complete++
-			} else if errors.Is(err, store.ErrNotFound) {
-				report.Renditions.Unavailable++
-			} else {
-				return Coverage{}, err
-			}
-		}
-		report.Renditions.State = coverageClassState(report.Renditions)
-		if report.Renditions.State != "complete" {
+		report.Renditions = toClass(snapshot.Renditions)
+		report.Renditions.Name, report.Renditions.Required = "rendition", true
+		if report.Renditions.State == "rebuilding" {
+			report.State = "rebuilding"
+		} else if report.Renditions.State != "complete" {
 			report.State = "partial"
 		}
 	}
-	if len(profile.portable.Embeddings) == 0 {
-		return report, nil
-	}
 	required, completeRequired := 0, 0
-	optionalIncomplete := false
-	var unregisteredCoverage *store.SearchCoverageSnapshot
-	for _, binding := range profile.portable.Embeddings {
-		validated, err := service.catalog.RevalidateSearchCandidates(ctx, nil,
-			store.SearchOptions{ContentVersionIDs: ids}, profile.record.Fingerprint, binding.Name)
-		if errors.Is(err, store.ErrNotFound) {
-			// Configured profiles become durable authority on their first run.
-			// Before then, current sources have no embedding coverage.
-			if unregisteredCoverage == nil {
-				unregisteredCoverage = &store.SearchCoverageSnapshot{}
-				for _, id := range ids {
-					version, sourceErr := service.catalog.ContentVersionByID(ctx, id)
-					var node store.Node
-					if sourceErr == nil {
-						node, sourceErr = service.catalog.NodeByID(ctx, version.NodeID)
-					}
-					if sourceErr != nil && !errors.Is(sourceErr, store.ErrNotFound) {
-						return Coverage{}, sourceErr
-					}
-					if sourceErr == nil && node.CurrentVersionID == id && node.TrashedAt == nil {
-						unregisteredCoverage.ScopedDocuments++
-					}
-				}
-			}
-			validated.Coverage = unregisteredCoverage
-		} else if err != nil {
-			return Coverage{}, err
-		}
-		item := CoverageClass{Name: binding.Name, Required: binding.Activation == document.EmbeddingRequired,
-			Total: len(ids), Complete: validated.Coverage.CompleteDocuments,
-			Stale:       len(ids) - validated.Coverage.ScopedDocuments,
-			Unavailable: validated.Coverage.ScopedDocuments - validated.Coverage.CompleteDocuments}
-		item.State = coverageClassState(item)
+	requiredRebuilding, optionalRebuilding, optionalIncomplete := false, false, false
+	for _, coverage := range snapshot.Embeddings {
+		item := toClass(coverage)
+		report.Embeddings = append(report.Embeddings, item)
 		if item.Required {
 			required++
 			if item.State == "complete" {
 				completeRequired++
 			}
-		} else if item.State != "complete" {
-			optionalIncomplete = true
+			requiredRebuilding = requiredRebuilding || item.State == "rebuilding"
+		} else {
+			optionalIncomplete = optionalIncomplete || item.State != "complete"
+			optionalRebuilding = optionalRebuilding || item.State == "rebuilding"
 		}
-		report.Embeddings = append(report.Embeddings, item)
 	}
-	if completeRequired != required || (required == 0 && optionalIncomplete) {
+	if requiredRebuilding || (required == 0 && optionalRebuilding) {
+		report.State = "rebuilding"
+	} else if report.State != "rebuilding" && (completeRequired != required || (required == 0 && optionalIncomplete)) {
 		report.State = "partial"
 	}
 	return report, nil
-}
-
-func coverageClassState(item CoverageClass) string {
-	switch {
-	case item.Stale == item.Total:
-		return "stale"
-	case item.Complete == item.Total:
-		return "complete"
-	case item.Complete > 0:
-		return "partial"
-	default:
-		return "unavailable"
-	}
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
@@ -1867,6 +1867,121 @@ func sameProvider(existing, candidate any) bool {
 		return false
 	}
 	return existing == candidate
+}
+
+func renditionRuntimeDisclosure(supplied RuntimeDisclosure, binding document.RenditionBindingV1,
+	descriptor document.RenditionDescriptor, retention document.RetentionDisclosurePolicyV1,
+) (RuntimeDisclosure, error) {
+	metadata := []string{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"}
+	if binding.DiscloseFilename {
+		metadata[len(metadata)-1] = "sanitized_filename"
+	}
+	roles := retainedRenditionClasses(document.ProcessingProfileV1{Rendition: &binding, RetentionDisclosure: retention})
+	value := supplied
+	if value.ImmediateProcessor == "" {
+		value.ImmediateProcessor = descriptor.ID
+	}
+	if value.UltimateProcessor == "" {
+		value.UltimateProcessor = descriptor.ID
+	}
+	if value.Deployment == "" {
+		value.Deployment = binding.DeploymentFingerprint
+	}
+	value.MetadataClasses = metadata
+	value.RetainedArtifactRoles = roles
+	value.VectorSpace = ""
+	return canonicalRuntimeDisclosure(value, string(descriptor.TrustBoundary))
+}
+
+func embeddingRuntimeDisclosure(supplied RuntimeDisclosure, binding document.EmbeddingBindingV1,
+	descriptor document.EmbeddingDescriptor, vectorSpace string,
+) (RuntimeDisclosure, error) {
+	value := supplied
+	if value.ImmediateProcessor == "" {
+		value.ImmediateProcessor = descriptor.ID
+	}
+	if value.UltimateProcessor == "" {
+		value.UltimateProcessor = descriptor.ID
+	}
+	if value.Deployment == "" {
+		value.Deployment = descriptor.PolicyFingerprint
+	}
+	value.Model = descriptor.Model
+	value.ModelRevision = descriptor.ModelRevision
+	value.VectorSpace = vectorSpace
+	value.RetainedArtifactRoles = []string{"embedding_input_generation", "embedding_vector_set"}
+	if binding.InputKind == document.EmbeddingInputOriginalFile {
+		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"}
+	} else {
+		value.MetadataClasses = []string{"chunk_key", "content_derived_heading_path"}
+	}
+	return canonicalRuntimeDisclosure(value, string(descriptor.TrustBoundary))
+}
+
+func canonicalRuntimeDisclosure(value RuntimeDisclosure, trustBoundary string) (RuntimeDisclosure, error) {
+	for name, field := range map[string]string{
+		"immediate processor": value.ImmediateProcessor,
+		"ultimate processor":  value.UltimateProcessor,
+		"deployment":          value.Deployment,
+		"model":               value.Model,
+		"model revision":      value.ModelRevision,
+		"vector space":        value.VectorSpace,
+	} {
+		if field != "" && (!utf8.ValidString(field) || len(field) > 1024 || strings.TrimSpace(field) != field) {
+			return RuntimeDisclosure{}, fmt.Errorf("%s identity is invalid", name)
+		}
+	}
+	if value.ImmediateProcessor == "" || value.UltimateProcessor == "" || value.Deployment == "" {
+		return RuntimeDisclosure{}, errors.New("processor and deployment identities are required")
+	}
+	endpoint, err := canonicalDisclosureEndpoint(value.Endpoint, trustBoundary)
+	if err != nil {
+		return RuntimeDisclosure{}, err
+	}
+	value.Endpoint = endpoint
+	value.MetadataClasses, err = canonicalDisclosureClasses(value.MetadataClasses)
+	if err != nil {
+		return RuntimeDisclosure{}, fmt.Errorf("metadata classes: %w", err)
+	}
+	value.RetainedArtifactRoles, err = canonicalDisclosureClasses(value.RetainedArtifactRoles)
+	if err != nil {
+		return RuntimeDisclosure{}, fmt.Errorf("retained artifact roles: %w", err)
+	}
+	return value, nil
+}
+
+func canonicalDisclosureEndpoint(raw, trustBoundary string) (string, error) {
+	local := trustBoundary == string(document.RenditionTrustLocalProcess) ||
+		trustBoundary == string(document.EmbeddingTrustLocalProcess)
+	if local {
+		if raw == "" || raw == "in-process" {
+			return "in-process", nil
+		}
+		return "", errors.New("local-process disclosure cannot name a network endpoint")
+	}
+	if raw == "" {
+		return "", errors.New("network provider disclosure requires an endpoint")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Opaque != "" || parsed.Host == "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("runtime endpoint is invalid or contains undisclosable components")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	return strings.TrimSuffix(parsed.String(), "/"), nil
+}
+
+func canonicalDisclosureClasses(values []string) ([]string, error) {
+	result := slices.Clone(values)
+	for _, value := range result {
+		if value == "" || len(value) > 128 || !utf8.ValidString(value) || strings.TrimSpace(value) != value {
+			return nil, errors.New("contains an invalid value")
+		}
+	}
+	sort.Strings(result)
+	return slices.Compact(result), nil
 }
 
 func validateProfileName(name string) error {

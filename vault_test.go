@@ -31,6 +31,14 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 )
 
+func TestEmbeddedCoverageMappingPreservesRebuildCounters(t *testing.T) {
+	got := fromCoverageClass(internalprocessing.CoverageClass{
+		Name: "semantic", Required: true, State: "rebuilding", Rebuilding: 2, PreviousServing: 1, Total: 2,
+	})
+	assert.Equal(t, 2, got.Rebuilding)
+	assert.Equal(t, 1, got.PreviousGenerationServing)
+}
+
 func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	require := require.New(t)
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})

@@ -205,6 +205,17 @@ func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, plan.Fingerprint)
 	require.Equal(t, "local_process", plan.Flow[0].TrustBoundary)
+	encodedPlan, err := json.Marshal(plan)
+	require.NoError(t, err)
+	var planWire map[string]any
+	require.NoError(t, json.Unmarshal(encodedPlan, &planWire))
+	flow, ok := planWire["flow"].([]any)
+	require.True(t, ok)
+	hop, ok := flow[0].(map[string]any)
+	require.True(t, ok)
+	runtime, ok := hop["runtime_disclosure"].(map[string]any)
+	require.True(t, ok, "embedded plans must expose the same runtime disclosure as HTTP plans")
+	require.Equal(t, "in-process", runtime["endpoint"])
 	require.Contains(t, plan.RetainedClasses, "sanitized_markdown")
 	require.True(t, plan.ConsentRequired)
 
@@ -596,6 +607,8 @@ func TestEmbeddedProcessingRunsDirectEmbeddingsAndSemanticSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, coverage.Embeddings, 1)
 	require.Equal(t, "complete", coverage.Embeddings[0].State)
+	require.Zero(t, coverage.Embeddings[0].Rebuilding)
+	require.Zero(t, coverage.Embeddings[0].PreviousGenerationServing)
 	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
 		Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "private", BindingID: "direct", Fence: fence})
 	require.NoError(t, err)

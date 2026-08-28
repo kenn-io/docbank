@@ -70,9 +70,8 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 		if configured.Runtime == nil {
 			continue
 		}
-		_, ok := secrets.variables[configured.CredentialBinding]
-		if !ok {
-			return embeddingRuntimeBundle{}, fmt.Errorf("embedding credential %q is not configured", configured.CredentialBinding)
+		if _, ok := secrets.variables[configured.CredentialBinding]; !ok {
+			return embeddingRuntimeBundle{}, errors.New("embedding credential binding is not configured")
 		}
 		modelInput, err := cfg.EmbeddingModelInput(name)
 		if err != nil {
@@ -156,6 +155,7 @@ func executableProcessingProfiles(cfg config.Config,
 		executable := true
 		configured := processing.ProfileConfig{Profile: portable,
 			EmbeddingProviders:   make(map[string]document.EmbeddingProvider),
+			EmbeddingDisclosures: make(map[string]processing.RuntimeDisclosure),
 			EmbeddingClassifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
 			Tokenizers:           make(map[string]document.Tokenizer)}
 		if portable.Rendition != nil {
@@ -173,6 +173,20 @@ func executableProcessingProfiles(cfg config.Config,
 			}
 			configured.EmbeddingProviders[binding.Name] = provider
 			configured.EmbeddingClassifiers[binding.Name] = classifier
+			if runtime := cfg.EmbeddingProfiles[binding.Name].Runtime; runtime != nil {
+				deployment := runtime.DeploymentEpoch
+				if deployment == "" {
+					deployment = runtime.ModelRevision
+				}
+				configured.EmbeddingDisclosures[binding.Name] = processing.RuntimeDisclosure{
+					ImmediateProcessor: runtime.AdapterContract,
+					UltimateProcessor:  binding.Descriptor.ID,
+					Endpoint:           runtime.Endpoint,
+					Deployment:         deployment,
+					Model:              binding.Model,
+					ModelRevision:      runtime.ModelRevision,
+				}
+			}
 			if binding.InputKind == document.EmbeddingInputRenditionChunk {
 				tokenizer := configuredEmbeddingTokenizer(binding.Chunk.Tokenizer + "@" + binding.Chunk.TokenizerRevision)
 				if tokenizer == nil {

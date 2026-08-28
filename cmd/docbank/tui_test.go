@@ -21,7 +21,7 @@ import (
 )
 
 func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
-	job := api.ProcessingJob{ID: strings.Repeat("a", 64)}
+	job := api.ProcessingJob{ID: strings.Repeat("a", 64), ContentVersionID: processingTestVersionID, ProfileFingerprint: strings.Repeat("b", 64)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
@@ -30,9 +30,15 @@ func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
 	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
 		return client.New(server.URL, ""), nil
 	}}
-	accepted, err := backend.StartProcessing(t.Context(), api.StartProcessingRequest{})
+	stream, err := backend.StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: job.ContentVersionID}}, job.ProfileFingerprint)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, stream.Close()) })
+	accepted, err := stream.Next()
+	require.NoError(t, err)
+	require.NotNil(t, accepted.Job)
+	_, err = stream.Next()
 	require.Error(t, err)
-	assert.Equal(t, job.ID, accepted.ID)
+	assert.Equal(t, job.ID, accepted.Job.ID)
 }
 
 func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {

@@ -84,7 +84,9 @@ type EmbeddingErrorClassifier func(error) (EmbeddingFailureClass, time.Duration)
 type ProcessingProfileConfig struct {
 	Profile              document.ProcessingProfileV1
 	RenditionProvider    document.RenditionProvider
+	RenditionDisclosure  ProcessingRuntimeDisclosure
 	EmbeddingProviders   map[string]document.EmbeddingProvider
+	EmbeddingDisclosures map[string]ProcessingRuntimeDisclosure
 	EmbeddingClassifiers map[string]EmbeddingErrorClassifier
 	Tokenizers           map[string]document.Tokenizer
 }
@@ -102,12 +104,27 @@ type ProcessingPlanRequest struct {
 }
 
 type ProcessingFlowHop struct {
-	Capability       string   `json:"capability"`
-	ProviderID       string   `json:"provider_id"`
-	TrustBoundary    string   `json:"trust_boundary"`
-	InputClasses     []string `json:"input_classes"`
-	DiscloseFilename bool     `json:"disclose_filename"`
-	Filename         string   `json:"filename,omitzero"`
+	Capability        string                      `json:"capability"`
+	ProviderID        string                      `json:"provider_id"`
+	TrustBoundary     string                      `json:"trust_boundary"`
+	InputClasses      []string                    `json:"input_classes"`
+	DiscloseFilename  bool                        `json:"disclose_filename"`
+	Filename          string                      `json:"filename,omitzero"`
+	RuntimeDisclosure ProcessingRuntimeDisclosure `json:"runtime_disclosure"`
+}
+
+// ProcessingRuntimeDisclosure is the complete non-secret runtime identity and
+// provider-visible data policy reviewed for one processing hop.
+type ProcessingRuntimeDisclosure struct {
+	ImmediateProcessor    string   `json:"immediate_processor"`
+	UltimateProcessor     string   `json:"ultimate_processor"`
+	Endpoint              string   `json:"endpoint"`
+	Deployment            string   `json:"deployment"`
+	Model                 string   `json:"model,omitzero"`
+	ModelRevision         string   `json:"model_revision,omitzero"`
+	VectorSpace           string   `json:"vector_space,omitzero"`
+	MetadataClasses       []string `json:"metadata_classes"`
+	RetainedArtifactRoles []string `json:"retained_artifact_roles"`
 }
 
 type ProcessingEstimate struct {
@@ -192,14 +209,16 @@ type CoverageRequest struct {
 }
 
 type CoverageClass struct {
-	Name        string `json:"name"`
-	Required    bool   `json:"required"`
-	State       string `json:"state"`
-	Complete    int    `json:"complete"`
-	Unavailable int    `json:"unavailable"`
-	Stale       int    `json:"stale"`
-	Ineligible  int    `json:"ineligible"`
-	Total       int    `json:"total"`
+	Name                      string `json:"name"`
+	Required                  bool   `json:"required"`
+	State                     string `json:"state"`
+	Complete                  int    `json:"complete"`
+	Unavailable               int    `json:"unavailable"`
+	Stale                     int    `json:"stale"`
+	Ineligible                int    `json:"ineligible"`
+	Rebuilding                int    `json:"rebuilding"`
+	PreviousGenerationServing int    `json:"previous_generation_serving"`
+	Total                     int    `json:"total"`
 }
 
 type CoverageReport struct {

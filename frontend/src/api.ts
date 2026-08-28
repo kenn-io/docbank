@@ -111,6 +111,19 @@ export interface ProcessingFlowHop {
   input_classes: string[];
   disclose_filename: boolean;
   filename?: string;
+  runtime_disclosure: ProcessingRuntimeDisclosure;
+}
+
+export interface ProcessingRuntimeDisclosure {
+  immediate_processor: string;
+  ultimate_processor: string;
+  endpoint: string;
+  deployment: string;
+  model?: string;
+  model_revision?: string;
+  vector_space?: string;
+  metadata_classes: string[];
+  retained_artifact_roles: string[];
 }
 
 export interface ProcessingPlan {
@@ -136,9 +149,19 @@ export interface ProcessingJob {
   content_version_id: string;
 }
 
+export type ProcessingState =
+  | "queued"
+  | "running"
+  | "retry_wait"
+  | "operator_required"
+  | "completed"
+  | "failed"
+  | "abandoned"
+  | "partial";
+
 export interface ProcessingStatus {
   job_id: string;
-  state: "queued" | "running" | "retry_wait" | "operator_required" | "failed" | "completed" | "abandoned" | "partial";
+  state: ProcessingState;
   phase: string;
   failure_code?: string;
   embedding_job_ids: string[];
@@ -150,6 +173,15 @@ export interface ProcessingRun {
   status: ProcessingStatus;
 }
 
+export interface ProcessingJobEvent {
+  sequence: number;
+  type: "job" | "status" | "error";
+  job?: ProcessingJob;
+  status?: ProcessingStatus;
+  error?: Problem;
+  terminal?: boolean;
+}
+
 export interface CoverageClass {
   name: string;
   required: boolean;
@@ -158,6 +190,8 @@ export interface CoverageClass {
   unavailable: number;
   stale: number;
   ineligible: number;
+  rebuilding: number;
+  previous_generation_serving: number;
   total: number;
 }
 
@@ -187,13 +221,22 @@ export interface DocumentSearchResult {
   score: number;
   path: string;
   excerpt?: string;
-  evidence: Array<{
-    kind: string;
-    build_id?: string;
-    segment_id?: string;
-    vector_space_id?: string;
-    time_span?: { start_ms: number; end_ms: number };
-  }>;
+  lexical_rank?: number;
+  semantic_rank?: number;
+  evidence: DocumentEvidenceReference[];
+}
+
+export interface DocumentEvidenceReference {
+  kind: string;
+  build_id?: string;
+  segment_id?: string;
+  vector_space_id?: string;
+  embedding_set_id?: string;
+  input_generation_id?: string;
+  input_id?: string;
+  input_kind?: string;
+  source_manifest_checksum?: string;
+  time_span?: { start_ms: number; end_ms: number };
 }
 
 export interface DocumentSearchReport {
@@ -612,60 +655,174 @@ export async function startProcessing(
   session: string,
   selector: ProcessingSelector,
   planFingerprint: string,
+  profileFingerprint: string,
   consent: boolean,
-  onJob?: (job: ProcessingJob) => void,
+  onProgress?: (event: ProcessingJobEvent) => void,
+  signal?: AbortSignal,
 ): Promise<ProcessingRun> {
   const response = await requestResponse("/api/v1/processing/jobs", session, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
     body: JSON.stringify({ selector, plan_fingerprint: planFingerprint, consent }),
+    signal,
   });
   if (!(response.headers.get("Content-Type") ?? "").startsWith("application/x-ndjson")) {
     throw new Error("The daemon returned an invalid processing stream.");
   }
-  const reader = response.body?.pipeThrough(new TextDecoderStream()).getReader();
-  if (!reader) throw new Error("The daemon returned an empty processing stream.");
-  let pending = "";
-  let job: ProcessingJob | undefined;
-  let status: ProcessingStatus | undefined;
-  let problem: Problem | undefined;
+  if (!response.body) throw new Error("The daemon returned an invalid processing stream.");
+  return readProcessingRun(response.body, selector, profileFingerprint, onProgress);
+}
+
+const maxProcessingProgressBytes = 64 * 1024;
+
+async function readProcessingRun(
+  body: ReadableStream<Uint8Array>,
+  selector: ProcessingSelector,
+  profileFingerprint: string,
+  onProgress?: (event: ProcessingJobEvent) => void,
+): Promise<ProcessingRun> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const events: ProcessingJobEvent[] = [];
+  let buffered = "";
+  let received = 0;
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      pending += value ?? "";
-      const lines = pending.split("\n");
-      pending = lines.pop() ?? "";
-      if (done && pending.trim()) lines.push(pending);
-      for (const line of lines) {
-        if ((status || problem) && !line.trim()) continue;
-        const event = JSON.parse(line) as { sequence?: number; type?: string; job?: ProcessingJob; status?: ProcessingStatus; error?: Problem; terminal?: boolean };
-        if (!job && event.sequence === 1 && event.type === "job" && event.job && !event.terminal) {
-          job = event.job;
-          onJob?.(job);
-        } else if (job && !status && !problem && event.sequence === 2 && event.terminal) {
-          if (event.type === "status" && event.status?.job_id === job.id) {
-            status = event.status;
-            job = { ...job, embedding_job_ids: status.embedding_job_ids };
-          } else if (event.type === "error" && event.error && event.job?.id === job.id) {
-            job = event.job;
-            problem = event.error;
-            onJob?.(job);
-          } else {
-            throw new Error("The daemon returned malformed processing progress.");
-          }
-        } else {
-          throw new Error("The daemon returned malformed processing progress.");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) {
+        received += value.byteLength;
+        if (received > maxProcessingProgressBytes) {
+          throw new Error("The processing progress stream is too large.");
         }
+        buffered += decoder.decode(value, { stream: true });
+        buffered = consumeProcessingLines(buffered, events, selector, profileFingerprint, onProgress);
       }
-      if (done) break;
+      if (!done) continue;
+      buffered += decoder.decode();
+      if (buffered.length > 0) {
+        acceptProcessingLine(buffered, events, selector, profileFingerprint, onProgress);
+        buffered = "";
+      }
+      if (events.length !== 2) {
+        throw new Error("The processing stream did not end after its terminal status.");
+      }
+      const first = events[0];
+      const second = events[1];
+      if (second?.error) {
+        throw new APIError(second.error.detail ?? "Document processing status is unavailable.",
+          second.error.status ?? 503, second.error.code ?? "");
+      }
+      if (!first?.job || !second?.status) {
+        throw new Error("The daemon returned malformed processing progress.");
+      }
+      onProgress?.(second);
+      return { job: { ...first.job, embedding_job_ids: second.status.embedding_job_ids }, status: second.status };
     }
-    if (problem) throw new APIError(problem.detail ?? "Document processing status is unavailable.", problem.status ?? 503, problem.code ?? "");
-    if (!job || !status) throw new Error("The processing stream did not end after its terminal status.");
-    return { job, status };
+  } catch (cause) {
+    await reader.cancel(cause).catch(() => undefined);
+    throw cause;
   } finally {
-    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+}
+
+function consumeProcessingLines(
+  value: string,
+  events: ProcessingJobEvent[],
+  selector: ProcessingSelector,
+  profileFingerprint: string,
+  onProgress?: (event: ProcessingJobEvent) => void,
+): string {
+  let newline = value.indexOf("\n");
+  while (newline >= 0) {
+    const raw = value.slice(0, newline).replace(/\r$/, "");
+    value = value.slice(newline + 1);
+    if (raw.length === 0) throw new Error("The daemon returned malformed processing progress.");
+    acceptProcessingLine(raw, events, selector, profileFingerprint, onProgress);
+    newline = value.indexOf("\n");
+  }
+  return value;
+}
+
+function acceptProcessingLine(
+  value: string,
+  events: ProcessingJobEvent[],
+  selector: ProcessingSelector,
+  profileFingerprint: string,
+  onProgress?: (event: ProcessingJobEvent) => void,
+): void {
+  if (events.length >= 2) {
+    throw new Error("The processing stream did not end after its terminal status.");
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value);
+  } catch {
+    throw new Error("The daemon returned malformed processing progress.");
+  }
+  const event = validateProcessingEvent(decoded, selector, profileFingerprint, events[0]?.job?.id);
+  events.push(event);
+  if (events.length === 1 || event.type === "error") onProgress?.(event);
+}
+
+function validateProcessingEvent(value: unknown, selector: ProcessingSelector, profileFingerprint: string, jobID?: string): ProcessingJobEvent {
+  if (!isRecord(value)) throw new Error("The daemon returned malformed processing progress.");
+  if (!jobID) {
+    if (value.sequence !== 1 || value.type !== "job" || !isProcessingJob(value.job, selector, profileFingerprint) ||
+        "status" in value || "error" in value || "terminal" in value) {
+      throw new Error("The daemon returned malformed processing progress.");
+    }
+    return value as unknown as ProcessingJobEvent;
+  }
+  const validStatus = value.type === "status" && !("job" in value) && !("error" in value) &&
+    isProcessingStatus(value.status) && value.status.job_id === jobID;
+  const validError = value.type === "error" && !("status" in value) &&
+    isProcessingJob(value.job, selector, profileFingerprint) && value.job.id === jobID && isRecord(value.error) &&
+    (value.error.status === undefined || Number.isInteger(value.error.status)) &&
+    (value.error.code === undefined || typeof value.error.code === "string") &&
+    (value.error.detail === undefined || typeof value.error.detail === "string");
+  if (value.sequence !== 2 || value.terminal !== true || (!validStatus && !validError)) {
+    throw new Error("The daemon returned malformed processing progress.");
+  }
+  return value as unknown as ProcessingJobEvent;
+}
+
+function isProcessingJob(value: unknown, selector: ProcessingSelector, profileFingerprint: string): value is ProcessingJob {
+  if (!isRecord(value)) return false;
+  return canonicalHash(value.id) && optionalCanonicalHash(value.rendition_job_id) &&
+    optionalCanonicalHash(value.attachment_id) && canonicalHashArray(value.embedding_job_ids) &&
+    canonicalHash(value.profile_fingerprint) && value.profile_fingerprint === profileFingerprint &&
+    canonicalUUID(value.content_version_id) && value.content_version_id === selector.content_version_id;
+}
+
+function isProcessingStatus(value: unknown): value is ProcessingStatus {
+  if (!isRecord(value)) return false;
+  return canonicalHash(value.job_id) && processingState(value.state) &&
+    typeof value.phase === "string" && value.phase.length > 0 &&
+    (value.failure_code === undefined || typeof value.failure_code === "string") &&
+    canonicalHashArray(value.embedding_job_ids) && Number.isInteger(value.completed_bindings) &&
+    Number(value.completed_bindings) >= 0;
+}
+
+function processingState(value: unknown): value is ProcessingState {
+  return typeof value === "string" &&
+    ["queued", "running", "retry_wait", "operator_required", "completed", "failed", "abandoned", "partial"].includes(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalHash(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+function optionalCanonicalHash(value: unknown): boolean {
+  return value === undefined || canonicalHash(value);
+}
+
+function canonicalHashArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(canonicalHash) && new Set(value).size === value.length;
 }
 
 export async function documentCoverage(
@@ -673,21 +830,168 @@ export async function documentCoverage(
   profile: string,
   vaultUID: string,
   contentVersionIDs: string[],
+  signal?: AbortSignal,
 ): Promise<CoverageReport> {
   const params = new URLSearchParams({ profile, vault_uid: vaultUID });
   for (const id of contentVersionIDs) params.append("content_version_id", id);
-  return requestJSON<CoverageReport>(`/api/v1/coverage?${params.toString()}`, session);
+  return requestJSON<CoverageReport>(`/api/v1/coverage?${params.toString()}`, session, { signal });
 }
 
 export async function documentSearch(
   session: string,
   request: DocumentSearchRequest,
 ): Promise<DocumentSearchReport> {
-  return requestJSON<DocumentSearchReport>("/api/v1/search", session, {
+  const response = await requestJSON<unknown>("/api/v1/search", session, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   });
+  return validateDocumentSearchReport(response, request);
+}
+
+function validateDocumentSearchReport(value: unknown, request: DocumentSearchRequest): DocumentSearchReport {
+  const invalid = (): never => { throw new Error("The daemon returned an invalid search response."); };
+  if (!canonicalUUID(request.fence.vault_uid) || request.fence.content_version_ids.length < 1 ||
+      request.fence.content_version_ids.length > 4096) invalid();
+  const versions = new Set<string>();
+  for (const versionID of request.fence.content_version_ids) {
+    if (!canonicalUUID(versionID) || versions.has(versionID)) invalid();
+    versions.add(versionID);
+  }
+  if (!isRecord(value)) invalid();
+  const report = value as UnknownRecord;
+  const requestedMode = request.mode || "auto";
+  const actualMode = report.actual_mode;
+  if (report.requested_mode !== requestedMode || typeof actualMode !== "string" ||
+      !["lexical", "semantic", "hybrid"].includes(actualMode) ||
+      (requestedMode !== "auto" && requestedMode !== actualMode)) invalid();
+  const limit = request.limit || 20;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Array.isArray(report.results) ||
+      report.results.length > limit) invalid();
+
+  const coverage = report.coverage;
+  if (!isRecord(coverage) || typeof coverage.binding_required !== "boolean" ||
+      !nonnegativeInteger(coverage.scoped_documents) || Number(coverage.scoped_documents) > versions.size ||
+      !nonnegativeInteger(coverage.complete_documents) ||
+      Number(coverage.complete_documents) > Number(coverage.scoped_documents) ||
+      typeof coverage.state !== "string" || !["unknown", "complete", "incomplete"].includes(coverage.state) ||
+      (coverage.state === "complete" && coverage.complete_documents !== coverage.scoped_documents)) invalid();
+  if (!Array.isArray(report.degradations) || report.degradations.some((item: unknown) => !boundedSearchIdentity(item, 128)) ||
+      typeof report.truncated !== "boolean" || !Array.isArray(report.trace) ||
+      (!request.explain && report.trace.length !== 0)) invalid();
+  const trace = report.trace as unknown[];
+  for (const rawTrace of trace) {
+    if (!isRecord(rawTrace) || !boundedSearchIdentity(rawTrace.code, 128) ||
+        !nonnegativeInteger(rawTrace.count)) invalid();
+  }
+
+  const documents = new Set<string>();
+  const lexicalRanks = new Set<number>();
+  const semanticRanks = new Set<number>();
+  const results = report.results as unknown[];
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index];
+    if (!isRecord(result) || result.vault_uid !== request.fence.vault_uid ||
+        !canonicalUUID(result.vault_uid) || typeof result.content_version_id !== "string" ||
+        !versions.has(result.content_version_id) || !canonicalUUID(result.content_version_id) ||
+        !positiveInteger(result.node_id) || result.rank !== index + 1 ||
+        typeof result.score !== "number" || !Number.isFinite(result.score) ||
+        !boundedDocumentSearchPath(result.path) ||
+        (result.excerpt !== undefined && !boundedDocumentSearchExcerpt(result.excerpt))) invalid();
+    const item = result as UnknownRecord;
+    const documentKey = String(item.content_version_id);
+    if (documents.has(documentKey)) invalid();
+    documents.add(documentKey);
+    const rawLexicalRank = item.lexical_rank === undefined ? 0 : item.lexical_rank;
+    const rawSemanticRank = item.semantic_rank === undefined ? 0 : item.semantic_rank;
+    if (!boundedLaneRank(rawLexicalRank) || !boundedLaneRank(rawSemanticRank)) invalid();
+    const lexicalRank = Number(rawLexicalRank);
+    const semanticRank = Number(rawSemanticRank);
+    if (
+        (actualMode === "lexical" && (lexicalRank === 0 || semanticRank !== 0)) ||
+        (actualMode === "semantic" && (semanticRank === 0 || lexicalRank !== 0)) ||
+        (actualMode === "hybrid" && lexicalRank === 0 && semanticRank === 0) ||
+        (lexicalRank > 0 && lexicalRanks.has(lexicalRank)) ||
+        (semanticRank > 0 && semanticRanks.has(semanticRank))) invalid();
+    if (lexicalRank > 0) lexicalRanks.add(lexicalRank);
+    if (semanticRank > 0) semanticRanks.add(semanticRank);
+    if (!Array.isArray(item.evidence) || item.evidence.length < 1 || item.evidence.length > 32) invalid();
+    const evidenceItems = item.evidence as unknown[];
+    const evidenceIdentities = new Set<string>();
+    for (const evidence of evidenceItems) {
+      if (!isRecord(evidence) || !validateDocumentEvidenceIdentity(evidence)) invalid();
+      const evidenceItem = evidence as UnknownRecord;
+      const identity = JSON.stringify([evidenceItem.kind, evidenceItem.build_id ?? "", evidenceItem.segment_id ?? "",
+        evidenceItem.vector_space_id ?? "", evidenceItem.embedding_set_id ?? "", evidenceItem.input_generation_id ?? "",
+        evidenceItem.input_id ?? "", evidenceItem.input_kind ?? "", evidenceItem.source_manifest_checksum ?? "",
+        isRecord(evidenceItem.time_span) ? evidenceItem.time_span.start_ms : null,
+        isRecord(evidenceItem.time_span) ? evidenceItem.time_span.end_ms : null]);
+      if (evidenceIdentities.has(identity)) invalid();
+      evidenceIdentities.add(identity);
+    }
+  }
+  return value as unknown as DocumentSearchReport;
+}
+
+function validateDocumentEvidenceIdentity(evidence: UnknownRecord): boolean {
+  const optionalFields = ["build_id", "segment_id", "vector_space_id", "embedding_set_id",
+    "input_generation_id", "input_id", "input_kind", "source_manifest_checksum"];
+  if (typeof evidence.kind !== "string" || optionalFields.some((field) =>
+    evidence[field] !== undefined && typeof evidence[field] !== "string")) return false;
+  if (evidence.time_span !== undefined && (!isRecord(evidence.time_span) ||
+      !nonnegativeInteger(evidence.time_span.start_ms) || !positiveInteger(evidence.time_span.end_ms) ||
+      Number(evidence.time_span.end_ms) <= Number(evidence.time_span.start_ms))) return false;
+  const field = (name: string): string => String(evidence[name] ?? "");
+  const embeddingEmpty = ["vector_space_id", "embedding_set_id", "input_generation_id", "input_id",
+    "input_kind", "source_manifest_checksum"].every((name) => field(name) === "");
+  const renditionEmpty = field("build_id") === "" && field("segment_id") === "";
+  if (evidence.kind === "node_name" || evidence.kind === "content_blob") {
+    return embeddingEmpty && renditionEmpty && evidence.time_span === undefined;
+  }
+  if (evidence.kind === "rendition_segment") {
+    return embeddingEmpty && canonicalHash(field("build_id")) && boundedSearchIdentity(field("segment_id"), 1024);
+  }
+  if (evidence.kind === "embedding") {
+    const renditionChunk = field("input_kind") === "rendition_chunk";
+    return field("segment_id") === "" &&
+      (field("build_id") === "" || (renditionChunk && canonicalHash(field("build_id")))) &&
+      (evidence.time_span === undefined || (renditionChunk && canonicalHash(field("build_id")))) &&
+      canonicalHash(field("vector_space_id")) && canonicalHash(field("embedding_set_id")) &&
+      canonicalHash(field("input_generation_id")) && boundedSearchIdentity(field("input_id"), 1024) &&
+      ["rendition_chunk", "original_file"].includes(field("input_kind")) &&
+      canonicalHash(field("source_manifest_checksum"));
+  }
+  return false;
+}
+
+function canonicalUUID(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+
+function boundedSearchIdentity(value: unknown, maximum: number): value is string {
+  return typeof value === "string" && value.length > 0 && utf8ToBytes(value).length <= maximum;
+}
+
+function boundedDocumentSearchPath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 2 || utf8ToBytes(value).length > 16 * 1024 ||
+      !value.startsWith("/") || value.endsWith("/")) return false;
+  return value.slice(1).split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function boundedDocumentSearchExcerpt(value: unknown): value is string {
+  return typeof value === "string" && Array.from(value).length <= 512 && utf8ToBytes(value).length <= 4 * 512;
+}
+
+function positiveInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function nonnegativeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function boundedLaneRank(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1000;
 }
 
 export async function renditionArtifact(session: string, attachmentID: string): Promise<RenditionArtifact> {
@@ -713,10 +1017,12 @@ export async function renditionArtifact(session: string, attachmentID: string): 
       !["complete", "partial", "degraded_provenance"].includes(transportCompleteness)) {
     throw new Error("The daemon returned invalid rendition identities.");
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!Number.isSafeInteger(declaredSize) || declaredSize < 1 || declaredSize !== bytes.length || bytes.length > 64 * 1024 * 1024) {
+  const maximumSize = 64 * 1024 * 1024;
+  if (!Number.isSafeInteger(declaredSize) || declaredSize < 1 || declaredSize > maximumSize) {
+    await response.body?.cancel();
     throw new Error("The daemon returned an invalid rendition size.");
   }
+  const bytes = await readBoundedRendition(response, declaredSize);
   if (bytesToHex(sha256(bytes)) !== blobHash) throw new Error("The rendition transport checksum does not match.");
   const artifact = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (!artifact.startsWith("---\n")) throw new Error("The rendition is missing canonical frontmatter.");
@@ -736,6 +1042,51 @@ export async function renditionArtifact(session: string, attachmentID: string): 
   return { attachmentID, buildID, artifactID, contentVersionID, blobHash, profileFingerprint,
     frontmatter, markdown, completeness: metadata.completeness, warnings, source: metadata.source,
     document: metadata.document, navigation: metadata.navigation };
+}
+
+async function readBoundedRendition(response: Response, declaredSize: number): Promise<Uint8Array> {
+  if (!response.body) throw new Error("The daemon returned an empty rendition body.");
+  let reader: ReadableStreamBYOBReader;
+  try {
+    reader = response.body.getReader({ mode: "byob" });
+  } catch (error) {
+    await response.body.cancel(error);
+    throw new Error("The daemon returned a rendition stream that cannot be read safely.");
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const remaining = declaredSize + 1 - received;
+      const { done, value } = await reader.read(new Uint8Array(Math.min(64 * 1024, remaining)));
+      if (value && value.byteLength > 0) {
+        received += value.byteLength;
+      }
+      if (received > declaredSize) {
+        await reader.cancel("rendition exceeds its declared size");
+        throw new Error("The daemon returned an invalid rendition size.");
+      }
+      if (value && value.byteLength > 0) chunks.push(value);
+      if (done) break;
+    }
+  } catch (error) {
+    try {
+      await reader.cancel(error);
+    } catch {
+      // Preserve the integrity or transport error that caused cancellation.
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (received !== declaredSize) throw new Error("The daemon returned an invalid rendition size.");
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 type UnknownRecord = Record<string, unknown>;

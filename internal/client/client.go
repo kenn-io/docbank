@@ -221,15 +221,34 @@ func (s *ContentStream) ContentDigest() string {
 // error is returned, so callers publishing a file must write to private staging
 // and publish only after this method succeeds.
 func (s *ContentStream) CopyVerified(w io.Writer) (int64, error) {
+	if s == nil {
+		return 0, errors.New("copying content: nil stream")
+	}
+	return s.copyVerified(w, s.Size)
+}
+
+func (s *ContentStream) copyVerified(w io.Writer, maxBytes int64) (int64, error) {
 	if s == nil || s.ReadCloser == nil {
 		return 0, errors.New("copying content: nil stream")
 	}
+	if w == nil {
+		return 0, errors.New("copying content: nil destination")
+	}
+	if s.Size < 0 || maxBytes < 0 || s.Size > maxBytes || s.Size == math.MaxInt64 {
+		_ = s.Close()
+		return 0, integrityErrorf("verifying content: declared size %d exceeds bounded limit %d",
+			s.Size, maxBytes)
+	}
 	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(w, hash), s)
+	written, err := io.Copy(io.MultiWriter(w, hash), io.LimitReader(s, s.Size+1))
 	if err != nil {
+		_ = s.Close()
 		return written, fmt.Errorf("copying content: %w", err)
 	}
 	if written != s.Size {
+		if written > s.Size {
+			_ = s.Close()
+		}
 		return written, integrityErrorf("verifying content: received %d bytes, expected %d",
 			written, s.Size)
 	}
@@ -846,7 +865,7 @@ func (c *Client) content(ctx context.Context, path, identity string) (*ContentSt
 		return nil, decodeError(resp)
 	}
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
-	if err != nil || size < 0 {
+	if err != nil || size < 0 || size == math.MaxInt64 {
 		_ = resp.Body.Close()
 		return nil, integrityErrorf("%s returned invalid %s %q",
 			identity, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))

@@ -240,11 +240,11 @@ func (b *tuiDaemonBackend) SearchDocuments(
 	})
 }
 
-func (b *tuiDaemonBackend) StartProcessing(
-	ctx context.Context, request api.StartProcessingRequest,
-) (api.ProcessingJob, error) {
-	return withTUIMutationClient(ctx, b, func(c *client.Client) (api.ProcessingJob, error) {
-		return c.StartProcessing(ctx, request)
+func (b *tuiDaemonBackend) StartProcessingStream(
+	ctx context.Context, request api.StartProcessingRequest, profileFingerprint string,
+) (doctui.ProcessingEventStream, error) {
+	return withTUIMutationClient(ctx, b, func(c *client.Client) (doctui.ProcessingEventStream, error) {
+		return c.StartProcessingStream(ctx, request, profileFingerprint)
 	})
 }
 

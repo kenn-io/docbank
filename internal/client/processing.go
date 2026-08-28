@@ -10,11 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -25,6 +28,16 @@ var (
 	ErrProcessingPlanChanged = errors.New("document processing plan changed")
 	ErrProcessingConsent     = errors.New("document processing consent is required")
 )
+
+const (
+	maxProcessingEventStreamBytes int64 = 64 << 10
+	maxRenditionResponseBytes     int64 = 64 << 20
+	maxDocumentSearchPathBytes          = 16 << 10
+	maxDocumentSearchExcerptRunes       = 512
+	maxDocumentSearchExcerptBytes       = 4 * maxDocumentSearchExcerptRunes
+)
+
+var errProcessingStreamTooLarge = errors.New("processing stream is too large")
 
 func (c *Client) ProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error) {
 	var result []api.ProcessingProfileSummary
@@ -40,15 +53,52 @@ func (c *Client) PlanProcessing(ctx context.Context, request api.ProcessingPlanR
 
 // StartProcessing returns the durable job alongside any later execution or stream
 // error, so callers can query its status without submitting another job.
-func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessingRequest) (api.ProcessingJob, error) {
+func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessingRequest, profileFingerprint string) (api.ProcessingJob, error) {
+	stream, err := c.StartProcessingStream(ctx, request, profileFingerprint)
+	if err != nil {
+		return api.ProcessingJob{}, err
+	}
+	defer func() { _ = stream.Close() }()
+	first, err := stream.Next()
+	if err != nil {
+		return api.ProcessingJob{}, err
+	}
+	terminal, err := stream.Next()
+	if terminal.Job != nil {
+		first.Job = terminal.Job
+	} else if terminal.Status != nil {
+		first.Job.EmbeddingJobIDs = terminal.Status.EmbeddingJobIDs
+	}
+	return *first.Job, err
+}
+
+// ProcessingEventStream incrementally validates the exact two-event processing
+// stream. The durable job is returned before terminal delivery; the terminal
+// event is returned only after end-of-stream has been verified.
+type ProcessingEventStream struct {
+	body               io.ReadCloser
+	decoder            *jsontext.Decoder
+	bounded            *boundedReadCloser
+	sequence           int
+	jobID              string
+	contentVersionID   string
+	profileFingerprint string
+	done               bool
+}
+
+// StartProcessingStream opens one cancellable processing progress stream.
+// profileFingerprint is the profile fingerprint from the reviewed plan.
+func (c *Client) StartProcessingStream(ctx context.Context,
+	request api.StartProcessingRequest, profileFingerprint string,
+) (*ProcessingEventStream, error) {
 	body, err := marshalJSONRequest(request)
 	if err != nil {
-		return api.ProcessingJob{}, fmt.Errorf("encoding processing request: %w", err)
+		return nil, fmt.Errorf("encoding processing request: %w", err)
 	}
 	const path = "/api/v1/processing/jobs"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
 	if err != nil {
-		return api.ProcessingJob{}, fmt.Errorf("building processing request: %w", err)
+		return nil, fmt.Errorf("building processing request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
@@ -57,60 +107,159 @@ func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessin
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return api.ProcessingJob{}, &transportError{err: fmt.Errorf("starting processing: %w", err)}
+		return nil, &transportError{err: fmt.Errorf("starting processing: %w", err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return api.ProcessingJob{}, decodeError(resp)
+		defer func() { _ = resp.Body.Close() }()
+		return nil, decodeError(resp)
 	}
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-ndjson" {
-		return api.ProcessingJob{}, errors.New("processing stream returned an invalid content type")
+		_ = resp.Body.Close()
+		return nil, errors.New("processing stream returned an invalid content type")
 	}
-	decoder := jsontext.NewDecoder(resp.Body)
-	var first, second api.ProcessingJobEvent
-	if err := json.UnmarshalDecode(decoder, &first, json.RejectUnknownMembers(true)); err != nil {
-		return api.ProcessingJob{}, fmt.Errorf("decoding processing job event: %w", err)
+	bounded := &boundedReadCloser{body: resp.Body, remaining: maxProcessingEventStreamBytes}
+	return &ProcessingEventStream{body: bounded, decoder: jsontext.NewDecoder(bounded), bounded: bounded,
+		contentVersionID: request.Selector.ContentVersionID, profileFingerprint: profileFingerprint}, nil
+}
+
+// Next returns the next strictly validated processing event.
+func (stream *ProcessingEventStream) Next() (api.ProcessingJobEvent, error) {
+	if stream == nil {
+		return api.ProcessingJobEvent{}, errors.New("processing stream is unavailable")
 	}
-	if first.Sequence != 1 || first.Type != "job" || first.Job == nil || first.Status != nil || first.Error != nil || first.Terminal {
-		return api.ProcessingJob{}, errors.New("processing stream returned malformed job event")
+	if stream.done {
+		return api.ProcessingJobEvent{}, io.EOF
 	}
-	if err := json.UnmarshalDecode(decoder, &second, json.RejectUnknownMembers(true)); err != nil {
-		return *first.Job, fmt.Errorf("decoding processing status event: %w", err)
+	if stream.body == nil || stream.decoder == nil {
+		return api.ProcessingJobEvent{}, errors.New("processing stream is unavailable")
 	}
-	if second.Sequence != 2 || !second.Terminal {
-		return *first.Job, errors.New("processing stream returned malformed terminal event")
+	var event api.ProcessingJobEvent
+	if err := json.UnmarshalDecode(stream.decoder, &event, json.RejectUnknownMembers(true)); err != nil {
+		_ = stream.Close()
+		if stream.bounded.exceeded {
+			return api.ProcessingJobEvent{}, errProcessingStreamTooLarge
+		}
+		if stream.sequence == 0 {
+			return api.ProcessingJobEvent{}, fmt.Errorf("decoding processing job event: %w", err)
+		}
+		return api.ProcessingJobEvent{}, fmt.Errorf("decoding processing status event: %w", err)
 	}
-	switch second.Type {
+	if stream.bounded.exceeded {
+		_ = stream.Close()
+		return api.ProcessingJobEvent{}, errProcessingStreamTooLarge
+	}
+	if stream.sequence == 0 {
+		if event.Sequence != 1 || event.Type != "job" || event.Job == nil || event.Status != nil || event.Error != nil || event.Terminal ||
+			!stream.validJob(*event.Job) {
+			_ = stream.Close()
+			return api.ProcessingJobEvent{}, errors.New("processing stream returned malformed job event")
+		}
+		stream.sequence, stream.jobID = 1, event.Job.ID
+		return event, nil
+	}
+	if event.Sequence != 2 || !event.Terminal {
+		_ = stream.Close()
+		return api.ProcessingJobEvent{}, errors.New("processing stream returned malformed terminal event")
+	}
+	switch event.Type {
 	case "status":
-		if second.Job != nil || second.Status == nil || second.Error != nil || second.Status.JobID != first.Job.ID {
-			return *first.Job, errors.New("processing stream returned malformed terminal status")
+		if event.Job != nil || event.Status == nil || event.Error != nil || event.Status.JobID != stream.jobID ||
+			!validProcessingEmbeddingIDs(event.Status.EmbeddingJobIDs) {
+			_ = stream.Close()
+			return api.ProcessingJobEvent{}, errors.New("processing stream returned malformed terminal status")
 		}
-		first.Job.EmbeddingJobIDs = second.Status.EmbeddingJobIDs
 	case "error":
-		if second.Job == nil || second.Status != nil || second.Error == nil || second.Job.ID != first.Job.ID {
-			return *first.Job, errors.New("processing stream returned malformed terminal error")
+		if event.Job == nil || event.Status != nil || event.Error == nil || event.Job.ID != stream.jobID ||
+			!stream.validJob(*event.Job) {
+			_ = stream.Close()
+			return api.ProcessingJobEvent{}, errors.New("processing stream returned malformed terminal error")
 		}
-		first.Job = second.Job
 	default:
-		return *first.Job, errors.New("processing stream returned an unknown terminal event")
+		_ = stream.Close()
+		return api.ProcessingJobEvent{}, errors.New("processing stream returned an unknown terminal event")
 	}
 	var extra api.ProcessingJobEvent
-	if err := json.UnmarshalDecode(decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
-		return *first.Job, errors.New("processing stream continued after its terminal event")
-	}
-	if second.Error != nil {
-		return *first.Job, apiProblemError(*second.Error)
-	}
-	switch second.Status.State {
-	case "failed", "abandoned", "operator_required":
-		cause := codeToTypedErr[second.Status.FailureCode]
-		if cause == nil {
-			cause = fmt.Errorf("document processing %s: %s", second.Status.State, second.Status.FailureCode)
+	if err := json.UnmarshalDecode(stream.decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
+		_ = stream.Close()
+		if stream.bounded.exceeded {
+			return api.ProcessingJobEvent{}, errProcessingStreamTooLarge
 		}
-		return *first.Job, &problemError{code: second.Status.FailureCode, err: cause}
+		return api.ProcessingJobEvent{}, errors.New("processing stream continued after its terminal status")
 	}
-	return *first.Job, nil
+	stream.sequence, stream.done = 2, true
+	if err := stream.Close(); err != nil {
+		return event, fmt.Errorf("closing processing stream: %w", err)
+	}
+	if event.Error != nil {
+		return event, apiProblemError(*event.Error)
+	}
+	switch event.Status.State {
+	case "failed", "abandoned", "operator_required":
+		cause := codeToTypedErr[event.Status.FailureCode]
+		if cause == nil {
+			cause = fmt.Errorf("document processing %s: %s", event.Status.State, event.Status.FailureCode)
+		}
+		return event, &problemError{code: event.Status.FailureCode, err: cause}
+	}
+	return event, nil
+}
+
+func (stream *ProcessingEventStream) validJob(job api.ProcessingJob) bool {
+	return validSHA256Hex(job.ID) && validUUIDv4(job.ContentVersionID) &&
+		job.ContentVersionID == stream.contentVersionID &&
+		validSHA256Hex(job.ProfileFingerprint) && job.ProfileFingerprint == stream.profileFingerprint &&
+		(job.RenditionJobID == "" || validSHA256Hex(job.RenditionJobID)) &&
+		(job.AttachmentID == "" || validSHA256Hex(job.AttachmentID)) &&
+		validProcessingEmbeddingIDs(job.EmbeddingJobIDs)
+}
+
+func validProcessingEmbeddingIDs(ids []string) bool {
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if !validSHA256Hex(id) {
+			return false
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
+}
+
+type boundedReadCloser struct {
+	body      io.ReadCloser
+	remaining int64
+	exceeded  bool
+}
+
+func (reader *boundedReadCloser) Read(p []byte) (int, error) {
+	if reader.exceeded {
+		return 0, errProcessingStreamTooLarge
+	}
+	if int64(len(p)) > reader.remaining+1 {
+		p = p[:reader.remaining+1]
+	}
+	n, err := reader.body.Read(p)
+	reader.remaining -= int64(n)
+	if reader.remaining < 0 {
+		reader.exceeded = true
+		return n, errProcessingStreamTooLarge
+	}
+	return n, err
+}
+
+func (reader *boundedReadCloser) Close() error { return reader.body.Close() }
+
+// Close cancels further reads and releases the response body.
+func (stream *ProcessingEventStream) Close() error {
+	if stream == nil || stream.body == nil {
+		return nil
+	}
+	body := stream.body
+	stream.body = nil
+	return body.Close()
 }
 
 func (c *Client) GrantProcessingConsent(ctx context.Context,
@@ -208,8 +357,196 @@ func (c *Client) DocumentCoverage(ctx context.Context, profile string,
 
 func (c *Client) SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	var result api.DocumentSearchReport
-	err := c.do(ctx, http.MethodPost, "/api/v1/search", nil, request, &result)
-	return result, err
+	if err := c.do(ctx, http.MethodPost, "/api/v1/search", nil, request, &result); err != nil {
+		return api.DocumentSearchReport{}, err
+	}
+	if err := validateDocumentSearchReport(request, result); err != nil {
+		return api.DocumentSearchReport{}, fmt.Errorf("search response is invalid: %w", err)
+	}
+	return result, nil
+}
+
+func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
+	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
+		len(request.Fence.ContentVersionIDs) > 4096 {
+		return errors.New("request fence identity is invalid")
+	}
+	versions := make(map[string]struct{}, len(request.Fence.ContentVersionIDs))
+	for _, versionID := range request.Fence.ContentVersionIDs {
+		if !validUUIDv4(versionID) {
+			return errors.New("request fence version identity is invalid")
+		}
+		if _, duplicate := versions[versionID]; duplicate {
+			return errors.New("request fence contains duplicate versions")
+		}
+		versions[versionID] = struct{}{}
+	}
+	requestedMode := request.Mode
+	if requestedMode == "" {
+		requestedMode = "auto"
+	}
+	if report.RequestedMode != requestedMode || !validDocumentSearchActualMode(requestedMode, report.ActualMode) {
+		return errors.New("retrieval mode authority is inconsistent")
+	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = 20
+	}
+	if limit < 1 || limit > 100 || len(report.Results) > limit {
+		return errors.New("result count exceeds the requested bound")
+	}
+	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
+		report.Coverage.CompleteDocuments < 0 ||
+		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
+		(report.Coverage.State != "unknown" && report.Coverage.State != "complete" &&
+			report.Coverage.State != "incomplete") ||
+		report.Coverage.State == "complete" &&
+			report.Coverage.CompleteDocuments != report.Coverage.ScopedDocuments {
+		return errors.New("coverage authority is inconsistent")
+	}
+	for _, degradation := range report.Degradations {
+		if !validBoundedSearchIdentity(degradation, 128) {
+			return errors.New("degradation identity is invalid")
+		}
+	}
+	if !request.Explain && len(report.Trace) != 0 {
+		return errors.New("unrequested retrieval trace was returned")
+	}
+	for _, event := range report.Trace {
+		if !validBoundedSearchIdentity(event.Code, 128) || event.Count < 0 {
+			return errors.New("retrieval trace is invalid")
+		}
+	}
+	seenDocuments := make(map[string]struct{}, len(report.Results))
+	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
+	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
+	for index, result := range report.Results {
+		if result.VaultUID != request.Fence.VaultUID || !validUUIDv4(result.VaultUID) {
+			return fmt.Errorf("result %d escaped the vault fence", index)
+		}
+		if _, allowed := versions[result.ContentVersionID]; !allowed || !validUUIDv4(result.ContentVersionID) {
+			return fmt.Errorf("result %d escaped the content-version fence", index)
+		}
+		if result.NodeID < 1 || result.Rank != index+1 || math.IsNaN(result.Score) || math.IsInf(result.Score, 0) {
+			return fmt.Errorf("result %d has invalid rank or document identity", index)
+		}
+		if !validDocumentSearchPath(result.Path) || !validDocumentSearchExcerpt(result.Excerpt) {
+			return fmt.Errorf("result %d has invalid path or excerpt", index)
+		}
+		if _, duplicate := seenDocuments[result.ContentVersionID]; duplicate {
+			return fmt.Errorf("result %d duplicates a document identity", index)
+		}
+		seenDocuments[result.ContentVersionID] = struct{}{}
+		if err := validateDocumentLaneRanks(report.ActualMode, result, seenLexicalRanks, seenSemanticRanks); err != nil {
+			return fmt.Errorf("result %d: %w", index, err)
+		}
+		if len(result.Evidence) < 1 || len(result.Evidence) > 32 {
+			return fmt.Errorf("result %d has invalid evidence count", index)
+		}
+		type evidenceIdentity struct {
+			reference api.DocumentEvidenceReference
+			span      api.MediaTimeSpan
+		}
+		seenEvidence := make(map[evidenceIdentity]struct{}, len(result.Evidence))
+		for evidenceIndex, evidence := range result.Evidence {
+			identity := evidenceIdentity{reference: evidence}
+			if evidence.TimeSpan != nil {
+				identity.span = *evidence.TimeSpan
+				identity.reference.TimeSpan = nil
+			}
+			if _, duplicate := seenEvidence[identity]; duplicate {
+				return fmt.Errorf("result %d has duplicate evidence", index)
+			}
+			seenEvidence[identity] = struct{}{}
+			if err := validateDocumentEvidenceIdentity(evidence); err != nil {
+				return fmt.Errorf("result %d evidence %d: %w", index, evidenceIndex, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validDocumentSearchPath(value string) bool {
+	return len(value) >= 2 && len(value) <= maxDocumentSearchPathBytes && utf8.ValidString(value) &&
+		strings.HasPrefix(value, "/") && pathpkg.Clean(value) == value
+}
+
+func validDocumentSearchExcerpt(value string) bool {
+	return utf8.ValidString(value) && len(value) <= maxDocumentSearchExcerptBytes &&
+		utf8.RuneCountInString(value) <= maxDocumentSearchExcerptRunes
+}
+
+func validDocumentSearchActualMode(requested, actual string) bool {
+	if actual != "lexical" && actual != "semantic" && actual != "hybrid" {
+		return false
+	}
+	return requested == "auto" || requested == actual
+}
+
+func validateDocumentLaneRanks(actualMode string, result api.DocumentSearchResult,
+	seenLexical, seenSemantic map[int]struct{},
+) error {
+	if result.LexicalRank < 0 || result.LexicalRank > document.MaxRetrievalCandidateLimit ||
+		result.SemanticRank < 0 || result.SemanticRank > document.MaxRetrievalCandidateLimit {
+		return errors.New("lane rank is outside its bound")
+	}
+	if actualMode == "lexical" && (result.LexicalRank == 0 || result.SemanticRank != 0) ||
+		actualMode == "semantic" && (result.SemanticRank == 0 || result.LexicalRank != 0) ||
+		actualMode == "hybrid" && result.LexicalRank == 0 && result.SemanticRank == 0 {
+		return errors.New("lane ranks are inconsistent with the actual mode")
+	}
+	for _, lane := range []struct {
+		rank int
+		seen map[int]struct{}
+	}{{result.LexicalRank, seenLexical}, {result.SemanticRank, seenSemantic}} {
+		rank, seen := lane.rank, lane.seen
+		if rank == 0 {
+			continue
+		}
+		if _, duplicate := seen[rank]; duplicate {
+			return errors.New("lane rank is duplicated")
+		}
+		seen[rank] = struct{}{}
+	}
+	return nil
+}
+
+func validateDocumentEvidenceIdentity(evidence api.DocumentEvidenceReference) error {
+	if evidence.TimeSpan != nil && (evidence.TimeSpan.StartMS < 0 || evidence.TimeSpan.EndMS <= evidence.TimeSpan.StartMS) {
+		return errors.New("media evidence interval is invalid")
+	}
+	embeddingEmpty := evidence.VectorSpaceID == "" && evidence.EmbeddingSetID == "" &&
+		evidence.InputGenerationID == "" && evidence.InputID == "" && evidence.InputKind == "" &&
+		evidence.SourceManifestChecksum == ""
+	renditionEmpty := evidence.BuildID == "" && evidence.SegmentID == ""
+	switch evidence.Kind {
+	case "node_name", "content_blob":
+		if !embeddingEmpty || !renditionEmpty || evidence.TimeSpan != nil {
+			return errors.New("metadata evidence carries derivative identity")
+		}
+	case "rendition_segment":
+		if !embeddingEmpty || !validSHA256Hex(evidence.BuildID) ||
+			!validBoundedSearchIdentity(evidence.SegmentID, 1024) {
+			return errors.New("rendition evidence identity is incomplete or inconsistent")
+		}
+	case "embedding":
+		if evidence.SegmentID != "" || !validSHA256Hex(evidence.VectorSpaceID) ||
+			!validSHA256Hex(evidence.EmbeddingSetID) || !validSHA256Hex(evidence.InputGenerationID) ||
+			!validBoundedSearchIdentity(evidence.InputID, 1024) ||
+			(evidence.InputKind != "rendition_chunk" && evidence.InputKind != "original_file") ||
+			(evidence.InputKind == "rendition_chunk" && !validSHA256Hex(evidence.BuildID)) ||
+			(evidence.InputKind == "original_file" && (evidence.BuildID != "" || evidence.TimeSpan != nil)) ||
+			!validSHA256Hex(evidence.SourceManifestChecksum) {
+			return errors.New("embedding evidence identity is incomplete or inconsistent")
+		}
+	default:
+		return errors.New("evidence kind is unrecognized")
+	}
+	return nil
+}
+
+func validBoundedSearchIdentity(value string, maximum int) bool {
+	return value != "" && len(value) <= maximum && utf8.ValidString(value)
 }
 
 // RenditionStream carries the immutable rendition and source identities that
@@ -224,6 +561,7 @@ type RenditionStream struct {
 	Completeness       string
 	Warnings           []string
 	FrontMatter        document.RenditionFrontMatterV1
+	maxBytes           int64
 }
 
 // RenditionRangeStream is a verified byte range of the complete immutable
@@ -250,13 +588,23 @@ func (stream *RenditionRangeStream) CopyVerified(w io.Writer) (int64, error) {
 	if stream == nil || stream.ReadCloser == nil || w == nil {
 		return 0, errors.New("copying rendition range: nil stream or destination")
 	}
+	expected := stream.End - stream.Start
+	if expected < 1 || expected == math.MaxInt64 {
+		_ = stream.Close()
+		return 0, integrityErrorf("verifying rendition range: invalid bounded size %d", expected)
+	}
+	var buffered bytes.Buffer
+	buffered.Grow(int(expected))
 	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(w, hash), stream)
+	written, err := io.Copy(io.MultiWriter(&buffered, hash), io.LimitReader(stream, expected+1))
 	if err != nil {
+		_ = stream.Close()
 		return written, fmt.Errorf("copying rendition range: %w", err)
 	}
-	expected := stream.End - stream.Start
-	if expected < 1 || written != expected {
+	if written != expected {
+		if written > expected {
+			_ = stream.Close()
+		}
 		return written, integrityErrorf("verifying rendition range: received %d bytes, expected %d", written, expected)
 	}
 	wantDigest := "sha-256=:" + base64.StdEncoding.EncodeToString(hash.Sum(nil)) + ":"
@@ -264,7 +612,11 @@ func (stream *RenditionRangeStream) CopyVerified(w io.Writer) (int64, error) {
 		return written, integrityErrorf("verifying rendition range: terminal Content-Digest %q, expected %q",
 			got, wantDigest)
 	}
-	return written, nil
+	published, err := io.Copy(w, &buffered)
+	if err != nil {
+		return published, fmt.Errorf("publishing verified rendition range: %w", err)
+	}
+	return published, nil
 }
 
 // CopyVerified validates the complete transport and the retained Markdown's
@@ -277,12 +629,17 @@ func (stream *RenditionStream) CopyVerified(w io.Writer) (int64, error) {
 	if w == nil {
 		return 0, errors.New("copying rendition: nil destination")
 	}
-	if stream.Size < 1 || stream.Size > 64<<20 {
+	maxBytes := stream.maxBytes
+	if maxBytes == 0 {
+		maxBytes = maxRenditionResponseBytes
+	}
+	if stream.Size < 1 || stream.Size > maxBytes {
+		_ = stream.Close()
 		return 0, integrityErrorf("verifying rendition: invalid bounded size %d", stream.Size)
 	}
 	var buffered bytes.Buffer
 	buffered.Grow(int(stream.Size))
-	written, err := stream.ContentStream.CopyVerified(&buffered)
+	written, err := stream.copyVerified(&buffered, maxBytes)
 	if err != nil {
 		return written, err
 	}
@@ -312,7 +669,7 @@ func (c *Client) Rendition(ctx context.Context, attachmentID string, maxBytes in
 	}
 	path := "/api/v1/renditions/" + attachmentID
 	if maxBytes != 0 {
-		if maxBytes < 1 || maxBytes > 64<<20 {
+		if maxBytes < 1 || maxBytes > maxRenditionResponseBytes {
 			return nil, errors.New("rendition max bytes must be between 1 and 67108864")
 		}
 		path += "?max_bytes=" + strconv.FormatInt(maxBytes, 10)
@@ -338,7 +695,7 @@ func (c *Client) Rendition(ctx context.Context, attachmentID string, maxBytes in
 // RenditionForSelector reads the active rendition for one exact immutable
 // source selector. The daemon resolves the live attachment internally.
 func (c *Client) RenditionForSelector(ctx context.Context, selector api.ProcessingSelector, maxBytes int64) (*RenditionStream, error) {
-	if maxBytes < 1 || maxBytes > 64<<20 {
+	if maxBytes < 1 || maxBytes > maxRenditionResponseBytes {
 		return nil, errors.New("rendition max bytes must be between 1 and 67108864")
 	}
 	body, err := marshalJSONRequest(api.RenditionSelectorRequest{Selector: selector, MaxBytes: maxBytes})
@@ -392,9 +749,11 @@ func decodeRenditionResponse(
 	if err != nil {
 		return nil, integrityErrorf("rendition returned invalid metadata: %v", err)
 	}
+	if maxBytes == 0 {
+		maxBytes = maxRenditionResponseBytes
+	}
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
-	if err != nil || size < 0 || (expectedAttachmentID == "" && size == 0) ||
-		(maxBytes != 0 && size > maxBytes) {
+	if err != nil || size < 1 || size > maxBytes {
 		return nil, integrityErrorf("rendition returned invalid size %q", resp.Header.Get(api.BlobSizeHeader))
 	}
 	hash, versionID := resp.Header.Get(api.BlobHashHeader), resp.Header.Get(api.ContentVersionHeader)
@@ -404,7 +763,7 @@ func decodeRenditionResponse(
 	return &RenditionStream{ContentStream: &ContentStream{ReadCloser: resp.Body,
 		VersionID: versionID, BlobHash: hash, Size: size, trailer: resp.Trailer},
 		AttachmentID: attachmentID, BuildID: buildID, ArtifactID: artifactID,
-		ProfileFingerprint: profileFingerprint, Completeness: completeness, Warnings: warnings}, nil
+		ProfileFingerprint: profileFingerprint, Completeness: completeness, Warnings: warnings, maxBytes: maxBytes}, nil
 }
 
 func (c *Client) RenditionRange(ctx context.Context, attachmentID string,
