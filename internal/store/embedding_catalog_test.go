@@ -223,6 +223,26 @@ func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
 	assert.False(t, found, "the unexpired resumed lease must survive daemon restart")
 }
 
+func TestEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	firstRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-first")
+	secondRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-second")
+	first, err := s.EnqueueEmbeddingJob(t.Context(), firstRequest)
+	require.NoError(t, err)
+	second, err := s.EnqueueEmbeddingJob(t.Context(), secondRequest)
+	require.NoError(t, err)
+
+	claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), second.ID,
+		"target-worker", time.Now().UTC(), 5*time.Minute, []string{secondRequest.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, second.ID, claim.AttemptID)
+	require.Equal(t, secondRequest.InputGeneration.ID, work.InputGeneration.ID)
+	firstStatus, err := s.EmbeddingJobByID(t.Context(), first.ID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", firstStatus.State)
+}
+
 func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testing.T) {
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint,

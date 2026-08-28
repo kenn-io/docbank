@@ -51,6 +51,11 @@ type embeddingWorkerCatalog interface {
 	FailEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, code store.EmbeddingFailureCode, receipt EmbeddingAttemptReceipt, at time.Time) error
 }
 
+type targetedEmbeddingWorkerCatalog interface {
+	ClaimEmbeddingWork(ctx context.Context, jobID, owner string, at time.Time,
+		lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
+}
+
 type embeddingWorkerAuthority interface {
 	RecordRenditionBlob(ctx context.Context, hash string, size int64, physical store.BlobPhysical) error
 	StageEmbeddingSetWithLease(ctx context.Context, record store.EmbeddingSetRecord, rootID string, fencingToken int64, at time.Time) error
@@ -150,6 +155,24 @@ func (registry *EmbeddingRuntimeRegistry) Prepare(ctx context.Context, work Embe
 		execution.Classify = runtime.Classify
 	}
 	return execution, err
+}
+
+// ResolveQueryEncoder implements retrieval.QueryEncoderResolver without
+// weakening the descriptor identity stored with the vector space.
+func (registry *EmbeddingRuntimeRegistry) ResolveQueryEncoder(_ context.Context,
+	descriptor document.EmbeddingDescriptor,
+) (document.EmbeddingProvider, error) {
+	if registry == nil {
+		return nil, ErrEmbeddingRuntimeUnavailable
+	}
+	registry.mu.RLock()
+	runtime := registry.runtimes[descriptor.Fingerprint]
+	registry.mu.RUnlock()
+	providerRuntime, ok := runtime.(*ProviderEmbeddingRuntime)
+	if !ok {
+		return nil, ErrEmbeddingRuntimeUnavailable
+	}
+	return providerRuntime.QueryProvider(descriptor)
 }
 
 func (registry *EmbeddingRuntimeRegistry) Classify(err error) (EmbeddingProviderFailure, time.Duration) {
@@ -347,6 +370,47 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			}
 		}
 	}
+}
+
+// RunJob processes one exact ready embedding job without consuming unrelated
+// provider work from the vault queue.
+func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, error) {
+	if worker == nil {
+		return false, errors.New("embedding worker is nil")
+	}
+	target, ok := worker.catalog.(targetedEmbeddingWorkerCatalog)
+	if !ok {
+		return false, errors.New("embedding catalog does not support targeted claims")
+	}
+	var claim EmbeddingWorkClaim
+	var work EmbeddingWork
+	var processed bool
+	err := worker.gate.MutateContext(ctx, func() error {
+		var claimErr error
+		claim, work, processed, claimErr = target.ClaimEmbeddingWork(ctx, jobID, worker.owner,
+			worker.clock().UTC(), worker.leaseDuration, worker.descriptorFingerprints)
+		if claimErr != nil {
+			return ErrEmbeddingPersistence
+		}
+		return nil
+	})
+	if err == nil && processed {
+		err = worker.processClaim(ctx, claim, work)
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return processed, ctx.Err()
+		}
+		if isEmbeddingWorkFence(err) {
+			err = worker.gate.MutateContext(ctx, func() error {
+				return worker.catalog.AbandonEmbeddingWork(ctx, claim, worker.clock().UTC())
+			})
+			if err != nil {
+				return processed, fmt.Errorf("abandoning embedding work: %w", ErrEmbeddingPersistence)
+			}
+		}
+	}
+	return processed, err
 }
 
 func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (retErr error) {

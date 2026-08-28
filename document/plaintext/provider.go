@@ -50,6 +50,7 @@ func New(profile Profile) (*Provider, error) {
 		TrustBoundary:     document.RenditionTrustLocalProcess,
 		SupportedFormats:  supportedFormats(),
 		ReturnsStructured: true,
+		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plaintext: construct descriptor: %w", err)

@@ -1053,6 +1053,7 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
     input_classes_json       TEXT NOT NULL,
     retained_classes_json    TEXT NOT NULL,
     state                    TEXT NOT NULL,
+    failure_code             TEXT,
     attachment_id            TEXT NOT NULL,
     created_at               TEXT NOT NULL,
     updated_at               TEXT NOT NULL

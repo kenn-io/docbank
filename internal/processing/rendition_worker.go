@@ -196,6 +196,11 @@ type renditionWorkerCatalog interface {
 	RenditionJobErrorRetryable(err error) bool
 }
 
+type targetedRenditionWorkerCatalog interface {
+	ClaimRenditionJob(ctx context.Context, jobID, owner string, at time.Time,
+		lease time.Duration) (store.RenditionJobClaim, error)
+}
+
 // RenditionWorkerConfig binds the provider-neutral state machine to one vault.
 type RenditionWorkerConfig struct {
 	Catalog       renditionWorkerCatalog
@@ -334,6 +339,37 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 	return processed, err
 }
 
+// RunJob claims and processes one exact ready shared build. It is used by
+// request/response surfaces that must not consume unrelated queued work.
+func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
+	processed bool, retErr error,
+) {
+	if worker == nil {
+		return false, errors.New("rendition worker is nil")
+	}
+	target, ok := worker.catalog.(targetedRenditionWorkerCatalog)
+	if !ok {
+		return false, errors.New("rendition catalog does not support targeted claims")
+	}
+	var claim store.RenditionJobClaim
+	err := worker.mutate(ctx, func() error {
+		return worker.catalogOnce(ctx, func() error {
+			var claimErr error
+			claim, claimErr = target.ClaimRenditionJob(ctx, jobID, worker.owner,
+				worker.clock().UTC(), worker.leaseDuration)
+			return claimErr
+		})
+	})
+	if err == nil {
+		processed, err = worker.runClaim(ctx, claim)
+	}
+	if err != nil && ctx.Err() == nil && !errors.Is(err, store.ErrRenditionJobFenced) &&
+		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
+		err = renditionWorkerFatal(err)
+	}
+	return processed, err
+}
+
 // runOne gates each catalog or physical mutation independently. Provider
 // execution remains outside the daemon-wide gate so queued maintenance does
 // not reject unrelated HTTP mutations for the duration of remote processing.
@@ -354,6 +390,12 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	if err != nil || !found {
 		return found, err
 	}
+	return worker.runClaim(ctx, claim)
+}
+
+func (worker *RenditionWorker) runClaim(ctx context.Context,
+	claim store.RenditionJobClaim,
+) (processed bool, retErr error) {
 	leaseCtx, stopLease := worker.keepLease(ctx, claim)
 	defer func() {
 		leaseErr := stopLease()
@@ -364,7 +406,7 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	}()
 	ctx = leaseCtx
 	var work store.RenditionJobWork
-	err = worker.mutate(ctx, func() error {
+	err := worker.mutate(ctx, func() error {
 		return worker.retryCatalog(ctx, func() error {
 			var workErr error
 			work, workErr = worker.catalog.RenditionJobWorkByClaim(
@@ -980,6 +1022,19 @@ func buildRenditionJobCandidate(
 	if err := json.Unmarshal(
 		work.Profile.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return StagedRendition{}, fmt.Errorf("decoding rendition profile: %w", err)
+	}
+	metadata := work.ExecutionIdentity.Upload
+	rendition, _, err = document.EnvelopeRenditionV1(rendition, document.RenditionEnvelopeV1{
+		BuildID: work.Job.ID, SourceSHA256: work.Job.SourceSHA256,
+		SourceFormat:                sourceFormat(metadata.Filename, metadata.MediaFamily, metadata.MediaType),
+		SourceMediaType:             metadata.MediaType,
+		RenditionRequestFingerprint: work.Job.RenditionRequestFingerprint,
+		EvidenceLexicalFingerprint:  work.Job.EvidenceLexicalFingerprint,
+		NormalizedEvidenceContract:  profile.EvidenceLexical.NormalizedEvidenceContract,
+		UnitKind:                    result.Evidence.UnitKind,
+	})
+	if err != nil {
+		return StagedRendition{}, fmt.Errorf("enveloping normalized rendition: %w", err)
 	}
 	type retained struct {
 		role    string
