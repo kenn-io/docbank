@@ -15,6 +15,7 @@ import (
 	"math"
 	"mime"
 	"net/url"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -443,12 +444,23 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 			record.Reason = CapabilityReasonNestedContainer
 			return record
 		}
+	}
+	var epubPackage string
+	if ext == ".epub" {
+		var err error
+		epubPackage, err = epubPackagePath(zr.File, policy.MaxEntryBytes)
+		if err != nil {
+			record.Reason = CapabilityReasonMalformed
+			return record
+		}
+	}
+	for _, file := range zr.File {
 		body, readErr := readZIPEntry(file, policy.MaxEntryBytes)
 		if readErr != nil {
 			record.Reason = CapabilityReasonMalformed
 			return record
 		}
-		if len(body) >= 4 && bytes.Equal(body[:4], []byte("PK\x03\x04")) {
+		if hasZIPSignature(body) {
 			record.Measurements.NestingDepth = 2
 			record.Reason = CapabilityReasonNestedContainer
 			return record
@@ -457,7 +469,7 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 		xmlContent := strings.HasSuffix(name, ".xml") || strings.HasSuffix(name, ".rels") ||
 			strings.HasSuffix(name, ".opf") || ext == ".epub" &&
 			(strings.HasSuffix(name, ".xhtml") || strings.HasSuffix(name, ".html") ||
-				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg"))
+				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg") || file.Name == epubPackage)
 		if xmlContent {
 			mode := xmlMeasureNone
 			switch {
@@ -465,7 +477,7 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 				mode = xmlMeasureOOXMLSheet
 			case name == "content.xml" && ext == ".ods":
 				mode = xmlMeasureODSSheet
-			case strings.HasSuffix(name, ".opf") && ext == ".epub":
+			case ext == ".epub" && file.Name == epubPackage:
 				mode = xmlMeasureEPUBPackage
 			}
 			external, xmlErr := inspectXML(body, &record.Measurements, mode)
@@ -648,7 +660,7 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 					return nil, true, nil
 				}
 			}
-		case "target", "href", "src", "schemalocation":
+		case "target", "href", "src", "schemalocation", "nonamespaceschemalocation":
 			if isExternalXMLURI(value, base) {
 				return nil, true, nil
 			}
@@ -743,6 +755,8 @@ func inspectPDF(data []byte, policy InspectionPolicy) CapabilityRecord {
 			record.Reason = CapabilityReasonEntryCount
 		case errors.Is(err, formatdetect.ErrPDFUnbounded):
 			record.Reason = CapabilityReasonUnboundedFamily
+		case errors.Is(err, formatdetect.ErrPDFExternalReference):
+			record.Reason = CapabilityReasonExternalReference
 		default:
 			record.Reason = CapabilityReasonMalformed
 		}
@@ -849,6 +863,60 @@ func readZIPEntry(file *zip.File, limit int64) ([]byte, error) {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
 	return data, nil
+}
+
+func hasZIPSignature(data []byte) bool {
+	return len(data) >= 4 && (bytes.Equal(data[:4], []byte("PK\x03\x04")) ||
+		bytes.Equal(data[:4], []byte("PK\x05\x06")))
+}
+
+func epubPackagePath(files []*zip.File, limit int64) (string, error) {
+	var container *zip.File
+	for _, file := range files {
+		if file.Name == "META-INF/container.xml" {
+			container = file
+			break
+		}
+	}
+	if container == nil {
+		return "", errors.New("EPUB container document is missing")
+	}
+	body, err := readZIPEntry(container, limit)
+	if err != nil {
+		return "", err
+	}
+	var document struct {
+		XMLName   xml.Name `xml:"container"`
+		Rootfiles struct {
+			Items []struct {
+				FullPath string `xml:"full-path,attr"`
+			} `xml:"rootfile"`
+		} `xml:"rootfiles"`
+	}
+	if err := xml.Unmarshal(body, &document); err != nil ||
+		document.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" ||
+		len(document.Rootfiles.Items) == 0 {
+		return "", errors.New("EPUB container document is invalid")
+	}
+	rootfile := document.Rootfiles.Items[0]
+	parsed, err := url.Parse(rootfile.FullPath)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("EPUB package path is invalid")
+	}
+	packagePath, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil {
+		return "", errors.New("EPUB package path is invalid")
+	}
+	packagePath = path.Clean(packagePath)
+	if packagePath == "." || path.IsAbs(packagePath) || strings.HasPrefix(packagePath, "../") {
+		return "", errors.New("EPUB package path is invalid")
+	}
+	for _, file := range files {
+		if file.Name == packagePath {
+			return packagePath, nil
+		}
+	}
+	return "", errors.New("EPUB package document is missing")
 }
 
 func isTextFamily(ext, mediaType string) bool {

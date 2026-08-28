@@ -162,11 +162,12 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 }
 
 var (
-	ErrPDFEncrypted     = errors.New("PDF is encrypted")
-	ErrPDFExpandedBytes = errors.New("PDF expanded bytes exceed the bound")
-	ErrPDFEntryBytes    = errors.New("PDF stream bytes exceed the entry bound")
-	ErrPDFEntryCount    = errors.New("PDF stream count exceeds the entry bound")
-	ErrPDFUnbounded     = errors.New("PDF stream cannot be bounded locally")
+	ErrPDFEncrypted         = errors.New("PDF is encrypted")
+	ErrPDFExpandedBytes     = errors.New("PDF expanded bytes exceed the bound")
+	ErrPDFEntryBytes        = errors.New("PDF stream bytes exceed the entry bound")
+	ErrPDFEntryCount        = errors.New("PDF stream count exceeds the entry bound")
+	ErrPDFUnbounded         = errors.New("PDF stream cannot be bounded locally")
+	ErrPDFExternalReference = errors.New("PDF contains an external reference")
 )
 
 // PDFLimits binds parser allocations and decoded stream measurements to one
@@ -219,6 +220,16 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 	if context.Encrypt != nil {
 		return PDFMeasurements{}, ErrPDFEncrypted
 	}
+	external, err := pdfHasExternalReference(context)
+	if err != nil {
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+			return PDFMeasurements{}, ErrPDFExpandedBytes
+		}
+		return PDFMeasurements{}, fmt.Errorf("inspect PDF object graph: %w", err)
+	}
+	if external {
+		return PDFMeasurements{}, ErrPDFExternalReference
+	}
 
 	measurements := PDFMeasurements{Pages: int64(context.PageCount)}
 	objectNumbers := make([]int, 0, len(context.Table))
@@ -256,6 +267,101 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 		measurements.MaxEntryBytes = max(measurements.MaxEntryBytes, decodedBytes)
 	}
 	return measurements, nil
+}
+
+func pdfHasExternalReference(context *model.Context) (bool, error) {
+	if context.Root == nil {
+		return false, errors.New("PDF catalog is missing")
+	}
+	pending := []types.Object{*context.Root}
+	visited := make(map[int]bool, len(context.Table))
+	for len(pending) != 0 {
+		object := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		switch value := object.(type) {
+		case types.IndirectRef:
+			number := value.ObjectNumber.Value()
+			if visited[number] {
+				continue
+			}
+			visited[number] = true
+			resolved, err := context.Dereference(value)
+			if err != nil {
+				return false, fmt.Errorf("dereference PDF object %d: %w", number, err)
+			}
+			if resolved != nil {
+				pending = append(pending, resolved)
+			}
+		case types.Dict:
+			external, err := pdfDictHasExternalReference(context, value)
+			if err != nil || external {
+				return external, err
+			}
+			for _, child := range value {
+				pending = append(pending, child)
+			}
+		case types.Array:
+			pending = append(pending, value...)
+		case types.StreamDict:
+			pending = append(pending, value.Dict)
+		case *types.StreamDict:
+			pending = append(pending, value.Dict)
+		case types.ObjectStreamDict:
+			pending = append(pending, value.Dict)
+		case *types.ObjectStreamDict:
+			pending = append(pending, value.Dict)
+		case types.XRefStreamDict:
+			pending = append(pending, value.Dict)
+		case *types.XRefStreamDict:
+			pending = append(pending, value.Dict)
+		}
+	}
+	return false, nil
+}
+
+func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) (bool, error) {
+	if dictionary.HasEntry("URI") {
+		return true, nil
+	}
+	action, err := pdfDictName(context, dictionary, "S")
+	if err != nil {
+		return false, err
+	}
+	if action == "GoToR" || action == "Launch" {
+		return true, nil
+	}
+	fileSystem, err := pdfDictName(context, dictionary, "FS")
+	if err != nil {
+		return false, err
+	}
+	if fileSystem == "URL" {
+		return true, nil
+	}
+	dictionaryType, err := pdfDictName(context, dictionary, "Type")
+	if err != nil {
+		return false, err
+	}
+	if dictionaryType == "Filespec" && !dictionary.HasEntry("EF") &&
+		(dictionary.HasEntry("F") || dictionary.HasEntry("UF")) {
+		return true, nil
+	}
+	return false, nil
+}
+
+func pdfDictName(context *model.Context, dictionary types.Dict, key string) (string, error) {
+	object, ok := dictionary[key]
+	if !ok {
+		return "", nil
+	}
+	resolved, err := context.Dereference(object)
+	if err != nil {
+		return "", fmt.Errorf("dereference PDF dictionary %q: %w", key, err)
+	}
+	name, ok := resolved.(types.Name)
+	if !ok {
+		return "", nil
+	}
+	return name.Value(), nil
 }
 
 func pdfStreamDictionary(object types.Object) (*types.StreamDict, bool) {

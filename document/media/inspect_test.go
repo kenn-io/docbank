@@ -80,6 +80,7 @@ func TestInspectRejectsDeclaredSourceMismatchAndExcessiveUnits(t *testing.T) {
 
 func TestInspectBoundsZIPContainers(t *testing.T) {
 	t.Parallel()
+	emptyZIP := zipBytes(t, nil)
 
 	tests := []struct {
 		name   string
@@ -100,6 +101,14 @@ func TestInspectBoundsZIPContainers(t *testing.T) {
 		{
 			name: "nested archive",
 			data: zipBytes(t, validPPTXEntries(zipEntry{name: "nested.zip", body: "PK\x03\x04nested"})),
+			policy: func(data []byte) media.InspectionPolicy {
+				return inspectionPolicy(data, "deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+			},
+			reason: media.CapabilityReasonNestedContainer,
+		},
+		{
+			name: "empty nested archive with neutral filename",
+			data: zipBytes(t, validPPTXEntries(zipEntry{name: "payload.bin", body: string(emptyZIP)})),
 			policy: func(data []byte) media.InspectionPolicy {
 				return inspectionPolicy(data, "deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
 			},
@@ -156,6 +165,7 @@ func TestInspectRejectsMalformedAndExternallyReferentialContainerXML(t *testing.
 		{name: "multiple roots", body: `<worksheet/><worksheet/>`, reason: media.CapabilityReasonMalformed},
 		{name: "external DTD", body: `<!DOCTYPE worksheet SYSTEM "https://example.invalid/sheet.dtd"><worksheet/>`, reason: media.CapabilityReasonExternalReference},
 		{name: "public DTD", body: `<!DOCTYPE worksheet PUBLIC "-//EXAMPLE//DTD Sheet//EN" "sheet.dtd"><worksheet/>`, reason: media.CapabilityReasonExternalReference},
+		{name: "no-namespace schema", body: `<worksheet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://example.invalid/sheet.xsd"/>`, reason: media.CapabilityReasonExternalReference},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -211,6 +221,24 @@ func TestInspectCountsODSRepeatedCells(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, record.Eligible)
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
+}
+
+func TestInspectUsesEPUBContainerPackagePath(t *testing.T) {
+	t.Parallel()
+	data := zipBytes(t, []zipEntry{
+		{name: "mimetype", body: "application/epub+zip"},
+		{name: "META-INF/container.xml", body: `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="OPS/package.bin" media-type="application/oebps-package+xml"/></rootfiles></container>`},
+		{name: "OPS/package.bin", body: `<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/></spine></package>`},
+	})
+	policy := inspectionPolicy(data, "book.epub", "application/epub+zip")
+	policy.MaxResources = 1
+	policy.MaxSpineItems = 1
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
+	assert.Equal(t, int64(2), record.Measurements.Resources)
+	assert.Equal(t, int64(2), record.Measurements.SpineItems)
 }
 
 func TestInspectCountsFinitePresentationSpreadsheetAndEPUBUnits(t *testing.T) {
@@ -393,6 +421,41 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonExpandedBytes, record.Reason)
+	})
+
+	for _, testCase := range []struct {
+		name, action string
+	}{
+		{name: "URI action", action: `/OpenAction << /S /URI /URI (https://example.invalid/probe) >>`},
+		{name: "remote go-to action", action: `/OpenAction << /S /GoToR /F (remote.pdf) /D [0 /Fit] >>`},
+		{name: "launch action", action: `/OpenAction << /S /Launch /F (program.exe) >>`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			pdf := syntheticPDFObjects("external-action", []string{
+				fmt.Sprintf("<< /Type /Catalog /Pages 2 0 R %s >>", testCase.action),
+				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+			})
+			record, err := media.InspectCapability(bytes.NewReader(pdf),
+				inspectionPolicy(pdf, "report.pdf", "application/pdf"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
+	t.Run("external file specification", func(t *testing.T) {
+		pdf := syntheticPDFObjects("external-file", []string{
+			"<< /Type /Catalog /Pages 2 0 R /AF [4 0 R] >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+			"<< /Type /Filespec /F (remote.txt) /AFRelationship /Data >>",
+		})
+		record, err := media.InspectCapability(bytes.NewReader(pdf),
+			inspectionPolicy(pdf, "report.pdf", "application/pdf"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 	})
 
 	t.Run("xref and object streams", func(t *testing.T) {
