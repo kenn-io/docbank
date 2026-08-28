@@ -1089,17 +1089,26 @@ func normalizeReferencePath(value string) string {
 	return strings.ReplaceAll(candidate, `\`, "/")
 }
 
-// escapesArchive reports whether a reference climbs above the container root.
-// Every resource a package names lives inside the container, so a reference
-// that resolves past the root names a file on the host instead. home is the
-// directory of the entry holding the reference, and is empty for a standalone
-// document, where there is no container to leave.
+// escapesArchive reports whether a reference names a place outside the document
+// it appears in. Every resource a package names lives inside the container, so
+// a reference that resolves past the root names a file on the host instead.
+// home is the directory of the entry holding the reference, and is empty for a
+// standalone document, which has no container.
 func escapesArchive(value, home string) bool {
-	if home == "" {
+	candidate := normalizeReferencePath(value)
+	if candidate == "" {
 		return false
 	}
-	candidate := normalizeReferencePath(value)
-	if candidate == "" || path.IsAbs(candidate) {
+	if path.IsAbs(candidate) {
+		// Inside a container a rooted path names the container root, which is
+		// how a legitimate part such as "/xl/styles.xml" is spelled. A
+		// standalone document has no root to name, so the same spelling pins a
+		// location on the host, exactly as "C:\secret.txt" does.
+		return home == ""
+	}
+	if home == "" {
+		// A relative reference from a standalone document lands wherever the
+		// consumer put the document. It pins nothing, so it names no place.
 		return false
 	}
 	return leavesArchiveRoot(path.Clean(path.Join(home, candidate)))
@@ -1800,21 +1809,47 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 		}
 	}
 	for _, override := range document.Overrides {
-		part := strings.TrimPrefix(strings.TrimSpace(override.PartName), "/")
-		if part == "" {
-			continue
-		}
-		// A part name is a URI path, so it may be percent-encoded. A consumer
-		// decodes it before matching, and an encoded name that matched nothing
-		// left its part undeclared and inspected only by its filename.
 		declaredType := normalizeDeclaredType(override.ContentType)
-		// An Override replaces the Default for that part rather than adding to it.
-		declared[part] = []string{declaredType}
-		if decoded, err := url.PathUnescape(part); err == nil && decoded != part {
-			declared[decoded] = []string{declaredType}
+		for _, part := range declaredPartNames(override.PartName) {
+			// An Override replaces the Default for that part rather than
+			// adding to it.
+			declared[part] = []string{declaredType}
 		}
 	}
 	return declared
+}
+
+// declaredPartNames returns the archive entries a declared part name refers to.
+// A part name is a URI path rooted at the container: it may be percent-encoded
+// and may carry dot segments, and a consumer resolves both before matching. A
+// spelling that matched no entry left its part undeclared and inspected only by
+// its filename, which is the bypass reading declarations was meant to close.
+//
+// Both container formats that declare part types share this, because handling a
+// spelling in one and not the other is how the two drifted apart before.
+func declaredPartNames(value string) []string {
+	names := make([]string, 0, 2)
+	rooted := strings.TrimPrefix(strings.TrimSpace(value), "/")
+	for _, spelling := range []string{rooted, decodedPath(rooted)} {
+		if spelling == "" {
+			continue
+		}
+		cleaned := path.Clean(spelling)
+		if !slices.Contains(names, cleaned) {
+			names = append(names, cleaned)
+		}
+	}
+	return names
+}
+
+// decodedPath returns the percent-decoded spelling of a path, or "" when it has
+// none distinct from the original.
+func decodedPath(value string) string {
+	decoded, err := url.PathUnescape(value)
+	if err != nil || decoded == value {
+		return ""
+	}
+	return decoded
 }
 
 // odfDeclaredTypes maps each ODF part to the content type META-INF/manifest.xml
@@ -1851,16 +1886,9 @@ func odfDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 	}
 	declared := make(contentDeclarations, len(document.Entries))
 	for _, entry := range document.Entries {
-		// A full-path is a URI path, so it may be percent-encoded, and the
-		// package root is spelled "/" and names no part.
-		part := strings.TrimSpace(entry.FullPath)
-		if part == "" || part == "/" {
-			continue
-		}
 		declaredType := normalizeDeclaredType(entry.MediaType)
-		declared.add(part, declaredType)
-		if decoded, err := url.PathUnescape(part); err == nil && decoded != part {
-			declared.add(decoded, declaredType)
+		for _, part := range declaredPartNames(entry.FullPath) {
+			declared.add(part, declaredType)
 		}
 	}
 	return declared

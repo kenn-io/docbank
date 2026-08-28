@@ -666,23 +666,27 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 	})
 
-	// A part name is a URI path, so a consumer decodes it before matching.
-	t.Run("percent-encoded OOXML part name", func(t *testing.T) {
-		t.Parallel()
-		contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
-			`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
-			`<Override PartName="/xl/re%70ort.bin" ContentType="application/xml"/></Types>`
-		data := zipBytes(t, []zipEntry{
-			{name: "[Content_Types].xml", body: contentTypes},
-			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
-			{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+	// A part name is a URI path, so a consumer resolves its escapes and its dot
+	// segments before matching. A spelling that matched no entry left the part
+	// undeclared and inspected only by its filename.
+	for _, partName := range []string{"/xl/re%70ort.bin", "/xl/./report.bin", "/xl/media/../report.bin"} {
+		t.Run("OOXML part name "+partName, func(t *testing.T) {
+			t.Parallel()
+			contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+				`<Override PartName="` + partName + `" ContentType="application/xml"/></Types>`
+			data := zipBytes(t, []zipEntry{
+				{name: "[Content_Types].xml", body: contentTypes},
+				{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+				{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+			})
+			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 		})
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
-			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
-		require.NoError(t, err)
-		assert.False(t, record.Eligible)
-		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
-	})
+	}
 
 	t.Run("second EPUB rootfile", func(t *testing.T) {
 		t.Parallel()
@@ -769,6 +773,13 @@ func TestInspectFollowsODFManifestDeclarations(t *testing.T) {
 			declaredPath: "Pictures/image.dat", declaredType: "image/svg+xml", body: drawing},
 		{name: "encoded declaration names the part", entry: "Pictures/a b.dat",
 			declaredPath: "Pictures/a%20b.dat", declaredType: "image/svg+xml", body: drawing},
+		// A part name is a URI path, so a consumer resolves its dot segments
+		// before matching. A spelling that matched no entry left the part
+		// undeclared and inspected only by its filename.
+		{name: "dot segment inside the declaration", entry: "Pictures/image.dat",
+			declaredPath: "Pictures/./image.dat", declaredType: "image/svg+xml", body: drawing},
+		{name: "declaration rooted by a dot segment", entry: "Pictures/image.dat",
+			declaredPath: "./Pictures/image.dat", declaredType: "image/svg+xml", body: drawing},
 		// Nothing declares it as markup, so its name decides, as it always did.
 		{name: "undeclared neutral name", entry: "Pictures/image.dat",
 			body: drawing, eligible: true},
@@ -996,6 +1007,48 @@ func TestInspectUsesEPUBContainerPackagePath(t *testing.T) {
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
 	assert.Equal(t, int64(2), record.Measurements.Resources)
 	assert.Equal(t, int64(2), record.Measurements.SpineItems)
+}
+
+// A standalone document has no container, so a rooted path names no part of one
+// and pins a location on the host instead, the way "C:\secret.txt" does. Inside
+// a container the same spelling names the container root and stays local.
+func TestInspectClassifiesRootedPathsByContainer(t *testing.T) {
+	t.Parallel()
+	standalone := []struct {
+		reference string
+		eligible  bool
+	}{
+		{reference: "/etc/passwd"},
+		{reference: "/images/logo.png"},
+		{reference: `\\host\share`},
+		// A relative reference lands wherever the consumer put the document,
+		// so it pins nothing and names no place.
+		{reference: "cover.png", eligible: true},
+		{reference: "assets/cover.png", eligible: true},
+	}
+	for _, tt := range standalone {
+		t.Run("standalone "+tt.reference, func(t *testing.T) {
+			t.Parallel()
+			data := []byte(`<doc><image href="` + tt.reference + `"/></doc>`)
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "doc.xml", "application/xml"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+		})
+	}
+
+	// The container root is how a legitimate OPC part name is spelled, so the
+	// same reference stays local when there is a container to name.
+	t.Run("rooted part name inside a container", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validXLSXEntries(zipEntry{name: "xl/worksheets/sheet1.xml",
+			body: `<worksheet><drawing r:href="/xl/styles.xml"/></worksheet>`}))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.xlsx",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		assert.True(t, record.Eligible, record.Reason)
+	})
 }
 
 func TestInspectCountsFinitePresentationSpreadsheetAndEPUBUnits(t *testing.T) {
