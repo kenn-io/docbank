@@ -448,6 +448,10 @@ func TestRenditionProviderContractRejectsExpiredAuthorizationAndOutOfWindowRecei
 	require.ErrorContains(t, ValidateRenditionResult(descriptor, authorization, result),
 		"outside the authorization interval")
 	result = validRenditionResult(descriptor, authorization)
+	result.Receipt.CompletedAt = now.Format(renditionTimestampForm)
+	require.ErrorContains(t, ValidateRenditionResult(descriptor, authorization, result),
+		"outside the authorization interval")
+	result = validRenditionResult(descriptor, authorization)
 	result.Receipt.CompletedAt = now.Add(time.Nanosecond).Format(renditionTimestampForm)
 	require.ErrorContains(t, ValidateRenditionResult(descriptor, authorization, result),
 		"outside the authorization interval")

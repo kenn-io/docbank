@@ -1087,7 +1087,7 @@ func validateRenditionReceipt(
 	}
 	authorizedAt, _ := parseRenditionTimestamp(authorization.AuthorizedAt)
 	expiresAt, _ := parseRenditionTimestamp(authorization.ExpiresAt)
-	if startedAt.Before(authorizedAt) || completedAt.After(expiresAt) {
+	if startedAt.Before(authorizedAt) || !completedAt.Before(expiresAt) {
 		return errors.New("receipt execution is outside the authorization interval")
 	}
 	if len(receipt.Warnings) > maxRenditionWarnings {
