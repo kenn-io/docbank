@@ -428,36 +428,9 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 	if ext == ".epub" {
 		archiveNames = make(map[string]bool, len(zr.File))
 	}
-	for _, file := range zr.File {
-		if archiveNames != nil {
-			archiveNames[file.Name] = true
-		}
-		if file.Flags&1 != 0 {
-			record.Reason = CapabilityReasonEncryptedContainer
-			return record
-		}
-		if file.UncompressedSize64 > math.MaxInt64 {
-			record.Reason = CapabilityReasonEntryBytes
-			return record
-		}
-		size := int64(file.UncompressedSize64) // #nosec G115 -- bounded above by MaxInt64
-		if size > policy.MaxEntryBytes {
-			record.Reason = CapabilityReasonEntryBytes
-			return record
-		}
-		if size > record.Measurements.MaxEntryBytes {
-			record.Measurements.MaxEntryBytes = size
-		}
-		if size > policy.MaxExpandedBytes-record.Measurements.ExpandedBytes {
-			record.Reason = CapabilityReasonExpandedBytes
-			return record
-		}
-		record.Measurements.ExpandedBytes += size
-		if looksNestedContainer(file.Name) {
-			record.Measurements.NestingDepth = 2
-			record.Reason = CapabilityReasonNestedContainer
-			return record
-		}
+	if reason := boundZIPEntries(zr.File, policy, archiveNames, &record.Measurements); reason != "" {
+		record.Reason = reason
+		return record
 	}
 	var epubPackages map[string]bool
 	var declaredTypes contentDeclarations
@@ -471,68 +444,20 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 	} else {
 		declaredTypes = ooxmlDeclaredTypes(zr.File, policy.MaxEntryBytes)
 	}
+	container := zipContainer{
+		ext: ext, epubPackages: epubPackages,
+		declaredTypes: declaredTypes, archiveNames: archiveNames,
+	}
 	for _, file := range zr.File {
-		body, readErr := readZIPEntry(file, policy.MaxEntryBytes)
-		if readErr != nil {
-			record.Reason = CapabilityReasonMalformed
-			return record
+		reason := container.inspectEntry(file, policy.MaxEntryBytes, &record.Measurements)
+		if reason == "" {
+			continue
 		}
-		if hasZIPSignature(body) {
+		if reason == CapabilityReasonNestedContainer {
 			record.Measurements.NestingDepth = 2
-			record.Reason = CapabilityReasonNestedContainer
-			return record
 		}
-		name := strings.ToLower(file.Name)
-		xmlContent := strings.HasSuffix(name, ".xml") || strings.HasSuffix(name, ".rels") ||
-			strings.HasSuffix(name, ".opf") || declaredTypes.anyXML(file.Name) ||
-			ext == ".epub" && (strings.HasSuffix(name, ".xhtml") || strings.HasSuffix(name, ".html") ||
-				strings.HasSuffix(name, ".htm") || strings.HasSuffix(name, ".svg") ||
-				epubPackages[file.Name])
-		// A part counts toward its semantic limit because of what it is, not
-		// where it sits. The package states that, so a declared part counts on
-		// its declaration alone and an undeclared one falls back to its name.
-		isWorksheet := declaredTypes.decides(file.Name, ooxmlWorksheetType,
-			strings.HasPrefix(name, "xl/worksheets/") && strings.HasSuffix(name, ".xml"))
-		isSlide := declaredTypes.decides(file.Name, ooxmlSlideType,
-			strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml"))
-		if xmlContent {
-			mode := xmlMeasureNone
-			switch {
-			case isWorksheet:
-				mode = xmlMeasureOOXMLSheet
-			case name == "content.xml" && ext == ".ods":
-				mode = xmlMeasureODSSheet
-			case ext == ".epub" && epubPackages[file.Name]:
-				mode = xmlMeasureEPUBPackage
-			}
-			external, xmlErr := inspectXML(body, &record.Measurements, mode)
-			if xmlErr != nil {
-				record.Reason = CapabilityReasonMalformed
-				return record
-			}
-			if external {
-				record.Reason = CapabilityReasonExternalReference
-				return record
-			}
-		}
-		if ext == ".epub" && (strings.HasSuffix(name, ".css") ||
-			declaredTypes.contains(file.Name, "text/css")) {
-			external, cssErr := inspectEPUBCSS(body, file.Name, archiveNames)
-			if cssErr != nil {
-				record.Reason = CapabilityReasonMalformed
-				return record
-			}
-			if external {
-				record.Reason = CapabilityReasonExternalReference
-				return record
-			}
-		}
-		if isSlide {
-			record.Measurements.Slides++
-		}
-		if isWorksheet {
-			record.Measurements.Sheets++
-		}
+		record.Reason = reason
+		return record
 	}
 	if record.Measurements.Slides > policy.MaxSlides ||
 		record.Measurements.Sheets > policy.MaxSheets || record.Measurements.Cells > policy.MaxCells ||
@@ -560,6 +485,134 @@ const (
 // Static inspection cannot be exhaustive: scripted, entity-split, and
 // consumer-specific references remain out of reach. This narrows exposure; the
 // provider contract, not this scan, is the boundary.
+// boundZIPEntries enforces the per-entry and aggregate byte limits, recording
+// what it measured. It returns the reason the container is disqualified, or an
+// empty reason when every entry is within bounds.
+func boundZIPEntries(
+	files []*zip.File, policy InspectionPolicy,
+	archiveNames map[string]bool, measurements *CapabilityMeasurements,
+) CapabilityReason {
+	for _, file := range files {
+		if archiveNames != nil {
+			archiveNames[file.Name] = true
+		}
+		if file.Flags&1 != 0 {
+			return CapabilityReasonEncryptedContainer
+		}
+		if file.UncompressedSize64 > math.MaxInt64 {
+			return CapabilityReasonEntryBytes
+		}
+		size := int64(file.UncompressedSize64) // #nosec G115 -- bounded above by MaxInt64
+		if size > policy.MaxEntryBytes {
+			return CapabilityReasonEntryBytes
+		}
+		if size > measurements.MaxEntryBytes {
+			measurements.MaxEntryBytes = size
+		}
+		if size > policy.MaxExpandedBytes-measurements.ExpandedBytes {
+			return CapabilityReasonExpandedBytes
+		}
+		measurements.ExpandedBytes += size
+		if looksNestedContainer(file.Name) {
+			measurements.NestingDepth = 2
+			return CapabilityReasonNestedContainer
+		}
+	}
+	return ""
+}
+
+// zipContainer is what one entry needs to know about the container holding it:
+// which format it is, and what that format declares about its parts.
+type zipContainer struct {
+	ext           string
+	epubPackages  map[string]bool
+	declaredTypes contentDeclarations
+	archiveNames  map[string]bool
+}
+
+// inspectEntry scans one entry for references that leave the document and
+// counts it toward its semantic limit. It returns the reason the entry
+// disqualifies the container, or an empty reason.
+func (container zipContainer) inspectEntry(
+	file *zip.File, limit int64, measurements *CapabilityMeasurements,
+) CapabilityReason {
+	body, err := readZIPEntry(file, limit)
+	if err != nil {
+		return CapabilityReasonMalformed
+	}
+	if hasZIPSignature(body) {
+		return CapabilityReasonNestedContainer
+	}
+	isWorksheet, isSlide := container.countsAs(file.Name)
+	if container.isMarkup(file.Name) {
+		external, err := inspectXML(body, measurements, container.measurement(file.Name, isWorksheet))
+		if err != nil {
+			return CapabilityReasonMalformed
+		}
+		if external {
+			return CapabilityReasonExternalReference
+		}
+	}
+	if container.isStylesheet(file.Name) {
+		external, err := inspectEPUBCSS(body, file.Name, container.archiveNames)
+		if err != nil {
+			return CapabilityReasonMalformed
+		}
+		if external {
+			return CapabilityReasonExternalReference
+		}
+	}
+	if isSlide {
+		measurements.Slides++
+	}
+	if isWorksheet {
+		measurements.Sheets++
+	}
+	return ""
+}
+
+// countsAs reports the semantic limit an entry counts toward. A part counts
+// because of what it is, not where it sits. The package states that, so a
+// declared part counts on its declaration alone and an undeclared one falls
+// back to its name.
+func (container zipContainer) countsAs(name string) (worksheet, slide bool) {
+	lowered := strings.ToLower(name)
+	worksheet = container.declaredTypes.decides(name, ooxmlWorksheetType,
+		strings.HasPrefix(lowered, "xl/worksheets/") && strings.HasSuffix(lowered, ".xml"))
+	slide = container.declaredTypes.decides(name, ooxmlSlideType,
+		strings.HasPrefix(lowered, "ppt/slides/slide") && strings.HasSuffix(lowered, ".xml"))
+	return worksheet, slide
+}
+
+// isMarkup reports whether a consumer parses the entry as XML.
+func (container zipContainer) isMarkup(name string) bool {
+	lowered := strings.ToLower(name)
+	return strings.HasSuffix(lowered, ".xml") || strings.HasSuffix(lowered, ".rels") ||
+		strings.HasSuffix(lowered, ".opf") || container.declaredTypes.anyXML(name) ||
+		container.ext == ".epub" && (strings.HasSuffix(lowered, ".xhtml") ||
+			strings.HasSuffix(lowered, ".html") || strings.HasSuffix(lowered, ".htm") ||
+			strings.HasSuffix(lowered, ".svg") || container.epubPackages[name])
+}
+
+// isStylesheet reports whether a consumer parses the entry as CSS.
+func (container zipContainer) isStylesheet(name string) bool {
+	return container.ext == ".epub" && (strings.HasSuffix(strings.ToLower(name), ".css") ||
+		container.declaredTypes.contains(name, "text/css"))
+}
+
+// measurement reports which semantic units the entry's markup carries.
+func (container zipContainer) measurement(name string, isWorksheet bool) xmlMeasurement {
+	switch {
+	case isWorksheet:
+		return xmlMeasureOOXMLSheet
+	case strings.ToLower(name) == "content.xml" && container.ext == ".ods":
+		return xmlMeasureODSSheet
+	case container.ext == ".epub" && container.epubPackages[name]:
+		return xmlMeasureEPUBPackage
+	}
+	return xmlMeasureNone
+}
+
 func inspectXML(
 	data []byte, measurements *CapabilityMeasurements, mode xmlMeasurement,
 ) (bool, error) {
@@ -687,12 +740,14 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 			continue
 		}
 		value := strings.TrimSpace(attribute.Value)
+		// A base is a locator like any other, so it is classified by the same
+		// rule. Testing it separately let every later rule miss it.
+		if isExternalXMLURI(value, base) {
+			return nil, true, nil
+		}
 		parsed, err := url.Parse(value)
 		if err != nil {
 			return nil, false, fmt.Errorf("inspect XML base URI: %w", err)
-		}
-		if strings.HasPrefix(value, "//") || externalURL(parsed) {
-			return nil, true, nil
 		}
 		if base != nil {
 			parsed = base.ResolveReference(parsed)
@@ -1483,28 +1538,28 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 
 func isTextFamily(ext, mediaType string) bool {
 	candidate, ok := formatdetect.CandidateFormatByMediaType(mediaType)
-	if ok && slicesContains([]string{
+	if ok && slices.Contains([]string{
 		"txt", "markdown", "rst", "latex", "json", "jsonl", "xml", "yaml",
 		"go", "python", "javascript", "eml", "csv",
 	}, candidate.ID) {
 		return true
 	}
-	return slicesContains([]string{".txt", ".md", ".csv", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".eml"}, ext)
+	return slices.Contains([]string{".txt", ".md", ".csv", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".eml"}, ext)
 }
 
 func isZIPFamily(ext, mediaType string, data []byte) bool {
 	return len(data) >= 4 && bytes.Equal(data[:4], []byte("PK\x03\x04")) ||
 		strings.Contains(mediaType, "officedocument") || mediaType == "application/epub+zip" ||
-		slicesContains([]string{".pptx", ".pptm", ".xlsx", ".xlsm", ".odp", ".ods", ".epub"}, ext)
+		slices.Contains([]string{".pptx", ".pptm", ".xlsx", ".xlsm", ".odp", ".ods", ".epub"}, ext)
 }
 
 func looksNestedContainer(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
-	return slicesContains([]string{".zip", ".epub", ".pptx", ".xlsx", ".docx", ".ods", ".odp"}, ext)
+	return slices.Contains([]string{".zip", ".epub", ".pptx", ".xlsx", ".docx", ".ods", ".odp"}, ext)
 }
 
 func requiresDocumentFormatDetection(family string) bool {
-	return slicesContains([]string{"text", "structured", "source", "mail", "pdf", "presentation", "spreadsheet", "ebook"}, family)
+	return slices.Contains([]string{"text", "structured", "source", "mail", "pdf", "presentation", "spreadsheet", "ebook"}, family)
 }
 
 func filenameAllowsFormat(extension, format string) bool {
@@ -1525,10 +1580,6 @@ func filenameAllowsVisualFormat(extension, format string) bool {
 		string(FormatWebP): {".webp"}, string(FormatGIF): {".gif"}, string(FormatMP4): {".mp4"},
 	}
 	return slices.Contains(allowed[format], extension)
-}
-
-func slicesContains(values []string, candidate string) bool {
-	return slices.Contains(values, candidate)
 }
 
 func validSHA256(value string) bool {

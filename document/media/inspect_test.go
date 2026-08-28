@@ -204,6 +204,10 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\\169.254.169.254\latest\meta-data"/></body></html>`,
 		// A drive letter parses as a one-letter scheme, which no allowlist holds.
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:\secret.txt"/></body></html>`,
+		// A base is a locator too, and is classified by the same rule.
+		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:/secret/"><body><img src="cover.png"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:\secret\"><body><img src="cover.png"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="\\host\share\"><body><img src="cover.png"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:/secret.txt"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="d:/secret.txt"/></body></html>`,
 	}
@@ -465,7 +469,7 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 
-	chapter := `<html xmlns="http://www.w3.org/1999/xhtml"><head>` +
+	chapter := `<html xmlns="http://www.w3.org/1999/xhtml" xml:base="../Images/"><head>` +
 		`<meta property="dcterms:modified" content="2026-01-01T00:00:00Z"/>` +
 		`<style>body { background: url(../Images/cover.png) }</style></head>` +
 		`<body><p style="opacity: 0%">text</p></body></html>`
