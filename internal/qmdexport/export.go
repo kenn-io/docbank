@@ -71,6 +71,7 @@ type Options struct {
 	MaxDocuments     int
 	MaxDocumentBytes int64
 	MaxTotalBytes    int64
+	MaxManifestBytes int64
 }
 
 type publishHooks struct {
@@ -234,6 +235,9 @@ func publish(ctx context.Context, root, collection string, sources []Source, cat
 	if err != nil {
 		return Receipt{}, fmt.Errorf("encode qmd export manifest: %w", err)
 	}
+	if int64(len(manifestBytes)+1) > bounds.MaxManifestBytes {
+		return Receipt{}, errors.New("qmd export manifest exceeds bound")
+	}
 	manifestBytes = append(manifestBytes, '\n')
 	if _, err := writePrivateFile(filepath.Join(stage, "manifest.json"), bytes.NewReader(manifestBytes)); err != nil {
 		return Receipt{}, err
@@ -380,9 +384,13 @@ func normalizeOptions(options Options) (Options, error) {
 	if options.MaxTotalBytes == 0 {
 		options.MaxTotalBytes = defaultMaxTotalBytes
 	}
+	if options.MaxManifestBytes == 0 {
+		options.MaxManifestBytes = maxManifestBytes
+	}
 	if options.MaxDocuments < 1 || options.MaxDocuments > defaultMaxDocuments ||
 		options.MaxDocumentBytes < 1 || options.MaxDocumentBytes > defaultMaxDocumentBytes ||
-		options.MaxTotalBytes < 1 || options.MaxTotalBytes > defaultMaxTotalBytes {
+		options.MaxTotalBytes < 1 || options.MaxTotalBytes > defaultMaxTotalBytes ||
+		options.MaxManifestBytes < 1 || options.MaxManifestBytes > maxManifestBytes {
 		return Options{}, errors.New("qmd export bounds are invalid")
 	}
 	return options, nil
