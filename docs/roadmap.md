@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-13
 title: Roadmap
 description: Current capabilities, current limits, and planned product direction.
 ---
@@ -41,7 +42,7 @@ their requirements.
 
 The vault retains derived results with their source versions, processing
 profiles, disclosure consent, and independent embedding sets. It has
-rebuildable vector indexes and internal hybrid retrieval, which combines
+rebuildable vector indexes and source-fenced hybrid retrieval, which combines
 lexical and vector matches. Optional internal components expand queries,
 rerank results, and retrieve from operator-hosted QMD. See
 [Document Processing](architecture/document-processing.md) for the flow and
@@ -52,9 +53,15 @@ The daemon automatically extracts supported plain text. Its configured
 execute retained jobs for the registered runtime contracts. Those jobs still
 need prepared input generations, matching profiles, and current consent.
 
-These pieces do not yet form an automatic OCR-to-semantic-search workflow for
-new imports. Public CLI, web, and TUI search remains lexical. Saving a query
-with hybrid-search settings does not execute internal retrieval.
+Operators can [preview and run configured processing profiles](usage/document-processing.md),
+inspect jobs, and read retained sanitized renditions through the CLI, HTTP API,
+web app, and TUI. [Processing search](usage/search.md) exposes lexical, semantic,
+hybrid, and auto modes for an explicit set of authorized source versions.
+
+New imports do not automatically run an OCR-to-semantic-search workflow. The
+default configuration has no processing profiles, and ordinary web and TUI
+search remains lexical. Saving a query with hybrid-search settings does not
+execute processing search.
 
 ## What can the human interfaces do?
 
@@ -74,8 +81,8 @@ have HTTP APIs; neither client has a management screen for them.
 
 ## What remains planned?
 
-- Automatic PDF and Office extraction for new vault imports, broader daemon
-  processing workflows, and public semantic search.
+- Automatic PDF and Office extraction for new vault imports and broader
+  processing workflows.
 - An MCP server for agent integrations.
 - Overlapping permanent audit scopes.
 - A retention contract for external references to Docbank nodes. Embedded

@@ -24,6 +24,8 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Importing Documents](https://docbank.ai/docs/usage/importing.md): Import folders, preview large sources, retry partial imports, and keep changing files up to date.
 - [Organizing & Tagging](https://docbank.ai/docs/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
 - [Searching](https://docbank.ai/docs/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
+- [Document processing](https://docbank.ai/docs/usage/document-processing.md): Preview, consent to, and run configured document derivatives without losing source authority.
+- [Document processing search](https://docbank.ai/docs/usage/search.md): Search only the exact document versions a consumer currently authorizes.
 - [Web application](https://docbank.ai/docs/usage/web.md): Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 - [Interactive terminal browser](https://docbank.ai/docs/usage/tui.md): Browse documents, inspect authority, storage, backups, and permanent history, and safely move or restore recoverable trash from the TUI.
 
@@ -44,6 +46,7 @@ Every public page is also published as raw Markdown at the route listed below.
 ## Reference
 - [CLI Reference](https://docbank.ai/docs/cli-reference.md): Every docbank command, flag, output format, and error behavior.
 - [Configuration](https://docbank.ai/docs/configuration.md): Vault location, data layout, config.toml, and environment variables.
+- [Document processing configuration](https://docbank.ai/docs/usage/configuration.md): Configure executable processing profiles while keeping credentials outside portable policy.
 - [HTTP API](https://docbank.ai/docs/architecture/http-api.md): The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 
 ## How It Works
@@ -60,6 +63,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Backup & Recovery](https://docbank.ai/docs/architecture/backup.md): Docbank's JSONL-native Kit snapshot and restore architecture.
 - [Integrity & Trust](https://docbank.ai/docs/architecture/integrity.md): What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
 - [Audited History](https://docbank.ai/docs/architecture/audited-history.md): The permanent, tamper-evident history model for protected directory scopes, content versions, backup, agents, and future interactive clients.
+- [Document derivatives](https://docbank.ai/docs/architecture/document-derivatives.md): Authority, retention, retrieval, and rendition format for processed document derivatives.
 
 ## Project
 - [Roadmap](https://docbank.ai/docs/roadmap.md): Current capabilities, current limits, and planned product direction.
