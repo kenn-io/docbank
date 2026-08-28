@@ -219,15 +219,31 @@ func (s *ContentStream) ContentDigest() string {
 // error is returned, so callers publishing a file must write to private staging
 // and publish only after this method succeeds.
 func (s *ContentStream) CopyVerified(w io.Writer) (int64, error) {
+	return s.copyVerified(w, s.Size)
+}
+
+func (s *ContentStream) copyVerified(w io.Writer, maxBytes int64) (int64, error) {
 	if s == nil || s.ReadCloser == nil {
 		return 0, errors.New("copying content: nil stream")
 	}
+	if w == nil {
+		return 0, errors.New("copying content: nil destination")
+	}
+	if s.Size < 0 || maxBytes < 0 || s.Size > maxBytes || s.Size == math.MaxInt64 {
+		_ = s.Close()
+		return 0, integrityErrorf("verifying content: declared size %d exceeds bounded limit %d",
+			s.Size, maxBytes)
+	}
 	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(w, hash), s)
+	written, err := io.Copy(io.MultiWriter(w, hash), io.LimitReader(s, s.Size+1))
 	if err != nil {
+		_ = s.Close()
 		return written, fmt.Errorf("copying content: %w", err)
 	}
 	if written != s.Size {
+		if written > s.Size {
+			_ = s.Close()
+		}
 		return written, integrityErrorf("verifying content: received %d bytes, expected %d",
 			written, s.Size)
 	}
@@ -267,30 +283,36 @@ func (c *Client) Close() error {
 // codeToTypedErr preserves server problem codes that have a stable local
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
-	"not_found":                    store.ErrNotFound,
-	"exists":                       store.ErrExists,
-	"cycle":                        store.ErrCycle,
-	"stale_revision":               store.ErrStaleRevision,
-	"not_dir":                      store.ErrNotDir,
-	"not_file":                     store.ErrNotFile,
-	"invalid_name":                 store.ErrInvalidName,
-	"invalid_tag":                  store.ErrInvalidTag,
-	"invalid_batch_move":           store.ErrInvalidBatchMove,
-	"not_trashed":                  store.ErrNotTrashed,
-	"is_root":                      store.ErrIsRoot,
-	"version_node_mismatch":        store.ErrVersionNodeMismatch,
-	"version_already_current":      store.ErrVersionAlreadyCurrent,
-	"invalid_version_prune":        store.ErrInvalidVersionPrune,
-	"audit_already_enabled":        store.ErrAuditAlreadyEnabled,
-	"audit_scope_overlap":          store.ErrAuditScopeOverlap,
-	"audit_scope_limit":            store.ErrAuditScopeLimit,
-	"audit_preview_stale":          store.ErrAuditPreviewStale,
-	"audit_not_enrolled":           store.ErrAuditNotEnrolled,
-	"invalid_audit_cursor":         store.ErrInvalidAuditCursor,
-	"backup_locked":                backup.ErrRepoLocked,
-	"backup_restore_target_active": home.ErrVaultLocked,
-	"pack_retirement_deferred":     packstore.ErrPackRetirementDeferred,
-	"maintenance_busy":             ErrMaintenanceBusy,
+	"not_found":                     store.ErrNotFound,
+	"exists":                        store.ErrExists,
+	"cycle":                         store.ErrCycle,
+	"stale_revision":                store.ErrStaleRevision,
+	"not_dir":                       store.ErrNotDir,
+	"not_file":                      store.ErrNotFile,
+	"invalid_name":                  store.ErrInvalidName,
+	"invalid_tag":                   store.ErrInvalidTag,
+	"invalid_batch_move":            store.ErrInvalidBatchMove,
+	"not_trashed":                   store.ErrNotTrashed,
+	"is_root":                       store.ErrIsRoot,
+	"version_node_mismatch":         store.ErrVersionNodeMismatch,
+	"version_already_current":       store.ErrVersionAlreadyCurrent,
+	"invalid_version_prune":         store.ErrInvalidVersionPrune,
+	"audit_already_enabled":         store.ErrAuditAlreadyEnabled,
+	"audit_scope_overlap":           store.ErrAuditScopeOverlap,
+	"audit_scope_limit":             store.ErrAuditScopeLimit,
+	"audit_preview_stale":           store.ErrAuditPreviewStale,
+	"audit_not_enrolled":            store.ErrAuditNotEnrolled,
+	"invalid_audit_cursor":          store.ErrInvalidAuditCursor,
+	"backup_locked":                 backup.ErrRepoLocked,
+	"backup_restore_target_active":  home.ErrVaultLocked,
+	"pack_retirement_deferred":      packstore.ErrPackRetirementDeferred,
+	"maintenance_busy":              ErrMaintenanceBusy,
+	"processing_unavailable":        ErrProcessingUnavailable,
+	"processing_plan_changed":       ErrProcessingPlanChanged,
+	"processing_consent_required":   ErrProcessingConsent,
+	"processing_consent_expired":    ErrProcessingConsent,
+	"processing_consent_revoked":    ErrProcessingConsent,
+	"derivative_purge_plan_changed": ErrProcessingPlanChanged,
 }
 
 func decodeError(resp *http.Response) error {
@@ -754,7 +776,7 @@ func (c *Client) content(ctx context.Context, path, identity string) (*ContentSt
 		return nil, decodeError(resp)
 	}
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
-	if err != nil || size < 0 {
+	if err != nil || size < 0 || size == math.MaxInt64 {
 		_ = resp.Body.Close()
 		return nil, integrityErrorf("%s returned invalid %s %q",
 			identity, api.BlobSizeHeader, resp.Header.Get(api.BlobSizeHeader))

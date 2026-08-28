@@ -23,6 +23,8 @@ nav = [
     {"Importing Documents" = "usage/importing.md"},
     {"Organizing & Tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
+    {"Document Processing" = "usage/document-processing.md"},
+    {"Document Processing Search" = "usage/search.md"},
     {"Web Application" = "usage/web.md"},
     {"Interactive Terminal Browser" = "usage/tui.md"},
   ]},
@@ -43,6 +45,7 @@ nav = [
   {"Reference" = [
     {"CLI Reference" = "cli-reference.md"},
     {"Configuration" = "configuration.md"},
+    {"Document Processing Configuration" = "usage/configuration.md"},
     {"HTTP API" = "architecture/http-api.md"},
   ]},
   {"How It Works" = [
@@ -55,6 +58,7 @@ nav = [
     {"Backup & Recovery" = "architecture/backup.md"},
     {"Integrity & Trust" = "architecture/integrity.md"},
     {"Audited History" = "architecture/audited-history.md"},
+    {"Document Derivatives" = "architecture/document-derivatives.md"},
   ]},
   {"Project" = [
     {"Roadmap" = "roadmap.md"},
