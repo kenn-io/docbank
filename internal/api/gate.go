@@ -37,7 +37,13 @@ func NewOperationGate() *OperationGate {
 // Mutate runs fn as an ordinary mutation, excluding maintenance while the
 // complete physical-write and metadata-publication operation is in flight.
 func (g *OperationGate) Mutate(fn func() error) error {
-	if err := g.mu.Acquire(context.Background(), 1); err != nil {
+	return g.MutateContext(context.Background(), fn)
+}
+
+// MutateContext runs a daemon-owned logical mutation on the shared side of
+// the maintenance gate, with cancellation while waiting for admission.
+func (g *OperationGate) MutateContext(ctx context.Context, fn func() error) error {
+	if err := g.mu.Acquire(ctx, 1); err != nil {
 		return fmt.Errorf("acquiring mutation gate: %w", err)
 	}
 	defer g.mu.Release(1)
@@ -50,6 +56,12 @@ func (g *OperationGate) Maintain(fn func() error) error {
 	return g.maintainContext(context.Background(), fn)
 }
 
+// MaintainContext is Maintain with cancellation while waiting for exclusive
+// daemon-owned maintenance admission.
+func (g *OperationGate) MaintainContext(ctx context.Context, fn func() error) error {
+	return g.maintainContext(ctx, fn)
+}
+
 // PhysicalMutate serializes a short physical-authority commit with backup
 // preservation without blocking unrelated logical document mutations.
 func (g *OperationGate) PhysicalMutate(fn func() error) error {
@@ -59,6 +71,17 @@ func (g *OperationGate) PhysicalMutate(fn func() error) error {
 		return fmt.Errorf("acquiring physical-authority gate: %w", err)
 	}
 	defer g.preservation.Release(operationGateExclusiveWeight)
+	return fn()
+}
+
+// PreserveContext holds the shared physical-authority side while a daemon job
+// resolves and consumes catalog-authorized blobs. Placement commits and
+// maintenance cannot replace that authority until fn returns.
+func (g *OperationGate) PreserveContext(ctx context.Context, fn func() error) error {
+	if err := g.preservation.Acquire(ctx, 1); err != nil {
+		return fmt.Errorf("acquiring physical-authority preservation gate: %w", err)
+	}
+	defer g.preservation.Release(1)
 	return fn()
 }
 

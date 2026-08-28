@@ -91,6 +91,189 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 		[]string{restoredVersions[0].ID, restoredVersions[1].ID})
 }
 
+func TestPruneContentVersionsRemovesHistoricalRenditionAttachment(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
+		AttachedAt: "2026-08-24T15:00:00.000000000Z",
+	}
+	require.NoError(t, s.AttachRenditionBuild(ctx, attachment))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-24T15:01:00.000000000Z",
+	}))
+
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	node, _, err = s.ReplaceContent(
+		ctx, node.ID, node.Revision, fakeHash("prune-current"), 21, "application/pdf",
+	)
+	require.NoError(t, err)
+	receipt, err := s.PruneContentVersions(ctx, node.ID, node.Revision,
+		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, receipt.DeletedVersions)
+
+	var attachments, heads, builds int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	assert.Equal(t, []int{0, 0, 1}, []int{attachments, heads, builds},
+		"version deletion revokes version authority while shared immutable builds remain for GC")
+}
+
+func TestPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(ctx, request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(ctx, job.ID, "worker:version-prune", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.ID = job.ID
+	require.NoError(t, s.StageRenditionJobBuild(ctx, claim, build, now.Add(2*time.Second)))
+
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	node, _, err = s.ReplaceContent(
+		ctx, node.ID, node.Revision, fakeHash("pruned-job-current"), 24, "application/pdf",
+	)
+	require.NoError(t, err)
+	receipt, err := s.PruneContentVersions(ctx, node.ID, node.Revision,
+		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, receipt.DeletedVersions)
+
+	_, err = s.RenditionJobByID(ctx, job.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	var waiters int
+	require.NoError(t, s.db.QueryRow(
+		`SELECT COUNT(*) FROM rendition_job_waiters WHERE job_id=?`, job.ID,
+	).Scan(&waiters))
+	assert.Zero(t, waiters)
+	var roots int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots
+		WHERE root_id IN (?,?)`, renditionJobRootID("build", job.ID),
+		renditionJobRootID("generation", job.ID)).Scan(&roots))
+	assert.Zero(t, roots)
+}
+
+func TestPruneContentVersionQuarantinesAmbiguousSharedRenditionJob(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	firstRequest := renditionJobTestRequest(versions[0], profile)
+	secondRequest := renditionJobTestRequest(versions[1], profile)
+	secondRequest.Authorization.Principal = "operator:remaining-waiter"
+	grantRenditionJobConsent(t, s, firstRequest)
+	grantRenditionJobConsent(t, s, secondRequest)
+	job, firstWaiter, err := s.EnqueueRenditionJob(ctx, firstRequest)
+	require.NoError(t, err)
+	_, _, err = s.EnqueueRenditionJob(ctx, secondRequest)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(ctx, job.ID, "worker:ambiguous-prune", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(ctx, claim, firstWaiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(firstRequest))
+	require.NoError(t, err)
+
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	node, _, err = s.ReplaceContent(
+		ctx, node.ID, node.Revision, fakeHash("ambiguous-prune-current"), 25, "application/pdf",
+	)
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, node.ID, node.Revision,
+		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true)
+	require.NoError(t, err)
+
+	current, err := s.RenditionJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, RenditionJobOperatorRequired, current.State)
+	assert.Equal(t, RenditionFailureAmbiguous, current.FailureCode)
+	assert.Equal(t, 1, current.WaiterCount)
+	require.ErrorIs(t,
+		s.CheckpointRenditionProvider(ctx, claim, "late-provider-handle", now.Add(3*time.Second)),
+		ErrRenditionJobFenced,
+	)
+}
+
+func TestPruneSoleWaiterKeepsAmbiguousJobSourceOutOfLooseAndPackedGC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(
+		ctx, s.RootID(), "single-waiter-source.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(created.CurrentVersionID, profile)
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(ctx, request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(ctx, job.ID, "worker:sole-ambiguous-prune", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.NoError(t, err)
+
+	node, _, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, testSHA256([]byte("sole-waiter-replacement")),
+		21, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, node.ID, node.Revision,
+		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
+	require.NoError(t, err)
+	current, err := s.RenditionJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, RenditionJobOperatorRequired, current.State)
+	assert.Zero(t, current.WaiterCount)
+
+	unreachable, err := s.UnreachableBlobs(ctx)
+	require.NoError(t, err)
+	for _, candidate := range unreachable {
+		assert.NotEqual(t, catalogSourceHash, candidate.Hash,
+			"an ambiguous tombstone retains exact source authority")
+	}
+	page, err := s.UnreachableBlobsPageFrom(ctx, nil, 100)
+	require.NoError(t, err)
+	for _, candidate := range page.Items {
+		assert.NotEqual(t, catalogSourceHash, candidate.Hash,
+			"paged GC eligibility is shared by loose and packed storage")
+	}
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
+	restoredJob, err := restored.RenditionJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, RenditionJobOperatorRequired, restoredJob.State)
+	assert.Zero(t, restoredJob.WaiterCount)
+
+	retryFile, err := restored.CreateFile(
+		ctx, restored.RootID(), "same-source-retry.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	retryRequest := request
+	retryRequest.ContentVersionID = retryFile.CurrentVersionID
+	grantRenditionJobConsent(t, restored, retryRequest)
+	_, _, err = restored.EnqueueRenditionJob(ctx, retryRequest)
+	require.ErrorIs(t, err, ErrRenditionJobOperatorRequired,
+		"metadata restore must not join or restart a zero-waiter ambiguity fence")
+}
+
 func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -154,26 +337,6 @@ func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testin
 	require.NoError(t, err)
 	require.Len(t, unreachable, 1)
 	assert.Equal(t, replacement.BlobHash, unreachable[0].Hash)
-}
-
-func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
-	s := newTestStore(t)
-	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
-	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
-	require.NoError(t, err)
-	replaced, _, err := s.ReplaceContent(
-		t.Context(), node.ID, node.Revision, fakeHash("f7"), 21, "application/pdf",
-	)
-	require.NoError(t, err)
-
-	receipt, err := s.PruneContentVersions(
-		t.Context(), node.ID, replaced.Revision,
-		VersionPruneSelector{VersionIDs: []string{versions[0]}}, true,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, 1, receipt.DeletedVersions)
-	_, err = s.ActiveRendition(t.Context(), versions[0], profiles[0].Fingerprint)
-	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
