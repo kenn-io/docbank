@@ -20,7 +20,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
+
+	webparse "github.com/tdewolff/parse/v2"
+	csslexer "github.com/tdewolff/parse/v2/css"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/formatdetect"
@@ -417,7 +421,14 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 		record.Reason = CapabilityReasonEntryCount
 		return record
 	}
+	var archiveNames map[string]bool
+	if ext == ".epub" {
+		archiveNames = make(map[string]bool, len(zr.File))
+	}
 	for _, file := range zr.File {
+		if archiveNames != nil {
+			archiveNames[file.Name] = true
+		}
 		if file.Flags&1 != 0 {
 			record.Reason = CapabilityReasonEncryptedContainer
 			return record
@@ -490,9 +501,16 @@ func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) Cap
 				return record
 			}
 		}
-		if ext == ".epub" && strings.HasSuffix(name, ".css") && hasCSSReference(body) {
-			record.Reason = CapabilityReasonExternalReference
-			return record
+		if ext == ".epub" && strings.HasSuffix(name, ".css") {
+			external, cssErr := inspectEPUBCSS(body, file.Name, archiveNames)
+			if cssErr != nil {
+				record.Reason = CapabilityReasonMalformed
+				return record
+			}
+			if external {
+				record.Reason = CapabilityReasonExternalReference
+				return record
+			}
 		}
 		if strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") {
 			record.Measurements.Slides++
@@ -650,8 +668,14 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 				return nil, true, nil
 			}
 		case "style":
-			if hasCSSReference([]byte(value)) {
-				return nil, true, nil
+			references, err := cssReferences([]byte(value))
+			if err != nil {
+				return nil, false, fmt.Errorf("inspect inline CSS: %w", err)
+			}
+			for _, reference := range references {
+				if isExternalXMLURI(reference, base) {
+					return nil, true, nil
+				}
 			}
 		case "srcset":
 			for candidate := range strings.SplitSeq(value, ",") {
@@ -847,9 +871,222 @@ func inspectWAV(data []byte, policy InspectionPolicy) CapabilityRecord {
 	return record
 }
 
-func hasCSSReference(data []byte) bool {
-	lower := strings.ToLower(string(data))
-	return strings.Contains(lower, "url") || strings.Contains(lower, "@import")
+func inspectEPUBCSS(data []byte, stylesheet string, archiveNames map[string]bool) (bool, error) {
+	references, err := cssReferences(data)
+	if err != nil {
+		return false, err
+	}
+	for _, reference := range references {
+		if !cssReferenceInArchive(reference, stylesheet, archiveNames) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func cssReferences(data []byte) ([]string, error) {
+	if !utf8.Valid(data) {
+		return nil, errors.New("CSS is not valid UTF-8")
+	}
+	lexer := csslexer.NewLexer(webparse.NewInput(bytes.NewReader(data)))
+	references := make([]string, 0, 4)
+	wantImport := false
+	for {
+		tokenType, token := lexer.Next()
+		switch tokenType {
+		case csslexer.ErrorToken:
+			if errors.Is(lexer.Err(), io.EOF) {
+				return references, nil
+			}
+			return nil, fmt.Errorf("lex CSS: %w", lexer.Err())
+		case csslexer.BadStringToken, csslexer.BadURLToken:
+			return nil, errors.New("CSS contains an invalid string or URL")
+		case csslexer.WhitespaceToken, csslexer.CommentToken:
+			continue
+		case csslexer.AtKeywordToken:
+			keyword, err := decodeCSSEscapes(token[1:])
+			if err != nil {
+				return nil, err
+			}
+			wantImport = strings.EqualFold(keyword, "import")
+		case csslexer.URLToken:
+			reference, err := cssURLTokenReference(token)
+			if err != nil {
+				return nil, err
+			}
+			references = append(references, reference)
+			wantImport = false
+		case csslexer.FunctionToken:
+			name, err := decodeCSSEscapes(token[:len(token)-1])
+			if err != nil {
+				return nil, err
+			}
+			isURL := strings.EqualFold(name, "url")
+			if wantImport && !isURL {
+				return nil, errors.New("CSS import does not name a stylesheet")
+			}
+			if isURL {
+				reference, err := cssURLFunctionReference(lexer)
+				if err != nil {
+					return nil, err
+				}
+				references = append(references, reference)
+			}
+			wantImport = false
+		case csslexer.StringToken:
+			if wantImport {
+				reference, err := cssStringTokenValue(token)
+				if err != nil {
+					return nil, err
+				}
+				references = append(references, reference)
+			}
+			wantImport = false
+		default:
+			if wantImport {
+				return nil, errors.New("CSS import does not name a stylesheet")
+			}
+		}
+	}
+}
+
+func cssURLTokenReference(token []byte) (string, error) {
+	open := bytes.IndexByte(token, '(')
+	if open < 0 || len(token) <= open+1 || token[len(token)-1] != ')' {
+		return "", errors.New("CSS URL is incomplete")
+	}
+	value := bytes.TrimSpace(token[open+1 : len(token)-1])
+	if len(value) != 0 && (value[0] == '\'' || value[0] == '"') {
+		return cssStringTokenValue(value)
+	}
+	return decodeCSSEscapes(value)
+}
+
+func cssURLFunctionReference(lexer *csslexer.Lexer) (string, error) {
+	var value []byte
+	quoted := false
+	for {
+		tokenType, token := lexer.Next()
+		switch tokenType {
+		case csslexer.ErrorToken:
+			return "", errors.New("CSS URL function is incomplete")
+		case csslexer.BadStringToken, csslexer.BadURLToken:
+			return "", errors.New("CSS URL function is invalid")
+		case csslexer.CommentToken:
+			continue
+		case csslexer.WhitespaceToken:
+			value = append(value, token...)
+		case csslexer.RightParenthesisToken:
+			value = bytes.TrimSpace(value)
+			if quoted {
+				return cssStringTokenValue(value)
+			}
+			if bytes.ContainsAny(value, " \t\r\n\f") {
+				return "", errors.New("CSS URL contains unescaped whitespace")
+			}
+			return decodeCSSEscapes(value)
+		case csslexer.StringToken:
+			if len(bytes.TrimSpace(value)) != 0 {
+				return "", errors.New("CSS URL has multiple values")
+			}
+			quoted = true
+			value = append(value, token...)
+		default:
+			if quoted {
+				return "", errors.New("CSS URL has content after its string")
+			}
+			value = append(value, token...)
+		}
+	}
+}
+
+func cssStringTokenValue(token []byte) (string, error) {
+	if len(token) < 2 || token[len(token)-1] != token[0] || (token[0] != '\'' && token[0] != '"') {
+		return "", errors.New("CSS string is incomplete")
+	}
+	return decodeCSSEscapes(token[1 : len(token)-1])
+}
+
+func decodeCSSEscapes(data []byte) (string, error) {
+	var decoded strings.Builder
+	decoded.Grow(len(data))
+	for index := 0; index < len(data); {
+		if data[index] != '\\' {
+			decoded.WriteByte(data[index])
+			index++
+			continue
+		}
+		index++
+		if index == len(data) {
+			return "", errors.New("CSS escape is incomplete")
+		}
+		if isCSSNewline(data[index]) {
+			if data[index] == '\r' && index+1 < len(data) && data[index+1] == '\n' {
+				index++
+			}
+			index++
+			continue
+		}
+		start := index
+		for index < len(data) && index-start < 6 && isCSSHex(data[index]) {
+			index++
+		}
+		if start != index {
+			value, err := strconv.ParseUint(string(data[start:index]), 16, 32)
+			if err != nil {
+				return "", fmt.Errorf("decode CSS escape: %w", err)
+			}
+			character := utf8.RuneError
+			if value > 0 && value <= unicode.MaxRune {
+				candidate := rune(value) // #nosec G115 -- bounded above by unicode.MaxRune
+				if utf8.ValidRune(candidate) {
+					character = candidate
+				}
+			}
+			decoded.WriteRune(character)
+			if index < len(data) && isCSSWhitespace(data[index]) {
+				if data[index] == '\r' && index+1 < len(data) && data[index+1] == '\n' {
+					index++
+				}
+				index++
+			}
+			continue
+		}
+		decoded.WriteByte(data[index])
+		index++
+	}
+	return decoded.String(), nil
+}
+
+func cssReferenceInArchive(reference, stylesheet string, archiveNames map[string]bool) bool {
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || strings.HasPrefix(reference, "//") {
+		return false
+	}
+	referencePath, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil || path.IsAbs(referencePath) || strings.Contains(referencePath, "\\") {
+		return false
+	}
+	if referencePath == "" {
+		return archiveNames[stylesheet]
+	}
+	resolved := path.Clean(path.Join(path.Dir(stylesheet), referencePath))
+	if resolved == "." || path.IsAbs(resolved) || strings.HasPrefix(resolved, "../") {
+		return false
+	}
+	return archiveNames[resolved]
+}
+
+func isCSSHex(value byte) bool {
+	return value >= '0' && value <= '9' || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
+}
+
+func isCSSWhitespace(value byte) bool {
+	return value == ' ' || value == '\t' || isCSSNewline(value)
+}
+
+func isCSSNewline(value byte) bool {
+	return value == '\r' || value == '\n' || value == '\f'
 }
 
 func readZIPEntry(file *zip.File, limit int64) ([]byte, error) {

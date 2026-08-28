@@ -202,6 +202,39 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 	}
 }
 
+func TestInspectResolvesEPUBCSSReferences(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, stylesheet string
+		eligible         bool
+	}{
+		{name: "relative asset", stylesheet: `body { background: url(../Images/cover.png) }`, eligible: true},
+		{name: "escaped relative asset", stylesheet: `body { background: u\72l( "../Images/cover.png" ) }`, eligible: true},
+		{name: "relative import", stylesheet: `@import "theme.css";`, eligible: true},
+		{name: "URL text in string", stylesheet: `a::after { content: "url" }`, eligible: true},
+		{name: "escaped external URL", stylesheet: `body { background: u\72l(https://example.invalid/cover.png) }`},
+		{name: "escaped external import", stylesheet: `@im\70ort "https://example.invalid/theme.css";`},
+		{name: "missing package asset", stylesheet: `body { background: url(../Images/missing.png) }`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="css" href="Styles/book.css"/><item id="cover" href="Images/cover.png"/></manifest><spine/></package>`},
+				zipEntry{name: "OPS/Styles/book.css", body: tt.stylesheet},
+				zipEntry{name: "OPS/Styles/theme.css", body: `body { color: black }`},
+				zipEntry{name: "OPS/Images/cover.png", body: "synthetic image"},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible)
+			if !tt.eligible {
+				assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+			}
+		})
+	}
+}
+
 func TestInspectCountsODSRepeatedCells(t *testing.T) {
 	t.Parallel()
 	data := zipBytes(t, []zipEntry{
