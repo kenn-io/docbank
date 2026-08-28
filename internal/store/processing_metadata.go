@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
@@ -29,7 +31,14 @@ const (
 	metadataLexicalGenerationType          = "rendition_lexical_generation"
 	metadataCurrentRenditionRootType       = "current_rendition_root"
 	metadataDerivativePurgeSuppressionType = "derivative_purge_suppression"
+	metadataProcessingIncarnationType      = "processing_incarnation"
+	metadataProcessingConsentGrantType     = "processing_consent_grant"
+	metadataProcessingConsentRevokeType    = "processing_consent_revocation"
+	metadataRenditionJobType               = "rendition_job"
+	metadataRenditionJobWaiterType         = "rendition_job_waiter"
 )
+
+var errEmbeddingArtifactUnavailable = errors.New("embedding artifact has no readable primary authority")
 
 type metadataProcessingProfile struct {
 	Type                           string         `json:"type"`
@@ -160,7 +169,100 @@ type metadataDerivativePurgeSuppression struct {
 	SupersedingBuildID *string `json:"superseding_build_id"`
 }
 
+type metadataProcessingIncarnation struct {
+	Type      string `json:"type"`
+	ID        string `json:"incarnation_id"`
+	CreatedAt string `json:"created_at"`
+}
+
+type metadataProcessingConsentGrant struct {
+	Type                    string   `json:"type"`
+	ID                      string   `json:"grant_id"`
+	VaultID                 string   `json:"vault_id"`
+	ProcessingIncarnationID string   `json:"incarnation_id"`
+	Principal               string   `json:"principal"`
+	Scope                   string   `json:"scope"`
+	ProfileFingerprint      string   `json:"profile_fingerprint"`
+	DisclosureFingerprint   string   `json:"disclosure_fingerprint"`
+	InputClasses            []string `json:"input_classes"`
+	RetainedArtifactClasses []string `json:"retained_artifact_classes"`
+	RevocationFence         int64    `json:"revocation_fence"`
+	IssuedAt                string   `json:"issued_at"`
+	ExpiresAt               *string  `json:"expires_at"`
+}
+
+type metadataProcessingConsentRevocation struct {
+	Type                    string `json:"type"`
+	ID                      string `json:"revocation_id"`
+	VaultID                 string `json:"vault_id"`
+	ProcessingIncarnationID string `json:"incarnation_id"`
+	Principal               string `json:"principal"`
+	Scope                   string `json:"scope"`
+	Fence                   int64  `json:"fence"`
+	RevokedAt               string `json:"revoked_at"`
+}
+
+type metadataRenditionJob struct {
+	Type                              string                                 `json:"type"`
+	ID                                string                                 `json:"job_id"`
+	VaultID                           string                                 `json:"vault_id"`
+	SourceSHA256                      string                                 `json:"source_sha256"`
+	RenditionRequestFingerprint       string                                 `json:"rendition_request_fingerprint"`
+	EvidenceLexicalFingerprint        string                                 `json:"evidence_lexical_fingerprint"`
+	CapturedArtifactPolicyFingerprint string                                 `json:"captured_artifact_policy_fingerprint"`
+	CapturedArtifactPolicy            jsontext.Value                         `json:"captured_artifact_policy"`
+	ExecutionIdentityFingerprint      string                                 `json:"execution_identity_fingerprint"`
+	ExecutionIdentity                 document.RenditionExecutionIdentityV1  `json:"execution_identity"`
+	ExecutionSnapshot                 *document.RenditionExecutionSnapshotV1 `json:"execution_snapshot"`
+	State                             RenditionJobState                      `json:"state"`
+	Phase                             RenditionJobPhase                      `json:"phase"`
+	ClaimOwner                        *string                                `json:"claim_owner"`
+	ClaimEpoch                        int64                                  `json:"claim_epoch"`
+	LeaseExpiresAt                    *string                                `json:"lease_expires_at"`
+	AvailableAt                       string                                 `json:"available_at"`
+	ProviderStarted                   bool                                   `json:"provider_started"`
+	ProviderResumeHandle              *string                                `json:"provider_resume_handle"`
+	SelectedWaiterID                  *string                                `json:"selected_waiter_id"`
+	AuthorizationGrantID              *string                                `json:"authorization_grant_id"`
+	AuthorizationIncarnationID        *string                                `json:"authorization_incarnation_id"`
+	AuthorizationRevocationFence      *int64                                 `json:"authorization_revocation_fence"`
+	LexicalGenerationID               *string                                `json:"lexical_generation_id"`
+	FailureCode                       *RenditionFailureCode                  `json:"failure_code"`
+	CreatedAt                         string                                 `json:"created_at"`
+	UpdatedAt                         string                                 `json:"updated_at"`
+}
+
+type metadataRenditionJobWaiter struct {
+	Type                  string   `json:"type"`
+	ID                    string   `json:"waiter_id"`
+	JobID                 string   `json:"job_id"`
+	ContentVersionID      string   `json:"content_version_id"`
+	ProfileFingerprint    string   `json:"profile_fingerprint"`
+	Principal             string   `json:"principal"`
+	Scope                 string   `json:"scope"`
+	DisclosureFingerprint string   `json:"disclosure_fingerprint"`
+	InputClasses          []string `json:"input_classes"`
+	RetainedClasses       []string `json:"retained_classes"`
+	State                 string   `json:"state"`
+	AttachmentID          string   `json:"attachment_id"`
+	CreatedAt             string   `json:"created_at"`
+	UpdatedAt             string   `json:"updated_at"`
+}
+
 var processingMetadataRequiredFields = map[string][]string{
+	metadataProcessingIncarnationType: {
+		metadataTypeField, "incarnation_id", metadataCreatedAtField,
+	},
+	metadataProcessingConsentGrantType: {
+		metadataTypeField, "grant_id", auditVaultIDField, "incarnation_id",
+		"principal", "scope", "profile_fingerprint", "disclosure_fingerprint",
+		"input_classes", "retained_artifact_classes", "revocation_fence",
+		"issued_at", "expires_at",
+	},
+	metadataProcessingConsentRevokeType: {
+		metadataTypeField, "revocation_id", auditVaultIDField, "incarnation_id",
+		"principal", "scope", "fence", "revoked_at",
+	},
 	metadataProcessingProfileType: {
 		metadataTypeField, "profile_fingerprint", "canonical_profile",
 		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
@@ -211,6 +313,33 @@ var processingMetadataRequiredFields = map[string][]string{
 		metadataTypeField, "source_sha256", "profile_fingerprint", "build_id",
 		"purged_at", "active", "superseded_at", "superseding_build_id",
 	},
+	metadataRenditionJobType: {
+		metadataTypeField, "job_id", auditVaultIDField, "source_sha256",
+		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
+		"captured_artifact_policy_fingerprint", "captured_artifact_policy",
+		"execution_identity_fingerprint", "execution_identity", "execution_snapshot",
+		"state", "phase", "claim_owner", "claim_epoch", "lease_expires_at", "available_at",
+		"provider_started", "provider_resume_handle", "selected_waiter_id",
+		"authorization_grant_id", "authorization_incarnation_id",
+		"authorization_revocation_fence", "lexical_generation_id", "failure_code",
+		metadataCreatedAtField, "updated_at",
+	},
+	metadataRenditionJobWaiterType: {
+		metadataTypeField, "waiter_id", "job_id", "content_version_id",
+		"profile_fingerprint", "principal", "scope", "disclosure_fingerprint",
+		"input_classes", "retained_classes", "state", "attachment_id",
+		metadataCreatedAtField, "updated_at",
+	},
+	metadataEmbeddingVectorSpaceType:  embeddingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
+	metadataEmbeddingGenerationType:   embeddingMetadataRequiredFields[metadataEmbeddingGenerationType],
+	metadataEmbeddingInputType:        embeddingMetadataRequiredFields[metadataEmbeddingInputType],
+	metadataEmbeddingVectorSetType:    embeddingMetadataRequiredFields[metadataEmbeddingVectorSetType],
+	metadataEmbeddingVectorRowType:    embeddingMetadataRequiredFields[metadataEmbeddingVectorRowType],
+	metadataEmbeddingSetType:          embeddingMetadataRequiredFields[metadataEmbeddingSetType],
+	metadataEmbeddingHeadType:         embeddingMetadataRequiredFields[metadataEmbeddingHeadType],
+	metadataEmbeddingFailureType:      embeddingMetadataRequiredFields[metadataEmbeddingFailureType],
+	metadataEmbeddingCorpusType:       embeddingMetadataRequiredFields[metadataEmbeddingCorpusType],
+	metadataEmbeddingCorpusMemberType: embeddingMetadataRequiredFields[metadataEmbeddingCorpusMemberType],
 }
 
 func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -220,6 +349,9 @@ func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write met
 	}
 	if !present {
 		return nil
+	}
+	if err := exportProcessingConsent(ctx, tx, write); err != nil {
+		return err
 	}
 	if err := exportProcessingProfiles(ctx, tx, write); err != nil {
 		return err
@@ -242,13 +374,217 @@ func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write met
 	if err := exportRenditionHeads(ctx, tx, write); err != nil {
 		return err
 	}
+	if err := exportEmbeddingMetadata(ctx, tx, write); err != nil {
+		return err
+	}
 	if err := exportLexicalGenerations(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportRenditionJobs(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportRenditionJobWaiters(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
 		return err
 	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
+}
+
+func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT job_id,vault_uid,source_sha256,rendition_request_fingerprint,
+		       evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
+		       captured_artifact_policy_json,execution_identity_fingerprint,
+		       execution_identity_json,execution_snapshot_json,state,phase,claim_owner,
+		       claim_epoch,lease_expires_at,available_at,provider_started,
+		       provider_resume_handle,selected_waiter_id,authorization_grant_id,
+		       authorization_incarnation_id,authorization_revocation_fence,
+		       lexical_generation_id,failure_code,created_at,updated_at
+		FROM rendition_jobs ORDER BY job_id`)
+	if err != nil {
+		return fmt.Errorf("exporting rendition jobs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataRenditionJob{Type: metadataRenditionJobType}
+		var policy, identity string
+		var snapshot, owner, lease, handle, waiter, grant, incarnation, generation, failure sql.NullString
+		var fence sql.NullInt64
+		if err := rows.Scan(&record.ID, &record.VaultID, &record.SourceSHA256,
+			&record.RenditionRequestFingerprint, &record.EvidenceLexicalFingerprint,
+			&record.CapturedArtifactPolicyFingerprint, &policy,
+			&record.ExecutionIdentityFingerprint, &identity, &snapshot, &record.State,
+			&record.Phase, &owner, &record.ClaimEpoch, &lease, &record.AvailableAt,
+			&record.ProviderStarted, &handle, &waiter, &grant, &incarnation, &fence,
+			&generation, &failure, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return fmt.Errorf("scanning rendition job metadata: %w", err)
+		}
+		record.CapturedArtifactPolicy = jsontext.Value(policy)
+		parsedIdentity, err := document.ParseRenditionExecutionIdentityV1([]byte(identity))
+		if err != nil {
+			return fmt.Errorf("decoding rendition job execution identity: %w", err)
+		}
+		record.ExecutionIdentity = parsedIdentity
+		if snapshot.Valid {
+			parsed, err := document.ParseRenditionExecutionSnapshotV1([]byte(snapshot.String))
+			if err != nil {
+				return fmt.Errorf("decoding rendition job execution snapshot: %w", err)
+			}
+			record.ExecutionSnapshot = &parsed
+		}
+		record.ClaimOwner, record.LeaseExpiresAt = stringPtr(owner), stringPtr(lease)
+		record.ProviderResumeHandle, record.SelectedWaiterID = stringPtr(handle), stringPtr(waiter)
+		record.AuthorizationGrantID = stringPtr(grant)
+		record.AuthorizationIncarnationID = stringPtr(incarnation)
+		record.AuthorizationRevocationFence = int64Ptr(fence)
+		record.LexicalGenerationID = stringPtr(generation)
+		if failure.Valid {
+			code := RenditionFailureCode(failure.String)
+			record.FailureCode = &code
+		}
+		if err := validateMetadataRenditionJob(record); err != nil {
+			return fmt.Errorf("validating rendition job metadata: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("rendition job", rows)
+}
+
+func exportRenditionJobWaiters(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+		       attachment_id,created_at,updated_at
+		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
+	if err != nil {
+		return fmt.Errorf("exporting rendition job waiters: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}
+		var inputs, retained string
+		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
+			&record.ProfileFingerprint, &record.Principal, &record.Scope,
+			&record.DisclosureFingerprint, &inputs, &retained, &record.State,
+			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
+		}
+		if err := json.Unmarshal([]byte(inputs), &record.InputClasses); err != nil {
+			return fmt.Errorf("decoding rendition job waiter input classes: %w", err)
+		}
+		if err := json.Unmarshal([]byte(retained), &record.RetainedClasses); err != nil {
+			return fmt.Errorf("decoding rendition job waiter retained classes: %w", err)
+		}
+		if _, err := validateMetadataRenditionJobWaiter(record); err != nil {
+			return fmt.Errorf("validating rendition job waiter metadata: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("rendition job waiter", rows)
+}
+
+func exportProcessingConsent(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	if err := exportProcessingIncarnations(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportProcessingConsentRevocations(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportProcessingConsentGrants(ctx, tx, write)
+}
+
+func exportProcessingIncarnations(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT i.incarnation_id,i.created_at
+		FROM processing_incarnations i
+		WHERE EXISTS(SELECT 1 FROM processing_consent_grants g
+		             WHERE g.incarnation_id=i.incarnation_id)
+		   OR EXISTS(SELECT 1 FROM processing_consent_revocations r
+		             WHERE r.incarnation_id=i.incarnation_id)
+		ORDER BY i.incarnation_id`)
+	if err != nil {
+		return fmt.Errorf("exporting processing incarnations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		value := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
+		if err := rows.Scan(&value.ID, &value.CreatedAt); err != nil {
+			return fmt.Errorf("scanning processing incarnation metadata: %w", err)
+		}
+		if err := write(value); err != nil {
+			return err
+		}
+	}
+	return rowsError("processing incarnation", rows)
+}
+
+func exportProcessingConsentRevocations(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	revocations, err := tx.QueryContext(ctx, `
+		SELECT revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
+		FROM processing_consent_revocations ORDER BY incarnation_id,principal,scope,fence`)
+	if err != nil {
+		return fmt.Errorf("exporting processing consent revocations: %w", err)
+	}
+	defer func() { _ = revocations.Close() }()
+	for revocations.Next() {
+		value := metadataProcessingConsentRevocation{Type: metadataProcessingConsentRevokeType}
+		if err := revocations.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
+			&value.Principal, &value.Scope, &value.Fence, &value.RevokedAt); err != nil {
+			return fmt.Errorf("scanning processing consent revocation metadata: %w", err)
+		}
+		if err := write(value); err != nil {
+			return err
+		}
+	}
+	return rowsError("processing consent revocation", revocations)
+}
+
+func exportProcessingConsentGrants(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	grants, err := tx.QueryContext(ctx, `
+		SELECT grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,
+		       revocation_fence,issued_at,expires_at
+		FROM processing_consent_grants ORDER BY incarnation_id,issued_at,grant_id`)
+	if err != nil {
+		return fmt.Errorf("exporting processing consent grants: %w", err)
+	}
+	defer func() { _ = grants.Close() }()
+	for grants.Next() {
+		value := metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType}
+		var inputs, retained string
+		var expires sql.NullString
+		if err := grants.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
+			&value.Principal, &value.Scope, &value.ProfileFingerprint,
+			&value.DisclosureFingerprint, &inputs, &retained, &value.RevocationFence,
+			&value.IssuedAt, &expires); err != nil {
+			return fmt.Errorf("scanning processing consent grant metadata: %w", err)
+		}
+		if err := json.Unmarshal([]byte(inputs), &value.InputClasses); err != nil {
+			return fmt.Errorf("decoding processing consent input classes: %w", err)
+		}
+		if err := json.Unmarshal([]byte(retained), &value.RetainedArtifactClasses); err != nil {
+			return fmt.Errorf("decoding processing consent retained classes: %w", err)
+		}
+		if expires.Valid {
+			value.ExpiresAt = &expires.String
+		}
+		if err := write(value); err != nil {
+			return err
+		}
+	}
+	return rowsError("processing consent grant", grants)
 }
 
 func exportLexicalGenerations(
@@ -269,7 +605,8 @@ func exportLexicalGenerations(
 		      ) OR EXISTS(
 		         SELECT 1 FROM current_rendition_roots r
 		         WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
-		           AND r.root_kind IN ('retention','audit')
+		           AND (r.root_kind IN ('retention','audit','policy_pin','restore_pin')
+		                OR (r.root_kind='job' AND r.active=1))
 		      )
 		ORDER BY g.generation_id`)
 	if err != nil {
@@ -334,7 +671,7 @@ func exportDurableCurrentRenditionRoots(
 		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
 		       active,released_at
 		FROM current_rendition_roots
-		WHERE root_kind IN ('retention','audit')
+		WHERE root_kind IN ('retention','audit','policy_pin','restore_pin') OR (root_kind='job' AND active=1)
 		ORDER BY root_id`)
 	if err != nil {
 		return fmt.Errorf("exporting durable current rendition roots: %w", err)
@@ -578,9 +915,59 @@ func isProcessingMetadataType(kind string) bool {
 }
 
 func (s *Store) importProcessingMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value, verifyPhysicalBytes bool,
+	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
+	if isEmbeddingMetadataType(kind) {
+		return importEmbeddingMetadataRecord(ctx, tx, kind, raw)
+	}
 	switch kind {
+	case metadataProcessingIncarnationType:
+		var value metadataProcessingIncarnation
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateMetadataProcessingIncarnation(value); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
+			value.ID, value.CreatedAt)
+		return err
+	case metadataProcessingConsentRevokeType:
+		var value metadataProcessingConsentRevocation
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateMetadataProcessingConsentRevocation(value); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO processing_consent_revocations(
+			revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
+		) VALUES(?,?,?,?,?,?,?)`, value.ID, value.VaultID, value.ProcessingIncarnationID,
+			value.Principal, value.Scope, value.Fence, value.RevokedAt)
+		return err
+	case metadataProcessingConsentGrantType:
+		var value metadataProcessingConsentGrant
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		authority, err := validateMetadataProcessingConsentGrant(value)
+		if err != nil {
+			return err
+		}
+		var expires any
+		if value.ExpiresAt != nil {
+			expires = *value.ExpiresAt
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO processing_consent_grants(
+			grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,
+			revocation_fence,issued_at,expires_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.VaultID,
+			value.ProcessingIncarnationID, authority.principal, authority.scope,
+			authority.profile, authority.disclosure, authority.inputsJSON,
+			authority.retainedJSON, value.RevocationFence, value.IssuedAt, expires)
+		return err
 	case metadataProcessingProfileType:
 		var value metadataProcessingProfile
 		if err := decodeMetadataRecord(raw, &value); err != nil {
@@ -706,9 +1093,6 @@ func (s *Store) importProcessingMetadataRecord(
 		}); err != nil {
 			return err
 		}
-		if err := s.validateImportedRenditionHead(ctx, tx, value, verifyPhysicalBytes); err != nil {
-			return err
-		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
 			VALUES(?,?,?,?)`, value.ContentVersionID, value.ProcessingProfileFingerprint,
@@ -720,6 +1104,80 @@ func (s *Store) importProcessingMetadataRecord(
 			return err
 		}
 		return restoreLexicalGenerationTx(ctx, tx, value)
+	case metadataRenditionJobType:
+		var value metadataRenditionJob
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateMetadataRenditionJob(value); err != nil {
+			return err
+		}
+		identityJSON, _, err := document.CanonicalRenditionExecutionIdentityV1(
+			value.ExecutionIdentity)
+		if err != nil {
+			return err
+		}
+		var snapshotJSON any
+		if value.ExecutionSnapshot != nil {
+			encoded, err := document.CanonicalRenditionExecutionSnapshotV1(
+				*value.ExecutionSnapshot)
+			if err != nil {
+				return err
+			}
+			snapshotJSON = string(encoded)
+		}
+		selectedWaiterID := value.SelectedWaiterID
+		authorizationGrantID := value.AuthorizationGrantID
+		authorizationIncarnationID := value.AuthorizationIncarnationID
+		authorizationRevocationFence := value.AuthorizationRevocationFence
+		if value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
+			value.State == RenditionJobRetryWait {
+			// A restore keeps sealed provider and staged local work, but imported
+			// consent belongs to the old processing incarnation. Force selection
+			// and authorization through fresh consent before any resumed provider
+			// call or local publication.
+			selectedWaiterID = nil
+			authorizationGrantID = nil
+			authorizationIncarnationID = nil
+			authorizationRevocationFence = nil
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_jobs(
+			job_id,vault_uid,source_sha256,rendition_request_fingerprint,
+			evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
+			captured_artifact_policy_json,execution_identity_fingerprint,
+			execution_identity_json,execution_snapshot_json,state,phase,claim_owner,
+			claim_epoch,lease_expires_at,available_at,provider_started,
+			provider_resume_handle,selected_waiter_id,authorization_grant_id,
+			authorization_incarnation_id,authorization_revocation_fence,
+			lexical_generation_id,failure_code,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			value.ID, value.VaultID, value.SourceSHA256, value.RenditionRequestFingerprint,
+			value.EvidenceLexicalFingerprint, value.CapturedArtifactPolicyFingerprint,
+			string(value.CapturedArtifactPolicy), value.ExecutionIdentityFingerprint,
+			string(identityJSON), snapshotJSON, value.State, value.Phase, value.ClaimOwner,
+			value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, value.ProviderStarted,
+			value.ProviderResumeHandle, selectedWaiterID, authorizationGrantID,
+			authorizationIncarnationID, authorizationRevocationFence,
+			value.LexicalGenerationID, value.FailureCode, value.CreatedAt, value.UpdatedAt)
+		return err
+	case metadataRenditionJobWaiterType:
+		var value metadataRenditionJobWaiter
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		authority, err := validateMetadataRenditionJobWaiter(value)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
+			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+			attachment_id,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+			value.ProfileFingerprint, authority.principal, authority.scope,
+			authority.disclosure, authority.inputsJSON, authority.retainedJSON, value.State,
+			value.AttachmentID, value.CreatedAt, value.UpdatedAt)
+		return err
 	case metadataCurrentRenditionRootType:
 		var value metadataCurrentRenditionRoot
 		if err := decodeMetadataRecord(raw, &value); err != nil {
@@ -782,7 +1240,7 @@ func restoreLexicalGenerationTx(
 	if err := validateMetadataLexicalGeneration(value); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
+	if err := ensureLexicalProjectionTx(ctx, tx); err != nil {
 		return fmt.Errorf("initializing restored lexical projection: %w", err)
 	}
 	segments := make([]lexicalManifestRow, 0, value.SegmentCount)
@@ -866,6 +1324,180 @@ func validateMetadataLexicalGeneration(value metadataLexicalGeneration) error {
 	return nil
 }
 
+func validateMetadataRenditionJob(value metadataRenditionJob) error {
+	if value.Type != metadataRenditionJobType || value.ClaimEpoch < 0 {
+		return errors.New("invalid rendition job metadata")
+	}
+	for subject, digest := range map[string]string{
+		"rendition job ID": value.ID, "rendition job source SHA-256": value.SourceSHA256,
+		"rendition request fingerprint":        value.RenditionRequestFingerprint,
+		"evidence lexical fingerprint":         value.EvidenceLexicalFingerprint,
+		"captured artifact policy fingerprint": value.CapturedArtifactPolicyFingerprint,
+		"execution identity fingerprint":       value.ExecutionIdentityFingerprint,
+	} {
+		if err := validateCatalogSHA256(digest, subject); err != nil {
+			return err
+		}
+	}
+	if err := validateUUIDv4(value.VaultID); err != nil {
+		return err
+	}
+	policy, err := normalizeCapturedArtifactPolicyV1(value.CapturedArtifactPolicy)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(policy.canonical, value.CapturedArtifactPolicy) ||
+		digestCatalogJSON(policy.canonical) != value.CapturedArtifactPolicyFingerprint {
+		return errors.New("rendition job captured artifact policy identity is invalid")
+	}
+	_, fingerprint, err := document.CanonicalRenditionExecutionIdentityV1(value.ExecutionIdentity)
+	if err != nil || fingerprint != value.ExecutionIdentityFingerprint {
+		return errors.Join(errors.New("rendition job execution identity is invalid"), err)
+	}
+	if value.ExecutionIdentity.Upload.SHA256 != value.SourceSHA256 ||
+		value.ExecutionIdentity.Authorization.RenditionRequestFingerprint !=
+			value.RenditionRequestFingerprint {
+		return errors.New("rendition job execution identity disagrees with job authority")
+	}
+	if renditionSharedBuildID(value.VaultID, value.SourceSHA256,
+		value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
+		value.CapturedArtifactPolicyFingerprint, value.ExecutionIdentityFingerprint) != value.ID {
+		return errors.New("rendition job ID does not match immutable shared-build identity")
+	}
+	if value.ExecutionSnapshot != nil {
+		if _, err := document.CanonicalRenditionExecutionSnapshotV1(*value.ExecutionSnapshot); err != nil {
+			return err
+		}
+		_, snapshotFingerprint, _ := document.CanonicalRenditionExecutionIdentityV1(
+			value.ExecutionSnapshot.Identity)
+		if snapshotFingerprint != value.ExecutionIdentityFingerprint {
+			return errors.New("rendition job execution snapshot identity drifted")
+		}
+	}
+	if value.ProviderStarted && value.ExecutionSnapshot == nil ||
+		value.ProviderResumeHandle != nil && value.ExecutionSnapshot == nil ||
+		(value.ClaimOwner == nil) != (value.LeaseExpiresAt == nil) ||
+		(value.State == RenditionJobRunning) != (value.ClaimOwner != nil) ||
+		(value.AuthorizationGrantID == nil) != (value.AuthorizationIncarnationID == nil) ||
+		(value.AuthorizationGrantID == nil) != (value.AuthorizationRevocationFence == nil) {
+		return errors.New("rendition job durable authority is inconsistent")
+	}
+	if value.ClaimOwner != nil && !validRenditionWorkerOwner(*value.ClaimOwner) {
+		return errors.New("rendition job claim owner is invalid")
+	}
+	if value.ProviderResumeHandle != nil && !validRenditionResumeHandle(*value.ProviderResumeHandle) {
+		return errors.New("rendition job resume handle is invalid")
+	}
+	if value.SelectedWaiterID != nil {
+		if err := validateCatalogSHA256(*value.SelectedWaiterID, "selected rendition waiter ID"); err != nil {
+			return err
+		}
+	}
+	if value.AuthorizationGrantID != nil {
+		if err := validateUUIDv4(*value.AuthorizationGrantID); err != nil {
+			return err
+		}
+		if err := validateUUIDv4(*value.AuthorizationIncarnationID); err != nil {
+			return err
+		}
+		if *value.AuthorizationRevocationFence < 0 {
+			return errors.New("rendition job authorization fence is invalid")
+		}
+	}
+	if value.LexicalGenerationID != nil {
+		if err := validateCatalogSHA256(*value.LexicalGenerationID, "rendition job lexical generation ID"); err != nil {
+			return err
+		}
+	}
+	switch value.State {
+	case RenditionJobQueued, RenditionJobRunning, RenditionJobRetryWait,
+		RenditionJobOperatorRequired, RenditionJobFailed, RenditionJobCompleted:
+	default:
+		return errors.New("rendition job state is invalid")
+	}
+	switch value.Phase {
+	case RenditionPhaseQueued, RenditionPhaseProvider, RenditionPhaseBuildStaged,
+		RenditionPhaseGenerationStaged, RenditionPhasePublished:
+	default:
+		return errors.New("rendition job phase is invalid")
+	}
+	if value.State == RenditionJobCompleted && value.Phase != RenditionPhasePublished ||
+		value.State == RenditionJobOperatorRequired &&
+			(value.FailureCode == nil || *value.FailureCode != RenditionFailureAmbiguous) {
+		return errors.New("rendition job terminal phase is inconsistent")
+	}
+	if value.FailureCode != nil {
+		switch *value.FailureCode {
+		case RenditionFailureTransient, RenditionFailureTerminal, RenditionFailureAmbiguous,
+			RenditionFailureConsent, RenditionFailureStaleAuthority:
+		default:
+			return errors.New("rendition job failure code is invalid")
+		}
+	}
+	for field, timestamp := range map[string]string{
+		"rendition job available_at": value.AvailableAt,
+		"rendition job created_at":   value.CreatedAt,
+		"rendition job updated_at":   value.UpdatedAt,
+	} {
+		if err := validateMetadataTime(field, timestamp); err != nil {
+			return err
+		}
+	}
+	if value.LeaseExpiresAt != nil {
+		return validateMetadataTime("rendition job lease_expires_at", *value.LeaseExpiresAt)
+	}
+	return nil
+}
+
+func validateMetadataRenditionJobWaiter(
+	value metadataRenditionJobWaiter,
+) (normalizedConsentAuthority, error) {
+	if value.Type != metadataRenditionJobWaiterType ||
+		(value.State != "waiting" && value.State != "published" && value.State != "rejected") {
+		return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter metadata")
+	}
+	for subject, digest := range map[string]string{
+		"rendition waiter ID": value.ID, "rendition waiter job ID": value.JobID,
+		"rendition waiter profile fingerprint":    value.ProfileFingerprint,
+		"rendition waiter disclosure fingerprint": value.DisclosureFingerprint,
+		"rendition waiter attachment ID":          value.AttachmentID,
+	} {
+		if err := validateCatalogSHA256(digest, subject); err != nil {
+			return normalizedConsentAuthority{}, err
+		}
+	}
+	if err := validateUUIDv4(value.ContentVersionID); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
+		Principal: value.Principal, Scope: value.Scope,
+		ProfileFingerprint:    value.ProfileFingerprint,
+		DisclosureFingerprint: value.DisclosureFingerprint,
+		InputClasses:          value.InputClasses, RetainedArtifactClasses: value.RetainedClasses,
+	})
+	if err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if !slices.Equal(authority.inputs, value.InputClasses) ||
+		!slices.Equal(authority.retained, value.RetainedClasses) {
+		return normalizedConsentAuthority{}, errors.New("rendition waiter classes are not canonical")
+	}
+	if renditionScopedID("waiter", value.JobID, value.ContentVersionID,
+		value.ProfileFingerprint, authority.principal, authority.scope, authority.disclosure,
+		authority.inputsJSON, authority.retainedJSON) != value.ID ||
+		renditionScopedID("attachment", value.JobID, value.ContentVersionID,
+			value.ProfileFingerprint) != value.AttachmentID {
+		return normalizedConsentAuthority{}, errors.New("rendition waiter identity is invalid")
+	}
+	if err := validateMetadataTime("rendition waiter created_at", value.CreatedAt); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if err := validateMetadataTime("rendition waiter updated_at", value.UpdatedAt); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	return authority, nil
+}
+
 func validateMetadataDerivativePurgeSuppression(
 	value metadataDerivativePurgeSuppression,
 ) error {
@@ -895,11 +1527,85 @@ func validateMetadataDerivativePurgeSuppression(
 	return nil
 }
 
+func validateMetadataProcessingIncarnation(value metadataProcessingIncarnation) error {
+	if value.Type != metadataProcessingIncarnationType {
+		return errors.New("invalid processing incarnation record")
+	}
+	if err := validateUUIDv4(value.ID); err != nil {
+		return fmt.Errorf("invalid processing incarnation ID: %w", err)
+	}
+	return validateMetadataTime("processing incarnation created_at", value.CreatedAt)
+}
+
+func validateMetadataProcessingConsentRevocation(
+	value metadataProcessingConsentRevocation,
+) error {
+	if value.Type != metadataProcessingConsentRevokeType || value.Fence <= 0 {
+		return errors.New("invalid processing consent revocation record")
+	}
+	for subject, id := range map[string]string{
+		"revocation ID": value.ID, "processing incarnation ID": value.ProcessingIncarnationID,
+		"vault ID": value.VaultID,
+	} {
+		if err := validateUUIDv4(id); err != nil {
+			return fmt.Errorf("invalid processing consent %s: %w", subject, err)
+		}
+	}
+	if _, err := normalizeConsentLabel("principal", value.Principal); err != nil {
+		return err
+	}
+	if _, err := normalizeConsentLabel("scope", value.Scope); err != nil {
+		return err
+	}
+	return validateMetadataTime("processing consent revoked_at", value.RevokedAt)
+}
+
+func validateMetadataProcessingConsentGrant(
+	value metadataProcessingConsentGrant,
+) (normalizedConsentAuthority, error) {
+	if value.Type != metadataProcessingConsentGrantType || value.RevocationFence < 0 {
+		return normalizedConsentAuthority{}, errors.New("invalid processing consent grant record")
+	}
+	for subject, id := range map[string]string{
+		"grant ID": value.ID, "processing incarnation ID": value.ProcessingIncarnationID,
+		"vault ID": value.VaultID,
+	} {
+		if err := validateUUIDv4(id); err != nil {
+			return normalizedConsentAuthority{}, fmt.Errorf("invalid processing consent %s: %w", subject, err)
+		}
+	}
+	authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
+		Principal: value.Principal, Scope: value.Scope,
+		ProfileFingerprint:      value.ProfileFingerprint,
+		DisclosureFingerprint:   value.DisclosureFingerprint,
+		InputClasses:            value.InputClasses,
+		RetainedArtifactClasses: value.RetainedArtifactClasses,
+	})
+	if err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if !slices.Equal(authority.inputs, value.InputClasses) ||
+		!slices.Equal(authority.retained, value.RetainedArtifactClasses) {
+		return normalizedConsentAuthority{}, errors.New("processing consent class sets are not canonical")
+	}
+	if err := validateMetadataTime("processing consent issued_at", value.IssuedAt); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if value.ExpiresAt != nil {
+		if err := validateMetadataTime("processing consent expires_at", *value.ExpiresAt); err != nil {
+			return normalizedConsentAuthority{}, err
+		}
+	}
+	return authority, nil
+}
+
 func validateDurableCurrentRenditionRootMetadata(
 	value metadataCurrentRenditionRoot, root CurrentRenditionRoot,
 ) error {
 	if value.Type != metadataCurrentRenditionRootType ||
-		(root.Kind != RenditionRootRetention && root.Kind != RenditionRootAudit) {
+		(root.Kind != RenditionRootRetention && root.Kind != RenditionRootAudit &&
+			root.Kind != RenditionRootJob && root.Kind != RenditionRootPolicyPin &&
+			root.Kind != RenditionRootRestorePin) {
 		return errors.New("invalid durable current rendition root record")
 	}
 	if err := validateCurrentRenditionRoot(root); err != nil {
@@ -926,8 +1632,8 @@ type RenditionBlobReader interface {
 }
 
 // VerifyRenditionBlobBytes verifies every retained rendition source and
-// artifact through the restored mixed-storage catalog, including builds that
-// are staged but not attached to an active head.
+// artifact through the restored mixed-storage catalog. This includes staged
+// builds and resumable jobs that are not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
@@ -936,6 +1642,10 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 		UNION
 		SELECT artifact.blob_hash, artifact.size
 		FROM rendition_artifacts artifact
+		UNION
+		SELECT job.source_sha256, source.size
+		FROM rendition_jobs job
+		JOIN blobs source ON source.hash=job.source_sha256
 		ORDER BY 1, 2`)
 	if err != nil {
 		return fmt.Errorf("listing retained rendition bytes: %w", err)
@@ -956,11 +1666,291 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 	return nil
 }
 
-// VerifyRenditionBlobAuthority verifies the relational and physical-catalog
-// location authority for every retained rendition source and artifact,
-// including staged builds that are not currently attached to a document
-// version. VerifyRenditionBlobBytes separately reads and verifies each location.
+func verifyRenditionBlob(
+	ctx context.Context, reader RenditionBlobReader, blob importedProcessingBlob,
+) (retErr error) {
+	stream, logicalSize, err := reader.OpenStreamContext(ctx, blob.hash)
+	if err != nil {
+		return fmt.Errorf("opening restored rendition blob %s: %w", blob.hash, err)
+	}
+	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
+	if logicalSize != blob.size {
+		return fmt.Errorf(
+			"restored rendition blob %s size %d does not match catalog size %d",
+			blob.hash, logicalSize, blob.size,
+		)
+	}
+	read, err := io.Copy(io.Discard, stream)
+	if err != nil {
+		return fmt.Errorf("reading restored rendition blob %s: %w", blob.hash, err)
+	}
+	if read != blob.size {
+		return fmt.Errorf(
+			"restored rendition blob %s read %d bytes, want %d", blob.hash, read, blob.size,
+		)
+	}
+	if err := stream.Verify(); err != nil {
+		return fmt.Errorf("verifying restored rendition blob %s: %w", blob.hash, err)
+	}
+	return nil
+}
+
+func (s *Store) verifyImportedProcessingBlobAuthority(
+	ctx context.Context, tx metadataQuerier,
+) (retErr error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256,blobs.size FROM rendition_builds
+		LEFT JOIN blobs ON blobs.hash=rendition_builds.source_sha256
+		UNION
+		SELECT blob_hash,blobs.size FROM rendition_artifacts
+		LEFT JOIN blobs ON blobs.hash=rendition_artifacts.blob_hash
+		UNION
+		SELECT source_sha256,blobs.size FROM rendition_jobs
+		LEFT JOIN blobs ON blobs.hash=rendition_jobs.source_sha256
+		UNION
+		SELECT generation_blob_hash,blobs.size FROM embedding_input_generations
+		LEFT JOIN blobs ON blobs.hash=embedding_input_generations.generation_blob_hash
+		WHERE generation_blob_hash IS NOT NULL
+		UNION
+		SELECT payload_blob_hash,blobs.size FROM embedding_vector_sets
+		LEFT JOIN blobs ON blobs.hash=embedding_vector_sets.payload_blob_hash
+		ORDER BY source_sha256`)
+	if err != nil {
+		return fmt.Errorf("reading imported processing blob authority: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("closing imported rendition artifact bytes: %w", err))
+		}
+	}()
+	var blobs []importedProcessingBlob
+	for rows.Next() {
+		var blob importedProcessingBlob
+		var size sql.NullInt64
+		if err := rows.Scan(&blob.hash, &size); err != nil {
+			return fmt.Errorf("scanning imported processing blob authority: %w", err)
+		}
+		if !size.Valid {
+			return fmt.Errorf("catalog-authorized processing blob %s is missing", blob.hash)
+		}
+		blob.size = size.Int64
+		blobs = append(blobs, blob)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating imported processing blob authority: %w", err)
+	}
+
+	layout, err := packstore.NewLayout(
+		filepath.Join(filepath.Dir(s.path), "blobs"),
+		packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"},
+	)
+	if err != nil {
+		return fmt.Errorf("opening processing blob layout: %w", err)
+	}
+	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
+	if err != nil {
+		return fmt.Errorf("opening processing blob verifier: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, backend.Close()) }()
+	verified := make(map[string]bool, len(blobs))
+	for _, blob := range blobs {
+		if verified[blob.hash] {
+			continue
+		}
+		if err := verifyImportedProcessingBlob(ctx, backend, blob); err != nil {
+			return err
+		}
+		verified[blob.hash] = true
+	}
+	concrete, ok := tx.(*sql.Tx)
+	if ok {
+		if err := verifyEmbeddingArtifacts(ctx, concrete, func(
+			ctx context.Context, hash string, size int64,
+		) ([]byte, error) {
+			return readImportedEmbeddingArtifact(ctx, backend, hash, size)
+		}, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type embeddingArtifactReader func(context.Context, string, int64) ([]byte, error)
+
+func verifyEmbeddingArtifacts(
+	ctx context.Context, tx *sql.Tx, read embeddingArtifactReader,
+	allowMissingVectorPayloads bool,
+) error {
+	generationIDs, err := loadProcessingMetadataIDs(ctx, tx, "embedding generation", `
+		SELECT generation_id FROM embedding_input_generations
+		WHERE generation_blob_hash IS NOT NULL ORDER BY generation_id`)
+	if err != nil {
+		return err
+	}
+	for _, id := range generationIDs {
+		record, err := loadInputGenerationTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		data, err := read(ctx, record.GenerationBlobHash, record.GenerationEncodedSize)
+		if err != nil {
+			return fmt.Errorf("reading E2 generation artifact %s: %w", id, err)
+		}
+		if err := validateExactEmbeddingGenerationArtifact(record, data); err != nil {
+			return fmt.Errorf("validating E2 generation artifact %s: %w", id, err)
+		}
+		setIDs, err := stringColumnTx(ctx, tx, "embedding generation sets", `
+			SELECT embedding_set_id FROM embedding_sets
+			WHERE input_generation_id=? ORDER BY embedding_set_id`, id)
+		if err != nil {
+			return err
+		}
+		for _, setID := range setIDs {
+			set, err := loadEmbeddingSetTx(ctx, tx, setID)
+			if err != nil {
+				return err
+			}
+			set.InputGeneration.GenerationJSON = data
+			binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx, set.ProcessingProfileFingerprint, set.BindingID)
+			if err != nil {
+				return err
+			}
+			if err := validateEmbeddingBindingAuthority(set, binding, fingerprints); err != nil {
+				return fmt.Errorf("validating E2 generation profile binding %s: %w", setID, err)
+			}
+		}
+	}
+	vectorSetIDs, err := loadProcessingMetadataIDs(ctx, tx, "embedding vector set", `
+		SELECT vector_set_id FROM embedding_vector_sets ORDER BY vector_set_id`)
+	if err != nil {
+		return err
+	}
+	for _, id := range vectorSetIDs {
+		vectorSet, err := loadVectorSetTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		var generationID string
+		if err := tx.QueryRowContext(ctx, `SELECT input_generation_id FROM embedding_sets
+			WHERE vector_set_id=? ORDER BY embedding_set_id LIMIT 1`, id).Scan(&generationID); err != nil {
+			return fmt.Errorf("finding vector-set generation %s: %w", id, err)
+		}
+		generation, err := loadInputGenerationTx(ctx, tx, generationID)
+		if err != nil {
+			return err
+		}
+		space, err := loadVectorSpaceTx(ctx, tx, vectorSet.VectorSpaceID)
+		if err != nil {
+			return err
+		}
+		data, err := read(ctx, vectorSet.PayloadBlobHash, vectorSet.PayloadSize)
+		if allowMissingVectorPayloads &&
+			(errors.Is(err, errEmbeddingArtifactUnavailable) || errors.Is(err, fs.ErrNotExist)) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("reading vector-set artifact %s: %w", id, err)
+		}
+		if err := validateExactEmbeddingVectorArtifact(vectorSet, space, generation, data); err != nil {
+			return fmt.Errorf("validating vector-set artifact %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func readCatalogEmbeddingArtifact(
+	ctx context.Context, store *Store, backend *packstore.FilesystemBackend,
+	rawHash string, size int64,
+) (data []byte, retErr error) {
+	if size < 1 || size > 64<<20 {
+		return nil, errors.New("embedding artifact size exceeds bounds")
+	}
+	hash, err := packstore.ParseHash(rawHash)
+	if err != nil {
+		return nil, fmt.Errorf("parsing embedding artifact hash: %w", err)
+	}
+	resolution, err := store.ResolveBlobLocations(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("resolving embedding artifact bytes: %w", err)
+	}
+	for _, location := range resolution.Candidates {
+		if string(location.StoreID) != store.primaryStoreID {
+			continue
+		}
+		var stream packstore.VerifiedReadCloser
+		var logicalSize int64
+		if location.Loose != nil {
+			stream, logicalSize, err = backend.OpenLoose(ctx, hash, *location.Loose)
+		} else if location.Pack != nil {
+			stream, logicalSize, err = backend.OpenPack(ctx, hash, *location.Pack)
+		} else {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("opening catalog-authorized embedding artifact: %w", err)
+		}
+		return readVerifiedEmbeddingArtifact(stream, logicalSize, size)
+	}
+	return nil, errEmbeddingArtifactUnavailable
+}
+
+func readImportedEmbeddingArtifact(
+	ctx context.Context, backend *packstore.FilesystemBackend, rawHash string, size int64,
+) (data []byte, retErr error) {
+	if size < 1 || size > 64<<20 {
+		return nil, errors.New("embedding artifact size exceeds bounds")
+	}
+	hash, err := packstore.ParseHash(rawHash)
+	if err != nil {
+		return nil, fmt.Errorf("parsing embedding artifact hash: %w", err)
+	}
+	stream, logicalSize, err := backend.OpenLoose(ctx, hash, packstore.LooseLocation{
+		Encoding: packstore.LooseEncodingRaw, LogicalSize: size, StoredSize: size,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("opening embedding artifact bytes: %w", err)
+	}
+	return readVerifiedEmbeddingArtifact(stream, logicalSize, size)
+}
+
+func readVerifiedEmbeddingArtifact(
+	stream packstore.VerifiedReadCloser, logicalSize, size int64,
+) (data []byte, retErr error) {
+	var err error
+	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
+	if logicalSize != size {
+		return nil, errors.New("embedding artifact size does not match metadata")
+	}
+	data, err = io.ReadAll(io.LimitReader(stream, size+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != size {
+		return nil, errors.New("embedding artifact bytes do not match bounded size")
+	}
+	if err := stream.Verify(); err != nil {
+		return nil, fmt.Errorf("verifying embedding artifact bytes: %w", err)
+	}
+	return data, nil
+}
+
+// VerifyRenditionBlobAuthority strictly verifies every catalog-authorized
+// rendition source and derivative blob, including embedding vector payloads.
 func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error) {
+	return s.verifyRenditionBlobAuthority(ctx, false)
+}
+
+// VerifyRestoredRenditionBlobAuthority keeps source, rendition, and E2
+// artifacts strict while allowing an intentionally omitted vector payload to
+// reach the provider-free index restore reporter. Corrupt vector bytes remain
+// an integrity failure.
+func (s *Store) VerifyRestoredRenditionBlobAuthority(ctx context.Context) (retErr error) {
+	return s.verifyRenditionBlobAuthority(ctx, true)
+}
+
+func (s *Store) verifyRenditionBlobAuthority(
+	ctx context.Context, allowMissingVectorPayloads bool,
+) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return fmt.Errorf("starting processing blob verification: %w", err)
@@ -969,22 +1959,53 @@ func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error)
 	if err := validateProcessingMetadataState(ctx, tx); err != nil {
 		return fmt.Errorf("validating processing blob authority: %w", err)
 	}
-	if err := verifyRenditionBlobCatalogAuthority(ctx, tx); err != nil {
+	if err := verifyRenditionBlobCatalogAuthority(ctx, tx, allowMissingVectorPayloads); err != nil {
 		return fmt.Errorf("verifying processing blob authority: %w", err)
+	}
+	layout, err := packstore.NewLayout(
+		filepath.Join(filepath.Dir(s.path), "blobs"),
+		packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"},
+	)
+	if err != nil {
+		return fmt.Errorf("opening embedding artifact layout: %w", err)
+	}
+	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
+	if err != nil {
+		return fmt.Errorf("opening embedding artifact verifier: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, backend.Close()) }()
+	if err := verifyEmbeddingArtifacts(ctx, tx, func(
+		ctx context.Context, hash string, size int64,
+	) ([]byte, error) {
+		return readCatalogEmbeddingArtifact(ctx, s, backend, hash, size)
+	}, allowMissingVectorPayloads); err != nil {
+		return fmt.Errorf("verifying exact embedding artifact authority: %w", err)
 	}
 	return nil
 }
 
-func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retErr error) {
-	rows, err := tx.QueryContext(ctx, `
+func verifyRenditionBlobCatalogAuthority(
+	ctx context.Context, tx *sql.Tx, allowMissingVectorPayloads bool,
+) (retErr error) {
+	query := `
 		SELECT source_sha256 FROM rendition_builds
 		UNION
 		SELECT blob_hash FROM rendition_artifacts
-		ORDER BY source_sha256`)
+		UNION
+		SELECT source_sha256 FROM rendition_jobs
+		UNION
+		SELECT generation_blob_hash FROM embedding_input_generations WHERE generation_blob_hash IS NOT NULL`
+	if !allowMissingVectorPayloads {
+		query += ` UNION SELECT payload_blob_hash FROM embedding_vector_sets`
+	}
+	query += ` ORDER BY source_sha256`
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)
 	}
-	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	defer func() {
+		retErr = errors.Join(retErr, rows.Close())
+	}()
 	for rows.Next() {
 		var hash string
 		if err := rows.Scan(&hash); err != nil {
@@ -993,6 +2014,9 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
 			return fmt.Errorf("processing blob %s: %w", hash, err)
 		}
+		if err := verifyRenditionBlobCatalogSizeAuthorityTx(ctx, tx, hash); err != nil {
+			return err
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating processing blob catalog authority: %w", err)
@@ -1000,8 +2024,40 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 	return nil
 }
 
+// verifyRenditionBlobCatalogSizeAuthorityTx ensures that the physical
+// representation Kit just materialized agrees with the logical size imported
+// for the processing record. A hash can be present in both the snapshot list
+// and pack index while a tampered staged build source carries a different
+// metadata size; that mismatch is only visible after packed authority exists.
+func verifyRenditionBlobCatalogSizeAuthorityTx(
+	ctx context.Context, tx metadataQuerier, hash string,
+) error {
+	var valid bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM blobs b
+			JOIN blob_locations l ON l.blob_hash=b.hash
+			LEFT JOIN blob_pack_entries e
+			  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+			WHERE b.hash=?
+			  AND (
+				(l.kind='loose' AND l.encoding='raw' AND l.stored_size=b.size)
+				OR (l.kind='loose' AND l.encoding='zstd')
+				OR (l.kind='packed' AND e.raw_len=b.size)
+			  )
+		)`, hash).Scan(&valid)
+	if err != nil {
+		return fmt.Errorf("reading rendition blob catalog size authority %s: %w", hash, err)
+	}
+	if !valid {
+		return fmt.Errorf("rendition blob catalog size authority %s disagrees with logical metadata", hash)
+	}
+	return nil
+}
+
 // RebuildRenditionLexicalProjection reconstructs the excluded FTS projection
-// solely from restored catalog rows. No provider or network access is involved.
+// only from restored catalog rows. It deliberately has no provider dependency.
 func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 	var generationID string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -1057,108 +2113,6 @@ func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 		}
 		return nil
 	})
-}
-
-func verifyRenditionBlob(
-	ctx context.Context, reader RenditionBlobReader, blob importedProcessingBlob,
-) (retErr error) {
-	stream, logicalSize, err := reader.OpenStreamContext(ctx, blob.hash)
-	if err != nil {
-		return fmt.Errorf("opening restored rendition blob %s: %w", blob.hash, err)
-	}
-	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
-	if logicalSize != blob.size {
-		return fmt.Errorf(
-			"restored rendition blob %s size %d does not match catalog size %d",
-			blob.hash, logicalSize, blob.size,
-		)
-	}
-	read, err := io.Copy(io.Discard, stream)
-	if err != nil {
-		return fmt.Errorf("reading restored rendition blob %s: %w", blob.hash, err)
-	}
-	if read != blob.size {
-		return fmt.Errorf(
-			"restored rendition blob %s read %d bytes, want %d", blob.hash, read, blob.size,
-		)
-	}
-	if err := stream.Verify(); err != nil {
-		return fmt.Errorf("verifying restored rendition blob %s: %w", blob.hash, err)
-	}
-	return nil
-}
-
-func (s *Store) validateImportedRenditionHead(
-	ctx context.Context, tx *sql.Tx, head metadataRenditionHead, verifyPhysicalBytes bool,
-) (retErr error) {
-	var buildID string
-	var source importedProcessingBlob
-	err := tx.QueryRowContext(ctx, `
-		SELECT a.build_id,b.source_sha256,source.size
-		FROM rendition_attachments a
-		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
-		JOIN blobs source ON source.hash=b.source_sha256
-		WHERE a.attachment_id=? AND a.content_version_id=? AND a.profile_fingerprint=?`,
-		head.AttachmentID, head.ContentVersionID, head.ProcessingProfileFingerprint,
-	).Scan(&buildID, &source.hash, &source.size)
-	if errors.Is(err, sql.ErrNoRows) {
-		return errors.New("processing head cannot verify bytes without its exact attachment and build")
-	}
-	if err != nil {
-		return fmt.Errorf("reading processing head byte authority: %w", err)
-	}
-	if err := validateRenditionBuildStateTx(ctx, tx, buildID); err != nil {
-		return err
-	}
-	blobs := []importedProcessingBlob{source}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT blob_hash,size FROM rendition_artifacts
-		WHERE build_id=? ORDER BY artifact_id`, buildID)
-	if err != nil {
-		return fmt.Errorf("reading imported rendition artifact bytes: %w", err)
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("closing imported rendition artifact bytes: %w", err))
-		}
-	}()
-	for rows.Next() {
-		var blob importedProcessingBlob
-		if err := rows.Scan(&blob.hash, &blob.size); err != nil {
-			return fmt.Errorf("scanning imported rendition artifact bytes: %w", err)
-		}
-		blobs = append(blobs, blob)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating imported rendition artifact bytes: %w", err)
-	}
-	if !verifyPhysicalBytes {
-		return nil
-	}
-
-	layout, err := packstore.NewLayout(
-		filepath.Join(filepath.Dir(s.path), "blobs"),
-		packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"},
-	)
-	if err != nil {
-		return fmt.Errorf("opening processing blob layout: %w", err)
-	}
-	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
-	if err != nil {
-		return fmt.Errorf("opening processing blob verifier: %w", err)
-	}
-	defer func() { retErr = errors.Join(retErr, backend.Close()) }()
-	verified := make(map[string]bool, len(blobs))
-	for _, blob := range blobs {
-		if verified[blob.hash] {
-			continue
-		}
-		if err := verifyImportedProcessingBlob(ctx, backend, blob); err != nil {
-			return err
-		}
-		verified[blob.hash] = true
-	}
-	return nil
 }
 
 func verifyImportedProcessingBlob(
@@ -1411,6 +2365,12 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	if !present {
 		return nil
 	}
+	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
+		return err
+	}
+	if err := validateProcessingConsentState(ctx, tx); err != nil {
+		return err
+	}
 	profileIDs, err := loadProcessingMetadataIDs(
 		ctx, tx, "processing profile", `SELECT profile_fingerprint FROM processing_profiles ORDER BY profile_fingerprint`,
 	)
@@ -1489,6 +2449,36 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			   AND a.profile_fingerprint=h.profile_fingerprint
 			  WHERE a.attachment_id IS NULL
 			)`},
+		{"rendition job belongs to another vault", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_jobs j
+			  WHERE j.vault_uid != (SELECT vault_uid FROM vault_metadata WHERE singleton=1)
+			)`},
+		{"rendition job waiter authority disagrees", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_job_waiters w
+			  JOIN rendition_jobs j ON j.job_id=w.job_id
+			  JOIN content_versions v ON v.version_id=w.content_version_id
+			  JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
+			  WHERE v.blob_hash != j.source_sha256
+			     OR p.rendition_request_fingerprint != j.rendition_request_fingerprint
+			     OR p.evidence_lexical_fingerprint != j.evidence_lexical_fingerprint
+			     OR p.rendition_disclosure_fingerprint != w.disclosure_fingerprint
+			)`},
+		{"rendition job selected waiter is missing", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_jobs j
+			  LEFT JOIN rendition_job_waiters w
+			    ON w.waiter_id=j.selected_waiter_id AND w.job_id=j.job_id
+			  WHERE j.selected_waiter_id IS NOT NULL AND w.waiter_id IS NULL
+			)`},
+		{"rendition job staged build is missing", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_jobs j
+			  LEFT JOIN rendition_builds b ON b.build_id=j.job_id
+			  WHERE j.phase IN ('build_staged','generation_staged','published')
+			    AND b.build_id IS NULL
+			)`},
 	}
 	for _, check := range checks {
 		var failed bool
@@ -1562,7 +2552,113 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	lexicalSchema, err := lexicalGenerationSchemaPresentTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if lexicalSchema {
+		var missingJobGeneration bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM rendition_jobs j
+			LEFT JOIN rendition_lexical_generations g
+			  ON g.generation_id=j.lexical_generation_id
+			WHERE j.phase IN ('generation_staged','published')
+			  AND g.generation_id IS NULL
+		)`).Scan(&missingJobGeneration); err != nil {
+			return fmt.Errorf("validating rendition job staged generation: %w", err)
+		}
+		if missingJobGeneration {
+			return errors.New("rendition job staged generation is missing")
+		}
+		var generationID string
+		err = tx.QueryRowContext(ctx, `SELECT generation_id FROM rendition_lexical_heads
+			WHERE singleton=1`).Scan(&generationID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading restored lexical head: %w", err)
+		}
+		if err == nil {
+			if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
+				return err
+			}
+		}
+	}
 	return validateCurrentRenditionRootState(ctx, tx)
+}
+
+func validateProcessingConsentState(ctx context.Context, tx metadataQuerier) error {
+	var currentCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM current_processing_incarnation`).Scan(
+		&currentCount); err != nil {
+		return fmt.Errorf("validating current processing incarnation: %w", err)
+	}
+	if currentCount != 1 {
+		return fmt.Errorf("current processing incarnation has %d rows", currentCount)
+	}
+
+	if err := validateProcessingIncarnations(ctx, tx); err != nil {
+		return err
+	}
+
+	var invalid bool
+	checks := []struct {
+		name  string
+		query string
+	}{
+		{"processing consent belongs to another vault", `
+			SELECT EXISTS(
+			  SELECT 1 FROM processing_consent_grants
+			  WHERE vault_uid != (SELECT vault_uid FROM vault_metadata WHERE singleton=1)
+			  UNION ALL
+			  SELECT 1 FROM processing_consent_revocations
+			  WHERE vault_uid != (SELECT vault_uid FROM vault_metadata WHERE singleton=1)
+			)`},
+		{"processing consent revocation fence is not contiguous", `
+			SELECT EXISTS(
+			  SELECT 1 FROM processing_consent_revocations
+			  GROUP BY vault_uid,incarnation_id,principal,scope
+			  HAVING MIN(fence) != 1 OR MAX(fence) != COUNT(*)
+			)`},
+		{"processing consent grant has an impossible revocation fence", `
+			SELECT EXISTS(
+			  SELECT 1 FROM processing_consent_grants g
+			  WHERE g.revocation_fence > COALESCE((
+			    SELECT MAX(r.fence) FROM processing_consent_revocations r
+			    WHERE r.vault_uid=g.vault_uid AND r.incarnation_id=g.incarnation_id
+			      AND r.principal=g.principal AND r.scope=g.scope
+			  ),0)
+			)`},
+	}
+	for _, check := range checks {
+		if err := tx.QueryRowContext(ctx, check.query).Scan(&invalid); err != nil {
+			return fmt.Errorf("validating processing consent (%s): %w", check.name, err)
+		}
+		if invalid {
+			return errors.New(check.name)
+		}
+	}
+	return nil
+}
+
+func validateProcessingIncarnations(ctx context.Context, tx metadataQuerier) error {
+	incarnations, err := tx.QueryContext(ctx, `
+		SELECT incarnation_id,created_at FROM processing_incarnations ORDER BY incarnation_id`)
+	if err != nil {
+		return fmt.Errorf("validating processing incarnations: %w", err)
+	}
+	defer func() { _ = incarnations.Close() }()
+	for incarnations.Next() {
+		value := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
+		if err := incarnations.Scan(&value.ID, &value.CreatedAt); err != nil {
+			return err
+		}
+		if err := validateMetadataProcessingIncarnation(value); err != nil {
+			return err
+		}
+	}
+	return rowsError("processing incarnation", incarnations)
 }
 
 func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) (_ error) {
@@ -1613,12 +2709,39 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 					SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
 				)`, root.TargetID).Scan(&present)
 			}
+		case RenditionRootEmbeddingSet:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_sets WHERE embedding_set_id=?)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingGeneration:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_input_generations WHERE generation_id=?)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingVectorSet:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE vector_set_id=?)`, root.TargetID).Scan(&present)
+		case RenditionRootEmbeddingPayload:
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_vector_sets WHERE payload_blob_hash=?)`, root.TargetID).Scan(&present)
 		}
 		if err != nil {
 			return fmt.Errorf("validating current rendition root %s target: %w", root.ID, err)
 		}
 		if !present {
 			return fmt.Errorf("current rendition root %s target %s is missing", root.ID, root.TargetID)
+		}
+		if root.Kind == RenditionRootJob {
+			prefix := "rendition_job_build_"
+			if root.TargetKind == RenditionRootLexicalGeneration {
+				prefix = "rendition_job_generation_"
+			}
+			jobID := strings.TrimPrefix(root.ID, prefix)
+			if jobID == root.ID {
+				return fmt.Errorf("current rendition job root %s has invalid identity", root.ID)
+			}
+			var epoch int64
+			if err := tx.QueryRowContext(ctx,
+				`SELECT claim_epoch FROM rendition_jobs WHERE job_id=?`, jobID,
+			).Scan(&epoch); err != nil {
+				return fmt.Errorf("current rendition job root %s has no job authority: %w", root.ID, err)
+			}
+			if root.FencingToken > epoch || active && root.FencingToken != epoch {
+				return fmt.Errorf("current rendition job root %s fencing token is invalid", root.ID)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
