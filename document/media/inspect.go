@@ -403,9 +403,9 @@ func inspectText(data []byte, ext, mediaType string, policy InspectionPolicy) Ca
 func inspectZIP(data []byte, ext, mediaType string, policy InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaType: mediaType, Format: strings.TrimPrefix(ext, ".")}
 	switch ext {
-	case ".pptx", ".pptm", ".odp":
+	case ".pptx":
 		record.MediaFamily = "presentation"
-	case ".xlsx", ".xlsm", ".ods":
+	case ".xlsx", ".ods":
 		record.MediaFamily = "spreadsheet"
 	case ".epub":
 		record.MediaFamily = "ebook"
@@ -639,12 +639,19 @@ func inspectXML(
 		}
 		switch value := token.(type) {
 		case xml.Directive:
-			if strings.Contains(strings.ToUpper(string(value)), "DOCTYPE") {
+			if doctypeReachesOutside(value) {
 				return true, nil
 			}
 		case xml.ProcInst:
 			if strings.EqualFold(value.Target, "xml-stylesheet") {
-				return true, nil
+				href, found := procInstAttribute(value.Inst, "href")
+				var base *url.URL
+				if len(bases) != 0 {
+					base = bases[len(bases)-1]
+				}
+				if !found || isExternalXMLURI(href, base, home) {
+					return true, nil
+				}
 			}
 		case xml.CharData:
 			if depth == 0 && len(bytes.TrimSpace(value)) != 0 {
@@ -731,6 +738,56 @@ func inspectXML(
 			bases = bases[:len(bases)-1]
 		}
 	}
+}
+
+// doctypeReachesOutside reports whether a document type declaration names
+// something beyond the document. A bare "<!DOCTYPE html>", which nearly every
+// XHTML document carries, names nothing; an external identifier names a DTD to
+// fetch, and an internal subset can declare entities of its own.
+func doctypeReachesOutside(directive xml.Directive) bool {
+	text := string(directive)
+	if !strings.Contains(strings.ToUpper(text), "DOCTYPE") {
+		return false
+	}
+	upper := strings.ToUpper(text)
+	return strings.Contains(upper, "SYSTEM") || strings.Contains(upper, "PUBLIC") ||
+		strings.Contains(text, "[")
+}
+
+// procInstAttribute returns one pseudo-attribute of a processing instruction.
+// The syntax looks like markup but is not, so the decoder hands the whole
+// instruction over as raw text.
+func procInstAttribute(instruction []byte, name string) (string, bool) {
+	rest := string(instruction)
+	for {
+		index := strings.Index(rest, name)
+		if index < 0 {
+			return "", false
+		}
+		leading := index == 0 || isXMLSpace(rest[index-1])
+		rest = rest[index+len(name):]
+		trimmed := strings.TrimLeft(rest, " \t\r\n")
+		if !leading || !strings.HasPrefix(trimmed, "=") {
+			continue
+		}
+		trimmed = strings.TrimLeft(trimmed[1:], " \t\r\n")
+		if trimmed == "" {
+			return "", false
+		}
+		quote := trimmed[0]
+		if quote != '"' && quote != '\'' {
+			return "", false
+		}
+		end := strings.IndexByte(trimmed[1:], quote)
+		if end < 0 {
+			return "", false
+		}
+		return trimmed[1 : 1+end], true
+	}
+}
+
+func isXMLSpace(value byte) bool {
+	return value == ' ' || value == '\t' || value == '\r' || value == '\n'
 }
 
 func inspectXMLAttributes(
@@ -892,10 +949,17 @@ func escapesArchive(value, home string) bool {
 		return false
 	}
 	// A Windows consumer treats a backslash as a separator.
-	candidate := strings.ReplaceAll(value, `\`, "/")
+	candidate := value
 	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
 		candidate = candidate[:index]
 	}
+	// A consumer decodes a reference before resolving it, so "%2e%2e" is
+	// another spelling of "..". Decoding fails on a value that is not a
+	// reference at all, which leaves the original text to check.
+	if decoded, err := url.PathUnescape(candidate); err == nil {
+		candidate = decoded
+	}
+	candidate = strings.ReplaceAll(candidate, `\`, "/")
 	if candidate == "" || path.IsAbs(candidate) {
 		return false
 	}
@@ -1573,7 +1637,7 @@ func isTextFamily(ext, mediaType string) bool {
 func isZIPFamily(ext, mediaType string, data []byte) bool {
 	return len(data) >= 4 && bytes.Equal(data[:4], []byte("PK\x03\x04")) ||
 		strings.Contains(mediaType, "officedocument") || mediaType == "application/epub+zip" ||
-		slices.Contains([]string{".pptx", ".pptm", ".xlsx", ".xlsm", ".odp", ".ods", ".epub"}, ext)
+		slices.Contains([]string{".pptx", ".xlsx", ".ods", ".epub"}, ext)
 }
 
 func looksNestedContainer(name string) bool {

@@ -238,6 +238,14 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 			reference: "../../../../etc/passwd"},
 		{name: "escapes with backslashes", entry: "OPS/text/chapter.xhtml",
 			reference: `..\..\..\..\etc\passwd`},
+		// A consumer decodes the reference before resolving it.
+		{name: "escapes percent-encoded", entry: "OPS/text/chapter.xhtml",
+			reference: "%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd"},
+		{name: "escapes with encoded separators", entry: "OPS/text/chapter.xhtml",
+			reference: "..%2f..%2f..%2f..%2fetc/passwd"},
+		// A stray percent is not an escape sequence and must not be read as one.
+		{name: "unencodable text value", entry: "OPS/text/chapter.xhtml",
+			reference: "100% cover", eligible: true},
 		{name: "escapes from a shallower entry", entry: "OPS/chapter.xhtml",
 			reference: "../../outside"},
 		{name: "stays inside from a deeper entry", entry: "OPS/text/chapter.xhtml",
@@ -282,6 +290,75 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 	})
+}
+
+// A format is inspectable only if detection can confirm it. Macro-enabled
+// Office formats and ODP have no detector candidate, so routing them into
+// container inspection reported malformed input for a well-formed file. Say
+// the family is unsupported instead of blaming the document.
+func TestInspectReportsUndetectableFormatsAsUnsupported(t *testing.T) {
+	t.Parallel()
+	data := zipBytes(t, validPPTXEntries())
+	for _, spec := range [][2]string{
+		{"deck.pptm", "application/vnd.ms-powerpoint.presentation.macroEnabled.12"},
+		{"book.xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12"},
+		{"deck.odp", "application/vnd.oasis.opendocument.presentation"},
+	} {
+		t.Run(spec[0], func(t *testing.T) {
+			t.Parallel()
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, spec[0], spec[1]))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonUnboundedFamily, record.Reason)
+		})
+	}
+
+	// The same bytes under a detectable name stay inspectable.
+	record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "deck.pptx",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+	require.NoError(t, err)
+	assert.True(t, record.Eligible, record.Reason)
+}
+
+// A document type declaration and a stylesheet instruction are rejected for
+// what they name, not for existing. Nearly every XHTML document carries a bare
+// doctype, and a package-local stylesheet is an ordinary internal reference.
+func TestInspectClassifiesPrologueByWhatItNames(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, prologue string
+		eligible       bool
+	}{
+		{name: "bare doctype", prologue: `<!DOCTYPE html>`, eligible: true},
+		{name: "system doctype", prologue: `<!DOCTYPE html SYSTEM "https://example.invalid/x.dtd">`},
+		{name: "public doctype", prologue: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "x.dtd">`},
+		{name: "internal subset", prologue: `<!DOCTYPE html [<!ENTITY a "b">]>`},
+		{name: "local stylesheet", prologue: `<?xml-stylesheet type="text/css" href="style.css"?>`, eligible: true},
+		{name: "parent stylesheet", prologue: `<?xml-stylesheet href="../styles/main.css"?>`, eligible: true},
+		{name: "external stylesheet", prologue: `<?xml-stylesheet href="https://example.invalid/book.css"?>`},
+		{name: "escaping stylesheet", prologue: `<?xml-stylesheet href="../../../../etc/passwd"?>`},
+		{name: "stylesheet without href", prologue: `<?xml-stylesheet type="text/css"?>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="c" href="text/c.xhtml"/></manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/text/c.xhtml", body: tt.prologue +
+					`<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>`},
+				zipEntry{name: "OPS/text/style.css", body: "body{}"},
+				zipEntry{name: "OPS/styles/main.css", body: "body{}"},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+			if !tt.eligible {
+				assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+			}
+		})
+	}
 }
 
 // A reader interprets an EPUB resource by its declared media type, so a
