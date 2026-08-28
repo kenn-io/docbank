@@ -196,6 +196,10 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><div background="https://example.invalid/paper.png"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><svg xmlns="http://www.w3.org/2000/svg"><use xlink:href="https://example.invalid/icons.svg#a"/></svg></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="file:///etc/passwd"/></body></html>`,
+		// Hostless scheme forms still reach the network.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="http:169.254.169.254/latest/meta-data"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="https:/tracker.example"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="http:/\\169.254.169.254\latest"/></body></html>`,
 	}
 	for _, chapter := range content {
 		data := zipBytes(t, validEPUBEntries(

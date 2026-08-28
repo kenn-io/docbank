@@ -787,20 +787,22 @@ func looksExternalText(value string) bool {
 	if strings.Contains(lowered, "://") {
 		return true
 	}
-	for _, scheme := range []string{"file:", "data:", "jar:", "javascript:", "vbscript:"} {
-		if strings.HasPrefix(lowered, scheme) {
-			return true
-		}
-	}
-	return false
+	scheme, _, found := strings.Cut(lowered, ":")
+	return found && dereferenceableScheme(scheme)
 }
 
 func externalURL(parsed *url.URL) bool {
-	if parsed.Host != "" {
-		return true
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "file", "data", "jar", "javascript", "vbscript":
+	return parsed.Host != "" || dereferenceableScheme(parsed.Scheme)
+}
+
+// dereferenceableScheme reports schemes a consumer resolves on its own. A
+// hostless form such as "http:169.254.169.254/latest" still reaches the
+// network, so the scheme decides even when no authority was parsed. Values
+// such as "A1:C3" and "urn:uuid:..." name nothing to fetch.
+func dereferenceableScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "http", "https", "ftp", "ftps", "sftp", "ws", "wss", "gopher",
+		"file", "data", "jar", "javascript", "vbscript":
 		return true
 	}
 	return false
