@@ -1068,7 +1068,14 @@ func escapesArchive(value, home string) bool {
 	if candidate == "" || path.IsAbs(candidate) {
 		return false
 	}
-	return strings.HasPrefix(path.Clean(path.Join(home, candidate)), "../")
+	return leavesArchiveRoot(path.Clean(path.Join(home, candidate)))
+}
+
+// leavesArchiveRoot reports whether a cleaned path lands outside the container.
+// path.Clean spells the root's own parent as ".." with no trailing separator,
+// so a prefix test alone reads that one landing place as contained.
+func leavesArchiveRoot(resolved string) bool {
+	return resolved == ".." || strings.HasPrefix(resolved, "../")
 }
 
 func externalURL(parsed *url.URL) bool {
@@ -1455,7 +1462,7 @@ func cssReferenceInArchive(reference, stylesheet string, archiveNames map[string
 		return archiveNames[stylesheet]
 	}
 	resolved := path.Clean(path.Join(path.Dir(stylesheet), referencePath))
-	if resolved == "." || path.IsAbs(resolved) || strings.HasPrefix(resolved, "../") {
+	if resolved == "." || path.IsAbs(resolved) || leavesArchiveRoot(resolved) {
 		return false
 	}
 	return archiveNames[resolved]
@@ -1644,7 +1651,7 @@ func epubArchivePath(reference, base string) (string, error) {
 		resource = path.Join(base, resource)
 	}
 	resource = path.Clean(resource)
-	if resource == "." || path.IsAbs(resource) || strings.HasPrefix(resource, "../") {
+	if resource == "." || path.IsAbs(resource) || leavesArchiveRoot(resource) {
 		return "", errors.New("EPUB resource path is invalid")
 	}
 	return resource, nil

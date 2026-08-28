@@ -328,6 +328,9 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 			reference: "../outside"},
 		{name: "encoded base stays inside", base: "%2e%2e/",
 			reference: "../outside", eligible: true},
+		// Landing on the root's own parent leaves the container too, and Clean
+		// spells that one place without the trailing separator.
+		{name: "reference lands on the root parent", base: "", reference: "../../.."},
 		{name: "no base", base: "", reference: "../../outside", eligible: true},
 	}
 	for _, tt := range bases {
