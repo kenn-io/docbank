@@ -901,10 +901,7 @@ func resolveArchiveDir(home, base string) string {
 	if home == "" {
 		return ""
 	}
-	candidate := strings.ReplaceAll(base, `\`, "/")
-	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
-		candidate = candidate[:index]
-	}
+	candidate := normalizeReferencePath(base)
 	if candidate == "" {
 		return home
 	}
@@ -931,8 +928,10 @@ func nonLocatorXMLAttribute(attribute xml.Attr) bool {
 		return true
 	}
 	switch strings.ToLower(attribute.Name.Local) {
-	case "about", "datatype", "prefix", "property", "rel", "resource", "type",
-		"typeof", "vocab":
+	// alttext holds the alternative text for a MathML formula, which is
+	// commonly TeX and therefore full of backslashes. It names no resource.
+	case "about", "alttext", "datatype", "prefix", "property", "rel", "resource",
+		"type", "typeof", "vocab":
 		return true
 	}
 	return false
@@ -1035,6 +1034,27 @@ func hasDriveLetter(value string) bool {
 	return letter >= 'a' && letter <= 'z' && (value[2] == '\\' || value[2] == '/')
 }
 
+// normalizeReferencePath reduces a reference to the path a consumer resolves.
+// A query or fragment selects a position inside a resource rather than naming
+// another one; a percent escape is another spelling of the character it
+// encodes; and a Windows consumer reads a backslash as a separator.
+//
+// Every place that measures where a reference lands shares this, because
+// decoding in one of them and not the other is what let an encoded spelling
+// land somewhere the check never looked.
+func normalizeReferencePath(value string) string {
+	candidate := value
+	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
+		candidate = candidate[:index]
+	}
+	// Decoding fails on a value that is not a reference at all, such as the
+	// ODF length "0%", which leaves the original text to measure.
+	if decoded, err := url.PathUnescape(candidate); err == nil {
+		candidate = decoded
+	}
+	return strings.ReplaceAll(candidate, `\`, "/")
+}
+
 // escapesArchive reports whether a reference climbs above the container root.
 // Every resource a package names lives inside the container, so a reference
 // that resolves past the root names a file on the host instead. home is the
@@ -1044,18 +1064,7 @@ func escapesArchive(value, home string) bool {
 	if home == "" {
 		return false
 	}
-	// A Windows consumer treats a backslash as a separator.
-	candidate := value
-	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
-		candidate = candidate[:index]
-	}
-	// A consumer decodes a reference before resolving it, so "%2e%2e" is
-	// another spelling of "..". Decoding fails on a value that is not a
-	// reference at all, which leaves the original text to check.
-	if decoded, err := url.PathUnescape(candidate); err == nil {
-		candidate = decoded
-	}
-	candidate = strings.ReplaceAll(candidate, `\`, "/")
+	candidate := normalizeReferencePath(value)
 	if candidate == "" || path.IsAbs(candidate) {
 		return false
 	}

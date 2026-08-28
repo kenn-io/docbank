@@ -220,6 +220,8 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:\secret.txt"/></body></html>`,
 		// A backslash-rooted path is the third spelling of the same idea.
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\Users\victim\secret.txt"/></body></html>`,
+		// Alt text is exempt, but a MathML image reference is a real locator.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><math xmlns="http://www.w3.org/1998/Math/MathML" altimg="https://example.invalid/f.png"><mi>x</mi></math></body></html>`,
 		// A consumer decodes before resolving, so each spelling also encodes.
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C%3A%5Csecret.txt"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="%5CUsers%5Cvictim%5Csecret.txt"/></body></html>`,
@@ -319,6 +321,13 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 			reference: "../../../outside", eligible: true},
 		{name: "base descends and still leaves", base: "images/",
 			reference: "../../../../outside"},
+		// A consumer decodes the base too, so an encoded base moves the origin.
+		{name: "encoded base spends the distance", base: "%2e%2e/",
+			reference: "../../outside"},
+		{name: "encoded base spends more", base: "%2e%2e/%2e%2e/",
+			reference: "../outside"},
+		{name: "encoded base stays inside", base: "%2e%2e/",
+			reference: "../outside", eligible: true},
 		{name: "no base", base: "", reference: "../../outside", eligible: true},
 	}
 	for _, tt := range bases {
@@ -798,6 +807,8 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 		`<meta property="dcterms:modified" content="2026-01-01T00:00:00Z"/>` +
 		`<meta property="formula" content="\frac{1}{2}"/>` +
 		`<meta property="coverage" content="100% cover"/>` +
+		// MathML alt text is commonly TeX, which is full of backslashes.
+		`<math xmlns="http://www.w3.org/1998/Math/MathML" alttext="\left(\frac{a}{b}\right)"><mi>x</mi></math>` +
 		`<style>body { background: url(../Images/cover.png) }</style></head>` +
 		`<body><p style="opacity: 0%">text</p></body></html>`
 	data = zipBytes(t, validEPUBEntries(
