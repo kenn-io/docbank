@@ -577,6 +577,10 @@ func exportLexicalGenerations(
 		WHERE EXISTS(
 		         SELECT 1 FROM rendition_lexical_heads h WHERE h.generation_id=g.generation_id
 		      ) OR EXISTS(
+		         SELECT 1 FROM rendition_jobs j
+		         WHERE j.lexical_generation_id=g.generation_id
+		           AND j.phase IN ('generation_staged','published')
+		      ) OR EXISTS(
 		         SELECT 1 FROM current_rendition_roots r
 		         WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
 		           AND r.root_kind IN ('retention','audit','job')
@@ -2429,8 +2433,8 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 		SELECT 1 FROM rendition_jobs j
 		LEFT JOIN rendition_lexical_generations g
 		  ON g.generation_id=j.lexical_generation_id
-		WHERE j.phase IN ('generation_staged','published')
-		  AND g.generation_id IS NULL
+		WHERE (j.phase='generation_staged' AND j.lexical_generation_id IS NULL)
+		   OR (j.lexical_generation_id IS NOT NULL AND g.generation_id IS NULL)
 	)`).Scan(&missingJobGeneration); err != nil {
 		return fmt.Errorf("validating rendition job staged generation: %w", err)
 	}

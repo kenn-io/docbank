@@ -16,10 +16,13 @@ const (
 	BlobSizeHeader = "X-Docbank-Blob-Size"
 	// ContentVersionHeader carries the stable version identity whose immutable
 	// bytes are being streamed.
-	ContentVersionHeader      = "X-Docbank-Content-Version"
-	RenditionAttachmentHeader = "X-Docbank-Rendition-Attachment"
-	RenditionBuildHeader      = "X-Docbank-Rendition-Build"
-	RenditionArtifactHeader   = "X-Docbank-Rendition-Artifact"
+	ContentVersionHeader        = "X-Docbank-Content-Version"
+	RenditionAttachmentHeader   = "X-Docbank-Rendition-Attachment"
+	RenditionBuildHeader        = "X-Docbank-Rendition-Build"
+	RenditionArtifactHeader     = "X-Docbank-Rendition-Artifact"
+	RenditionProfileHeader      = "X-Docbank-Rendition-Profile"
+	RenditionCompletenessHeader = "X-Docbank-Rendition-Completeness"
+	RenditionWarningsHeader     = "X-Docbank-Rendition-Warnings"
 )
 
 // ProcessingSelector binds provider work to one exact immutable document
@@ -69,6 +72,7 @@ type ProcessingPlan struct {
 	RetainedClasses    []string            `json:"retained_classes"`
 	Estimate           ProcessingEstimate  `json:"estimate"`
 	ConsentRequired    bool                `json:"consent_required"`
+	ConsentState       string              `json:"consent_state" enum:"active,required,expired,revoked"`
 	BackupConsequence  string              `json:"backup_consequence"`
 }
 

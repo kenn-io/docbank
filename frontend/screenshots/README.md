@@ -13,6 +13,7 @@ Install Chromium once:
 ```sh
 cd frontend
 npm ci
+node node_modules/@playwright/test/cli.js install-deps chromium
 node node_modules/@playwright/test/cli.js install chromium
 ```
 
@@ -30,7 +31,9 @@ for visual inspection and orphan-branch publication; the current set captures
 desktop and mobile page selection, move-to-trash and restore confirmations,
 the tag-definition catalog, and a completed tag assignment, current vault browsing, extracted-text search, retained-version
 selection, packed-storage status, and independently verified permanent-audit
-evidence. Generated images are intentionally not committed to the main branch.
+evidence. The processing plan, partial semantic coverage, and sanitized Markdown
+rendition are captured separately under `.superpowers/processing-screenshots/`
+for pull request review. Generated images are intentionally not committed to the main branch.
 
 The command must produce the complete set listed in `scripts/docs-assets.txt`.
 Documentation builds consume a reviewed set and never run this harness.

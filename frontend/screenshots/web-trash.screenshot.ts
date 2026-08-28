@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -64,10 +66,16 @@ async function expectFocusAboveDock(page: Page, dock: Locator): Promise<void> {
   expect(focusedBox.y + focusedBox.height).toBeLessThanOrEqual(dockBox.y);
 }
 
+const processingScreenshotDirectory = path.join(repositoryRoot, ".superpowers", "processing-screenshots");
+const processingPlanScreenshotPath = path.join(processingScreenshotDirectory, "web-document-processing-plan.png");
+const processingPartialScreenshotPath = path.join(processingScreenshotDirectory, "web-document-processing-partial.png");
+const renditionScreenshotPath = path.join(processingScreenshotDirectory, "web-document-rendition.png");
+
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
   let vault = "";
   let webURL = "";
+  let embeddingServer: Server | undefined;
 
   async function runDocbank(args: string[]): Promise<string> {
     const result = await execFileAsync(binary, args, {
@@ -75,6 +83,7 @@ test.describe("Docbank web screenshots", () => {
       env: {
         ...process.env,
         DOCBANK_HOME: vault,
+        DOCBANK_SCREENSHOT_EMBEDDING_KEY: "synthetic-secret",
       },
       maxBuffer: 1024 * 1024,
       timeout: 60_000,
@@ -146,14 +155,132 @@ test.describe("Docbank web screenshots", () => {
     await rm(searchResultsScreenshotPath, { force: true });
     await rm(retainedVersionScreenshotPath, { force: true });
     await rm(packedStorageScreenshotPath, { force: true });
+    await mkdir(processingScreenshotDirectory, { recursive: true, mode: 0o700 });
+    await rm(processingPlanScreenshotPath, { force: true });
+    await rm(processingPartialScreenshotPath, { force: true });
+    await rm(renditionScreenshotPath, { force: true });
     const archive = path.join(workspace, "archive-store");
     const backup = path.join(workspace, "backup-repository");
     await mkdir(vault, { recursive: true, mode: 0o700 });
     await mkdir(archive, { recursive: true, mode: 0o700 });
+
+    embeddingServer = createServer((_request, response) => {
+      response.writeHead(503, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "synthetic provider unavailable" } }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      embeddingServer!.once("error", reject);
+      embeddingServer!.listen(0, "127.0.0.1", resolve);
+    });
+    const embeddingAddress = embeddingServer.address() as AddressInfo;
+    const embeddingOrigin = `http://127.0.0.1:${embeddingAddress.port}`;
+    const identityResult = await execFileAsync(
+      "go",
+      ["run", "-tags", "fts5", path.join(here, "processing-profile.go"), embeddingOrigin],
+      { cwd: repositoryRoot, maxBuffer: 1024 * 1024, timeout: 60_000 },
+    );
+    const identities = JSON.parse(identityResult.stdout) as {
+      rendition_id: string;
+      rendition_fingerprint: string;
+      embedding_id: string;
+      embedding_fingerprint: string;
+      compatibility_id: string;
+    };
     await writeFile(
       path.join(vault, "config.toml"),
       `[backup]\nrepo = ${JSON.stringify(backup)}\n\n` +
-        `[store_bindings.archive]\nkind = "filesystem"\npath = ${JSON.stringify(archive)}\npriority = 20\n`,
+      `[store_bindings.archive]
+kind = "filesystem"
+path = ${JSON.stringify(archive)}
+priority = 20
+
+[credential_bindings.semantic]
+environment_variable = "DOCBANK_SCREENSHOT_EMBEDDING_KEY"
+
+[rendition_profiles.plaintext]
+adapter_contract = "docbank-plaintext-rendition/v1"
+authorization_fingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+credential_binding = "credential:none"
+deployment_fingerprint = "2222222222222222222222222222222222222222222222222222222222222222"
+descriptor_id = ${JSON.stringify(identities.rendition_id)}
+descriptor_fingerprint = ${JSON.stringify(identities.rendition_fingerprint)}
+disclose_filename = false
+disclosure_fingerprint = "3333333333333333333333333333333333333333333333333333333333333333"
+max_document_bytes = 16777216
+max_response_bytes = 16777216
+max_units = 1
+requested_artifacts = ["structured_evidence"]
+trust_boundary = "local_process"
+upload_options_fingerprint = "4444444444444444444444444444444444444444444444444444444444444444"
+
+[embedding_profiles.semantic]
+activation = "optional"
+authorization_fingerprint = "5555555555555555555555555555555555555555555555555555555555555555"
+compatibility_id = ${JSON.stringify(identities.compatibility_id)}
+credential_binding = "credential:semantic"
+descriptor_id = ${JSON.stringify(identities.embedding_id)}
+descriptor_fingerprint = ${JSON.stringify(identities.embedding_fingerprint)}
+dimensions = 2
+disclosure_fingerprint = "6666666666666666666666666666666666666666666666666666666666666666"
+document_formatter = "openai-compatible/document/v1"
+input_kind = "rendition_chunk"
+max_batch_items = 8
+max_input_bytes = 1048576
+max_input_tokens = 128
+max_response_bytes = 1048576
+metric = "cosine"
+model = "synthetic-model"
+normalization = "none"
+query_formatter = "openai-compatible/query/v1"
+scalar_encoding = "float32"
+trust_boundary = "operator_network"
+
+[embedding_profiles.semantic.chunk]
+context_fingerprint = "7777777777777777777777777777777777777777777777777777777777777777"
+formatter = "rendition-chunk/v1"
+max_tokens = 128
+overlap_tokens = 8
+tokenizer = "unicode-runes"
+tokenizer_revision = "v1"
+truncation_policy = "reject_indivisible"
+
+[embedding_profiles.semantic.model_input]
+profile = "nomic/v1"
+
+[embedding_profiles.semantic.runtime]
+adapter_contract = "docbank-openai-compatible-embeddings/v1"
+endpoint = ${JSON.stringify(embeddingOrigin)}
+model_revision = "deployment-v1"
+deployment_epoch = "deployment-v1"
+request_timeout = "1s"
+max_request_bytes = 1048576
+allowed_cidrs = ["127.0.0.0/8"]
+proxy_mode = "disabled"
+connect_timeout = "1s"
+keep_alive = "1s"
+tls_handshake_timeout = "1s"
+
+[retrieval_profiles.hybrid]
+lexical_limit = 20
+vector_limit = 20
+
+[processing_profiles.private_text]
+rendition = "plaintext"
+embeddings = ["semantic"]
+retrieval = "hybrid"
+attachment_policy_fingerprint = "8888888888888888888888888888888888888888888888888888888888888888"
+completeness_fingerprint = "9999999999999999999999999999999999999999999999999999999999999999"
+consent_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+lexical_segmenter_fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+max_segment_runes = 2000
+max_unit_runes = 100000
+max_document_chars = 1000000
+normalizer_fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+sanitizer_fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+retain_sanitized_markdown = true
+retain_typed_artifacts = true
+trust_boundary = "local_process"
+`,
       { mode: 0o600 },
     );
     const reports = path.join(workspace, "synthetic", "Reports");
@@ -357,6 +484,11 @@ test.describe("Docbank web screenshots", () => {
       }
     }
     if (workspace) await rm(workspace, { recursive: true, force: true });
+    if (embeddingServer) {
+      await new Promise<void>((resolve, reject) => {
+        embeddingServer!.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   test("visible page CSV download", async ({ page }) => {
@@ -777,6 +909,36 @@ test.describe("Docbank web screenshots", () => {
       animations: "disabled",
     });
     await tags.getByRole("button", { name: "Done" }).click();
+
+    await page.getByRole("button", { name: "Process and retrieve" }).click();
+    const processing = page.getByRole("dialog", {
+      name: "Document processing and coverage",
+    });
+    await expect(processing).toContainText("Private network");
+    await expect(processing).toContainText("sanitized_markdown");
+    await page.screenshot({
+      path: processingPlanScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await processing.getByRole("button", { name: "Consent and run" }).click();
+    await expect(processing.getByRole("button", { name: "Read sanitized Markdown" })).toBeVisible({ timeout: 30_000 });
+    await expect(processing).toContainText(/semantic.*unavailable/i);
+    await page.screenshot({
+      path: processingPartialScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await processing.getByRole("button", { name: "Read sanitized Markdown" }).click();
+    const rendition = page.getByRole("dialog", { name: "Sanitized Markdown rendition" });
+    await expect(rendition).toContainText("Synthetic quarterly tax report with reviewed totals");
+    await expect(rendition).toContainText("degraded_provenance");
+    await page.screenshot({
+      path: renditionScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await rendition.getByRole("button", { name: "Close sanitized Markdown" }).click();
 
     await page.getByRole("button", { name: "Move to trash", exact: true }).click();
 

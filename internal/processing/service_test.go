@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,6 +67,7 @@ func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	plan.ConsentRequired = false
+	plan.ConsentState = "active"
 	granted, err := planFingerprint(plan)
 	require.NoError(t, err)
 	require.Equal(t, first, granted)
@@ -86,6 +88,34 @@ func TestAggregateStatusNeverReportsUnfinishedEmbeddingsAsCompleted(t *testing.T
 
 	embeddings[1].State = "unexpected"
 	require.Equal(t, "unexpected", aggregateStatus("a", nil, embeddings).State)
+}
+
+func TestInspectionPolicyCanonicalizesDeclaredMediaTypeForDurableReplay(t *testing.T) {
+	profile := configuredProfile{
+		portable: document.ProcessingProfileV1{Rendition: &document.RenditionBindingV1{
+			MaxDocumentBytes: 1024, DisclosureFingerprint: strings.Repeat("1", 64),
+		}},
+		record: store.ProcessingProfileRecord{Fingerprint: strings.Repeat("2", 64)},
+		provider: inertRenditionProvider{descriptor: document.RenditionDescriptor{
+			Fingerprint: strings.Repeat("3", 64),
+		}},
+	}
+	policy := inspectionPolicy("document.txt", store.ContentVersion{
+		ID: "00000000-0000-4000-8000-000000000001", BlobHash: strings.Repeat("4", 64),
+		Size: 12, MimeType: "text/plain; charset=utf-8",
+	}, profile)
+	require.Equal(t, "text/plain", policy.DeclaredMediaType)
+}
+
+type inertRenditionProvider struct{ descriptor document.RenditionDescriptor }
+
+func (provider inertRenditionProvider) Descriptor() document.RenditionDescriptor {
+	return provider.descriptor
+}
+func (inertRenditionProvider) Render(context.Context, document.AuthorizedUpload,
+	document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	return document.RenditionResult{}, nil
 }
 
 func BenchmarkProcessingServiceSourceFence4096(b *testing.B) {
@@ -122,7 +152,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
-	jobs, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	jobs, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
@@ -130,11 +160,11 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	require.Equal(t, "retry_wait", status.State)
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	_, err = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	_, err = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
 	clockOffset.Store(int64(2 * time.Minute))
-	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
 	require.NoError(t, err)
 	require.Equal(t, jobs, retried)
 	status, err = fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])

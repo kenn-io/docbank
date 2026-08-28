@@ -57,6 +57,10 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	})
 
 	type startInput struct{ Body StartProcessingRequest }
+	type startResult struct {
+		job processing.Job
+		err error
+	}
 	processingEventSchema := api.OpenAPI().Components.Schemas.Schema(
 		reflect.TypeFor[ProcessingJobEvent](), true, "ProcessingJobEvent")
 	huma.Register(api, huma.Operation{
@@ -69,27 +73,68 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		job, err := d.Processing.Start(ctx, processing.StartRequest{
+		request := processing.StartRequest{
 			Selector: processing.Selector{NodeID: input.Body.Selector.NodeID,
 				ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			PlanFingerprint: input.Body.PlanFingerprint, Consent: input.Body.Consent,
-		})
-		if err != nil {
-			return nil, fromProcessingError(err)
 		}
-		wireJob := ProcessingJob{ID: job.ID, RenditionJobID: job.RenditionJobID,
-			AttachmentID: job.AttachmentID, EmbeddingJobIDs: job.EmbeddingJobIDs,
-			ProfileFingerprint: job.ProfileFingerprint, ContentVersionID: job.ContentVersionID}
-		status, err := d.Processing.Status(ctx, job.ID)
-		if err != nil {
-			return nil, fromProcessingError(err)
+		started, done := make(chan processing.Job, 1), make(chan startResult, 1)
+		go func() {
+			job, err := d.Processing.StartWithProgress(ctx, request, func(job processing.Job) {
+				select {
+				case started <- job:
+				default:
+				}
+			})
+			done <- startResult{job: job, err: err}
+		}()
+		var first processing.Job
+		var completed *startResult
+		select {
+		case first = <-started:
+		case result := <-done:
+			select {
+			case first = <-started:
+				completed = &result
+			default:
+				if result.err != nil {
+					return nil, fromProcessingError(result.err)
+				}
+				first, completed = result.job, &result
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		wireStatus := fromProcessingStatus(status)
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
 			hctx.SetHeader("Cache-Control", "no-store")
 			stream := newEventStreamWriter[ProcessingJobEvent](hctx.BodyWriter(), func() {})
+			wireJob := fromProcessingJob(first)
 			stream.send(ProcessingJobEvent{Sequence: 1, Type: "job", Job: &wireJob})
+			var result startResult
+			if completed != nil {
+				result = *completed
+			} else {
+				select {
+				case result = <-done:
+				case <-hctx.Context().Done():
+					return
+				}
+			}
+			status, statusErr := d.Processing.Status(hctx.Context(), first.ID)
+			if statusErr != nil {
+				status = processing.Status{JobID: first.ID, State: "failed", Phase: "processing",
+					FailureCode: "processing_failed", EmbeddingJobIDs: []string{}}
+			}
+			if result.err != nil {
+				if status.State != "operator_required" {
+					status.State = "failed"
+				}
+				if problem, ok := errors.AsType[*Error](fromProcessingError(result.err)); ok {
+					status.FailureCode = problem.Code
+				}
+			}
+			wireStatus := fromProcessingStatus(status)
 			stream.send(ProcessingJobEvent{Sequence: 2, Type: "status", Status: &wireStatus, Terminal: true})
 		}}, nil
 	})
@@ -293,13 +338,9 @@ func renditionStream(rendition processing.Rendition) *huma.StreamResponse {
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
 		defer func() { _ = rendition.Reader.Close() }()
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
+		ctx.SetHeader("Cache-Control", "no-store")
 		ctx.SetHeader("Accept-Ranges", "bytes")
-		ctx.SetHeader(RenditionAttachmentHeader, rendition.AttachmentID)
-		ctx.SetHeader(RenditionBuildHeader, rendition.BuildID)
-		ctx.SetHeader(RenditionArtifactHeader, rendition.ArtifactID)
-		ctx.SetHeader(ContentVersionHeader, rendition.ContentVersionID)
-		ctx.SetHeader(BlobHashHeader, rendition.SHA256)
-		ctx.SetHeader(BlobSizeHeader, strconv.FormatInt(rendition.Size, 10))
+		setRenditionHeaders(ctx, rendition)
 		ctx.SetHeader("Trailer", "Content-Digest")
 		hash := sha256.New()
 		if _, err := io.Copy(ctx.BodyWriter(), io.TeeReader(rendition.Reader, hash)); err == nil {
@@ -323,20 +364,28 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 	selected := data[start:end]
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
+		ctx.SetHeader("Cache-Control", "no-store")
 		ctx.SetHeader("Accept-Ranges", "bytes")
 		ctx.SetHeader("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, rendition.Size))
-		ctx.SetHeader(RenditionAttachmentHeader, rendition.AttachmentID)
-		ctx.SetHeader(RenditionBuildHeader, rendition.BuildID)
-		ctx.SetHeader(RenditionArtifactHeader, rendition.ArtifactID)
-		ctx.SetHeader(ContentVersionHeader, rendition.ContentVersionID)
-		ctx.SetHeader(BlobHashHeader, rendition.SHA256)
-		ctx.SetHeader(BlobSizeHeader, strconv.FormatInt(rendition.Size, 10))
+		setRenditionHeaders(ctx, rendition)
 		ctx.SetHeader("Trailer", "Content-Digest")
 		ctx.SetStatus(http.StatusPartialContent)
 		hash := sha256.Sum256(selected)
 		_, _ = ctx.BodyWriter().Write(selected)
 		ctx.SetHeader("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(hash[:])+":")
 	}}, nil
+}
+
+func setRenditionHeaders(ctx huma.Context, rendition processing.Rendition) {
+	ctx.SetHeader(RenditionAttachmentHeader, rendition.AttachmentID)
+	ctx.SetHeader(RenditionBuildHeader, rendition.BuildID)
+	ctx.SetHeader(RenditionArtifactHeader, rendition.ArtifactID)
+	ctx.SetHeader(RenditionProfileHeader, rendition.ProfileFingerprint)
+	ctx.SetHeader(RenditionCompletenessHeader, rendition.Completeness)
+	ctx.SetHeader(RenditionWarningsHeader, strings.Join(rendition.Warnings, ","))
+	ctx.SetHeader(ContentVersionHeader, rendition.ContentVersionID)
+	ctx.SetHeader(BlobHashHeader, rendition.SHA256)
+	ctx.SetHeader(BlobSizeHeader, strconv.FormatInt(rendition.Size, 10))
 }
 
 func parseRenditionRange(value string, size int64) (int64, int64, error) {
@@ -388,6 +437,12 @@ func fromProcessingStatus(status processing.Status) ProcessingStatus {
 		CompletedBindings: status.CompletedBindings}
 }
 
+func fromProcessingJob(job processing.Job) ProcessingJob {
+	return ProcessingJob{ID: job.ID, RenditionJobID: job.RenditionJobID,
+		AttachmentID: job.AttachmentID, EmbeddingJobIDs: job.EmbeddingJobIDs,
+		ProfileFingerprint: job.ProfileFingerprint, ContentVersionID: job.ContentVersionID}
+}
+
 func fromProcessingCoverageClass(item processing.CoverageClass) CoverageClass {
 	return CoverageClass{Name: item.Name, Required: item.Required, State: item.State,
 		Complete: item.Complete, Unavailable: item.Unavailable, Stale: item.Stale,
@@ -432,6 +487,7 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 			ContentVersionID: plan.Selector.ContentVersionID, Profile: plan.Selector.Profile},
 		ProfileFingerprint: plan.ProfileFingerprint, DisclosedClasses: plan.DisclosedClasses,
 		RetainedClasses: plan.RetainedClasses, ConsentRequired: plan.ConsentRequired,
+		ConsentState:      plan.ConsentState,
 		BackupConsequence: plan.BackupConsequence,
 		Estimate: ProcessingEstimate{SourceBytes: plan.Estimate.SourceBytes,
 			ProviderCalls: plan.Estimate.ProviderCalls, VectorSpaces: plan.Estimate.VectorSpaces},

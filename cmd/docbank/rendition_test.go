@@ -48,6 +48,8 @@ func TestRenditionCLIEmitsExactSelfDescribingMarkdown(t *testing.T) {
 		w.Header().Set(api.RenditionAttachmentHeader, attachmentID)
 		w.Header().Set(api.RenditionBuildHeader, buildID)
 		w.Header().Set(api.RenditionArtifactHeader, artifactID)
+		w.Header().Set(api.RenditionProfileHeader, sha256Hex("profile"))
+		w.Header().Set(api.RenditionCompletenessHeader, string(document.EvidenceComplete))
 		w.Header().Set(api.BlobHashHeader, hex.EncodeToString(artifactHash[:]))
 		w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(artifact)))
 		w.Header().Set(api.ContentVersionHeader, processingTestVersionID)
