@@ -380,7 +380,7 @@ func inspectText(data []byte, ext, mediaType string, policy InspectionPolicy) Ca
 		record.Measurements.Records = 1
 	}
 	if mediaType == "application/xml" {
-		external, err := inspectXML(data, &record.Measurements, xmlMeasureNone)
+		external, err := inspectXML(data, &record.Measurements, xmlMeasureNone, "")
 		if err != nil {
 			record.Reason = CapabilityReasonMalformed
 			return record
@@ -545,7 +545,8 @@ func (container zipContainer) inspectEntry(
 	}
 	isWorksheet, isSlide := container.countsAs(file.Name)
 	if container.isMarkup(file.Name) {
-		external, err := inspectXML(body, measurements, container.measurement(file.Name, isWorksheet))
+		external, err := inspectXML(body, measurements, container.measurement(file.Name, isWorksheet),
+			path.Dir(file.Name))
 		if err != nil {
 			return CapabilityReasonMalformed
 		}
@@ -614,7 +615,7 @@ func (container zipContainer) measurement(name string, isWorksheet bool) xmlMeas
 }
 
 func inspectXML(
-	data []byte, measurements *CapabilityMeasurements, mode xmlMeasurement,
+	data []byte, measurements *CapabilityMeasurements, mode xmlMeasurement, home string,
 ) (bool, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	depth, roots := 0, 0
@@ -663,7 +664,7 @@ func inspectXML(
 			if len(bases) != 0 {
 				inheritedBase = bases[len(bases)-1]
 			}
-			base, external, attrErr := inspectXMLAttributes(value.Attr, inheritedBase)
+			base, external, attrErr := inspectXMLAttributes(value.Attr, inheritedBase, home)
 			if attrErr != nil {
 				return false, attrErr
 			}
@@ -707,7 +708,7 @@ func inspectXML(
 			}
 		case xml.EndElement:
 			if styleDepth != 0 && styleDepth == depth && len(bases) != 0 {
-				external, styleErr := cssTextIsExternal(styleText, bases[len(bases)-1])
+				external, styleErr := cssTextIsExternal(styleText, bases[len(bases)-1], home)
 				if styleErr != nil {
 					return false, styleErr
 				}
@@ -732,7 +733,9 @@ func inspectXML(
 	}
 }
 
-func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.URL, bool, error) {
+func inspectXMLAttributes(
+	attributes []xml.Attr, inheritedBase *url.URL, home string,
+) (*url.URL, bool, error) {
 	base := inheritedBase
 	for _, attribute := range attributes {
 		if attribute.Name.Space != "http://www.w3.org/XML/1998/namespace" ||
@@ -742,7 +745,7 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 		value := strings.TrimSpace(attribute.Value)
 		// A base is a locator like any other, so it is classified by the same
 		// rule. Testing it separately let every later rule miss it.
-		if isExternalXMLURI(value, base) {
+		if isExternalXMLURI(value, base, home) {
 			return nil, true, nil
 		}
 		parsed, err := url.Parse(value)
@@ -762,7 +765,7 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 				return nil, true, nil
 			}
 		case name == "style":
-			external, err := cssTextIsExternal([]byte(value), base)
+			external, err := cssTextIsExternal([]byte(value), base, home)
 			if err != nil {
 				return nil, false, err
 			}
@@ -772,13 +775,13 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 		case name == "srcset":
 			for candidate := range strings.SplitSeq(value, ",") {
 				fields := strings.Fields(candidate)
-				if len(fields) == 0 || isExternalXMLURI(fields[0], base) {
+				if len(fields) == 0 || isExternalXMLURI(fields[0], base, home) {
 					return nil, true, nil
 				}
 			}
 		case nonLocatorXMLAttribute(attribute):
 		default:
-			if isExternalXMLURI(value, base) {
+			if isExternalXMLURI(value, base, home) {
 				return nil, true, nil
 			}
 		}
@@ -817,13 +820,13 @@ func markupStyleNamespace(space string) bool {
 	return false
 }
 
-func cssTextIsExternal(data []byte, base *url.URL) (bool, error) {
+func cssTextIsExternal(data []byte, base *url.URL, home string) (bool, error) {
 	references, err := cssReferences(data)
 	if err != nil {
 		return false, fmt.Errorf("inspect embedded CSS: %w", err)
 	}
 	for _, reference := range references {
-		if isExternalXMLURI(reference, base) {
+		if isExternalXMLURI(reference, base, home) {
 			return true, nil
 		}
 	}
@@ -835,13 +838,13 @@ func cssTextIsExternal(data []byte, base *url.URL) (bool, error) {
 // one. Colon-bearing values that name no host stay local: a spreadsheet range
 // such as A1:C3, a settings key such as ooo:view-settings, a compact URI, and
 // a urn are all vocabulary, not locators.
-func isExternalXMLURI(value string, base *url.URL) bool {
+func isExternalXMLURI(value string, base *url.URL, home string) bool {
 	// "//host/path" is protocol-relative; "\\host\path" is the UNC spelling a
 	// Windows consumer resolves to the same network location.
 	if strings.HasPrefix(value, "//") || strings.HasPrefix(value, `\\`) {
 		return true
 	}
-	if hasDriveLetter(value) {
+	if hasDriveLetter(value) || escapesArchive(value, home) {
 		return true
 	}
 	parsed, err := url.Parse(value)
@@ -877,6 +880,26 @@ func hasDriveLetter(value string) bool {
 	}
 	letter := value[0] | 0x20
 	return letter >= 'a' && letter <= 'z' && (value[2] == '\\' || value[2] == '/')
+}
+
+// escapesArchive reports whether a reference climbs above the container root.
+// Every resource a package names lives inside the container, so a reference
+// that resolves past the root names a file on the host instead. home is the
+// directory of the entry holding the reference, and is empty for a standalone
+// document, where there is no container to leave.
+func escapesArchive(value, home string) bool {
+	if home == "" {
+		return false
+	}
+	// A Windows consumer treats a backslash as a separator.
+	candidate := strings.ReplaceAll(value, `\`, "/")
+	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
+		candidate = candidate[:index]
+	}
+	if candidate == "" || path.IsAbs(candidate) {
+		return false
+	}
+	return strings.HasPrefix(path.Clean(path.Join(home, candidate)), "../")
 }
 
 func externalURL(parsed *url.URL) bool {

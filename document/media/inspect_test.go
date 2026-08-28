@@ -224,6 +224,66 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 	}
 }
 
+// Every resource a package names lives inside the container, so a reference
+// that climbs past the root names a file on the host. How far is far enough
+// depends on where the entry sits, so the rule counts depth rather than
+// matching "..": the same value escapes from one entry and not from another.
+func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, entry, reference string
+		eligible               bool
+	}{
+		{name: "escapes from chapter", entry: "OPS/text/chapter.xhtml",
+			reference: "../../../../etc/passwd"},
+		{name: "escapes with backslashes", entry: "OPS/text/chapter.xhtml",
+			reference: `..\..\..\..\etc\passwd`},
+		{name: "escapes from a shallower entry", entry: "OPS/chapter.xhtml",
+			reference: "../../outside"},
+		{name: "stays inside from a deeper entry", entry: "OPS/text/chapter.xhtml",
+			reference: "../../outside", eligible: true},
+		{name: "ordinary sibling reference", entry: "OPS/text/chapter.xhtml",
+			reference: "../Images/cover.png", eligible: true},
+		{name: "plain text attribute value", entry: "OPS/text/chapter.xhtml",
+			reference: "Cover Image", eligible: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			href := strings.TrimPrefix(tt.entry, "OPS/")
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="c" href="` + href +
+					`"/></manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: tt.entry, body: `<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="` +
+					tt.reference + `"/></body></html>`},
+				zipEntry{name: "OPS/Images/cover.png", body: "png"},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+			if !tt.eligible {
+				assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+			}
+		})
+	}
+
+	// A manifest href that leaves the container is caught where the package
+	// document is scanned, rather than dropped as unresolvable.
+	t.Run("manifest href", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+				`<item id="c" href="../../outside"/></manifest><spine/></package>`},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+}
+
 // A reader interprets an EPUB resource by its declared media type, so a
 // neutral filename must not decide whether the resource is inspected.
 func TestInspectFollowsEPUBDeclaredMediaTypes(t *testing.T) {
