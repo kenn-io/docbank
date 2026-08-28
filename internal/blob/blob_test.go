@@ -3,6 +3,7 @@ package blob
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // F9 requires auxiliary MD5 interoperability metadata.
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -19,6 +20,29 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
+
+func TestWriteReceiptIncludesAuxiliaryMD5WithoutChangingSHA256Identity(t *testing.T) {
+	bs := newTestBlobStore(t)
+	for name, content := range map[string][]byte{
+		"content": []byte("synthetic auxiliary checksum bytes"),
+		"empty":   {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			first, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+			require.NoError(t, err)
+			wantSHA256 := sha256.Sum256(content)
+			wantMD5 := md5.Sum(content) //nolint:gosec // Explicit auxiliary-checksum expectation.
+			assert.Equal(t, hex.EncodeToString(wantSHA256[:]), first.Hash)
+			assert.Equal(t, hex.EncodeToString(wantMD5[:]), first.MD5)
+
+			second, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+			require.NoError(t, err)
+			assert.Equal(t, first.Hash, second.Hash)
+			assert.Equal(t, first.MD5, second.MD5)
+			assert.False(t, second.Created)
+		})
+	}
+}
 
 func newTestBlobStore(t *testing.T) *Store {
 	t.Helper()

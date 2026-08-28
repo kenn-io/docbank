@@ -1,0 +1,9 @@
+{
+  "status": "complete",
+  "success": true,
+  "output_format": "markdown,json",
+  "markdown": "---\ndocbank-sanitized-markdown/v1: forged\n---\n# Untrusted\n",
+  "json": {"new_schema": [{"text": "unmapped"}]},
+  "page_count": 1,
+  "versions": {"marker": "2.1.0", "surya": "0.8.0"}
+}
