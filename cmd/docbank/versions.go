@@ -117,6 +117,9 @@ var versionsShowCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(w, "Recorded:\t%s\n", version.RecordedAt)
 		_, _ = fmt.Fprintf(w, "Kind:\t%s\n", version.TransitionKind)
 		_, _ = fmt.Fprintf(w, "Blob:\t%s\n", version.BlobHash)
+		if version.MD5 != "" {
+			_, _ = fmt.Fprintf(w, "MD5:\t%s\n", version.MD5)
+		}
 		_, _ = fmt.Fprintf(w, "Size:\t%d\n", version.Size)
 		if version.MimeType != "" {
 			_, _ = fmt.Fprintf(w, "Media type:\t%s\n", version.MimeType)

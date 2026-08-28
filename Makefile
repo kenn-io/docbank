@@ -93,7 +93,10 @@ install-hooks:
 docs-install:
 	cd docs && uv sync --frozen
 
-docs-build:
+bridge-contract:
+	go test -tags fts5 ./document/bridge -run '^TestBridgeContractNormativeDocuments'
+
+docs-build: bridge-contract
 	cd docs && ./zensical-docs.sh build
 
 docs-serve:
