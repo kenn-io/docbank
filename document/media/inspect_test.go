@@ -605,6 +605,30 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		})
 	}
 
+	// A reader may honour any prefix of the base chain, so every step it can
+	// stop at is a place the item resolves to. Recording only the two ends left
+	// the steps between them declared nowhere.
+	for _, target := range []string{
+		"OPS/chapter.dat", "OPS/a/chapter.dat", "OPS/a/b/chapter.dat", "OPS/a/b/c/chapter.dat",
+	} {
+		t.Run("manifest base chain "+target, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package xml:base="a/">` +
+					`<manifest xml:base="b/"><item id="c" href="chapter.dat" ` +
+					`media-type="application/xhtml+xml" xml:base="c/"/>` +
+					`</manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: target, body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
+					`<img src="https://example.invalid/t.png"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
 	// The package directory stays in use, so an item without any base still
 	// resolves the way it always did.
 	t.Run("manifest without xml:base", func(t *testing.T) {

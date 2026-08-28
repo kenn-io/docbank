@@ -1643,9 +1643,14 @@ func epubManifestTypes(
 	return nil
 }
 
-// manifestBases returns each directory a manifest item may resolve against:
-// the package document's own directory, and the directory an inherited
-// xml:base chain would move it to.
+// manifestBases returns each directory a manifest item may resolve against.
+// The xml:base values arrive outermost first, and a reader may honour any
+// prefix of them: the package document's own directory when it honours none,
+// the fully shifted directory when it honours all, and a step in between when
+// it reads the attribute on some elements and not others. Recording only the
+// two ends left an item under a neutral name at an intermediate step declared
+// nowhere, and so inspected by its file name rather than as the markup a
+// reader loads.
 func manifestBases(packageDir string, bases ...string) []string {
 	directories := []string{packageDir}
 	shifted := packageDir
@@ -1657,9 +1662,9 @@ func manifestBases(packageDir string, bases ...string) []string {
 		if shifted == "" {
 			return directories
 		}
-	}
-	if shifted != packageDir {
-		directories = append(directories, shifted)
+		if !slices.Contains(directories, shifted) {
+			directories = append(directories, shifted)
+		}
 	}
 	return directories
 }
