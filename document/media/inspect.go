@@ -668,13 +668,18 @@ func inspectXML(
 			}
 		case xml.ProcInst:
 			if strings.EqualFold(value.Target, "xml-stylesheet") {
-				href, found := procInstAttribute(value.Inst, "href")
+				hrefs, wellFormed := procInstAttributes(value.Inst, "href")
 				scope := xmlScope{home: home}
 				if len(bases) != 0 {
 					scope = bases[len(bases)-1]
 				}
-				if !found || isExternalXMLURI(href, scope.url, scope.home) {
+				if !wellFormed || len(hrefs) == 0 {
 					return true, nil
+				}
+				for _, href := range hrefs {
+					if isExternalXMLURI(href, scope.url, scope.home) {
+						return true, nil
+					}
 				}
 			}
 		case xml.CharData:
@@ -779,40 +784,49 @@ func doctypeReachesOutside(directive xml.Directive) bool {
 		strings.Contains(text, "[")
 }
 
-// procInstAttribute returns one pseudo-attribute of a processing instruction.
-// The syntax looks like markup but is not, so the decoder hands the whole
-// instruction over as raw text.
-func procInstAttribute(instruction []byte, name string) (string, bool) {
+// procInstAttributes returns every value a processing instruction gives for
+// one pseudo-attribute. The syntax looks like markup but is not, so the
+// decoder hands the whole instruction over as raw text.
+//
+// Reading it as ordered pairs matters twice over. Searching for the name alone
+// matches text inside an earlier attribute's value, which let a decoy steer
+// the scan away from the real reference; and returning only the first match
+// would let a repeated attribute hide a second one. The caller checks them
+// all, and treats an instruction it cannot parse as unresolvable.
+func procInstAttributes(instruction []byte, name string) ([]string, bool) {
+	var values []string
 	rest := string(instruction)
 	for {
-		index := strings.Index(rest, name)
-		if index < 0 {
-			return "", false
+		rest = strings.TrimLeft(rest, " \t\r\n")
+		if rest == "" {
+			return values, true
 		}
-		leading := index == 0 || isXMLSpace(rest[index-1])
-		rest = rest[index+len(name):]
-		trimmed := strings.TrimLeft(rest, " \t\r\n")
-		if !leading || !strings.HasPrefix(trimmed, "=") {
-			continue
+		separator := strings.IndexAny(rest, "= \t\r\n")
+		if separator <= 0 {
+			return values, false
 		}
-		trimmed = strings.TrimLeft(trimmed[1:], " \t\r\n")
-		if trimmed == "" {
-			return "", false
+		key := rest[:separator]
+		rest = strings.TrimLeft(rest[separator:], " \t\r\n")
+		if !strings.HasPrefix(rest, "=") {
+			return values, false
 		}
-		quote := trimmed[0]
+		rest = strings.TrimLeft(rest[1:], " \t\r\n")
+		if rest == "" {
+			return values, false
+		}
+		quote := rest[0]
 		if quote != '"' && quote != '\'' {
-			return "", false
+			return values, false
 		}
-		end := strings.IndexByte(trimmed[1:], quote)
-		if end < 0 {
-			return "", false
+		closing := strings.IndexByte(rest[1:], quote)
+		if closing < 0 {
+			return values, false
 		}
-		return trimmed[1 : 1+end], true
+		if strings.EqualFold(key, name) {
+			values = append(values, rest[1:1+closing])
+		}
+		rest = rest[2+closing:]
 	}
-}
-
-func isXMLSpace(value byte) bool {
-	return value == ' ' || value == '\t' || value == '\r' || value == '\n'
 }
 
 func inspectXMLAttributes(attributes []xml.Attr, inherited xmlScope) (xmlScope, bool, error) {
@@ -958,7 +972,7 @@ func isExternalXMLURI(value string, base *url.URL, home string) bool {
 	if strings.HasPrefix(value, "//") || strings.HasPrefix(value, `\\`) {
 		return true
 	}
-	if hasDriveLetter(value) || escapesArchive(value, home) {
+	if hasDriveLetter(value) || hasRootedBackslash(value) || escapesArchive(value, home) {
 		return true
 	}
 	parsed, err := url.Parse(value)
@@ -981,6 +995,18 @@ func looksExternalText(value string) bool {
 	}
 	scheme, _, found := strings.Cut(lowered, ":")
 	return found && dereferenceableScheme(scheme)
+}
+
+// hasRootedBackslash reports whether a value is a Windows path rooted on the
+// current drive, such as "\Users\victim\secret.txt". A package resource is
+// named by a URI, so it is never spelled with backslashes, and the UNC and
+// drive-letter spellings of the same idea are already rejected.
+//
+// A further separator is required so that a lone leading backslash, which is
+// not a path at all, stays local: a TeX macro in an alt-text attribute begins
+// that way.
+func hasRootedBackslash(value string) bool {
+	return strings.HasPrefix(value, `\`) && strings.ContainsAny(value[1:], `\/`)
 }
 
 // hasDriveLetter reports whether a value is a Windows drive-absolute path such

@@ -218,6 +218,9 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\\169.254.169.254\latest\meta-data"/></body></html>`,
 		// A drive letter parses as a one-letter scheme, which no allowlist holds.
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="C:\secret.txt"/></body></html>`,
+		// A backslash-rooted path is the third spelling of the same idea.
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\Users\victim\secret.txt"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="\Users/victim/secret.txt"/></body></html>`,
 		// A base is a locator too, and is classified by the same rule.
 		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:/secret/"><body><img src="cover.png"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml" xml:base="C:\secret\"><body><img src="cover.png"/></body></html>`,
@@ -396,6 +399,20 @@ func TestInspectClassifiesPrologueByWhatItNames(t *testing.T) {
 		{name: "external stylesheet", prologue: `<?xml-stylesheet href="https://example.invalid/book.css"?>`},
 		{name: "escaping stylesheet", prologue: `<?xml-stylesheet href="../../../../etc/passwd"?>`},
 		{name: "stylesheet without href", prologue: `<?xml-stylesheet type="text/css"?>`},
+		// A decoy inside an earlier value must not steer the scan, and a second
+		// href must not hide behind the first.
+		{name: "decoy href in another value",
+			prologue: `<?xml-stylesheet alt=" href='style.css'" href="https://example.invalid/x.css"?>`},
+		{name: "repeated href",
+			prologue: `<?xml-stylesheet href="style.css" href="https://example.invalid/x.css"?>`},
+		{name: "href text inside a value is not an href",
+			prologue: `<?xml-stylesheet type="href='https://example.invalid/x.css'" href="style.css"?>`,
+			eligible: true},
+		{name: "unparsable instruction", prologue: `<?xml-stylesheet href=style.css?>`},
+		// A local href read before the syntax breaks proves nothing about what
+		// follows it, so an instruction that cannot be parsed is unresolvable.
+		{name: "syntax breaks after a local href",
+			prologue: `<?xml-stylesheet href="style.css" alternate=yes?>`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -731,6 +748,7 @@ func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
 
 	chapter := `<html xmlns="http://www.w3.org/1999/xhtml" xml:base="../Images/"><head>` +
 		`<meta property="dcterms:modified" content="2026-01-01T00:00:00Z"/>` +
+		`<meta property="formula" content="\frac{1}{2}"/>` +
 		`<style>body { background: url(../Images/cover.png) }</style></head>` +
 		`<body><p style="opacity: 0%">text</p></body></html>`
 	data = zipBytes(t, validEPUBEntries(
