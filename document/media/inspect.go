@@ -539,11 +539,19 @@ const (
 	xmlMeasureEPUBPackage
 )
 
+// inspectXML reports whether a document reaches outside itself. Every
+// attribute that is not a namespace declaration or a compact URI is treated as
+// a locator, so a resource attribute nobody enumerated still fails closed.
+// Static inspection cannot be exhaustive: scripted, entity-split, and
+// consumer-specific references remain out of reach. This narrows exposure; the
+// provider contract, not this scan, is the boundary.
 func inspectXML(
 	data []byte, measurements *CapabilityMeasurements, mode xmlMeasurement,
 ) (bool, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	depth, roots := 0, 0
+	styleDepth := 0
+	var styleText []byte
 	bases := make([]*url.URL, 0, 8)
 	type odsRow struct {
 		depth, repeat, cells int64
@@ -573,6 +581,9 @@ func inspectXML(
 			if depth == 0 && len(bytes.TrimSpace(value)) != 0 {
 				return false, errors.New("XML document contains text outside its root element")
 			}
+			if styleDepth != 0 {
+				styleText = append(styleText, value...)
+			}
 		case xml.StartElement:
 			if depth == 0 {
 				roots++
@@ -595,6 +606,10 @@ func inspectXML(
 			depth++
 
 			name := strings.ToLower(value.Name.Local)
+			if styleDepth == 0 && name == "style" && markupStyleNamespace(value.Name.Space) {
+				styleDepth = depth
+				styleText = styleText[:0]
+			}
 			switch {
 			case mode == xmlMeasureOOXMLSheet && name == "c":
 				measurements.Cells = saturatingAdd(measurements.Cells, 1)
@@ -623,6 +638,16 @@ func inspectXML(
 				measurements.Resources = saturatingAdd(measurements.Resources, 1)
 			}
 		case xml.EndElement:
+			if styleDepth != 0 && styleDepth == depth && len(bases) != 0 {
+				external, styleErr := cssTextIsExternal(styleText, bases[len(bases)-1])
+				if styleErr != nil {
+					return false, styleErr
+				}
+				if external {
+					return true, nil
+				}
+				styleDepth = 0
+			}
 			if mode == xmlMeasureODSSheet && strings.EqualFold(value.Name.Local, "table-row") && len(rows) != 0 {
 				row := rows[len(rows)-1]
 				rows = rows[:len(rows)-1]
@@ -651,7 +676,7 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 		if err != nil {
 			return nil, false, fmt.Errorf("inspect XML base URI: %w", err)
 		}
-		if strings.HasPrefix(value, "//") || parsed.IsAbs() {
+		if strings.HasPrefix(value, "//") || externalURL(parsed) {
 			return nil, true, nil
 		}
 		if base != nil {
@@ -661,30 +686,28 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 	}
 	for _, attribute := range attributes {
 		value := strings.TrimSpace(attribute.Value)
-		name := strings.ToLower(attribute.Name.Local)
-		switch name {
-		case "targetmode":
+		switch name := strings.ToLower(attribute.Name.Local); {
+		case name == "targetmode":
 			if strings.EqualFold(value, "External") {
 				return nil, true, nil
 			}
-		case "style":
-			references, err := cssReferences([]byte(value))
+		case name == "style":
+			external, err := cssTextIsExternal([]byte(value), base)
 			if err != nil {
-				return nil, false, fmt.Errorf("inspect inline CSS: %w", err)
+				return nil, false, err
 			}
-			for _, reference := range references {
-				if isExternalXMLURI(reference, base) {
-					return nil, true, nil
-				}
+			if external {
+				return nil, true, nil
 			}
-		case "srcset":
+		case name == "srcset":
 			for candidate := range strings.SplitSeq(value, ",") {
 				fields := strings.Fields(candidate)
 				if len(fields) == 0 || isExternalXMLURI(fields[0], base) {
 					return nil, true, nil
 				}
 			}
-		case "target", "href", "src", "schemalocation", "nonamespaceschemalocation":
+		case nonLocatorXMLAttribute(attribute):
+		default:
 			if isExternalXMLURI(value, base) {
 				return nil, true, nil
 			}
@@ -693,15 +716,94 @@ func inspectXMLAttributes(attributes []xml.Attr, inheritedBase *url.URL) (*url.U
 	return base, false, nil
 }
 
+// nonLocatorXMLAttribute reports attributes whose values name a vocabulary
+// rather than a resource. Namespace declarations, xml:base, and compact URIs
+// such as an OOXML relationship Type or an EPUB dcterms property all carry
+// absolute URIs that no consumer fetches. Everything outside this set is
+// treated as a locator.
+func nonLocatorXMLAttribute(attribute xml.Attr) bool {
+	if attribute.Name.Space == "xmlns" || attribute.Name.Local == "xmlns" {
+		return true
+	}
+	if attribute.Name.Space == "http://www.w3.org/XML/1998/namespace" &&
+		strings.EqualFold(attribute.Name.Local, "base") {
+		return true
+	}
+	switch strings.ToLower(attribute.Name.Local) {
+	case "about", "datatype", "prefix", "property", "rel", "resource", "type",
+		"typeof", "vocab":
+		return true
+	}
+	return false
+}
+
+// markupStyleNamespace reports whether a <style> element carries CSS. ODF
+// names an unrelated <style:style> element in its own namespace.
+func markupStyleNamespace(space string) bool {
+	switch space {
+	case "", "http://www.w3.org/1999/xhtml", "http://www.w3.org/2000/svg":
+		return true
+	}
+	return false
+}
+
+func cssTextIsExternal(data []byte, base *url.URL) (bool, error) {
+	references, err := cssReferences(data)
+	if err != nil {
+		return false, fmt.Errorf("inspect embedded CSS: %w", err)
+	}
+	for _, reference := range references {
+		if isExternalXMLURI(reference, base) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// isExternalXMLURI reports whether a reference leaves the document. A value is
+// external when it names a host or uses a scheme that dereferences without
+// one. Colon-bearing values that name no host stay local: a spreadsheet range
+// such as A1:C3, a settings key such as ooo:view-settings, a compact URI, and
+// a urn are all vocabulary, not locators.
 func isExternalXMLURI(value string, base *url.URL) bool {
 	if strings.HasPrefix(value, "//") {
 		return true
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.IsAbs() {
+	if err != nil {
+		return looksExternalText(value)
+	}
+	if base != nil {
+		parsed = base.ResolveReference(parsed)
+	}
+	return externalURL(parsed)
+}
+
+// looksExternalText screens values that are not parseable URLs, such as the
+// ODF length "0%". A consumer with a lenient parser could still dereference
+// one, so keep a textual check rather than reading a parse failure as local.
+func looksExternalText(value string) bool {
+	lowered := strings.ToLower(value)
+	if strings.Contains(lowered, "://") {
 		return true
 	}
-	return base != nil && base.ResolveReference(parsed).IsAbs()
+	for _, scheme := range []string{"file:", "data:", "jar:", "javascript:", "vbscript:"} {
+		if strings.HasPrefix(lowered, scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+func externalURL(parsed *url.URL) bool {
+	if parsed.Host != "" {
+		return true
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "file", "data", "jar", "javascript", "vbscript":
+		return true
+	}
+	return false
 }
 
 func xmlPositiveRepeat(attributes []xml.Attr, name string) (int64, error) {

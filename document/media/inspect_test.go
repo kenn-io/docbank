@@ -188,6 +188,14 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		`<?xml-stylesheet href="https://example.invalid/book.css"?><html xmlns="http://www.w3.org/1999/xhtml"/>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img srcset="cover.png 1x, https://example.invalid/cover.png 2x"/></body></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><body style="background: url(https://example.invalid/paper.png)"/></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><head><style>@import url("https://example.invalid/book.css");</style></head><body/></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><head><style>body { background: url(https://example.invalid/paper.png) }</style></head><body/></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><video poster="https://example.invalid/poster.png"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><object data="https://example.invalid/embed.bin"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><embed src="https://example.invalid/embed.bin"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><div background="https://example.invalid/paper.png"/></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><svg xmlns="http://www.w3.org/2000/svg"><use xlink:href="https://example.invalid/icons.svg#a"/></svg></body></html>`,
+		`<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="file:///etc/passwd"/></body></html>`,
 	}
 	for _, chapter := range content {
 		data := zipBytes(t, validEPUBEntries(
@@ -200,6 +208,39 @@ func TestInspectRejectsExternalReferenceInEPUBContent(t *testing.T) {
 		assert.False(t, record.Eligible)
 		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
 	}
+}
+
+// Treating every unlisted attribute as a locator must not reject the
+// vocabulary URIs and colon-bearing values that ordinary documents carry.
+func TestInspectAcceptsVocabularyAttributeValues(t *testing.T) {
+	t.Parallel()
+	sheet := `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+		`<dimension ref="A1:C3"/><c/></worksheet>`
+	relationships := `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+		`<Relationship Id="rId1" Target="worksheets/sheet1.xml" ` +
+		`Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/></Relationships>`
+	data := zipBytes(t, validXLSXEntries(
+		zipEntry{name: "xl/worksheets/sheet1.xml", body: sheet},
+		zipEntry{name: "xl/_rels/workbook.xml.rels", body: relationships},
+	))
+	record, err := media.InspectCapability(bytes.NewReader(data),
+		inspectionPolicy(data, "book.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+
+	chapter := `<html xmlns="http://www.w3.org/1999/xhtml"><head>` +
+		`<meta property="dcterms:modified" content="2026-01-01T00:00:00Z"/>` +
+		`<style>body { background: url(../Images/cover.png) }</style></head>` +
+		`<body><p style="opacity: 0%">text</p></body></html>`
+	data = zipBytes(t, validEPUBEntries(
+		zipEntry{name: "OPS/content.opf", body: `<package><manifest><item id="chapter" href="chapter.xhtml"/></manifest><spine><itemref idref="chapter"/></spine></package>`},
+		zipEntry{name: "OPS/chapter.xhtml", body: chapter},
+		zipEntry{name: "OPS/Images/cover.png", body: "png"},
+	))
+	record, err = media.InspectCapability(bytes.NewReader(data),
+		inspectionPolicy(data, "book.epub", "application/epub+zip"))
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
 }
 
 func TestInspectResolvesEPUBCSSReferences(t *testing.T) {
