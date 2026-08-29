@@ -36,6 +36,12 @@ func TestBridgeContractNormativeDocumentsAreStrictAndVersioned(t *testing.T) {
 	artifactContent := contractObject(t, openAPI, "paths",
 		jobsPath+"/{job_id}/artifacts/{artifact_id}", "get", "responses", "200", "content")
 	assert.Contains(t, artifactContent, "*/*")
+	artifactPayload := contractObject(t, openAPI, "components", "schemas", "ArtifactPayload")
+	artifactBranches, ok := artifactPayload["oneOf"].([]any)
+	require.True(t, ok)
+	require.Len(t, artifactBranches, 2)
+	assert.Equal(t, "inline", contractObject(t, artifactBranches[0], "properties", "location")["const"])
+	assert.Equal(t, "result", contractObject(t, artifactBranches[1], "properties", "location")["const"])
 	manifest := contractObject(t, openAPI, "components", "schemas", "AuthorizationManifest")
 	authorization := contractObject(t, manifest, "properties", "authorization")
 	requiredAuthorization, ok := authorization["required"].([]any)
@@ -70,6 +76,9 @@ func TestBridgeContractNormativeDocumentsAreStrictAndVersioned(t *testing.T) {
 
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal(sourceEvidenceSchema, &schema))
+	description, ok := schema["description"].(string)
+	require.True(t, ok)
+	assert.Contains(t, description, "document.ValidateSourceEvidenceV1")
 	unitKinds, ok := contractObject(t, schema, "properties", "unit_kind")["enum"].([]any)
 	require.True(t, ok)
 	assert.NotContains(t, unitKinds, "time_range")

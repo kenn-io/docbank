@@ -224,8 +224,12 @@ components:
         artifact_id: {$ref: '#/components/schemas/StableID'}
       oneOf:
         - required: [inline_base64]
+          properties:
+            location: {const: inline}
           not: {required: [artifact_id]}
         - required: [artifact_id]
+          properties:
+            location: {const: result}
           not: {required: [inline_base64]}
     StableError:
       type: object

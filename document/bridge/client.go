@@ -166,10 +166,17 @@ func (client *Client) Render(
 		}
 		delay := client.pollInterval
 		if retryDelay > 0 {
-			delay = min(retryDelay, client.requestTimeout)
+			delay = retryDelay
 			retryDelay = 0
 		} else if envelope.RetryAfterMillis > 0 {
-			delay = min(time.Duration(envelope.RetryAfterMillis)*time.Millisecond, client.requestTimeout)
+			delay = time.Duration(envelope.RetryAfterMillis) * time.Millisecond
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return document.RenditionResult{}, context.DeadlineExceeded
+			}
+			delay = min(delay, remaining)
 		}
 		timer := time.NewTimer(delay)
 		select {
@@ -535,7 +542,17 @@ func (client *Client) fetchArtifact(
 	}
 	payload, err := readBounded(response.Body, min(artifact.ByteLength, client.maxResponseBytes))
 	if err != nil {
-		return nil, err
+		if _, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+			return nil, err
+		}
+		if contextErr := requestCtx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, classifiedError(
+			document.RenditionErrorTransient, "bridge artifact response read failed", 0, err)
 	}
 	if int64(len(payload)) != artifact.ByteLength {
 		return nil, malformedError("bridge artifact length does not match declaration", nil)
@@ -626,6 +643,10 @@ func cloneDescriptor(value document.RenditionDescriptor) document.RenditionDescr
 func decodeInlinePayload(value binaryPayloadRecord, maxBytes int) ([]byte, error) {
 	if value.ByteLength < 0 || value.ByteLength > int64(maxBytes) {
 		return nil, malformedError("inline payload length is outside authorization", nil)
+	}
+	if len(value.InlineBase64) != base64.StdEncoding.EncodedLen(int(value.ByteLength)) ||
+		strings.ContainsAny(value.InlineBase64, "\r\n") {
+		return nil, malformedError("inline payload base64 encoding is invalid", nil)
 	}
 	payload, err := base64.StdEncoding.Strict().DecodeString(value.InlineBase64)
 	if err != nil {

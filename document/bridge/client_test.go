@@ -211,6 +211,7 @@ func TestBridgeContractHonorsRetryDelayFromPollingError(t *testing.T) {
 
 	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
 	client.pollInterval = time.Millisecond
+	client.requestTimeout = 10 * time.Millisecond
 	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), polls.Load())
@@ -336,6 +337,16 @@ func TestBridgeContractRejectsUnsafeOrCorruptResponses(t *testing.T) {
 		"wrong response content type": {
 			ctype: "application/json", want: "content type",
 		},
+		"whitespace-padded inline payload": {
+			mutate: func(value map[string]any) {
+				payload := []byte("x")
+				completedResultMap(value)["provider_markdown"] = map[string]any{
+					"media_type": "text/plain", "byte_length": len(payload), "sha256": sha256String(payload),
+					"inline_base64": strings.Repeat("\n", 64<<10) + base64.StdEncoding.EncodeToString(payload),
+				}
+			},
+			want: "provider Markdown",
+		},
 		"Docbank frontmatter injection": {
 			mutate: func(value map[string]any) {
 				markdown := []byte("---\ncontract: docbank-sanitized-markdown/v1\n---\nsecret\n")
@@ -438,6 +449,28 @@ func TestBridgeContractRejectsArtifactContentTypeLengthAndChecksumMismatch(t *te
 			requireBridgeErrorContains(t, err, test.want)
 		})
 	}
+}
+
+func TestBridgeContractClassifiesArtifactReadFailure(t *testing.T) {
+	fixture := newBridgeFixture(t).withStructuredArtifact(t)
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK, ContentLength: -1,
+				Header:  http.Header{"Content-Type": []string{"application/json"}},
+				Body:    io.NopCloser(iotest.ErrReader(io.ErrUnexpectedEOF)),
+				Request: request,
+			}, nil
+		})})
+
+	_, err := client.fetchArtifact(t.Context(), "job-read-error", artifactPayload{
+		MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
+		SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
+	})
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorTransient, providerError.Code())
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
 func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *testing.T) {

@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docbank.dev/schemas/source-evidence-v1.schema.json",
   "title": "Docbank source-evidence/v1",
+  "description": "Wire-shape schema. document.ValidateSourceEvidenceV1 is authoritative for semantic, aggregate, sequence, normalization, and referential constraints.",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "completeness", "family", "unit_kind", "units"],
