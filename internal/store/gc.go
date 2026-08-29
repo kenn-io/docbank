@@ -124,15 +124,17 @@ type PurgeReport struct {
 }
 
 type purgeAttachment struct {
-	id, contentVersionID, buildID, profileFingerprint string
+	id, contentVersionID, buildID, profileFingerprint, providerOperationID string
 }
 
 func renditionAttachmentsForPurgeTx(
 	ctx context.Context, tx *sql.Tx,
 ) (_ []purgeAttachment, retErr error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT attachment_id,content_version_id,build_id,profile_fingerprint
-		FROM rendition_attachments ORDER BY attachment_id`)
+		SELECT a.attachment_id,a.content_version_id,a.build_id,a.profile_fingerprint,b.provider_operation_id
+		FROM rendition_attachments a
+		JOIN rendition_builds b ON b.build_id=a.build_id
+		ORDER BY a.attachment_id`)
 	if err != nil {
 		return nil, fmt.Errorf("selecting rendition attachments for purge: %w", err)
 	}
@@ -145,7 +147,7 @@ func renditionAttachmentsForPurgeTx(
 	for rows.Next() {
 		var attachment purgeAttachment
 		if err := rows.Scan(&attachment.id, &attachment.contentVersionID,
-			&attachment.buildID, &attachment.profileFingerprint); err != nil {
+			&attachment.buildID, &attachment.profileFingerprint, &attachment.providerOperationID); err != nil {
 			return nil, fmt.Errorf("scanning rendition attachment for purge: %w", err)
 		}
 		attachments = append(attachments, attachment)
@@ -314,7 +316,9 @@ func (s *Store) PurgeDerivatives(
 			legacyVersionSet[versionID] = struct{}{}
 		}
 		for _, attachment := range selected {
-			legacyVersionSet[attachment.contentVersionID] = struct{}{}
+			if attachment.providerOperationID == legacyPlainTextProvider {
+				legacyVersionSet[attachment.contentVersionID] = struct{}{}
+			}
 		}
 		legacyScopes, legacySources, err := legacyVersionPurgeScopesTx(
 			ctx, tx, legacyVersionSet, request.All, asOf)

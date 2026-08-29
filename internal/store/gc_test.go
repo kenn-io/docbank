@@ -620,6 +620,54 @@ func TestPurgeDerivativesPreservesLiveContentBlobSharingArtifactHash(t *testing.
 	assert.Zero(t, pending)
 }
 
+func TestExactNonLegacyPurgePreservesLegacySearchAuthority(t *testing.T) {
+	tests := map[string]func(RenditionAttachmentRecord) PurgeRequest{
+		"attachment": func(attachment RenditionAttachmentRecord) PurgeRequest {
+			return PurgeRequest{AttachmentIDs: []string{attachment.ID}}
+		},
+		"build": func(attachment RenditionAttachmentRecord) PurgeRequest {
+			return PurgeRequest{BuildIDs: []string{attachment.BuildID}}
+		},
+	}
+	for name, request := range tests {
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			const legacyText = "legacy searchable phrase"
+			node, err := s.CreateFile(ctx, s.RootID(), "legacy.txt", catalogSourceHash,
+				int64(len(legacyText)), "text/plain")
+			require.NoError(t, err)
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if err := s.EnsureBlobTx(tx, catalogEvidenceBlobHash,
+					int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
+					return err
+				}
+				return s.EnsureBlobTx(tx, catalogMarkdownBlobHash,
+					int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
+			}))
+			require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+				BlobHash: catalogSourceHash, Extractor: legacyPlainTextExtractor,
+				ExtractorVersion: legacyPlainTextExtractorVersion, Status: ExtractionOK, Text: legacyText,
+			}))
+			profile := catalogProcessingProfile(t, false)
+			build := catalogRenditionBuild(s, profile)
+			require.NoError(t, s.StageRenditionBuild(ctx, build))
+			attachment := RenditionAttachmentRecord{
+				ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID,
+				BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-24T10:00:00.000000000Z",
+			}
+			require.NoError(t, publishAttachmentForTest(t, s, attachment))
+
+			_, err = s.PurgeDerivatives(ctx, request(attachment))
+			require.NoError(t, err)
+			var searchableVersions int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM text_searchable_versions
+				WHERE version_id=?`, node.CurrentVersionID).Scan(&searchableVersions))
+			assert.Equal(t, 1, searchableVersions)
+		})
+	}
+}
+
 func TestLateLegacyExtractionCannotRecreatePurgedDerivativeAfterRestore(t *testing.T) {
 	// A worker may finish after purge revoked its authority. The late result and
 	// restore-time queue rebuild must both honor the durable suppression.
