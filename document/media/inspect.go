@@ -1060,6 +1060,12 @@ func cssTextIsExternal(data []byte, base *url.URL, home string) (bool, error) {
 // such as A1:C3, a settings key such as ooo:view-settings, a compact URI, and
 // a urn are all vocabulary, not locators.
 func isExternalXMLURI(value string, base *url.URL, home string) bool {
+	// Containment and host classification already discard the whitespace a
+	// consumer discards. Scheme classification is the same question asked of
+	// the same value, so it reads the same text: a leading space stopped
+	// url.Parse from seeing a scheme at all, and " file:/etc/passwd" then
+	// resolved as an ordinary relative name.
+	value = stripReferenceWhitespace(value)
 	if namesHostLocation(value) || escapesArchive(value, home) {
 		return true
 	}
@@ -1157,7 +1163,13 @@ func normalizeReferencePath(value string) string {
 	if decoded, err := url.PathUnescape(candidate); err == nil {
 		candidate = decoded
 	}
-	return strings.ReplaceAll(candidate, `\`, "/")
+	return separatorsAsSlashes(candidate)
+}
+
+// separatorsAsSlashes spells a reference the way a consumer that reads a
+// backslash as a path separator sees it.
+func separatorsAsSlashes(value string) string {
+	return strings.ReplaceAll(value, `\`, "/")
 }
 
 // stripReferenceWhitespace removes the whitespace a consumer discards before it
@@ -1767,7 +1779,13 @@ func manifestBases(packageDir string, bases ...string) []string {
 
 // epubArchivePath resolves one EPUB-relative reference to an archive entry
 // name, rejecting absolute, remote, and traversing forms.
+//
+// The reference is reduced the way a consumer reduces it before resolving:
+// whitespace it discards, and a backslash it reads as a separator. Matching the
+// unreduced text meant a manifest item spelled with either named no entry, so a
+// resource a reader loads was left undeclared and inspected by its file name.
 func epubArchivePath(reference, base string) (string, error) {
+	reference = separatorsAsSlashes(stripReferenceWhitespace(reference))
 	parsed, err := url.Parse(reference)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" ||
 		parsed.RawQuery != "" || parsed.Fragment != "" {
@@ -1777,6 +1795,7 @@ func epubArchivePath(reference, base string) (string, error) {
 	if err != nil {
 		return "", errors.New("EPUB resource path is invalid")
 	}
+	resource = separatorsAsSlashes(resource)
 	// An absolute reference inside a container names the container root, so it
 	// must not be joined with the package directory: that silently renamed it
 	// to a different entry and left the real one undeclared.

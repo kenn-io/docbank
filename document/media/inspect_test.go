@@ -439,6 +439,13 @@ func TestInspectClassifiesPrologueByWhatItNames(t *testing.T) {
 		{name: "external stylesheet", prologue: `<?xml-stylesheet href="https://example.invalid/book.css"?>`},
 		{name: "escaping stylesheet", prologue: `<?xml-stylesheet href="../../../../etc/passwd"?>`},
 		{name: "stylesheet without href", prologue: `<?xml-stylesheet type="text/css"?>`},
+		// A consumer discards the whitespace before deciding what the value
+		// names. Reading the unstripped text kept url.Parse from seeing a
+		// scheme, so a leading space turned a scheme into an ordinary name.
+		{name: "scheme behind a space", prologue: `<?xml-stylesheet href=" file:/etc/passwd"?>`},
+		{name: "scheme behind a tab", prologue: `<?xml-stylesheet href="	https://example.invalid/x.css"?>`},
+		{name: "space before a local href",
+			prologue: `<?xml-stylesheet href=" style.css"?>`, eligible: true},
 		// A decoy inside an earlier value must not steer the scan, and a second
 		// href must not hide behind the first.
 		{name: "decoy href in another value",
@@ -602,6 +609,28 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 					`</manifest><spine><itemref idref="c"/></spine></package>`},
 				zipEntry{name: target, body: `<html xmlns="http://www.w3.org/1999/xhtml"><body>` +
 					`<img src="https://example.invalid/t.png"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
+	// A manifest href is reduced the way a consumer reduces it before resolving.
+	// Matching the unreduced text meant an item spelled with whitespace or a
+	// backslash named no entry, so the resource it declares was left undeclared
+	// and inspected by its file name.
+	for _, href := range []string{" text/chapter.dat ", `text\chapter.dat`, "text/./chapter.dat"} {
+		t.Run("manifest href "+href, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+					`<item id="c" href="` + href + `" media-type="application/xhtml+xml"/>` +
+					`</manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/text/chapter.dat", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+					`<body><img src="https://example.invalid/t.png"/></body></html>`},
 			))
 			record, err := media.InspectCapability(bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))
