@@ -1059,6 +1059,12 @@ func TestInspectResolvesEPUBCSSReferences(t *testing.T) {
 		{name: "escaped external URL", stylesheet: `body { background: u\72l(https://example.invalid/cover.png) }`},
 		{name: "escaped external import", stylesheet: `@im\70ort "https://example.invalid/theme.css";`},
 		{name: "missing package asset", stylesheet: `body { background: url(../Images/missing.png) }`},
+		{name: "protocol-relative URL", stylesheet: `body { background: url("//host.invalid/x") }`},
+		// A leading space hid the "//" and then became part of a directory
+		// name, so with an entry crafted to carry that name the reference named
+		// an archive entry here and a host to a renderer.
+		{name: "protocol-relative URL behind a space",
+			stylesheet: `body { background: url(" //host.invalid/x") }`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1067,6 +1073,9 @@ func TestInspectResolvesEPUBCSSReferences(t *testing.T) {
 				zipEntry{name: "OPS/Styles/book.css", body: tt.stylesheet},
 				zipEntry{name: "OPS/Styles/theme.css", body: `body { color: black }`},
 				zipEntry{name: "OPS/Images/cover.png", body: "synthetic image"},
+				// The entry the crafted reference resolves to when the space is
+				// measured rather than discarded.
+				zipEntry{name: "OPS/Styles/ /host.invalid/x", body: "decoy"},
 			))
 			record, err := media.InspectCapability(bytes.NewReader(data),
 				inspectionPolicy(data, "book.epub", "application/epub+zip"))

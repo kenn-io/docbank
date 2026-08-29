@@ -1610,7 +1610,16 @@ func decodeCSSEscapes(data []byte) (string, error) {
 	return decoded.String(), nil
 }
 
+// cssReferenceInArchive reports whether a stylesheet reference names an entry of
+// the archive holding it, which is what makes it local.
+//
+// The reference is reduced the way a consumer reduces it before resolving, as
+// every other reference is. Measuring the unreduced text let a leading space
+// hide the "//" that makes a reference protocol-relative, and the space then
+// became part of a directory name: with an entry crafted to carry that name,
+// url(" //host/x") named an archive entry here and a host to a renderer.
 func cssReferenceInArchive(reference, stylesheet string, archiveNames map[string]bool) bool {
+	reference = stripReferenceWhitespace(reference)
 	parsed, err := url.Parse(reference)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || strings.HasPrefix(reference, "//") {
 		return false
