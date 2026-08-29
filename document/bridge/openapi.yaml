@@ -103,6 +103,24 @@ components:
       type: object
       additionalProperties: false
       required: [contract_version, source, authorization]
+      allOf:
+        - if:
+            required: [authorization]
+            properties:
+              authorization:
+                required: [disclose_filename]
+                properties:
+                  disclose_filename: {const: true}
+          then:
+            properties:
+              source:
+                properties:
+                  filename: {minLength: 1}
+          else:
+            properties:
+              source:
+                properties:
+                  filename: {maxLength: 0}
       properties:
         contract_version: {const: docbank-rendition/v1}
         source:
@@ -110,7 +128,7 @@ components:
           additionalProperties: false
           required: [filename, media_family, media_type, byte_length, sha256, capability_record_checksum, provider_metadata_checksum, input_kind]
           properties:
-            filename: {type: string, minLength: 1, maxLength: 255}
+            filename: {type: string, maxLength: 255}
             media_family: {type: string, minLength: 1, maxLength: 63}
             media_type: {type: string, minLength: 3, maxLength: 255}
             byte_length: {type: integer, minimum: 1}
@@ -122,7 +140,7 @@ components:
           type: object
           description: Exact canonical RenditionAuthorization from Docbank core.
           additionalProperties: false
-          required: [provider_id, descriptor_fingerprint, policy_fingerprint, rendition_request_fingerprint, source_sha256, source_bytes, capability_record_checksum, provider_metadata_checksum, media_family, media_type, input_kind, allowed_artifact_roles, max_provider_markdown_bytes, max_artifact_bytes, max_artifacts, max_total_result_bytes, authorized_at, expires_at]
+          required: [provider_id, descriptor_fingerprint, policy_fingerprint, rendition_request_fingerprint, source_sha256, source_bytes, capability_record_checksum, provider_metadata_checksum, media_family, media_type, input_kind, disclose_filename, allowed_artifact_roles, max_provider_markdown_bytes, max_artifact_bytes, max_artifacts, max_total_result_bytes, authorized_at, expires_at]
           properties:
             provider_id: {$ref: '#/components/schemas/StableID'}
             descriptor_fingerprint: {$ref: '#/components/schemas/SHA256'}
@@ -135,6 +153,7 @@ components:
             media_family: {type: string, minLength: 1, maxLength: 63}
             media_type: {type: string, minLength: 3, maxLength: 255}
             input_kind: {enum: [original_file, derived_upload]}
+            disclose_filename: {type: boolean}
             allowed_artifact_roles:
               type: array
               uniqueItems: true

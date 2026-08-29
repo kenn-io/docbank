@@ -144,6 +144,7 @@ func (client *Client) Render(
 		}
 	}()
 
+	var retryDelay time.Duration
 	for attempt := 0; ; attempt++ {
 		switch envelope.Status {
 		case JobCompleted:
@@ -164,7 +165,10 @@ func (client *Client) Render(
 				document.RenditionErrorCapacity, "bridge polling limit reached", 0, nil)
 		}
 		delay := client.pollInterval
-		if envelope.RetryAfterMillis > 0 {
+		if retryDelay > 0 {
+			delay = min(retryDelay, client.requestTimeout)
+			retryDelay = 0
+		} else if envelope.RetryAfterMillis > 0 {
 			delay = min(time.Duration(envelope.RetryAfterMillis)*time.Millisecond, client.requestTimeout)
 		}
 		timer := time.NewTimer(delay)
@@ -177,6 +181,9 @@ func (client *Client) Render(
 		envelope, err = client.getJob(ctx, jobID, authorization.SourceSHA256)
 		if err != nil {
 			if document.IsRenditionProviderErrorRetryable(err) {
+				if providerError, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+					retryDelay = providerError.RetryAfter()
+				}
 				envelope = jobEnvelope{Status: JobRunning, JobID: jobID}
 				continue
 			}

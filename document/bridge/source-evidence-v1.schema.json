@@ -9,7 +9,7 @@
     "contract_version": {"const": "source-evidence/v1"},
     "completeness": {"enum": ["complete", "partial", "degraded_provenance"]},
     "family": {"type": "string", "minLength": 1, "maxLength": 1024},
-    "unit_kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine", "time_range"]},
+    "unit_kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
     "artifacts": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/artifact"}},
     "omissions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/omission"}},
     "units": {"type": "array", "minItems": 1, "maxItems": 100000, "items": {"$ref": "#/$defs/unit"}}
@@ -78,6 +78,7 @@
       "properties": {
         "field": {"type": "string", "maxLength": 1024},
         "kind": {"enum": ["field", "range", "unit"]},
+        "locator": {"$ref": "#/$defs/locator"},
         "range": {"$ref": "#/$defs/text_range"},
         "reason": {"type": "string", "minLength": 1, "maxLength": 4096},
         "unit_order": {"type": "integer", "minimum": 0}
@@ -89,7 +90,7 @@
       "properties": {
         "end": {"type": "integer", "minimum": 0},
         "index_origin": {"enum": ["none", "one", "zero"]},
-        "kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine", "time_range"]},
+        "kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
         "name": {"type": "string", "maxLength": 1024},
         "start": {"type": "integer", "minimum": 0}
       }

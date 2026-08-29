@@ -85,6 +85,21 @@ func TestBridgeContractSynchronousCompletion(t *testing.T) {
 	assert.NotEmpty(t, idempotency)
 }
 
+func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	fixture.authorization.DiscloseFilename = false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assertMultipartRequest(t, request, fixture.authorization, fixture.source)
+		writeBridgeJSON(t, response, http.StatusOK,
+			completedEnvelope(t, fixture, "job-withheld-filename", nil))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+}
+
 func TestBridgeContractIdempotencyReplayAndForwardCompatibleEnvelope(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	var keys []string
@@ -165,6 +180,42 @@ func TestBridgeContractPollsAndFetchesFixedRouteArtifact(t *testing.T) {
 	require.Len(t, result.Artifacts, 1)
 	assert.Equal(t, fixture.artifact, result.Artifacts[0].Payload)
 	assert.Equal(t, int64(2), polls.Load())
+}
+
+func TestBridgeContractHonorsRetryDelayFromPollingError(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	const retryDelay = 40 * time.Millisecond
+	var polls, firstPollAt, secondPollAt atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost:
+			writeBridgeJSON(t, response, http.StatusAccepted,
+				pendingEnvelope(fixture, "job-rate-limited", JobQueued))
+		case request.Method == http.MethodGet && polls.Add(1) == 1:
+			firstPollAt.Store(time.Now().UnixNano())
+			value := pendingEnvelope(fixture, "job-rate-limited", JobRunning)
+			value["error"] = map[string]any{
+				"code": string(document.RenditionErrorRateLimited), "message": "retry later",
+				"retry_after_millis": retryDelay.Milliseconds(),
+			}
+			writeBridgeJSON(t, response, http.StatusTooManyRequests, value)
+		case request.Method == http.MethodGet:
+			secondPollAt.Store(time.Now().UnixNano())
+			writeBridgeJSON(t, response, http.StatusOK,
+				completedEnvelope(t, fixture, "job-rate-limited", nil))
+		default:
+			response.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+	client.pollInterval = time.Millisecond
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), polls.Load())
+	assert.GreaterOrEqual(t, time.Duration(secondPollAt.Load()-firstPollAt.Load()),
+		retryDelay-5*time.Millisecond)
 }
 
 func TestBridgeContractRejectsAggregateArtifactLimitsBeforeFetching(t *testing.T) {
@@ -807,10 +858,16 @@ func assertMultipartRequest(
 	var manifest AuthorizationManifest
 	require.NoError(t, json.Unmarshal(manifestBytes, &manifest))
 	assert.Equal(t, authorization.SourceSHA256, manifest.Authorization.SourceSHA256)
+	assert.Equal(t, authorization.DiscloseFilename, manifest.Authorization.DiscloseFilename)
+	expectedFilename := "document.pdf"
+	if !authorization.DiscloseFilename {
+		expectedFilename = ""
+	}
+	assert.Equal(t, expectedFilename, manifest.Source.Filename)
 	sourcePart, err := reader.NextPart()
 	require.NoError(t, err)
 	assert.Equal(t, sourcePartName, sourcePart.FormName())
-	assert.Equal(t, "document.pdf", sourcePart.FileName())
+	assert.Equal(t, expectedFilename, sourcePart.FileName())
 	gotSource, err := io.ReadAll(sourcePart)
 	require.NoError(t, err)
 	assert.Equal(t, source, gotSource)
