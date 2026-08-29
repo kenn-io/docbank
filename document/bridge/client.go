@@ -235,7 +235,7 @@ func (client *Client) submit(
 			"bridge submission outcome is ambiguous", 0, err)
 	}
 	if status != http.StatusOK && status != http.StatusAccepted {
-		return jobEnvelope{}, statusError(status, envelope)
+		return jobEnvelope{}, client.statusError(status, envelope)
 	}
 	if err := client.validateEnvelope(envelope, upload.Metadata()); err != nil {
 		return jobEnvelope{}, err
@@ -328,7 +328,7 @@ func (client *Client) getJob(ctx context.Context, jobID, sourceSHA256 string) (j
 			document.RenditionErrorTransient, "bridge polling request failed", 0, err)
 	}
 	if status != http.StatusOK && status != http.StatusAccepted {
-		return jobEnvelope{}, statusError(status, envelope)
+		return jobEnvelope{}, client.statusError(status, envelope)
 	}
 	if err := client.validateEnvelope(envelope, document.AuthorizedUploadMetadata{
 		SHA256: sourceSHA256,
@@ -582,7 +582,7 @@ func (client *Client) fetchArtifact(
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, statusError(response.StatusCode, jobEnvelope{})
+		return nil, client.statusError(response.StatusCode, jobEnvelope{})
 	}
 	if err := requireMediaType(response.Header.Get("Content-Type"), artifact.MediaType); err != nil {
 		return nil, err
@@ -689,8 +689,8 @@ func validatePathIdentifier(value, subject string) error {
 }
 
 func cloneDescriptor(value document.RenditionDescriptor) document.RenditionDescriptor {
-	value.SupportedFormats = append([]document.RenditionFormatCapability(nil), value.SupportedFormats...)
-	value.ArtifactRoles = append([]document.EvidenceArtifactRole(nil), value.ArtifactRoles...)
+	value.SupportedFormats = slices.Clone(value.SupportedFormats)
+	value.ArtifactRoles = slices.Clone(value.ArtifactRoles)
 	return value
 }
 
@@ -775,7 +775,7 @@ func providerErrorFromEnvelope(envelope jobEnvelope) error {
 	return classifiedError(providerError.Code, providerError.Message, retry, nil)
 }
 
-func statusError(status int, envelope jobEnvelope) error {
+func (client *Client) statusError(status int, envelope jobEnvelope) error {
 	if len(envelope.Error) != 0 {
 		return providerErrorFromEnvelope(envelope)
 	}
@@ -785,7 +785,12 @@ func statusError(status int, envelope jobEnvelope) error {
 	case http.StatusNotFound, http.StatusGone:
 		return classifiedError(document.RenditionErrorUnknownJob, "bridge job is unknown or expired", 0, nil)
 	case http.StatusTooManyRequests:
-		return classifiedError(document.RenditionErrorRateLimited, "bridge rate limit", 0, nil)
+		if envelope.RetryAfterMillis < 0 ||
+			envelope.RetryAfterMillis > int64(client.totalTimeout/time.Millisecond) {
+			return malformedError("bridge retry delay is outside bounds", nil)
+		}
+		return classifiedError(document.RenditionErrorRateLimited, "bridge rate limit",
+			time.Duration(envelope.RetryAfterMillis)*time.Millisecond, nil)
 	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway,
 		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return classifiedError(document.RenditionErrorTransient, "bridge is temporarily unavailable", 0, nil)

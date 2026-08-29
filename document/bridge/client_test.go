@@ -85,6 +85,17 @@ func TestBridgeContractSynchronousCompletion(t *testing.T) {
 	assert.NotEmpty(t, idempotency)
 }
 
+func TestBridgeDescriptorPreservesEmptyArtifactRoles(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	fixture.descriptor.ArtifactRoles = []document.EvidenceArtifactRole{}
+	descriptor, err := document.NewRenditionDescriptor(fixture.descriptor)
+	require.NoError(t, err)
+	client := newTestBridgeClient(t, "https://bridge.invalid", descriptor, nil)
+
+	got := client.Descriptor()
+	assert.Equal(t, descriptor, got)
+}
+
 func TestBridgeContractRejectsAcceptedResponseBeforeUploadCompletion(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
@@ -232,6 +243,15 @@ func TestBridgeContractHonorsRetryDelayFromPollingError(t *testing.T) {
 	assert.Equal(t, int64(2), polls.Load())
 	assert.GreaterOrEqual(t, time.Duration(secondPollAt.Load()-firstPollAt.Load()),
 		retryDelay-5*time.Millisecond)
+}
+
+func TestBridgeContractPreservesTopLevelRetryDelay(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	client := newTestBridgeClient(t, "https://bridge.invalid", fixture.descriptor, nil)
+	err := client.statusError(http.StatusTooManyRequests, jobEnvelope{RetryAfterMillis: 40})
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, 40*time.Millisecond, providerError.RetryAfter())
 }
 
 func TestBridgeContractRejectsAggregateArtifactLimitsBeforeFetching(t *testing.T) {
