@@ -205,22 +205,25 @@ func (client *Client) submit(
 	bodyReader, bodyWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(bodyWriter)
 	contentType := multipartWriter.FormDataContentType()
+	uploadDone := make(chan error, 1)
 	go func() {
 		writeErr := writeMultipartUpload(multipartWriter, manifest, upload)
 		if closeErr := multipartWriter.Close(); writeErr == nil {
 			writeErr = closeErr
 		}
+		uploadDone <- writeErr
 		_ = bodyWriter.CloseWithError(writeErr)
 	}()
+	completion := multipartCompletion{reader: bodyReader, done: uploadDone}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.origin+jobsPath, bodyReader)
 	if err != nil {
-		_ = bodyReader.Close()
+		completion.abort(err)
 		return jobEnvelope{}, fmt.Errorf("bridge: create submission: %w", err)
 	}
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", jobMediaType)
 	request.Header.Set("Idempotency-Key", idempotencyKey)
-	envelope, status, err := client.doJobRequest(request)
+	envelope, status, err := client.doJobRequest(request, &completion)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return jobEnvelope{}, contextErr
@@ -244,6 +247,33 @@ func (client *Client) submit(
 		return jobEnvelope{}, malformedError("bridge accepted response has an invalid status", nil)
 	}
 	return envelope, nil
+}
+
+type multipartCompletion struct {
+	reader *io.PipeReader
+	done   <-chan error
+}
+
+func (completion multipartCompletion) abort(cause error) {
+	completion.close(cause)
+	<-completion.done
+}
+
+func (completion multipartCompletion) close(cause error) {
+	_ = completion.reader.CloseWithError(cause)
+}
+
+func (completion multipartCompletion) wait(ctx context.Context) error {
+	select {
+	case err := <-completion.done:
+		return err
+	case <-ctx.Done():
+		completion.close(ctx.Err())
+		if err := <-completion.done; err != nil {
+			return errors.Join(ctx.Err(), err)
+		}
+		return ctx.Err()
+	}
 }
 
 func writeMultipartUpload(
@@ -286,7 +316,7 @@ func (client *Client) getJob(ctx context.Context, jobID, sourceSHA256 string) (j
 		return jobEnvelope{}, err
 	}
 	request.Header.Set("Accept", jobMediaType)
-	envelope, status, err := client.doJobRequest(request)
+	envelope, status, err := client.doJobRequest(request, nil)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return jobEnvelope{}, contextErr
@@ -311,25 +341,41 @@ func (client *Client) getJob(ctx context.Context, jobID, sourceSHA256 string) (j
 	return envelope, nil
 }
 
-func (client *Client) doJobRequest(request *http.Request) (jobEnvelope, int, error) {
+func (client *Client) doJobRequest(
+	request *http.Request, completion *multipartCompletion,
+) (jobEnvelope, int, error) {
 	parentCtx := request.Context()
 	requestCtx, cancel := context.WithTimeout(parentCtx, client.requestTimeout)
 	defer cancel()
 	request = request.Clone(requestCtx)
+	if completion != nil {
+		stopClose := context.AfterFunc(requestCtx, func() { completion.close(requestCtx.Err()) })
+		defer stopClose()
+	}
 	if err := client.authorizeRequest(request); err != nil {
-		if request.Body != nil {
+		if completion != nil {
+			completion.abort(err)
+		} else if request.Body != nil {
 			_ = request.Body.Close()
 		}
 		return jobEnvelope{}, 0, err
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
+		if completion != nil {
+			completion.abort(err)
+		}
 		if contextErr := parentCtx.Err(); contextErr != nil {
 			return jobEnvelope{}, 0, contextErr
 		}
 		return jobEnvelope{}, 0, err
 	}
 	defer func() { _ = response.Body.Close() }()
+	if completion != nil {
+		if err := completion.wait(requestCtx); err != nil {
+			return jobEnvelope{}, response.StatusCode, err
+		}
+	}
 	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
 		return jobEnvelope{}, response.StatusCode, nil
 	}

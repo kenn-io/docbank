@@ -85,6 +85,21 @@ func TestBridgeContractSynchronousCompletion(t *testing.T) {
 	assert.NotEmpty(t, idempotency)
 }
 
+func TestBridgeContractRejectsAcceptedResponseBeforeUploadCompletion(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			require.NoError(t, request.Body.Close())
+			return bridgeHTTPResponse(t, request, http.StatusAccepted,
+				pendingEnvelope(fixture, "job-incomplete-upload", JobQueued)), nil
+		})})
+
+	_, err := client.submit(t.Context(), fixture.upload(), []byte("{}"), strings.Repeat("a", 64))
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+}
+
 func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	fixture.authorization.DiscloseFilename = false
@@ -607,6 +622,9 @@ func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
 		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
 			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				if request.Method == http.MethodPost {
+					_, err := io.Copy(io.Discard, request.Body)
+					require.NoError(t, err)
+					require.NoError(t, request.Body.Close())
 					return bridgeHTTPResponse(t, request, http.StatusAccepted,
 						pendingEnvelope(fixture, "job-slow", JobQueued)), nil
 				}
@@ -693,6 +711,9 @@ func TestBridgeContractClassifiesUnknownExpiredAndAmbiguousJobs(t *testing.T) {
 		fixture := newBridgeFixture(t)
 		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
 			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				_, err := io.Copy(io.Discard, request.Body)
+				require.NoError(t, err)
+				require.NoError(t, request.Body.Close())
 				return &http.Response{
 					StatusCode: http.StatusAccepted,
 					Header:     http.Header{"Content-Type": []string{jobMediaType}},
