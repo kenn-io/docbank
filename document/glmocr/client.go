@@ -13,7 +13,9 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/ocr"
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 const (
@@ -87,7 +90,26 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: config.Timeout}
+		endpoint, err := url.Parse(policy.values.Endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("parse GLM-OCR endpoint for egress: %w", err)
+		}
+		port, err := strconv.ParseUint(endpoint.Port(), 10, 16)
+		if err != nil || port == 0 {
+			return nil, errors.New("GLM-OCR endpoint has an invalid egress port")
+		}
+		transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
+			Scheme: endpoint.Scheme, Host: endpoint.Hostname(), Port: uint16(port),
+			AllowedCIDRs: []netip.Prefix{
+				netip.MustParsePrefix("127.0.0.0/8"),
+				netip.MustParsePrefix("::1/128"),
+			},
+			ProxyMode: providerhttp.ProxyDisabled,
+		}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create GLM-OCR egress transport: %w", err)
+		}
+		httpClient = &http.Client{Timeout: config.Timeout, Transport: transport}
 	} else {
 		clone := *httpClient
 		httpClient = &clone
@@ -95,7 +117,7 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 			httpClient.Timeout = config.Timeout
 		}
 	}
-	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	httpClient.CheckRedirect = providerhttp.RefuseRedirects
 	return &Client{policy: policy, http: httpClient, maxRetries: config.MaxRetries, maxRetryDelay: config.MaxRetryDelay}, nil
 }
 
