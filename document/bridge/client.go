@@ -121,8 +121,13 @@ func (client *Client) Render(
 	}
 	ctx, cancel := context.WithTimeout(ctx, client.totalTimeout)
 	defer cancel()
+	metadata := upload.Metadata()
+	if strings.ContainsAny(metadata.Filename, "\r\n") {
+		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
+			"bridge filename contains unsupported line breaks", 0, nil)
+	}
 	manifest := AuthorizationManifest{
-		ContractVersion: ContractVersion, Source: upload.Metadata(), Authorization: authorization,
+		ContractVersion: ContractVersion, Source: metadata, Authorization: authorization,
 	}
 	manifestJSON, err := json.Marshal(manifest, json.Deterministic(true))
 	if err != nil {
@@ -135,9 +140,9 @@ func (client *Client) Render(
 		return document.RenditionResult{}, err
 	}
 	jobID := envelope.JobID
-	completed := false
+	jobStatus := envelope.Status
 	defer func() {
-		if jobID != "" && !completed {
+		if jobID != "" && (jobStatus == JobQueued || jobStatus == JobRunning) {
 			cancelCtx, cancelRemote := context.WithTimeout(context.WithoutCancel(ctx), client.requestTimeout)
 			defer cancelRemote()
 			_ = client.cancelJob(cancelCtx, jobID)
@@ -146,13 +151,13 @@ func (client *Client) Render(
 
 	var retryDelay time.Duration
 	for attempt := 0; ; attempt++ {
+		jobStatus = envelope.Status
 		switch envelope.Status {
 		case JobCompleted:
 			result, err := client.decodeCompleted(ctx, envelope, authorization)
 			if err != nil {
 				return document.RenditionResult{}, err
 			}
-			completed = true
 			return result, nil
 		case JobFailed, JobCanceled:
 			return document.RenditionResult{}, providerErrorFromEnvelope(envelope)

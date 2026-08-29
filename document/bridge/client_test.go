@@ -126,6 +126,23 @@ func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestBridgeContractRejectsMultilineFilenameBeforeSubmission(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	fixture.metadata.Filename = "document.pdf\r\nX-Synthetic: value"
+	var requests atomic.Int64
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return nil, errors.New("unexpected bridge request")
+		})})
+
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorPolicyRejected, providerError.Code())
+	assert.Zero(t, requests.Load())
+}
+
 func TestBridgeContractIdempotencyReplayAndForwardCompatibleEnvelope(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	var keys []string
@@ -514,6 +531,7 @@ func TestBridgeContractRejectsArtifactContentTypeLengthAndChecksumMismatch(t *te
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			fixture := newBridgeFixture(t).withStructuredArtifact(t)
+			var deletes atomic.Int64
 			declaredBytes := len(fixture.artifact)
 			if test.declaredBytes != 0 {
 				declaredBytes = test.declaredBytes
@@ -523,6 +541,11 @@ func TestBridgeContractRejectsArtifactContentTypeLengthAndChecksumMismatch(t *te
 				declaredHash = test.declaredHash
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodDelete {
+					deletes.Add(1)
+					response.WriteHeader(http.StatusNoContent)
+					return
+				}
 				if request.URL.Path == jobsPath {
 					writeBridgeJSON(t, response, http.StatusOK,
 						completedEnvelope(t, fixture, "job-artifact", []map[string]any{{
@@ -544,6 +567,7 @@ func TestBridgeContractRejectsArtifactContentTypeLengthAndChecksumMismatch(t *te
 			client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
 			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			requireBridgeErrorContains(t, err, test.want)
+			assert.Zero(t, deletes.Load())
 		})
 	}
 }
