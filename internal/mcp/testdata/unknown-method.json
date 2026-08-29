@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "docbank/unknown",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}

@@ -30,3 +30,11 @@ func TestFromStoreErrorMapsUnsupportedAuditMutation(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, mapped.Status)
 	assert.Equal(t, "audit_mutation_unsupported", mapped.Code)
 }
+
+func TestFromStoreErrorMapsDocumentCursorCapacityWithout500(t *testing.T) {
+	mapped := &Error{}
+	ok := errors.As(FromStoreError(store.ErrDocumentCursorCapacity), &mapped)
+	require.True(t, ok)
+	assert.Equal(t, http.StatusServiceUnavailable, mapped.Status)
+	assert.Equal(t, "cursor_capacity", mapped.Code)
+}

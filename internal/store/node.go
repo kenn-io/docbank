@@ -21,6 +21,7 @@ type Node struct {
 	Kind             string // "dir" | "file"
 	CurrentVersionID string
 	BlobHash         string
+	MD5              string
 	Size             int64
 	MimeType         string
 	Revision         int64
@@ -54,13 +55,14 @@ const nodeFrom = `nodes AS n
 
 const nodeCols = `n.id, n.parent_id, n.name, n.kind,
 	COALESCE(n.current_version_id, ''), COALESCE(cv.blob_hash, ''),
+	COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=cv.blob_hash), ''),
 	COALESCE(cv.size, 0), COALESCE(cv.mime_type, ''),
 	n.revision, n.created_at, n.modified_at, n.trashed_at`
 
 func scanNode(row interface{ Scan(args ...any) error }) (Node, error) {
 	var n Node
 	err := row.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind,
-		&n.CurrentVersionID, &n.BlobHash, &n.Size, &n.MimeType,
+		&n.CurrentVersionID, &n.BlobHash, &n.MD5, &n.Size, &n.MimeType,
 		&n.Revision, &n.CreatedAt, &n.ModifiedAt, &n.TrashedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, ErrNotFound
@@ -73,7 +75,11 @@ func scanNode(row interface{ Scan(args ...any) error }) (Node, error) {
 
 // NodeByID returns the node with the given id, live or trashed.
 func (s *Store) NodeByID(ctx context.Context, id int64) (Node, error) {
-	row := s.db.QueryRowContext(ctx,
+	return nodeByIDQuery(ctx, s.db, id)
+}
+
+func nodeByIDQuery(ctx context.Context, queryer rowQuerier, id int64) (Node, error) {
+	row := queryer.QueryRowContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, id)
 	n, err := scanNode(row)
 	if err != nil {

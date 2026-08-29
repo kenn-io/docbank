@@ -1,6 +1,9 @@
 package api
 
-import "go.kenn.io/docbank/internal/store"
+import (
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/store"
+)
 
 const openAPIStringType = "string"
 
@@ -13,25 +16,299 @@ const (
 	BlobSizeHeader = "X-Docbank-Blob-Size"
 	// ContentVersionHeader carries the stable version identity whose immutable
 	// bytes are being streamed.
-	ContentVersionHeader = "X-Docbank-Content-Version"
+	ContentVersionHeader        = "X-Docbank-Content-Version"
+	RenditionAttachmentHeader   = "X-Docbank-Rendition-Attachment"
+	RenditionBuildHeader        = "X-Docbank-Rendition-Build"
+	RenditionArtifactHeader     = "X-Docbank-Rendition-Artifact"
+	RenditionProfileHeader      = "X-Docbank-Rendition-Profile"
+	RenditionCompletenessHeader = "X-Docbank-Rendition-Completeness"
+	RenditionWarningsHeader     = "X-Docbank-Rendition-Warnings"
 )
+
+// ProcessingSelector binds provider work to one exact immutable document
+// version and one named deployment profile.
+type ProcessingSelector struct {
+	NodeID           int64  `json:"node_id" minimum:"1"`
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Profile          string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+}
+
+// ProcessingProfileSummary is one locally executable deployment profile.
+type ProcessingProfileSummary struct {
+	Name              string   `json:"name"`
+	Fingerprint       string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Rendition         bool     `json:"rendition"`
+	EmbeddingBindings []string `json:"embedding_bindings"`
+}
+
+type ProcessingPlanRequest struct {
+	Selector ProcessingSelector `json:"selector"`
+}
+
+type ProcessingFlowHop struct {
+	Capability        string                      `json:"capability"`
+	ProviderID        string                      `json:"provider_id"`
+	TrustBoundary     string                      `json:"trust_boundary"`
+	InputClasses      []string                    `json:"input_classes"`
+	RuntimeDisclosure ProcessingRuntimeDisclosure `json:"runtime_disclosure"`
+}
+
+type ProcessingRuntimeDisclosure struct {
+	ImmediateProcessor    string   `json:"immediate_processor" minLength:"1" maxLength:"1024"`
+	UltimateProcessor     string   `json:"ultimate_processor" minLength:"1" maxLength:"1024"`
+	Endpoint              string   `json:"endpoint" minLength:"1" maxLength:"1024"`
+	Deployment            string   `json:"deployment" minLength:"1" maxLength:"1024"`
+	Model                 string   `json:"model,omitzero" maxLength:"1024"`
+	ModelRevision         string   `json:"model_revision,omitzero" maxLength:"1024"`
+	VectorSpace           string   `json:"vector_space,omitzero" maxLength:"1024"`
+	MetadataClasses       []string `json:"metadata_classes" maxItems:"64" uniqueItems:"true"`
+	RetainedArtifactRoles []string `json:"retained_artifact_roles" maxItems:"64" uniqueItems:"true"`
+}
+
+type ProcessingEstimate struct {
+	SourceBytes   int64 `json:"source_bytes" minimum:"0"`
+	ProviderCalls int   `json:"provider_calls" minimum:"0"`
+	VectorSpaces  int   `json:"vector_spaces" minimum:"0"`
+}
+
+// ProcessingPlan is the complete reviewed disclosure. Its fingerprint must
+// be supplied unchanged when starting work.
+type ProcessingPlan struct {
+	Fingerprint        string              `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	VaultUID           string              `json:"vault_uid" format:"uuid"`
+	Selector           ProcessingSelector  `json:"selector"`
+	ProfileFingerprint string              `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Flow               []ProcessingFlowHop `json:"flow"`
+	DisclosedClasses   []string            `json:"disclosed_classes"`
+	RetainedClasses    []string            `json:"retained_classes"`
+	Estimate           ProcessingEstimate  `json:"estimate"`
+	ConsentRequired    bool                `json:"consent_required"`
+	ConsentState       string              `json:"consent_state" enum:"active,required,expired,revoked"`
+	BackupConsequence  string              `json:"backup_consequence"`
+}
+
+type StartProcessingRequest struct {
+	Selector        ProcessingSelector `json:"selector"`
+	PlanFingerprint string             `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Consent         bool               `json:"consent"`
+}
+
+type ProcessingConsentGrantRequest struct {
+	Selector        ProcessingSelector `json:"selector"`
+	PlanFingerprint string             `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ExpiresAt       string             `json:"expires_at,omitzero" format:"date-time"`
+}
+
+type ProcessingConsentGrant struct {
+	PlanFingerprint    string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ProfileFingerprint string `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ExpiresAt          string `json:"expires_at,omitzero" format:"date-time"`
+}
+
+type ProcessingConsentRevokeRequest struct{}
+
+type ProcessingConsentRevocation struct {
+	RevokedAt string `json:"revoked_at" format:"date-time"`
+}
+
+type DerivativePurgePlanRequest struct {
+	ContentVersionIDs []string `json:"content_version_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	AttachmentIDs     []string `json:"attachment_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	BuildIDs          []string `json:"build_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	All               bool     `json:"all,omitzero"`
+}
+
+type DerivativePurgePlan struct {
+	Fingerprint                    string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	VaultUID                       string   `json:"vault_uid" format:"uuid"`
+	ContentVersionIDs              []string `json:"content_version_ids"`
+	AttachmentIDs                  []string `json:"attachment_ids"`
+	BuildIDs                       []string `json:"build_ids"`
+	All                            bool     `json:"all"`
+	ImmutableBackupCopiesUntouched bool     `json:"immutable_backup_copies_untouched"`
+}
+
+type DerivativePurgeJobRequest struct {
+	ContentVersionIDs []string `json:"content_version_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	AttachmentIDs     []string `json:"attachment_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	BuildIDs          []string `json:"build_ids,omitzero" maxItems:"1000" uniqueItems:"true"`
+	All               bool     `json:"all,omitzero"`
+	PlanFingerprint   string   `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+}
+
+type DerivativePurgeReceipt struct {
+	ID                               string `json:"id" pattern:"^[0-9a-f]{64}$"`
+	PlanFingerprint                  string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	RemovedHeads                     int    `json:"removed_heads" minimum:"0"`
+	RemovedAttachments               int    `json:"removed_attachments" minimum:"0"`
+	RemovedBuilds                    int    `json:"removed_builds" minimum:"0"`
+	RemovedArtifacts                 int    `json:"removed_artifacts" minimum:"0"`
+	RemovedLexicalSegments           int    `json:"removed_lexical_segments" minimum:"0"`
+	RemovedEmbeddingHeads            int    `json:"removed_embedding_heads" minimum:"0"`
+	RemovedEmbeddingSets             int    `json:"removed_embedding_sets" minimum:"0"`
+	PhysicalDerivativeBlobsReclaimed int    `json:"physical_derivative_blobs_reclaimed" minimum:"0"`
+	ReclaimedFiles                   int    `json:"reclaimed_files" minimum:"0"`
+	ImmutableBackupCopiesUntouched   bool   `json:"immutable_backup_copies_untouched"`
+}
+
+type DerivativePurgeEvent struct {
+	Sequence int                     `json:"sequence" minimum:"1" maximum:"1"`
+	Type     string                  `json:"type" enum:"result"`
+	Receipt  *DerivativePurgeReceipt `json:"receipt"`
+	Terminal bool                    `json:"terminal"`
+}
+
+type ProcessingJob struct {
+	ID                 string   `json:"id" pattern:"^[0-9a-f]{64}$"`
+	RenditionJobID     string   `json:"rendition_job_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	AttachmentID       string   `json:"attachment_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	EmbeddingJobIDs    []string `json:"embedding_job_ids"`
+	ProfileFingerprint string   `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ContentVersionID   string   `json:"content_version_id" format:"uuid"`
+}
+
+type ProcessingStatus struct {
+	JobID             string   `json:"job_id" pattern:"^[0-9a-f]{64}$"`
+	State             string   `json:"state"`
+	Phase             string   `json:"phase"`
+	FailureCode       string   `json:"failure_code,omitzero"`
+	EmbeddingJobIDs   []string `json:"embedding_job_ids"`
+	CompletedBindings int      `json:"completed_bindings" minimum:"0"`
+}
+
+// RenditionSelectorRequest reads the active rendition for one exact source
+// selector without requiring callers to discover its attachment identity.
+type RenditionSelectorRequest struct {
+	Selector ProcessingSelector `json:"selector"`
+	MaxBytes int64              `json:"max_bytes" minimum:"1" maximum:"67108864"`
+}
+
+// ProcessingJobEvent is one bounded NDJSON event. A successful stream contains
+// one job event followed by one terminal status event.
+type ProcessingJobEvent struct {
+	Sequence int               `json:"sequence" minimum:"1" maximum:"2"`
+	Type     string            `json:"type" enum:"job,status"`
+	Job      *ProcessingJob    `json:"job,omitzero"`
+	Status   *ProcessingStatus `json:"status,omitzero"`
+	Terminal bool              `json:"terminal,omitzero"`
+}
+
+type DocumentSourceFence struct {
+	VaultUID          string   `json:"vault_uid" format:"uuid"`
+	ContentVersionIDs []string `json:"content_version_ids" minItems:"1" maxItems:"4096" uniqueItems:"true"`
+}
+
+type CoverageClass struct {
+	Name                      string `json:"name"`
+	Required                  bool   `json:"required"`
+	State                     string `json:"state"`
+	Complete                  int    `json:"complete" minimum:"0"`
+	Unavailable               int    `json:"unavailable" minimum:"0"`
+	Stale                     int    `json:"stale" minimum:"0"`
+	Ineligible                int    `json:"ineligible" minimum:"0"`
+	Rebuilding                int    `json:"rebuilding" minimum:"0"`
+	PreviousGenerationServing int    `json:"previous_generation_serving" minimum:"0"`
+	Total                     int    `json:"total" minimum:"0"`
+}
+
+type CoverageReport struct {
+	VaultUID           string          `json:"vault_uid" format:"uuid"`
+	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	State              string          `json:"state"`
+	Renditions         CoverageClass   `json:"renditions"`
+	Embeddings         []CoverageClass `json:"embeddings"`
+}
+
+type DocumentSearchRequest struct {
+	Query     string              `json:"query" minLength:"1" maxLength:"8192"`
+	Mode      string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit     int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile   string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID string              `json:"binding_id,omitzero" maxLength:"128"`
+	Fence     DocumentSourceFence `json:"fence"`
+	Explain   bool                `json:"explain,omitzero"`
+}
+
+// DocumentSearchValidationRequest validates search semantics when an exact
+// resolved source fence is empty and therefore must not be searched.
+type DocumentSearchValidationRequest struct {
+	Query     string `json:"query" minLength:"1" maxLength:"8192"`
+	Mode      string `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit     int    `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile   string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID string `json:"binding_id,omitzero" maxLength:"128"`
+	Explain   bool   `json:"explain,omitzero"`
+}
+
+type DocumentSearchValidation struct {
+	Valid bool `json:"valid"`
+}
+
+type DocumentEvidenceReference struct {
+	Kind                   string `json:"kind"`
+	BuildID                string `json:"build_id,omitzero"`
+	SegmentID              string `json:"segment_id,omitzero"`
+	VectorSpaceID          string `json:"vector_space_id,omitzero"`
+	EmbeddingSetID         string `json:"embedding_set_id,omitzero"`
+	InputGenerationID      string `json:"input_generation_id,omitzero"`
+	InputID                string `json:"input_id,omitzero"`
+	InputKind              string `json:"input_kind,omitzero"`
+	SourceManifestChecksum string `json:"source_manifest_checksum,omitzero"`
+}
+
+type DocumentSearchTrace struct {
+	Code  string `json:"code"`
+	Count int    `json:"count" minimum:"0"`
+}
+
+type DocumentSearchResult struct {
+	VaultUID         string                      `json:"vault_uid" format:"uuid"`
+	NodeID           int64                       `json:"node_id" minimum:"1"`
+	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
+	Rank             int                         `json:"rank" minimum:"1"`
+	Score            float64                     `json:"score"`
+	Path             string                      `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
+	Excerpt          string                      `json:"excerpt,omitzero" maxLength:"512"`
+	LexicalRank      int                         `json:"lexical_rank,omitzero"`
+	SemanticRank     int                         `json:"semantic_rank,omitzero"`
+	Evidence         []DocumentEvidenceReference `json:"evidence"`
+}
+
+type DocumentSearchCoverage struct {
+	BindingRequired   bool   `json:"binding_required"`
+	ScopedDocuments   int    `json:"scoped_documents" minimum:"0"`
+	CompleteDocuments int    `json:"complete_documents" minimum:"0"`
+	State             string `json:"state"`
+}
+
+type DocumentSearchReport struct {
+	RequestedMode string                 `json:"requested_mode"`
+	ActualMode    string                 `json:"actual_mode"`
+	Coverage      DocumentSearchCoverage `json:"coverage"`
+	Degradations  []string               `json:"degradations"`
+	Results       []DocumentSearchResult `json:"results"`
+	Truncated     bool                   `json:"truncated"`
+	Trace         []DocumentSearchTrace  `json:"trace"`
+}
 
 // Node is the wire representation of a store.Node. Path is populated on live
 // single-node responses; lists and trashed nodes omit it.
 type Node struct {
-	ID               int64  `json:"id"`
-	ParentID         *int64 `json:"parent_id,omitempty"`
-	Name             string `json:"name"`
-	Kind             string `json:"kind" enum:"dir,file"`
-	CurrentVersionID string `json:"current_version_id,omitzero" format:"uuid"`
-	BlobHash         string `json:"blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
-	Size             int64  `json:"size"`
-	MimeType         string `json:"mime_type,omitzero"`
-	Revision         int64  `json:"revision"`
-	CreatedAt        string `json:"created_at"`
-	ModifiedAt       string `json:"modified_at"`
-	TrashedAt        string `json:"trashed_at,omitzero"`
-	Path             string `json:"path,omitzero"` // set on live single-node responses only
+	ID               int64           `json:"id"`
+	ParentID         *int64          `json:"parent_id,omitempty"`
+	Name             string          `json:"name"`
+	Kind             string          `json:"kind" enum:"dir,file"`
+	CurrentVersionID string          `json:"current_version_id,omitzero" format:"uuid"`
+	BlobHash         string          `json:"blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
+	MD5              string          `json:"md5,omitzero" pattern:"^[0-9a-f]{32}$"`
+	Size             int64           `json:"size"`
+	MimeType         string          `json:"mime_type,omitzero"`
+	Revision         int64           `json:"revision"`
+	CreatedAt        string          `json:"created_at"`
+	ModifiedAt       string          `json:"modified_at"`
+	TrashedAt        string          `json:"trashed_at,omitzero"`
+	Path             string          `json:"path,omitzero"` // set on live single-node responses only
+	SourceMetadata   *SourceMetadata `json:"source_metadata,omitempty"`
 }
 
 // NodePage is one bounded, ordered directory-child listing.
@@ -80,16 +357,29 @@ type BatchMoveReport struct {
 
 // ContentVersion is the wire representation of an immutable version record.
 type ContentVersion struct {
-	ID                    string  `json:"id" format:"uuid"`
-	NodeID                int64   `json:"node_id"`
-	BlobHash              string  `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
-	Size                  int64   `json:"size" minimum:"0"`
-	MimeType              string  `json:"mime_type,omitzero"`
-	RecordedAt            string  `json:"recorded_at"`
-	NodeRevision          int64   `json:"node_revision" minimum:"1"`
-	IntroducedOperationID string  `json:"introduced_operation_id" format:"uuid"`
-	TransitionKind        string  `json:"transition_kind" enum:"content_create,content_replace,content_revert"`
-	SourceVersionID       *string `json:"source_version_id,omitempty" format:"uuid"`
+	ID                    string          `json:"id" format:"uuid"`
+	NodeID                int64           `json:"node_id"`
+	BlobHash              string          `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	MD5                   string          `json:"md5,omitzero" pattern:"^[0-9a-f]{32}$"`
+	Size                  int64           `json:"size" minimum:"0"`
+	MimeType              string          `json:"mime_type,omitzero"`
+	RecordedAt            string          `json:"recorded_at"`
+	NodeRevision          int64           `json:"node_revision" minimum:"1"`
+	IntroducedOperationID string          `json:"introduced_operation_id" format:"uuid"`
+	TransitionKind        string          `json:"transition_kind" enum:"content_create,content_replace,content_revert"`
+	SourceVersionID       *string         `json:"source_version_id,omitempty" format:"uuid"`
+	SourceMetadata        *SourceMetadata `json:"source_metadata,omitempty"`
+}
+
+// SourceMetadata is durable local evidence extracted from verified original
+// bytes, plus attachment facts joined only for the requested node/version.
+type SourceMetadata struct {
+	ContractVersion      string                              `json:"contract_version"`
+	ExtractorFingerprint string                              `json:"extractor_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Checksum             string                              `json:"checksum" pattern:"^[0-9a-f]{64}$"`
+	Fields               []document.SourceMetadataFieldV1    `json:"fields"`
+	Warnings             []document.SourceMetadataWarningV1  `json:"warnings"`
+	Attachment           store.SourceMetadataAttachmentFacts `json:"attachment"`
 }
 
 // ContentVersionPage is one bounded newest-first version listing.
@@ -923,7 +1213,7 @@ type BackupRestoreEvent struct {
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,
-		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash,
+		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash, MD5: n.MD5,
 		Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
 		CreatedAt: n.CreatedAt, ModifiedAt: n.ModifiedAt,
 	}
@@ -935,11 +1225,18 @@ func fromStoreNode(n store.Node) Node {
 
 func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 	return ContentVersion{
-		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, Size: v.Size,
+		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, MD5: v.MD5, Size: v.Size,
 		MimeType: v.MimeType, RecordedAt: v.RecordedAt, NodeRevision: v.NodeRevision,
 		IntroducedOperationID: v.IntroducedOperationID,
 		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,
 	}
+}
+
+func fromStoreSourceMetadata(view store.SourceMetadataView) *SourceMetadata {
+	return &SourceMetadata{ContractVersion: view.Metadata.ContractVersion,
+		ExtractorFingerprint: view.Generation.ExtractorFingerprint,
+		Checksum:             view.Generation.Checksum, Fields: view.Metadata.Fields,
+		Warnings: view.Metadata.Warnings, Attachment: view.Attachment}
 }
 
 func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {

@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -55,6 +56,13 @@ type Deps struct {
 	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
 	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry  *blob.Registry   // nil keeps storage-registry routes read-only to the primary
+	Processing    *processing.Service
+	// DocumentCursorKey, DocumentCursorNow, and DocumentCursorRandom are
+	// deterministic-test seams. Production leaves them unset for process-private
+	// randomness and the wall clock.
+	DocumentCursorKey    []byte
+	DocumentCursorNow    func() time.Time
+	DocumentCursorRandom func([]byte) error
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -126,6 +134,7 @@ func NewServer(d Deps) *Server {
 	}
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
+	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
 	registerInfoRoute(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -141,6 +150,7 @@ func NewServer(d Deps) *Server {
 	registerProvenanceRoutes(humaAPI, d)
 	registerTagRoutes(humaAPI, d, g)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
+	registerProcessingRoutes(humaAPI, d)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-29
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -515,6 +516,34 @@ catalog mapping still referenced by the pinned snapshot. The create route is
 timeout-exempt; cancellation still propagates through Kit and prevents
 publication of a snapshot manifest.
 
+## MCP is a daemon client
+
+`docbank mcp` is a separate process and listener, not another path into the
+vault. It uses the same daemon discovery and authenticated HTTP client as the
+CLI, so the daemon remains the only standalone owner of SQLite, blob, pack,
+rendition, processing, and lock authority. There is no direct-vault or
+remote-daemon mode behind MCP.
+
+The MCP boundary implements exactly protocol `2026-07-28` through the official
+Go SDK v1.7.0. Stdio is newline framed. Its optional HTTP transport is
+stateless, POST-only, loopback-only, and separately authenticated; the MCP
+bearer is resolved from a named credential binding and cannot equal the
+daemon's configured, ephemeral, or runtime-discovered API key. The daemon API
+key is never accepted as an inbound MCP credential.
+
+MCP exposes nine bounded read tools plus one optional processing enqueue. The
+enqueue preserves the daemon's existing consent and plan-fingerprint checks;
+it cannot grant consent or replay an ambiguous start. Rendition resources bind
+the stable vault, node, content-version, and attachment tuple and expose only
+bounded windows of active sanitized Markdown. They do not expose source bytes
+or host paths.
+
+This fixed local HTTP bearer is not MCP OAuth. The listener has no OAuth
+metadata, authorization-server discovery, client registration, scopes, or
+refresh. It also has no GET streams, sessions, resumption, prompts, roots,
+sampling, elicitation, or tasks. See [Model Context Protocol](../usage/mcp.md)
+for the complete catalog and limits.
+
 ## Auth
 
 `X-Api-Key` or `Authorization: Bearer <key>`, constant-time compared
@@ -581,5 +610,6 @@ machine-readable string clients branch on instead of parsing `detail`:
   authenticated API requests. The master API key never enters the browser.
 - No multi-user model: one vault and one master authority. Browser sessions are
   attenuated local capabilities, not accounts. Sharing is out of scope for v1.
-- No MCP server.
+- No MCP endpoint inside `docbank daemon run`; `docbank mcp` remains a bounded
+  client process with its own transport and credential boundary.
 - No remote-daemon mode or `[remote]` configuration.

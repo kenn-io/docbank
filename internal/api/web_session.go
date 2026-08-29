@@ -181,6 +181,12 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		r.URL.RawQuery == "" {
 		return true
 	}
+	if method == http.MethodPost && r.URL.RawQuery == "" {
+		switch path {
+		case "/api/v1/processing/plans", "/api/v1/processing/jobs", "/api/v1/search":
+			return true
+		}
+	}
 	if (method == http.MethodPatch || method == http.MethodDelete) &&
 		r.URL.RawQuery == "" {
 		if tagID, ok := strings.CutPrefix(path, "/api/v1/tags/"); ok &&
@@ -226,13 +232,22 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
 		"/api/v1/audit/status", "/api/v1/audit/history", "/api/v1/jobs",
-		"/api/v1/storage", "/api/v1/tags":
+		"/api/v1/storage", "/api/v1/tags", "/api/v1/processing/profiles",
+		"/api/v1/coverage":
 		return true
 	case "/api/v1/backup/snapshots":
 		// Browser sessions may inspect only the repository selected by daemon
 		// configuration. An arbitrary repo query is a server-filesystem read
 		// capability and remains exclusive to the master API credential.
 		return r.URL.RawQuery == ""
+	}
+	for _, resourcePrefix := range []string{"/api/v1/processing/jobs/", "/api/v1/renditions/"} {
+		if identity, ok := strings.CutPrefix(path, resourcePrefix); ok {
+			return r.URL.RawQuery == "" && len(identity) == 64 &&
+				strings.IndexFunc(identity, func(char rune) bool {
+					return !strings.ContainsRune("0123456789abcdef", char)
+				}) == -1
+		}
 	}
 	const tagPrefix = "/api/v1/tags/"
 	if after, ok := strings.CutPrefix(path, tagPrefix); ok {

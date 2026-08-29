@@ -369,7 +369,7 @@ func (s *Store) ingestFile(
 				return err
 			}
 			if skip {
-				if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+				if err := s.EnsureOrdinaryBlobTx(tx, blobHash, size, physical...); err != nil {
 					return fmt.Errorf("reconciling idempotent ingest content: %w", err)
 				}
 				receipt.Node, err = scanNode(tx.QueryRow(

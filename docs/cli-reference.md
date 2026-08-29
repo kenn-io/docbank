@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-08-29
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -721,6 +722,37 @@ it only in page memory.
 contains a live scoped browser session and must be handled as a secret. See the
 [web application guide](usage/web.md) for its capabilities and trust boundary.
 
+## docbank mcp
+
+```text
+docbank mcp [--transport stdio|http] [--listen <loopback-ip:port>]
+            [--allow-processing]
+```
+
+Runs the selected vault's exact MCP `2026-07-28` server as another client of
+the local daemon. `--transport` defaults to `stdio`. Stdio accepts one JSON-RPC
+message per line, reserves stdout for protocol frames, and writes only redacted
+diagnostics to stderr. `--listen` is invalid for stdio.
+
+HTTP requires `--transport http`, an explicit IPv4 or IPv6 loopback
+`--listen`, and `[mcp.http] credential_binding` in
+`$DOCBANK_HOME/config.toml`. The binding resolves one fixed bearer from its
+named environment variable when the MCP process starts. It must differ from
+the daemon's effective API key. There is no token flag, remote-daemon option,
+or non-loopback listener.
+
+The catalog contains nine read tools by default. `--allow-processing` adds
+only the guarded `start_processing` tool: the agent must first retrieve the
+exact plan from the same process, and the operator must already have consented
+to that unchanged disclosure. The flag does not let MCP grant consent. The
+supported CLI consent path is `docbank processing plan`, followed by `docbank
+processing build --plan-fingerprint <fingerprint> --consent`; the build command
+also starts the reviewed work. See [Document
+processing](usage/document-processing.md) for the exact flow.
+
+See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
+catalogs, transport limits, caching, and unsupported capabilities.
+
 ## docbank trash
 
 ```
@@ -1006,6 +1038,6 @@ builds; release builds inject both via `-ldflags`).
 ## Environment variables
 
 `DOCBANK_HOME` selects the vault (see [Configuration](configuration.md)).
-`DOCBANK_LOG_LEVEL` sets the daemon's log level (`debug`, `info`,
-`warn`, `error`; default `info`) for both `docbank daemon run` and
-background-spawned daemons.
+`DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level (`debug`, `info`,
+`warn`, `error`; default `info`) for `docbank daemon run`, background-spawned
+daemons, and `docbank mcp` diagnostics.
