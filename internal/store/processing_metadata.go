@@ -1848,6 +1848,12 @@ func validateProcessingConsentState(ctx context.Context, tx metadataQuerier) err
 	if err := validateProcessingIncarnations(ctx, tx); err != nil {
 		return err
 	}
+	if err := validateProcessingConsentRevocations(ctx, tx); err != nil {
+		return err
+	}
+	if err := validateProcessingConsentGrants(ctx, tx); err != nil {
+		return err
+	}
 
 	var invalid bool
 	checks := []struct {
@@ -1887,6 +1893,63 @@ func validateProcessingConsentState(ctx context.Context, tx metadataQuerier) err
 		}
 	}
 	return nil
+}
+
+func validateProcessingConsentRevocations(ctx context.Context, tx metadataQuerier) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
+		FROM processing_consent_revocations ORDER BY incarnation_id,principal,scope,fence`)
+	if err != nil {
+		return fmt.Errorf("validating processing consent revocations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		value := metadataProcessingConsentRevocation{Type: metadataProcessingConsentRevokeType}
+		if err := rows.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
+			&value.Principal, &value.Scope, &value.Fence, &value.RevokedAt); err != nil {
+			return fmt.Errorf("scanning processing consent revocation metadata: %w", err)
+		}
+		if err := validateMetadataProcessingConsentRevocation(value); err != nil {
+			return err
+		}
+	}
+	return rowsError("processing consent revocation", rows)
+}
+
+func validateProcessingConsentGrants(ctx context.Context, tx metadataQuerier) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,
+		       revocation_fence,issued_at,expires_at
+		FROM processing_consent_grants ORDER BY incarnation_id,issued_at,grant_id`)
+	if err != nil {
+		return fmt.Errorf("validating processing consent grants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		value := metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType}
+		var inputs, retained string
+		var expires sql.NullString
+		if err := rows.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
+			&value.Principal, &value.Scope, &value.ProfileFingerprint,
+			&value.DisclosureFingerprint, &inputs, &retained, &value.RevocationFence,
+			&value.IssuedAt, &expires); err != nil {
+			return fmt.Errorf("scanning processing consent grant metadata: %w", err)
+		}
+		if err := json.Unmarshal([]byte(inputs), &value.InputClasses); err != nil {
+			return fmt.Errorf("decoding processing consent input classes: %w", err)
+		}
+		if err := json.Unmarshal([]byte(retained), &value.RetainedArtifactClasses); err != nil {
+			return fmt.Errorf("decoding processing consent retained classes: %w", err)
+		}
+		if expires.Valid {
+			value.ExpiresAt = &expires.String
+		}
+		if _, err := validateMetadataProcessingConsentGrant(value); err != nil {
+			return err
+		}
+	}
+	return rowsError("processing consent grant", rows)
 }
 
 func validateProcessingIncarnations(ctx context.Context, tx metadataQuerier) error {

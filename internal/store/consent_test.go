@@ -239,6 +239,57 @@ func TestProcessingConsentHistoryIsAppendOnly(t *testing.T) {
 	}
 }
 
+func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
+	t.Run("noncanonical grant classes", func(t *testing.T) {
+		s := newTestStore(t)
+		grant, err := s.GrantConsent(
+			t.Context(), grantRequestForAuthorization(testProviderAuthorizationRequest(), nil),
+		)
+		require.NoError(t, err)
+
+		_, err = s.db.Exec(`DROP TRIGGER processing_consent_grants_immutable_update`)
+		require.NoError(t, err)
+		_, err = s.db.Exec(`
+			UPDATE processing_consent_grants SET input_classes_json=? WHERE grant_id=?`,
+			`["rendition_chunk","original_file"]`, grant.ID)
+		require.NoError(t, err)
+		_, err = s.db.Exec(`
+			CREATE TRIGGER processing_consent_grants_immutable_update
+			BEFORE UPDATE ON processing_consent_grants BEGIN
+				SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+			END`)
+		require.NoError(t, err)
+
+		err = validateProcessingMetadataState(t.Context(), s.db)
+		require.ErrorContains(t, err, "processing consent class sets are not canonical")
+	})
+
+	t.Run("invalid revocation timestamp", func(t *testing.T) {
+		s := newTestStore(t)
+		request := testProviderAuthorizationRequest()
+		revocation, err := s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
+			Principal: request.Principal, Scope: request.Scope,
+		})
+		require.NoError(t, err)
+
+		_, err = s.db.Exec(`DROP TRIGGER processing_consent_revocations_immutable_update`)
+		require.NoError(t, err)
+		_, err = s.db.Exec(`
+			UPDATE processing_consent_revocations SET revoked_at=? WHERE revocation_id=?`,
+			`not-a-timestamp`, revocation.ID)
+		require.NoError(t, err)
+		_, err = s.db.Exec(`
+			CREATE TRIGGER processing_consent_revocations_immutable_update
+			BEFORE UPDATE ON processing_consent_revocations BEGIN
+				SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
+			END`)
+		require.NoError(t, err)
+
+		err = validateProcessingMetadataState(t.Context(), s.db)
+		require.ErrorContains(t, err, "processing consent revoked_at")
+	})
+}
+
 func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testing.T) {
 	source := newTestStore(t)
 	request := testProviderAuthorizationRequest()
