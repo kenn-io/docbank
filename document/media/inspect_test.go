@@ -1545,6 +1545,17 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		// viewer with nothing to open falls back to the path. Reading the key's
 		// presence alone let it stand in for a file that never travelled.
 		{name: "empty embedded file", object: "<< /Type /Filespec /F (/etc/passwd) /EF << >> >>"},
+		{name: "embedded names a non-stream",
+			object: "<< /Type /Filespec /F (/etc/passwd) /EF << /F 6 0 R >> >>"},
+		{name: "embedded names an integer",
+			object: "<< /Type /Filespec /F (/etc/passwd) /EF << /F 42 >> >>"},
+		{name: "embedded under a key that holds no path",
+			object: "<< /Type /Filespec /F (/etc/passwd) /EF << /Junk 5 0 R >> >>"},
+		// ISO 32000-1 §7.11.4 has /EF carry a subset of the path keys, and an
+		// ordinary attachment is a /F and a /UF name over one stream. The file
+		// is embedded, so requiring a stream per path key would reject it.
+		{name: "one stream covers the specification", eligible: true,
+			object: "<< /Type /Filespec /F (data.txt) /UF (data.txt) /EF << /F 5 0 R >> >>"},
 	}
 	for _, testCase := range fileSpecifications {
 		t.Run("file specification "+testCase.name, func(t *testing.T) {
@@ -1553,7 +1564,8 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
 				testCase.object,
-				"<< /Length 4 >>\nstream\ndata\nendstream",
+				"<< /Type /EmbeddedFile /Length 4 >>\nstream\ndata\nendstream",
+				"<< /Type /NotAStream /Value 1 >>",
 			})
 			record, err := media.InspectCapability(bytes.NewReader(pdf),
 				inspectionPolicy(pdf, "report.pdf", "application/pdf"))

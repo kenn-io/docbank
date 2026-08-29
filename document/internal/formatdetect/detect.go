@@ -345,14 +345,14 @@ func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) 
 	// /DOS, /Mac, and /Unix hold the same path for one platform. A viewer on
 	// that platform reads them, and a specification may carry them with no /F
 	// at all, so all five keys count.
-	embedded, err := pdfDictCarriesEmbeddedFile(context, dictionary)
+	embedded, err := pdfCarriesEmbeddedFile(context, dictionary)
 	if err != nil {
 		return false, err
 	}
 	if embedded {
 		return false, nil
 	}
-	for _, key := range []string{"F", "UF", "DOS", "Mac", "Unix"} {
+	for _, key := range pdfFileSpecPathKeys {
 		isPath, err := pdfDictHasStringEntry(context, dictionary, key)
 		if err != nil || isPath {
 			return isPath, err
@@ -361,14 +361,26 @@ func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) 
 	return false, nil
 }
 
-// pdfDictCarriesEmbeddedFile reports whether a file specification actually
-// carries the file rather than pointing at one. Only then do its path entries
-// describe bytes the document already holds.
+// pdfFileSpecPathKeys are the entries of a file specification that hold a path.
+// /DOS, /Mac, and /Unix hold the same path for one platform, and a specification
+// may carry them with no /F at all, so all five count.
+var pdfFileSpecPathKeys = []string{"F", "UF", "DOS", "Mac", "Unix"}
+
+// pdfCarriesEmbeddedFile reports whether a file specification holds the file
+// rather than pointing at one. Only then do its path entries name bytes the
+// document already carries, instead of somewhere to fetch them from.
 //
-// An /EF that names no stream leaves nothing to open, and a viewer with nothing
-// to open falls back to the path. Reading the key's presence alone let an empty
-// /EF suppress the check on a path such as "/etc/passwd".
-func pdfDictCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool, error) {
+// The file travels when /EF holds a stream under one of the path keys. Anything
+// else leaves a viewer nothing to open, and a viewer with nothing to open falls
+// back to the path, so an /EF that is empty, holds a non-stream, or names only
+// keys that are not path keys let "/etc/passwd" pass as an embedded file.
+//
+// One such stream covers the whole specification rather than the key it is
+// named after. ISO 32000-1 §7.11.4 defines /EF as carrying a subset of the path
+// keys, and the ordinary attachment written by real producers is a /F and a /UF
+// name over a single stream. Requiring each path key to have its own stream
+// rejects that document, and the file is embedded either way.
+func pdfCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool, error) {
 	object, ok := dictionary["EF"]
 	if !ok {
 		return false, nil
@@ -378,7 +390,24 @@ func pdfDictCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (
 		return false, fmt.Errorf("dereference PDF dictionary %q: %w", "EF", err)
 	}
 	streams, ok := resolved.(types.Dict)
-	return ok && len(streams) != 0, nil
+	if !ok {
+		return false, nil
+	}
+	for _, key := range pdfFileSpecPathKeys {
+		entry, ok := streams[key]
+		if !ok {
+			continue
+		}
+		value, err := context.Dereference(entry)
+		if err != nil {
+			return false, fmt.Errorf("dereference PDF embedded file %q: %w", key, err)
+		}
+		switch value.(type) {
+		case types.StreamDict, *types.StreamDict:
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func pdfDictHasStringEntry(
