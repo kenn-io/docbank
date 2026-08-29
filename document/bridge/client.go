@@ -308,7 +308,7 @@ func writeMultipartUpload(
 }
 
 func (client *Client) getJob(ctx context.Context, jobID, sourceSHA256 string) (jobEnvelope, error) {
-	if err := validateIdentifier(jobID, "job ID"); err != nil {
+	if err := validatePathIdentifier(jobID, "job ID"); err != nil {
 		return jobEnvelope{}, malformedError("bridge returned an invalid job ID", err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.origin+jobsPath+"/"+jobID, nil)
@@ -401,7 +401,7 @@ func (client *Client) validateEnvelope(
 	if envelope.ContractVersion != ContractVersion {
 		return malformedError("bridge contract version is unsupported", nil)
 	}
-	if err := validateIdentifier(envelope.JobID, "job ID"); err != nil {
+	if err := validatePathIdentifier(envelope.JobID, "job ID"); err != nil {
 		return malformedError("bridge job ID is invalid", err)
 	}
 	if metadata.SHA256 != "" && envelope.SourceSHA256 != metadata.SHA256 {
@@ -550,7 +550,7 @@ func (client *Client) resolveArtifact(
 	if artifact.Location != "result" || artifact.InlineBase64 != "" {
 		return nil, malformedError("bridge artifact location is invalid", nil)
 	}
-	if err := validateIdentifier(artifact.ArtifactID, "artifact ID"); err != nil {
+	if err := validatePathIdentifier(artifact.ArtifactID, "artifact ID"); err != nil {
 		return nil, malformedError("bridge artifact ID is invalid", err)
 	}
 	return client.fetchArtifact(ctx, artifactJobID, artifact)
@@ -611,7 +611,7 @@ func (client *Client) fetchArtifact(
 }
 
 func (client *Client) cancelJob(ctx context.Context, jobID string) error {
-	if err := validateIdentifier(jobID, "job ID"); err != nil {
+	if err := validatePathIdentifier(jobID, "job ID"); err != nil {
 		return err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, client.origin+jobsPath+"/"+jobID, nil)
@@ -679,6 +679,13 @@ func validateIdentifier(value, subject string) error {
 		}
 	}
 	return nil
+}
+
+func validatePathIdentifier(value, subject string) error {
+	if value == "." || value == ".." {
+		return fmt.Errorf("bridge: %s is invalid", subject)
+	}
+	return validateIdentifier(value, subject)
 }
 
 func cloneDescriptor(value document.RenditionDescriptor) document.RenditionDescriptor {

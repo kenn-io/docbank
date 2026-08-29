@@ -327,6 +327,26 @@ func TestBridgeContractRejectsArtifactAboveResponseLimitBeforeFetching(t *testin
 	assert.Zero(t, artifactRequests.Load(), "oversized artifacts must fail before fetching")
 }
 
+func TestBridgeContractRejectsDotSegmentArtifactIDsBeforeFetching(t *testing.T) {
+	fixture := newBridgeFixture(t).withStructuredArtifact(t)
+	var requests atomic.Int64
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return nil, errors.New("unexpected artifact fetch")
+		})})
+	for _, artifactID := range []string{".", ".."} {
+		t.Run(artifactID, func(t *testing.T) {
+			_, err := client.resolveArtifact(t.Context(), "job-artifact", artifactPayload{
+				MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
+				SHA256: sha256String(fixture.artifact), Location: "result", ArtifactID: artifactID,
+			}, fixture.authorization.MaxArtifactBytes)
+			requireBridgeErrorContains(t, err, "artifact ID")
+		})
+	}
+	assert.Zero(t, requests.Load())
+}
+
 func TestBridgeContractRejectsUnsafeOrCorruptResponses(t *testing.T) {
 	tests := map[string]struct {
 		mutate func(map[string]any)

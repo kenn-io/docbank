@@ -63,7 +63,7 @@ paths:
       - name: artifact_id
         in: path
         required: true
-        schema: {$ref: '#/components/schemas/StableID'}
+        schema: {$ref: '#/components/schemas/PathID'}
     get:
       operationId: getRenditionArtifact
       description: Returns bytes only from this fixed same-origin route. Job manifests never contain URLs.
@@ -81,7 +81,7 @@ components:
       name: job_id
       in: path
       required: true
-      schema: {$ref: '#/components/schemas/StableID'}
+      schema: {$ref: '#/components/schemas/PathID'}
   responses:
     Job:
       description: Bounded rendition job state.
@@ -99,6 +99,10 @@ components:
       minLength: 1
       maxLength: 128
       pattern: '^[A-Za-z0-9._-]+$'
+    PathID:
+      allOf:
+        - {$ref: '#/components/schemas/StableID'}
+        - not: {enum: ['.', '..']}
     AuthorizationManifest:
       type: object
       additionalProperties: false
@@ -172,7 +176,7 @@ components:
       properties:
         contract_version: {const: docbank-rendition/v1}
         status: {enum: [queued, running, completed, failed, canceled]}
-        job_id: {$ref: '#/components/schemas/StableID'}
+        job_id: {$ref: '#/components/schemas/PathID'}
         source_sha256: {$ref: '#/components/schemas/SHA256'}
         adapter_id: {$ref: '#/components/schemas/StableID'}
         descriptor_fingerprint: {$ref: '#/components/schemas/SHA256'}
@@ -221,7 +225,7 @@ components:
         sha256: {$ref: '#/components/schemas/SHA256'}
         location: {enum: [inline, result]}
         inline_base64: {type: string, contentEncoding: base64}
-        artifact_id: {$ref: '#/components/schemas/StableID'}
+        artifact_id: {$ref: '#/components/schemas/PathID'}
       oneOf:
         - required: [inline_base64]
           properties:
