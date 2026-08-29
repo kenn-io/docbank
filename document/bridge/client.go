@@ -545,11 +545,8 @@ func (client *Client) fetchArtifact(
 		if _, ok := errors.AsType[*document.RenditionProviderError](err); ok {
 			return nil, err
 		}
-		if contextErr := requestCtx.Err(); contextErr != nil {
+		if contextErr := parentCtx.Err(); contextErr != nil {
 			return nil, contextErr
-		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
 		}
 		return nil, classifiedError(
 			document.RenditionErrorTransient, "bridge artifact response read failed", 0, err)

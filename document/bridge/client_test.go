@@ -473,6 +473,32 @@ func TestBridgeContractClassifiesArtifactReadFailure(t *testing.T) {
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
+func TestBridgeContractClassifiesArtifactReadTimeout(t *testing.T) {
+	fixture := newBridgeFixture(t).withStructuredArtifact(t)
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			body, writer := io.Pipe()
+			go func() {
+				<-request.Context().Done()
+				_ = writer.CloseWithError(request.Context().Err())
+			}()
+			return &http.Response{
+				StatusCode: http.StatusOK, ContentLength: -1,
+				Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request,
+			}, nil
+		})})
+	client.requestTimeout = 10 * time.Millisecond
+
+	_, err := client.fetchArtifact(t.Context(), "job-read-timeout", artifactPayload{
+		MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
+		SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
+	})
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorTransient, providerError.Code())
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *testing.T) {
 	t.Run("credential failure", func(t *testing.T) {
 		fixture := newBridgeFixture(t)
