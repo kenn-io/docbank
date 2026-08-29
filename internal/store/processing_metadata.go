@@ -1137,6 +1137,9 @@ func validateMetadataProcessingConsentGrant(
 			return normalizedConsentAuthority{}, fmt.Errorf("invalid processing consent %s: %w", subject, err)
 		}
 	}
+	if value.RetainedArtifactClasses == nil {
+		return normalizedConsentAuthority{}, errors.New("processing consent retained artifact classes cannot be null")
+	}
 	authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
 		Principal: value.Principal, Scope: value.Scope,
 		ProfileFingerprint:      value.ProfileFingerprint,

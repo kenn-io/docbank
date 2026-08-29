@@ -264,6 +264,30 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 		require.ErrorContains(t, err, "processing consent class sets are not canonical")
 	})
 
+	t.Run("null retained classes", func(t *testing.T) {
+		s := newTestStore(t)
+		grant, err := s.GrantConsent(
+			t.Context(), grantRequestForAuthorization(testProviderAuthorizationRequest(), nil),
+		)
+		require.NoError(t, err)
+
+		_, err = s.db.Exec(`DROP TRIGGER processing_consent_grants_immutable_update`)
+		require.NoError(t, err)
+		_, err = s.db.Exec(`
+			UPDATE processing_consent_grants SET retained_classes_json='null' WHERE grant_id=?`,
+			grant.ID)
+		require.NoError(t, err)
+		_, err = s.db.Exec(`
+			CREATE TRIGGER processing_consent_grants_immutable_update
+			BEFORE UPDATE ON processing_consent_grants BEGIN
+				SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+			END`)
+		require.NoError(t, err)
+
+		err = validateProcessingMetadataState(t.Context(), s.db)
+		require.ErrorContains(t, err, "retained artifact classes cannot be null")
+	})
+
 	t.Run("invalid revocation timestamp", func(t *testing.T) {
 		s := newTestStore(t)
 		request := testProviderAuthorizationRequest()
