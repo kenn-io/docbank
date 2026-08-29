@@ -356,6 +356,10 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 		{name: "base ending in a dot segment stays inside", base: "../..",
 			reference: "outside", eligible: true},
 		{name: "no base", base: "", reference: "../../outside", eligible: true},
+		// A base that descends gives a later reference room to climb, and this
+		// one descends by two.
+		{name: "descending base grants room", base: "a/b/",
+			reference: "../../../../outside", eligible: true},
 	}
 	for _, tt := range bases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -615,6 +619,33 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, record.Eligible)
 			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
+	// XML names are case-sensitive, so "xml:Base" is not xml:base and states
+	// nothing. Honouring it applied a base no renderer applies: one that
+	// descends gave every later reference room to climb that it does not have.
+	for _, spelling := range []struct {
+		attribute string
+		eligible  bool
+	}{
+		{attribute: `xml:base="images/"`, eligible: true},
+		{attribute: `xml:Base="images/"`},
+		{attribute: `xml:BASE="images/"`},
+	} {
+		t.Run("base attribute "+spelling.attribute, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+					`<item id="c" href="text/c.xhtml" media-type="application/xhtml+xml"/>` +
+					`</manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml" ` +
+					spelling.attribute + `><body><img src="../../../secret"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, spelling.eligible, record.Eligible, record.Reason)
 		})
 	}
 
@@ -1219,6 +1250,40 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 					`</manifest><spine><itemref idref="c"/></spine></package>`},
 				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
 					`<head><base href="` + tt.base + `"/></head>` +
+					`<body><img src="` + tt.reference + `"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+		})
+	}
+
+	// An element name is case-sensitive to an XML parser and not to an HTML one,
+	// so a document spelling it <BASE> is read both ways by the readers that
+	// exist. Honouring it may only remove room from a later reference, never add
+	// it, because the parser that ignores the element resolves from where the
+	// document sits.
+	spellings := []struct {
+		name, element, base, reference string
+		eligible                       bool
+	}{
+		{name: "mixed case base may not grant room", element: "BASE",
+			base: "images/", reference: "../../../secret"},
+		{name: "mixed case base still removes room", element: "BASE",
+			base: "../../", reference: "../secret"},
+		{name: "exact base grants room", element: "base",
+			base: "images/", reference: "../../../secret", eligible: true},
+	}
+	for _, tt := range spellings {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+					`<item id="c" href="text/c.xhtml" media-type="application/xhtml+xml"/>` +
+					`</manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+					`<head><` + tt.element + ` href="` + tt.base + `"/></head>` +
 					`<body><img src="` + tt.reference + `"/></body></html>`},
 			))
 			record, err := media.InspectCapability(bytes.NewReader(data),

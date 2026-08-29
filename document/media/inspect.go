@@ -849,8 +849,12 @@ func procInstAttributes(instruction []byte, name string) ([]string, bool) {
 func inspectXMLAttributes(attributes []xml.Attr, inherited xmlScope) (xmlScope, bool, error) {
 	scope := inherited
 	for _, attribute := range attributes {
+		// XML names are case-sensitive, so "xml:Base" is not xml:base and states
+		// nothing. Matching it loosely honoured a base no renderer applies: one
+		// that descends gave every later reference room to climb that it does
+		// not have, and the reference then read as contained.
 		if attribute.Name.Space != "http://www.w3.org/XML/1998/namespace" ||
-			!strings.EqualFold(attribute.Name.Local, "base") {
+			attribute.Name.Local != "base" {
 			continue
 		}
 		value := strings.TrimSpace(attribute.Value)
@@ -1017,9 +1021,28 @@ func documentBaseOrigin(data []byte, home string) string {
 			// The href is classified as a locator by the main pass, which is
 			// where an external or escaping base is rejected. Here it only
 			// moves the origin.
-			return resolveArchiveDir(home, attribute.Value)
+			shifted := resolveArchiveDir(home, attribute.Value)
+			// Element names are case-sensitive to an XML parser and not to an
+			// HTML one, so a document spelling it <BASE> is read both ways by
+			// the readers that exist. Honouring it can only remove room from a
+			// later reference, never add it: the parser that ignores the
+			// element resolves from where the document sits.
+			if element.Name.Local != "base" && archiveDirDepth(shifted) > archiveDirDepth(home) {
+				return home
+			}
+			return shifted
 		}
 	}
+}
+
+// archiveDirDepth counts the directories a path names. The container root names
+// none, and a deeper origin is one a reference has further to climb out of.
+func archiveDirDepth(directory string) int {
+	cleaned := path.Clean(directory)
+	if cleaned == "." || cleaned == "" {
+		return 0
+	}
+	return strings.Count(cleaned, "/") + 1
 }
 
 // isHTMLBase reports whether an element is the HTML <base>, which states the
