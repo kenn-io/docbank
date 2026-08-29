@@ -704,6 +704,7 @@ func inspectXML(
 			if len(bases) != 0 {
 				inherited = bases[len(bases)-1]
 			}
+			enclosing := inherited.home
 			if isHTMLBase(value) {
 				// The document base has already moved home. Its own href says
 				// where the document resolves from, so it resolves from where
@@ -716,6 +717,12 @@ func inspectXML(
 			}
 			if external {
 				return true, nil
+			}
+			if isHTMLBase(value) {
+				// That exemption covers the href alone. Markup nested inside the
+				// element resolves from the base like the rest of the document,
+				// so it must not inherit the unshifted directory.
+				scope.home = enclosing
 			}
 			bases = append(bases, scope)
 			depth++
@@ -999,7 +1006,12 @@ func documentBaseOrigin(data []byte, home string) string {
 			continue
 		}
 		for _, attribute := range element.Attr {
-			if !strings.EqualFold(attribute.Name.Local, "href") {
+			// Only the unqualified href states the document base. A renderer
+			// ignores a namespaced one, so honouring it would move the origin
+			// somewhere the renderer never resolves from, and a base that
+			// descends there would leave a reference measured with more room
+			// than it has.
+			if attribute.Name.Space != "" || !strings.EqualFold(attribute.Name.Local, "href") {
 				continue
 			}
 			// The href is classified as a locator by the main pass, which is
@@ -1011,10 +1023,14 @@ func documentBaseOrigin(data []byte, home string) string {
 }
 
 // isHTMLBase reports whether an element is the HTML <base>, which states the
-// base URI of the document holding it.
+// base URI of the document holding it. Only HTML has the element; an element of
+// that name in another vocabulary states nothing, and treating it as a base
+// would move the origin somewhere no renderer resolves from.
 func isHTMLBase(element xml.StartElement) bool {
-	return strings.EqualFold(element.Name.Local, "base") &&
-		markupStyleNamespace(element.Name.Space)
+	if !strings.EqualFold(element.Name.Local, "base") {
+		return false
+	}
+	return element.Name.Space == "" || element.Name.Space == "http://www.w3.org/1999/xhtml"
 }
 
 func markupStyleNamespace(space string) bool {
@@ -1848,15 +1864,23 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 		// classified there rather than silently trusted here.
 		return nil
 	}
-	byExtension := make(map[string]string, len(document.Defaults))
+	// Two Defaults may claim one extension, the way two Overrides may claim one
+	// part. The package is invalid either way and consumers need not agree on
+	// which wins, so every part carrying that extension is inspected under both:
+	// keeping only the last let a second declaration of "opaque" hide parts that
+	// a consumer taking the first reads as markup.
+	byExtension := make(map[string][]string, len(document.Defaults))
 	for _, def := range document.Defaults {
-		byExtension["."+strings.ToLower(strings.TrimSpace(def.Extension))] =
-			normalizeDeclaredType(def.ContentType)
+		extension := "." + strings.ToLower(strings.TrimSpace(def.Extension))
+		declaredType := normalizeDeclaredType(def.ContentType)
+		if !slices.Contains(byExtension[extension], declaredType) {
+			byExtension[extension] = append(byExtension[extension], declaredType)
+		}
 	}
 	declared := make(contentDeclarations, len(files))
 	for _, file := range files {
-		if declaredType, ok := byExtension[strings.ToLower(path.Ext(file.Name))]; ok {
-			declared[file.Name] = []string{declaredType}
+		if declaredTypes, ok := byExtension[strings.ToLower(path.Ext(file.Name))]; ok {
+			declared[file.Name] = slices.Clone(declaredTypes)
 		}
 	}
 	overridden := make(map[string]bool, len(document.Overrides))

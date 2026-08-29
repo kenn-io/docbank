@@ -715,6 +715,31 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		})
 	}
 
+	// Two Defaults may claim one extension, the same way two Overrides may claim
+	// one part, and with the same consequence if only the last is kept.
+	for _, order := range [][2]string{
+		{"application/xml", "image/png"},
+		{"image/png", "application/xml"},
+	} {
+		t.Run("conflicting OOXML defaults "+order[0], func(t *testing.T) {
+			t.Parallel()
+			contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Default Extension="bin" ContentType="` + order[0] + `"/>` +
+				`<Default Extension="bin" ContentType="` + order[1] + `"/>` +
+				`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`
+			data := zipBytes(t, []zipEntry{
+				{name: "[Content_Types].xml", body: contentTypes},
+				{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+				{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+			})
+			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
 	// An Override still replaces the Default for its part, so a part its
 	// extension declares as markup is not inspected when the Override says
 	// otherwise and nothing else declares it.
@@ -1098,6 +1123,47 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
 		})
 	}
+
+	// The base's own href resolves from where the document sits. That exemption
+	// covers the href alone: markup nested inside the element resolves from the
+	// base like the rest of the document.
+	t.Run("reference nested inside the base", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+				`<item id="c" href="text/c.xhtml" media-type="application/xhtml+xml"/>` +
+				`</manifest><spine><itemref idref="c"/></spine></package>`},
+			zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+				`<head><base href="../../"><img src="../secret"/></base></head>` +
+				`<body/></html>`},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
+
+	// Only the unqualified href states the document base. A renderer ignores a
+	// namespaced one, so honouring it would move the origin somewhere the
+	// renderer never resolves from, and a base that descends there would leave
+	// a reference measured with more room than it has.
+	t.Run("namespaced href does not state the base", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+				`<item id="c" href="text/c.xhtml" media-type="application/xhtml+xml"/>` +
+				`</manifest><spine><itemref idref="c"/></spine></package>`},
+			zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+				`<head><base xmlns:x="http://example.test/x" x:href="assets/"/></head>` +
+				`<body><img src="../../../secret"/></body></html>`},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
 
 	// A <base> applies to the whole document, including references written
 	// before it, so reading it only when it is reached would leave those
