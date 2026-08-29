@@ -179,9 +179,12 @@ func (dialer *policyDialer) dial(
 		return nil, fmt.Errorf("%w: malformed address", ErrDestinationDenied)
 	}
 	host, err = normalizeHost(host)
-	if err != nil || host != dialer.policy.host || port != strconv.Itoa(int(dialer.policy.port)) {
+	parsedPort, portErr := strconv.ParseUint(port, 10, 16)
+	if err != nil || portErr != nil || parsedPort == 0 ||
+		host != dialer.policy.host || uint16(parsedPort) != dialer.policy.port {
 		return nil, fmt.Errorf("%w: host or port", ErrDestinationDenied)
 	}
+	port = strconv.Itoa(int(parsedPort))
 	addresses, err := dialer.resolve(ctx)
 	if err != nil {
 		return nil, err

@@ -51,6 +51,26 @@ func TestEgressDialsResolvedIPWithoutASecondLookup(t *testing.T) {
 	assert.Equal(t, []string{"provider.invalid"}, resolver.hosts())
 }
 
+func TestEgressAcceptsAnEquivalentZeroPaddedPort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "provider")
+	}))
+	defer server.Close()
+	host, port := endpoint(t, server.Listener.Addr())
+	transport := newHTTPTransport(t, port, &recordingResolver{
+		answers: [][]netip.Addr{{netip.MustParseAddr(host)}},
+	})
+
+	response, err := (&http.Client{Transport: transport}).Get(
+		"http://provider.invalid:0" + strconv.Itoa(int(port)),
+	)
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	assert.Equal(t, "provider", string(body))
+}
+
 func TestEgressIgnoresAmbientProxy(t *testing.T) {
 	var proxyRequests atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
