@@ -270,6 +270,12 @@ func TestInspectRejectsArchiveEscapingReference(t *testing.T) {
 			reference: "%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd"},
 		{name: "escapes with encoded separators", entry: "OPS/text/chapter.xhtml",
 			reference: "..%2f..%2f..%2f..%2fetc/passwd"},
+		// A consumer discards a tab or newline anywhere in a reference, and
+		// spaces at either end, before it resolves the rest.
+		{name: "escapes across a tab", entry: "OPS/text/chapter.xhtml",
+			reference: "..\t/../../../etc/passwd"},
+		{name: "escapes across a newline", entry: "OPS/text/chapter.xhtml",
+			reference: "../\n../../../etc/passwd"},
 		// A stray percent is not an escape sequence and must not be read as one.
 		{name: "unencodable text value", entry: "OPS/text/chapter.xhtml",
 			reference: "100% cover", eligible: true},
@@ -1105,6 +1111,12 @@ func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
 		{name: "base leaves the container", base: "../../../../",
 			reference: "cover.png"},
 		{name: "remote base", base: "https://example.invalid/", reference: "cover.png"},
+		// A consumer discards the whitespace before resolving, so a base
+		// spelled with it climbs just as far as one spelled without.
+		{name: "base wrapped in spaces", base: " ../../ ", reference: "../secret"},
+		{name: "base split by a tab", base: "..\t/../", reference: "../secret"},
+		{name: "base wrapped in spaces stays inside", base: " ../../ ",
+			reference: "cover.png", eligible: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1105,9 +1105,13 @@ func namesHostLocation(value string) bool {
 }
 
 func namesHostLocationLiterally(value string) bool {
+	// A consumer discards the whitespace before deciding what the value names,
+	// so it decides here on the same text.
+	stripped := stripReferenceWhitespace(value)
 	// "//host/path" is protocol-relative; the UNC spelling "\\host\path" is
 	// caught as a rooted Windows path.
-	return strings.HasPrefix(value, "//") || hasDriveLetter(value) || hasRootedBackslash(value)
+	return strings.HasPrefix(stripped, "//") || hasDriveLetter(stripped) ||
+		hasRootedBackslash(stripped)
 }
 
 // hasRootedBackslash reports whether a value is a Windows path rooted on the
@@ -1144,7 +1148,7 @@ func hasDriveLetter(value string) bool {
 // decoding in one of them and not the other is what let an encoded spelling
 // land somewhere the check never looked.
 func normalizeReferencePath(value string) string {
-	candidate := value
+	candidate := stripReferenceWhitespace(value)
 	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
 		candidate = candidate[:index]
 	}
@@ -1154,6 +1158,22 @@ func normalizeReferencePath(value string) string {
 		candidate = decoded
 	}
 	return strings.ReplaceAll(candidate, `\`, "/")
+}
+
+// stripReferenceWhitespace removes the whitespace a consumer discards before it
+// resolves a reference: a tab or newline anywhere in the value, and controls or
+// spaces at either end. Both are required of a URL parser, so a value spelled
+// with them names the same place as one spelled without, and measuring the
+// untrimmed text read a leading space as a directory that absorbed a level of
+// climb.
+func stripReferenceWhitespace(value string) string {
+	candidate := strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, value)
+	return strings.TrimFunc(candidate, func(r rune) bool { return r <= ' ' })
 }
 
 // escapesArchive reports whether a reference names a place outside the document
