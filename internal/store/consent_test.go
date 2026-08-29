@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/document"
 )
 
 func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
@@ -131,7 +133,15 @@ func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T)
 func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
+	operation := document.RenditionAuthorization{
+		RenditionRequestFingerprint: profile.RenditionRequestFingerprint,
+		SourceSHA256:                catalogSourceHash,
+		InputKind:                   document.RenditionInputOriginalFile,
+	}
+	operationChecksum, err := operation.Fingerprint()
+	require.NoError(t, err)
 	build := lexicalSearchBuild(s, profile, catalogBuildID, "authorized synthetic evidence")
+	build.AuthorizationChecksum = operationChecksum
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 	generation, err := s.StageLexicalGeneration(t.Context(), fakeHash("c9"))
 	require.NoError(t, err)
@@ -146,6 +156,7 @@ func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing
 	request := testProviderAuthorizationRequest()
 	request.ProfileFingerprint = profile.Fingerprint
 	request.DisclosureFingerprint = profile.RenditionDisclosureFingerprint
+	request.RetainedArtifactClasses = []string{"normalized_evidence", "sanitized_markdown"}
 	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 	require.NoError(t, err)
 	leased, err := s.AuthorizeProviderOperation(t.Context(), request)
@@ -158,19 +169,48 @@ func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing
 	publication := request
 	publication.PriorAuthorization = &leased
 	err = s.PublishAuthorizedRenditionAndLexicalHeads(
-		t.Context(), attachment, head, generation.ID, publication,
+		t.Context(), attachment, head, generation.ID, publication, operation,
 	)
 	require.ErrorIs(t, err, ErrProcessingConsentRevoked)
 	_, err = s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
 
+	narrow := request
+	narrow.RetainedArtifactClasses = []string{"normalized_evidence"}
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(narrow, nil))
+	require.NoError(t, err)
+	current, err := s.AuthorizeProviderOperation(t.Context(), narrow)
+	require.NoError(t, err)
+	publication = narrow
+	publication.PriorAuthorization = &current
+	err = s.PublishAuthorizedRenditionAndLexicalHeads(
+		t.Context(), attachment, head, generation.ID, publication, operation,
+	)
+	require.ErrorContains(t, err, "retained artifact classes do not match")
+	_, err = s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	wrongInput := request
+	wrongInput.InputClasses = []string{string(document.RenditionInputDerivedUpload)}
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(wrongInput, nil))
+	require.NoError(t, err)
+	current, err = s.AuthorizeProviderOperation(t.Context(), wrongInput)
+	require.NoError(t, err)
+	publication = wrongInput
+	publication.PriorAuthorization = &current
+	err = s.PublishAuthorizedRenditionAndLexicalHeads(
+		t.Context(), attachment, head, generation.ID, publication, operation,
+	)
+	require.ErrorContains(t, err, "input classes do not match")
+
 	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 	require.NoError(t, err)
-	current, err := s.AuthorizeProviderOperation(t.Context(), request)
+	current, err = s.AuthorizeProviderOperation(t.Context(), request)
 	require.NoError(t, err)
+	publication = request
 	publication.PriorAuthorization = &current
 	require.NoError(t, s.PublishAuthorizedRenditionAndLexicalHeads(
-		t.Context(), attachment, head, generation.ID, publication,
+		t.Context(), attachment, head, generation.ID, publication, operation,
 	))
 	published, err := s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
 	require.NoError(t, err)
