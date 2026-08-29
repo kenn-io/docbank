@@ -704,7 +704,9 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 	// A part name is a URI path, so a consumer resolves its escapes and its dot
 	// segments before matching. A spelling that matched no entry left the part
 	// undeclared and inspected only by its filename.
-	for _, partName := range []string{"/xl/re%70ort.bin", "/xl/./report.bin", "/xl/media/../report.bin"} {
+	for _, partName := range []string{"/xl/re%70ort.bin", "/xl/./report.bin", "/xl/media/../report.bin",
+		// The separator marking the package root may itself be encoded.
+		"%2Fxl%2Freport.bin", "%2fxl/report.bin"} {
 		t.Run("OOXML part name "+partName, func(t *testing.T) {
 			t.Parallel()
 			contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
@@ -1098,6 +1100,58 @@ func TestInspectCountsODSRepeatedCells(t *testing.T) {
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
 }
 
+// An XML attribute name is case-sensitive and belongs to a namespace, so one
+// that differs in either states nothing about the repeat. Matching the local
+// name alone let a foreign attribute stand in for the real one and hide the
+// cells it stands for from the limit.
+func TestInspectCountsODSRepeatsByTheTableAttribute(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, attributes string
+		cells            int64
+	}{
+		{name: "table attribute", attributes: `table:number-rows-repeated="20000"`, cells: 4_000_000},
+		{name: "unqualified attribute", attributes: `number-rows-repeated="20000"`, cells: 4_000_000},
+		// A foreign attribute placed first used to be read instead of the real
+		// one, which is the whole of the bypass.
+		{name: "foreign attribute first",
+			attributes: `x:number-rows-repeated="1" table:number-rows-repeated="20000"`,
+			cells:      4_000_000},
+		{name: "foreign attribute alone", attributes: `x:number-rows-repeated="20000"`, cells: 200},
+		{name: "wrong case", attributes: `table:NUMBER-ROWS-REPEATED="20000"`, cells: 200},
+		// The document is invalid and a consumer need not agree which repeat it
+		// takes, so the largest is counted rather than whichever came last.
+		{name: "repeated attribute, smaller last",
+			attributes: `table:number-rows-repeated="20000" table:number-rows-repeated="1"`,
+			cells:      4_000_000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			content := `<office:document-content ` +
+				`xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+				`xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+				`xmlns:x="http://example.test/x"><office:body><office:spreadsheet>` +
+				`<table:table><table:table-row ` + tt.attributes + `>` +
+				`<table:table-cell table:number-columns-repeated="200"/>` +
+				`</table:table-row></table:table></office:spreadsheet></office:body>` +
+				`</office:document-content>`
+			data := zipBytes(t, []zipEntry{
+				{name: "mimetype", body: "application/vnd.oasis.opendocument.spreadsheet"},
+				{name: "META-INF/manifest.xml", body: `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>`},
+				{name: "content.xml", body: content},
+			})
+			policy := inspectionPolicy(data, "book.ods",
+				"application/vnd.oasis.opendocument.spreadsheet")
+			policy.MaxCells = 1_000_000
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			assert.Equal(t, tt.cells, record.Measurements.Cells)
+			assert.Equal(t, tt.cells <= policy.MaxCells, record.Eligible, record.Reason)
+		})
+	}
+}
+
 func TestInspectUsesEPUBContainerPackagePath(t *testing.T) {
 	t.Parallel()
 	data := zipBytes(t, []zipEntry{
@@ -1487,6 +1541,10 @@ func TestInspectResolvesAndBoundsAuthoritativePDFObjects(t *testing.T) {
 		{name: "mac path", object: "<< /Type /Filespec /Mac (Disk:remote.txt) >>"},
 		{name: "unix path", object: "<< /Type /Filespec /Unix (/etc/passwd) >>"},
 		{name: "embedded", object: "<< /Type /Filespec /F (data.txt) /EF << /F 5 0 R >> >>", eligible: true},
+		// An /EF that names no stream leaves a viewer nothing to open, and a
+		// viewer with nothing to open falls back to the path. Reading the key's
+		// presence alone let it stand in for a file that never travelled.
+		{name: "empty embedded file", object: "<< /Type /Filespec /F (/etc/passwd) /EF << >> >>"},
 	}
 	for _, testCase := range fileSpecifications {
 		t.Run("file specification "+testCase.name, func(t *testing.T) {

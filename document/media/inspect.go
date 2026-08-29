@@ -1237,18 +1237,37 @@ func dereferenceableScheme(scheme string) bool {
 	return false
 }
 
+// odfTableNamespace is where ODF states how many times a row or cell repeats.
+const odfTableNamespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+
+// xmlPositiveRepeat reads how many times an ODS row or cell repeats.
+//
+// XML attribute names are case-sensitive and belong to a namespace, so an
+// attribute that differs in either is a different attribute and states nothing
+// about the repeat. Matching the local name alone let a foreign attribute
+// spelled the same way stand in for the real one: placed first, a repeat of 1
+// hid a repeat of twenty thousand, and the cells it stands for were never
+// counted against the limit.
+//
+// A document that repeats the attribute is invalid and a consumer need not
+// agree which one it takes, so the largest is counted.
 func xmlPositiveRepeat(attributes []xml.Attr, name string) (int64, error) {
+	repeat := int64(1)
 	for _, attribute := range attributes {
-		if !strings.EqualFold(attribute.Name.Local, name) {
+		// An unqualified attribute is taken as the table's own: a producer that
+		// omits the declaration still means the repeat, and reading it as
+		// foreign would leave those cells uncounted.
+		if attribute.Name.Local != name ||
+			(attribute.Name.Space != odfTableNamespace && attribute.Name.Space != "") {
 			continue
 		}
-		repeat, err := strconv.ParseInt(strings.TrimSpace(attribute.Value), 10, 64)
-		if err != nil || repeat <= 0 {
+		value, err := strconv.ParseInt(strings.TrimSpace(attribute.Value), 10, 64)
+		if err != nil || value <= 0 {
 			return 0, fmt.Errorf("ODS %s must be a positive integer", name)
 		}
-		return repeat, nil
+		repeat = max(repeat, value)
 	}
-	return 1, nil
+	return repeat, nil
 }
 
 func saturatingAdd(left, right int64) int64 {
@@ -1952,8 +1971,13 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 // spelling in one and not the other is how the two drifted apart before.
 func declaredPartNames(value string) []string {
 	names := make([]string, 0, 2)
-	rooted := strings.TrimPrefix(strings.TrimSpace(value), "/")
-	for _, spelling := range []string{rooted, decodedPath(rooted)} {
+	trimmed := strings.TrimSpace(value)
+	for _, spelling := range []string{trimmed, decodedPath(trimmed)} {
+		// The separator that marks the package root may itself be encoded, so
+		// it is stripped from each spelling after that spelling is decoded.
+		// Stripping only the literal one left "%2Fxl%2Freport.bin" rooted, and
+		// a rooted name matches no archive entry.
+		spelling = strings.TrimPrefix(spelling, "/")
 		if spelling == "" {
 			continue
 		}

@@ -345,7 +345,11 @@ func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) 
 	// /DOS, /Mac, and /Unix hold the same path for one platform. A viewer on
 	// that platform reads them, and a specification may carry them with no /F
 	// at all, so all five keys count.
-	if dictionary.HasEntry("EF") {
+	embedded, err := pdfDictCarriesEmbeddedFile(context, dictionary)
+	if err != nil {
+		return false, err
+	}
+	if embedded {
 		return false, nil
 	}
 	for _, key := range []string{"F", "UF", "DOS", "Mac", "Unix"} {
@@ -355,6 +359,26 @@ func pdfDictHasExternalReference(context *model.Context, dictionary types.Dict) 
 		}
 	}
 	return false, nil
+}
+
+// pdfDictCarriesEmbeddedFile reports whether a file specification actually
+// carries the file rather than pointing at one. Only then do its path entries
+// describe bytes the document already holds.
+//
+// An /EF that names no stream leaves nothing to open, and a viewer with nothing
+// to open falls back to the path. Reading the key's presence alone let an empty
+// /EF suppress the check on a path such as "/etc/passwd".
+func pdfDictCarriesEmbeddedFile(context *model.Context, dictionary types.Dict) (bool, error) {
+	object, ok := dictionary["EF"]
+	if !ok {
+		return false, nil
+	}
+	resolved, err := context.Dereference(object)
+	if err != nil {
+		return false, fmt.Errorf("dereference PDF dictionary %q: %w", "EF", err)
+	}
+	streams, ok := resolved.(types.Dict)
+	return ok && len(streams) != 0, nil
 }
 
 func pdfDictHasStringEntry(
