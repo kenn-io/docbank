@@ -278,6 +278,39 @@ func TestBridgeContractRejectsAggregateArtifactLimitsBeforeFetching(t *testing.T
 	}
 }
 
+func TestBridgeContractRejectsArtifactAboveResponseLimitBeforeFetching(t *testing.T) {
+	fixture := newBridgeFixture(t).withStructuredArtifact(t)
+	fixture.artifact = bytes.Repeat([]byte("x"), 8<<10)
+	fixture.authorization.MaxArtifactBytes = len(fixture.artifact)
+	fixture.authorization.MaxTotalResultBytes = 1 << 20
+	artifacts := []map[string]any{{
+		"role": string(document.EvidenceArtifactStructured), "media_type": "application/json",
+		"byte_length": len(fixture.artifact), "sha256": sha256String(fixture.artifact),
+		"location": "result", "artifact_id": "structured-1",
+	}}
+	var artifactRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == jobsPath {
+			writeBridgeJSON(t, response, http.StatusOK,
+				completedEnvelope(t, fixture, "job-response-limit", artifacts))
+			return
+		}
+		if request.Method == http.MethodGet && strings.Contains(request.URL.Path, "/artifacts/") {
+			artifactRequests.Add(1)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, err := response.Write(fixture.artifact)
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+	client.maxResponseBytes = 4 << 10
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	requireBridgeErrorContains(t, err, "response byte limit")
+	assert.Zero(t, artifactRequests.Load(), "oversized artifacts must fail before fetching")
+}
+
 func TestBridgeContractRejectsUnsafeOrCorruptResponses(t *testing.T) {
 	tests := map[string]struct {
 		mutate func(map[string]any)

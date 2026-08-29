@@ -71,7 +71,7 @@ paths:
         '200':
           description: Exact artifact bytes with the media type declared by the completed job.
           content:
-            application/octet-stream:
+            '*/*':
               schema: {type: string, format: binary}
         '404': {description: Artifact or job is unknown.}
         '410': {description: Artifact result expired.}

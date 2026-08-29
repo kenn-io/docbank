@@ -390,7 +390,7 @@ func (client *Client) decodeCompleted(
 		}
 	}
 	artifactByteBudget, err := preflightArtifacts(
-		evidence, markdown, wire.Artifacts, wire.Receipt, authorization)
+		evidence, markdown, wire.Artifacts, wire.Receipt, authorization, client.maxResponseBytes)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -417,7 +417,7 @@ func (client *Client) decodeCompleted(
 
 func preflightArtifacts(
 	evidence document.SourceEvidenceV1, markdown []byte, artifacts []artifactPayload,
-	receipt document.RenditionReceipt, authorization document.RenditionAuthorization,
+	receipt document.RenditionReceipt, authorization document.RenditionAuthorization, maxResponseBytes int64,
 ) (int64, error) {
 	if len(artifacts) > authorization.MaxArtifacts {
 		return 0, malformedError("bridge artifact count exceeds authorization", nil)
@@ -432,6 +432,9 @@ func preflightArtifacts(
 		}
 		if artifact.ByteLength < 0 || artifact.ByteLength > int64(authorization.MaxArtifactBytes) {
 			return 0, malformedError("bridge artifact length is outside authorization", nil)
+		}
+		if artifact.ByteLength > maxResponseBytes {
+			return 0, malformedError("bridge artifact length exceeds response byte limit", nil)
 		}
 		projected.Artifacts = append(projected.Artifacts, document.RenditionArtifact{
 			Role: artifact.Role, MediaType: artifact.MediaType, Payload: []byte{}, SHA256: artifact.SHA256,
@@ -530,7 +533,7 @@ func (client *Client) fetchArtifact(
 	if response.ContentLength >= 0 && response.ContentLength != artifact.ByteLength {
 		return nil, malformedError("bridge artifact HTTP length does not match declaration", nil)
 	}
-	payload, err := readBounded(response.Body, artifact.ByteLength)
+	payload, err := readBounded(response.Body, min(artifact.ByteLength, client.maxResponseBytes))
 	if err != nil {
 		return nil, err
 	}

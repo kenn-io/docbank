@@ -33,6 +33,9 @@ func TestBridgeContractNormativeDocumentsAreStrictAndVersioned(t *testing.T) {
 		"the bridge contract must not define a template language")
 	assert.NotContains(t, string(openAPIContract), "artifact_url",
 		"artifacts are reachable only through the fixed job route")
+	artifactContent := contractObject(t, openAPI, "paths",
+		jobsPath+"/{job_id}/artifacts/{artifact_id}", "get", "responses", "200", "content")
+	assert.Contains(t, artifactContent, "*/*")
 	manifest := contractObject(t, openAPI, "components", "schemas", "AuthorizationManifest")
 	authorization := contractObject(t, manifest, "properties", "authorization")
 	requiredAuthorization, ok := authorization["required"].([]any)
