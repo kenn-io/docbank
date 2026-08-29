@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,19 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestAPIKeyExclusionPolicyChecksDaemonKeyWithoutRetainingRawSecret(t *testing.T) {
+	const daemonKey = "synthetic-daemon-key"
+	policy := client.NewAPIKeyExclusionPolicy(daemonKey)
+
+	assert.False(t, policy.Allows(client.New("http://127.0.0.1:1", daemonKey)))
+	assert.True(t, policy.Allows(client.New("http://127.0.0.1:1", "independent-daemon-key")))
+	assert.False(t, policy.Allows(client.New("http://127.0.0.1:1", "")))
+	formatted := fmt.Sprintf("%#v", policy)
+	assert.NotContains(t, formatted, daemonKey)
+	keyHash := sha256.Sum256([]byte(daemonKey))
+	assert.NotContains(t, formatted, hex.EncodeToString(keyHash[:]))
+}
 
 func TestClientPreservesSourceMetadataOnStatAndVersionDetail(t *testing.T) {
 	metadata := &api.SourceMetadata{ContractVersion: document.SourceMetadataContractV1,

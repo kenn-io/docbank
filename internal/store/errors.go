@@ -3,6 +3,14 @@ package store
 import "errors"
 
 var (
+	// ErrInvalidDocumentQuery marks unsupported catalog filters or bounds.
+	ErrInvalidDocumentQuery = errors.New("invalid document query")
+	// ErrInvalidDocumentCursor marks malformed, unauthenticated, wrong-version,
+	// or query-mismatched document catalog continuation state.
+	ErrInvalidDocumentCursor = errors.New("invalid document cursor")
+	// ErrDocumentCursorExpired marks an otherwise valid cursor outside its
+	// short daemon-lifetime continuation window.
+	ErrDocumentCursorExpired = errors.New("document cursor expired")
 	// ErrNotFound is returned when a node, path, or blob does not exist.
 	ErrNotFound = errors.New("not found")
 	// ErrExists is returned when a live sibling with the same name exists.

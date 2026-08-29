@@ -20,6 +20,37 @@ import (
 )
 
 func registerProcessingRoutes(api huma.API, d Deps) {
+	type sourceFenceInput struct {
+		Body DocumentSourceFenceResolveRequest
+	}
+	type sourceFenceOutput struct{ Body DocumentSourceFenceResolution }
+	huma.Register(api, huma.Operation{
+		OperationID: "resolveDocumentSourceFence", Method: http.MethodPost,
+		Path:    "/api/v1/processing/source-fences/resolve",
+		Summary: "Resolve exact current live document search authority",
+	}, func(ctx context.Context, input *sourceFenceInput) (*sourceFenceOutput, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		var filters *store.SearchOptions
+		if input.Body.Filters != nil {
+			filters = &store.SearchOptions{TagID: input.Body.Filters.TagID,
+				MIMEType: input.Body.Filters.MIMEType, UnderNodeID: input.Body.Filters.UnderNodeID,
+				ModifiedSince: input.Body.Filters.ModifiedSince, ModifiedBefore: input.Body.Filters.ModifiedBefore}
+		}
+		resolved, err := d.Processing.ResolveSourceFence(ctx, processing.SourceFenceResolveRequest{
+			ContentVersionIDs: input.Body.ContentVersionIDs, Filters: filters,
+		})
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return &sourceFenceOutput{Body: DocumentSourceFenceResolution{
+			Fence: ResolvedDocumentSourceFence{VaultUID: resolved.Fence.VaultUID,
+				ContentVersionIDs: resolved.Fence.ContentVersionIDs},
+			FenceFingerprint: resolved.FenceFingerprint, ObservedScopeCount: resolved.ObservedScopeCount,
+		}}, nil
+	})
+
 	type profilesOutput struct{ Body []ProcessingProfileSummary }
 	huma.Register(api, huma.Operation{
 		OperationID: "listDocumentProcessingProfiles", Method: http.MethodGet,
@@ -258,6 +289,34 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		return &statusOutput{Body: fromProcessingStatus(status)}, nil
 	})
 
+	type renditionWindowInput struct{ Body RenditionWindowRequest }
+	type renditionWindowOutput struct{ Body RenditionTextWindow }
+	huma.Register(api, huma.Operation{
+		OperationID: "readDocumentRenditionWindow", Method: http.MethodPost,
+		Path: "/api/v1/renditions/windows", Summary: "Read one bounded Unicode rendition window",
+	}, func(ctx context.Context, input *renditionWindowInput) (*renditionWindowOutput, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		window, err := d.Processing.RenditionTextWindow(ctx, processing.RenditionWindowRequest{
+			VaultUID: input.Body.VaultID, NodeID: input.Body.NodeID,
+			ContentVersionID: input.Body.ContentVersionID, AttachmentID: input.Body.AttachmentID,
+			Offset: input.Body.Offset, MaxChars: input.Body.MaxChars,
+		})
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return &renditionWindowOutput{Body: RenditionTextWindow{
+			VaultID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID,
+			AttachmentID: window.AttachmentID, BuildID: window.BuildID,
+			ProfileFingerprint: window.ProfileFingerprint, Text: window.Text,
+			MediaType: window.MediaType, Checksum: window.Checksum,
+			RequestedOffset: window.RequestedOffset, ActualStart: window.ActualStart,
+			ActualEnd: window.ActualEnd, NextOffset: window.NextOffset,
+			EOF: window.EOF, ResponseBytes: window.ResponseBytes,
+		}}, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "getDocumentRendition", Method: http.MethodGet,
 		Path: "/api/v1/renditions/{attachment_id}", Summary: "Stream one exact active sanitized-Markdown rendition",
@@ -319,6 +378,25 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 
 	type searchInput struct{ Body DocumentSearchRequest }
 	type searchOutput struct{ Body DocumentSearchReport }
+	type searchValidationInput struct {
+		Body DocumentSearchValidationRequest
+	}
+	type searchValidationOutput struct{ Body DocumentSearchValidation }
+	huma.Register(api, huma.Operation{
+		OperationID: "validateDocumentSearch", Method: http.MethodPost,
+		Path: "/api/v1/search/validate", Summary: "Validate document-search semantics without executing a search",
+	}, func(ctx context.Context, input *searchValidationInput) (*searchValidationOutput, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		err := d.Processing.ValidateSearch(ctx, processing.SearchRequest{Query: input.Body.Query,
+			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
+			BindingID: input.Body.BindingID, Explain: input.Body.Explain})
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return &searchValidationOutput{Body: DocumentSearchValidation{Valid: true}}, nil
+	})
 	huma.Register(api, huma.Operation{
 		OperationID: "searchDocuments", Method: http.MethodPost,
 		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
@@ -557,14 +635,24 @@ func fromProcessingError(err error) error {
 		{processing.ErrPurgePlanChanged, http.StatusConflict, "derivative_purge_plan_changed", "derivative purge plan changed after preview"},
 		{processing.ErrInvalidPurgeRequest, http.StatusUnprocessableEntity, "invalid_derivative_purge", "derivative purge request is invalid"},
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
+		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
+		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
 		{store.ErrProcessingConsentExpired, http.StatusPreconditionFailed, "processing_consent_expired", "processing consent has expired"},
 		{store.ErrProcessingConsentRevoked, http.StatusPreconditionFailed, "processing_consent_revoked", "processing consent has been revoked"},
 		{processing.ErrConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
+		{processing.ErrInvalidRenditionWindow, http.StatusRequestedRangeNotSatisfiable, "invalid_rendition_window", "rendition text window is invalid"},
+		{processing.ErrInvalidRenditionEncoding, http.StatusUnprocessableEntity, "invalid_rendition_encoding", "rendition text is not valid UTF-8"},
 	} {
 		if errors.Is(err, item.target) {
 			return NewError(item.status, item.code, item.detail)
 		}
+	}
+	if scopeError, ok := errors.AsType[*store.ProcessingSourceFenceScopeError](err); ok {
+		result := NewError(http.StatusUnprocessableEntity, "scope_too_large",
+			"source scope exceeds 4096 current live content versions; narrow the source scope")
+		result.ObservedScopeCount = scopeError.ObservedScopeCount
+		return result
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)

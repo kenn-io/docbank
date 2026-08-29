@@ -29,7 +29,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"listDocumentProcessingProfiles", "planDocumentProcessing", "startDocumentProcessing",
 		"getDocumentProcessingJob", "grantDocumentProcessingConsent", "revokeDocumentProcessingConsent",
 		"planDerivativePurge", "runDerivativePurge", "getDocumentRendition",
-		"getDocumentProcessingCoverage", "searchDocuments",
+		"getDocumentProcessingCoverage", "validateDocumentSearch", "searchDocuments",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify", "appendNodeProvenance",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {

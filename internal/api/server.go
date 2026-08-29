@@ -71,6 +71,11 @@ type Deps struct {
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
 	PublishEmailDocuments PublishEmailDocumentsFunc
+	// DocumentCursorKey and DocumentCursorNow are
+	// deterministic-test seams. Production leaves them unset for process-private
+	// randomness and the wall clock.
+	DocumentCursorKey []byte
+	DocumentCursorNow func() time.Time
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -157,6 +162,7 @@ func NewServer(d Deps) *Server {
 	registerCollectionRoutes(humaAPI, d, g)
 	registerCollectionQualityRoutes(humaAPI, d)
 	registerDuplicateRoutes(humaAPI, d)
+	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
 	registerInfoRoute(humaAPI, d)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6

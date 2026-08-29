@@ -102,10 +102,14 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 
 // TagByID returns one tag by stable identity.
 func (s *Store) TagByID(ctx context.Context, id string) (Tag, error) {
+	return tagByIDQuery(ctx, s.db, id)
+}
+
+func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, error) {
 	if err := validateUUIDv4(id); err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
-	tag, err := scanTag(s.db.QueryRowContext(ctx, `
+	tag, err := scanTag(queryer.QueryRowContext(ctx, `
 		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
 		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
 		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))

@@ -22,6 +22,9 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+// MaxSearchSourceFenceIDs is the shared hard bound for exact search authority.
+const MaxSearchSourceFenceIDs = 4096
+
 // SearchHit is a search result with its display path.
 type SearchHit struct {
 	Node  Node
@@ -2044,8 +2047,15 @@ func (s *Store) SearchPageWithOptions(
 
 // NormalizeSearchOptions validates scope identities and returns canonical filters.
 func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
-	if len(opts.ContentVersionIDs) > 4096 {
-		return SearchOptions{}, errors.New("search source fence exceeds 4096 content versions")
+	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts)
+}
+
+func (s *Store) normalizeSearchOptionsWithQuerier(
+	ctx context.Context, queryer rowQuerier, opts SearchOptions,
+) (SearchOptions, error) {
+	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
+		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
+			MaxSearchSourceFenceIDs)
 	}
 	if len(opts.ContentVersionIDs) != 0 {
 		ids := slices.Clone(opts.ContentVersionIDs)
@@ -2061,7 +2071,7 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 		opts.ContentVersionIDs = ids
 	}
 	if opts.TagID != "" {
-		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
+		if _, err := tagByIDQuery(ctx, queryer, opts.TagID); err != nil {
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)
 		}
 	}
@@ -2074,7 +2084,7 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 		return SearchOptions{}, errors.New("search directory node ID must be positive")
 	}
 	if opts.UnderNodeID != 0 {
-		directory, err := s.NodeByID(ctx, opts.UnderNodeID)
+		directory, err := nodeByIDQuery(ctx, queryer, opts.UnderNodeID)
 		if err != nil {
 			return SearchOptions{}, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
 		}

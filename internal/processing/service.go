@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -36,7 +37,7 @@ import (
 )
 
 const (
-	MaxSourceFenceIDs  = 4096
+	MaxSourceFenceIDs  = store.MaxSearchSourceFenceIDs
 	MaxRenditionBytes  = int64(64 << 20)
 	DefaultSearchLimit = 20
 	MaxSearchLimit     = 100
@@ -271,6 +272,17 @@ type Rendition struct {
 type SourceFence struct {
 	VaultUID          string
 	ContentVersionIDs []string
+}
+
+type SourceFenceResolveRequest struct {
+	ContentVersionIDs []string
+	Filters           *store.SearchOptions
+}
+
+type SourceFenceResolution struct {
+	Fence              SourceFence
+	FenceFingerprint   string
+	ObservedScopeCount int
 }
 
 type CoverageClass struct {
@@ -1143,7 +1155,7 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 	}
 	var artifact store.RenditionArtifactRecord
 	for _, candidate := range view.Build.Artifacts {
-		if candidate.Role == "sanitized_markdown" {
+		if candidate.Role == sanitizedMarkdownRole {
 			artifact = candidate
 			break
 		}
@@ -1224,13 +1236,85 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	return report, nil
 }
 
+// ResolveSourceFence captures exact current/live search authority without
+// invoking any retrieval or provider operation.
+func (service *Service) ResolveSourceFence(
+	ctx context.Context, request SourceFenceResolveRequest,
+) (SourceFenceResolution, error) {
+	resolved, err := service.catalog.ResolveProcessingSourceFence(ctx, store.ProcessingSourceFenceRequest{
+		ContentVersionIDs: request.ContentVersionIDs,
+		Filters:           request.Filters,
+	})
+	if err != nil {
+		return SourceFenceResolution{}, err
+	}
+	fence := SourceFence{VaultUID: service.catalog.VaultID(), ContentVersionIDs: resolved.ContentVersionIDs}
+	fingerprint, err := SourceFenceFingerprint(fence)
+	if err != nil {
+		return SourceFenceResolution{}, err
+	}
+	return SourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint,
+		ObservedScopeCount: resolved.ObservedScopeCount}, nil
+}
+
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
 	profile, ids, err := service.profileFence(request.Profile, request.Fence)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
+	prepared, err := service.prepareSearch(request, profile)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
+		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
+			Principal: service.principal, Scope: service.scope,
+			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+			InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
+		})
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		defer fence.Close()
+	}
+	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
+		Limit: prepared.limit, Scope: store.SearchOptions{ContentVersionIDs: ids},
+		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
+		Authorization: prepared.authorization})
+}
+
+// ValidateSearch applies the same profile, query, mode, limit, and binding
+// semantics as Search without executing or widening a source-fenced search.
+func (service *Service) ValidateSearch(ctx context.Context, request SearchRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	profile, ok := service.profiles[request.Profile]
+	if !ok {
+		return ErrProfileNotConfigured
+	}
+	_, err := service.prepareSearch(request, profile)
+	return err
+}
+
+type preparedSearch struct {
+	searcher      *retrieval.Searcher
+	mode          retrieval.Mode
+	limit         int
+	bindingID     string
+	authorization document.EmbeddingAuthorization
+}
+
+func (service *Service) prepareSearch(
+	request SearchRequest, profile configuredProfile,
+) (preparedSearch, error) {
 	if strings.TrimSpace(request.Query) == "" {
-		return retrieval.Report{}, store.ErrSearchQueryRequired
+		return preparedSearch{}, store.ErrSearchQueryRequired
 	}
 	mode := retrieval.Mode(request.Mode)
 	if mode == "" {
@@ -1241,7 +1325,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		limit = DefaultSearchLimit
 	}
 	if limit < 1 || limit > MaxSearchLimit {
-		return retrieval.Report{}, errors.New("document search limit is invalid")
+		return preparedSearch{}, errors.New("document search limit is invalid")
 	}
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
@@ -1250,20 +1334,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if len(profile.portable.Embeddings) != 0 {
 		binding, bindingErr := selectEmbeddingBinding(profile.portable, request.BindingID)
 		if bindingErr != nil {
-			return retrieval.Report{}, bindingErr
+			return preparedSearch{}, bindingErr
 		}
 		request.BindingID = binding.Name
-		if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
-			_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
-				Principal: service.principal, Scope: service.scope,
-				ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
-				InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
-			})
-			if err != nil {
-				return retrieval.Report{}, err
-			}
-			defer fence.Close()
-		}
 		searcherConfig.Encoders = service.embeddings
 		authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
 			DescriptorFingerprint: binding.Descriptor.Fingerprint,
@@ -1272,13 +1345,10 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	searcher, err := retrieval.NewSearcher(searcherConfig)
 	if err != nil {
-		return retrieval.Report{}, err
+		return preparedSearch{}, err
 	}
-	return searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: mode, Limit: limit,
-		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
-		Scope:                        store.SearchOptions{ContentVersionIDs: ids},
-		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: request.BindingID,
-		Authorization: authorization})
+	return preparedSearch{searcher: searcher, mode: mode, limit: limit,
+		bindingID: request.BindingID, authorization: authorization}, nil
 }
 
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
@@ -1856,6 +1926,57 @@ func normalizeFenceIDs(ids []string) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// SourceFenceFingerprint returns the versioned identity of exact source authority.
+func SourceFenceFingerprint(fence SourceFence) (string, error) {
+	encoded, err := sourceFenceCanonicalBytes(fence)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func sourceFenceCanonicalBytes(fence SourceFence) ([]byte, error) {
+	vaultID, err := uuid.Parse(fence.VaultUID)
+	if err != nil || (vaultID[6]>>4 != 4 || vaultID[8]>>6 != 2) || vaultID.String() != fence.VaultUID {
+		return nil, errors.New("source fence contains an invalid vault identity")
+	}
+	ids := slices.Clone(fence.ContentVersionIDs)
+	sort.Strings(ids)
+	for index, id := range ids {
+		parsed, parseErr := uuid.Parse(id)
+		if parseErr != nil || (parsed[6]>>4 != 4 || parsed[8]>>6 != 2) || parsed.String() != id {
+			return nil, errors.New("source fence contains an invalid content version ID")
+		}
+		if index > 0 && ids[index-1] == id {
+			return nil, errors.New("source fence contains a duplicate content version ID")
+		}
+	}
+	encoded := []byte("docbank-document-source-fence/v1")
+	if err := appendSourceFenceUint32(&encoded, uint64(len(fence.VaultUID))); err != nil {
+		return nil, fmt.Errorf("encoding source fence vault identity: %w", err)
+	}
+	encoded = append(encoded, fence.VaultUID...)
+	if err := appendSourceFenceUint32(&encoded, uint64(len(ids))); err != nil {
+		return nil, fmt.Errorf("encoding source fence identity count: %w", err)
+	}
+	for _, id := range ids {
+		if err := appendSourceFenceUint32(&encoded, uint64(len(id))); err != nil {
+			return nil, fmt.Errorf("encoding source fence content identity: %w", err)
+		}
+		encoded = append(encoded, id...)
+	}
+	return encoded, nil
+}
+
+func appendSourceFenceUint32(encoded *[]byte, value uint64) error {
+	if value > math.MaxUint32 {
+		return errors.New("source fence canonical value exceeds uint32")
+	}
+	*encoded = binary.BigEndian.AppendUint32(*encoded, uint32(value))
+	return nil
 }
 
 func planFingerprint(plan Plan) (string, error) {

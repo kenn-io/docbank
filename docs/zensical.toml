@@ -40,6 +40,7 @@ nav = [
   {"Automate & Integrate" = [
     {"Docbank for Agents" = "agents.md"},
     {"Agent Integration Guide" = "agents/integration.md"},
+    {"Model Context Protocol" = "usage/mcp.md"},
     {"Embed in Go" = "embedding.md"},
     {"Document Understanding in Go" = "document-understanding.md"},
   ]},

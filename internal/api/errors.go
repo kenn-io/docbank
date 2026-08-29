@@ -16,12 +16,13 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
-	Title    string         `json:"title"`
-	Status   int            `json:"status"`
-	Detail   string         `json:"detail,omitzero"`
-	Code     string         `json:"code,omitzero"`
-	Errors   []string       `json:"errors,omitempty"`
-	Position *ErrorPosition `json:"position,omitempty"`
+	Title              string         `json:"title"`
+	Status             int            `json:"status"`
+	Detail             string         `json:"detail,omitzero"`
+	Code               string         `json:"code,omitzero"`
+	Errors             []string       `json:"errors,omitempty"`
+	ObservedScopeCount int            `json:"observed_scope_count,omitzero"`
+	Position           *ErrorPosition `json:"position,omitempty"`
 }
 
 // ErrorPosition is a half-open UTF-8 byte span in the submitted query text.
@@ -110,6 +111,10 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidAuditCursor, http.StatusUnprocessableEntity, "invalid_audit_cursor"},
 	{store.ErrDocumentEventBuildConflict, http.StatusConflict, "conflict"},
 	{store.ErrDocumentEventsCorrupt, http.StatusInternalServerError, "timeline_index_corrupt"},
+	{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version"},
+	{store.ErrInvalidDocumentQuery, http.StatusUnprocessableEntity, "invalid_document_query"},
+	{store.ErrInvalidDocumentCursor, http.StatusUnprocessableEntity, "invalid_document_cursor"},
+	{store.ErrDocumentCursorExpired, http.StatusUnprocessableEntity, "cursor_expired"},
 	{store.ErrBlobStorePrimary, http.StatusConflict, "blob_store_primary"},
 	{store.ErrBlobStoreNotEmpty, http.StatusConflict, "blob_store_not_empty"},
 	{store.ErrBlobStoreState, http.StatusConflict, "blob_store_state"},

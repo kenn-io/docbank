@@ -41,6 +41,7 @@ Every public page is also published as raw Markdown at the route listed below.
 ## Automate & Integrate
 - [Docbank for Agents](https://docbank.ai/docs/agents.md): Why agents use docbank, which interface to choose, and the safety model for document automation.
 - [Agent Integration Guide](https://docbank.ai/docs/agents/integration.md): Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
+- [Model Context Protocol](https://docbank.ai/docs/usage/mcp.md): Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 - [Embed in Go](https://docbank.ai/docs/embedding.md): Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 - [Document Understanding in Go](https://docbank.ai/docs/document-understanding.md): Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 

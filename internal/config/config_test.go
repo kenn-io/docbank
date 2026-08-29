@@ -80,6 +80,55 @@ func TestLoadPartialFileKeepsDefaults(t *testing.T) {
 	assert.True(t, c.Web.Enabled)
 }
 
+func TestLoadMCPHTTPCredentialBindingWithoutResolvingSecret(t *testing.T) {
+	dir := privateTestConfigDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
+[mcp.http]
+credential_binding = "credential:mcp-http"
+
+[credential_bindings.mcp-http]
+environment_variable = "DOCBANK_MCP_HTTP_TOKEN"
+`), 0o600))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, "credential:mcp-http", cfg.MCP.HTTP.CredentialBinding)
+	assert.Equal(t, "DOCBANK_MCP_HTTP_TOKEN",
+		cfg.CredentialBindings["mcp-http"].EnvironmentVariable)
+}
+
+func TestValidateMCPHTTPCredentialBindingIsNamedAndDefined(t *testing.T) {
+	tests := []struct {
+		name    string
+		binding string
+		define  bool
+		want    string
+	}{
+		{name: "disabled"},
+		{name: "defined", binding: "credential:mcp-http", define: true},
+		{name: "raw secret", binding: "synthetic-secret", want: "credential:<name>"},
+		{name: "undefined", binding: "credential:mcp-http", want: "is not defined"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.MCP.HTTP.CredentialBinding = test.binding
+			if test.define {
+				cfg.CredentialBindings["mcp-http"] = CredentialBindingConfig{
+					EnvironmentVariable: "DOCBANK_MCP_HTTP_TOKEN",
+				}
+			}
+			err := cfg.Validate()
+			if test.want == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, test.want)
+			}
+		})
+	}
+}
+
 func TestProcessingProfilesLoadNamedBindingsWithoutResolvingSecrets(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`

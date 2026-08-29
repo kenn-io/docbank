@@ -2,9 +2,11 @@ package processing
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -508,6 +510,45 @@ func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDocumentSourceFenceFingerprintIsStableAndBindsExactAuthority(t *testing.T) {
+	fence := SourceFence{VaultUID: "11111111-1111-4111-8111-111111111111", ContentVersionIDs: []string{
+		"33333333-3333-4333-8333-333333333333",
+		"22222222-2222-4222-8222-222222222222",
+	}}
+	canonical, err := sourceFenceCanonicalBytes(fence)
+	require.NoError(t, err)
+	wantCanonical := []byte("docbank-document-source-fence/v1" +
+		"\x00\x00\x00\x24" + "11111111-1111-4111-8111-111111111111" +
+		"\x00\x00\x00\x02" +
+		"\x00\x00\x00\x24" + "22222222-2222-4222-8222-222222222222" +
+		"\x00\x00\x00\x24" + "33333333-3333-4333-8333-333333333333")
+	assert.Equal(t, hex.EncodeToString(wantCanonical), hex.EncodeToString(canonical))
+
+	fingerprint, err := SourceFenceFingerprint(fence)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc", fingerprint)
+	assert.NotContains(t, fingerprint, fence.VaultUID)
+
+	reordered := SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: []string{
+		"22222222-2222-4222-8222-222222222222",
+		"33333333-3333-4333-8333-333333333333",
+	}}
+	reorderedFingerprint, err := SourceFenceFingerprint(reordered)
+	require.NoError(t, err)
+	assert.Equal(t, fingerprint, reorderedFingerprint)
+
+	changed := reordered
+	changed.VaultUID = "44444444-4444-4444-8444-444444444444"
+	changedFingerprint, err := SourceFenceFingerprint(changed)
+	require.NoError(t, err)
+	assert.NotEqual(t, fingerprint, changedFingerprint)
+}
+
+func TestDocumentSourceFenceFingerprintRejectsUint32LengthOverflow(t *testing.T) {
+	var encoded []byte
+	require.ErrorContains(t, appendSourceFenceUint32(&encoded, uint64(math.MaxUint32)+1), "uint32")
 }
 
 func TestProcessingServicePlanFingerprintSealsCompleteRuntimeDisclosure(t *testing.T) {
