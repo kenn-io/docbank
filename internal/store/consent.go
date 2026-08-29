@@ -79,9 +79,8 @@ type ProviderOperationAuthorizationRequest struct {
 	DisclosureFingerprint   string
 	InputClasses            []string
 	RetainedArtifactClasses []string
-	// PriorAuthorization is set when a leased operation rechecks authority
-	// immediately before publication. A later replacement grant cannot revive
-	// work authorized below an earlier revocation fence.
+	// PriorAuthorization is set only for atomic publication. A later replacement
+	// grant cannot revive work authorized below an earlier revocation fence.
 	PriorAuthorization *ProviderOperationAuthorization
 }
 
@@ -250,16 +249,33 @@ func (s *Store) RevokeConsent(
 func (s *Store) AuthorizeProviderOperation(
 	ctx context.Context, request ProviderOperationAuthorizationRequest,
 ) (ProviderOperationAuthorization, error) {
-	authority, err := normalizeConsentAuthority(request)
-	if err != nil {
-		return ProviderOperationAuthorization{}, err
+	if request.PriorAuthorization != nil {
+		return ProviderOperationAuthorization{}, errors.New(
+			"prior processing authorization can only be checked during atomic publication",
+		)
 	}
-	now := time.Now().UTC()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	authorization, err := s.authorizeProviderOperationTx(ctx, tx, request, time.Now().UTC())
+	if err != nil {
+		return ProviderOperationAuthorization{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
+	}
+	return authorization, nil
+}
+
+func (s *Store) authorizeProviderOperationTx(
+	ctx context.Context, tx *sql.Tx, request ProviderOperationAuthorizationRequest, now time.Time,
+) (ProviderOperationAuthorization, error) {
+	authority, err := normalizeConsentAuthority(request)
+	if err != nil {
+		return ProviderOperationAuthorization{}, err
+	}
 	incarnationID, err := currentProcessingIncarnationIDTx(ctx, tx)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
@@ -314,9 +330,6 @@ func (s *Store) AuthorizeProviderOperation(
 			if !expiry.After(now) {
 				continue
 			}
-		}
-		if err := tx.Commit(); err != nil {
-			return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
 		}
 		return ProviderOperationAuthorization{
 			GrantID: grantID, ProcessingIncarnationID: incarnationID,

@@ -115,8 +115,7 @@ func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T)
 	recheck := request
 	recheck.PriorAuthorization = &leased
 	_, err = s.AuthorizeProviderOperation(t.Context(), recheck)
-	require.ErrorIs(t, err, ErrProcessingConsentRevoked,
-		"publication must recheck consent after a leased operation returns")
+	require.ErrorContains(t, err, "only be checked during atomic publication")
 	assert.Equal(t, int64(0), leased.RevocationFence,
 		"the earlier authorization receipt must remain immutable evidence")
 
@@ -126,8 +125,56 @@ func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T)
 	_, err = s.AuthorizeProviderOperation(t.Context(), request)
 	require.NoError(t, err, "a grant issued after the revocation fence is current authority")
 	_, err = s.AuthorizeProviderOperation(t.Context(), recheck)
-	require.ErrorIs(t, err, ErrProcessingConsentRevoked,
-		"a replacement grant must not revive work leased below the revocation fence")
+	require.ErrorContains(t, err, "only be checked during atomic publication")
+}
+
+func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID, "authorized synthetic evidence")
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	generation, err := s.StageLexicalGeneration(t.Context(), fakeHash("c9"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-29T14:00:00.000000000Z",
+	}
+	head := RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-29T14:01:00.000000000Z",
+	}
+	request := testProviderAuthorizationRequest()
+	request.ProfileFingerprint = profile.Fingerprint
+	request.DisclosureFingerprint = profile.RenditionDisclosureFingerprint
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
+	require.NoError(t, err)
+	leased, err := s.AuthorizeProviderOperation(t.Context(), request)
+	require.NoError(t, err)
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
+		Principal: request.Principal, Scope: request.Scope,
+	})
+	require.NoError(t, err)
+
+	publication := request
+	publication.PriorAuthorization = &leased
+	err = s.PublishAuthorizedRenditionAndLexicalHeads(
+		t.Context(), attachment, head, generation.ID, publication,
+	)
+	require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+	_, err = s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
+	require.NoError(t, err)
+	current, err := s.AuthorizeProviderOperation(t.Context(), request)
+	require.NoError(t, err)
+	publication.PriorAuthorization = &current
+	require.NoError(t, s.PublishAuthorizedRenditionAndLexicalHeads(
+		t.Context(), attachment, head, generation.ID, publication,
+	))
+	published, err := s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, attachment.ID, published.Attachment.ID)
 }
 
 func TestProcessingConsentHistoryIsAppendOnly(t *testing.T) {

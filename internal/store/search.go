@@ -632,6 +632,29 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 	ctx context.Context, attachment RenditionAttachmentRecord,
 	head RenditionHeadRecord, generationID string,
 ) error {
+	return s.publishRenditionAndLexicalHeads(ctx, attachment, head, generationID, nil)
+}
+
+// PublishAuthorizedRenditionAndLexicalHeads rechecks the exact provider grant
+// in the transaction that makes its rendition and lexical heads visible.
+func (s *Store) PublishAuthorizedRenditionAndLexicalHeads(
+	ctx context.Context, attachment RenditionAttachmentRecord,
+	head RenditionHeadRecord, generationID string,
+	authorization ProviderOperationAuthorizationRequest,
+) error {
+	if authorization.PriorAuthorization == nil {
+		return fmt.Errorf("publishing authorized rendition: %w", ErrProcessingConsentRequired)
+	}
+	return s.publishRenditionAndLexicalHeads(
+		ctx, attachment, head, generationID, &authorization,
+	)
+}
+
+func (s *Store) publishRenditionAndLexicalHeads(
+	ctx context.Context, attachment RenditionAttachmentRecord,
+	head RenditionHeadRecord, generationID string,
+	authorization *ProviderOperationAuthorizationRequest,
+) error {
 	normalized, err := normalizeRenditionAttachmentRecord(attachment)
 	if err != nil {
 		return fmt.Errorf("publishing rendition attachment: %w", err)
@@ -650,6 +673,11 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 	if normalized.VaultID != s.vaultID {
 		return fmt.Errorf("publishing rendition attachment: vault %q does not match store vault %q",
 			normalized.VaultID, s.vaultID)
+	}
+	if authorization != nil &&
+		(authorization.ProfileFingerprint != normalized.Profile.Fingerprint ||
+			authorization.DisclosureFingerprint != normalized.Profile.RenditionDisclosureFingerprint) {
+		return errors.New("provider authorization does not match rendition publication policy")
 	}
 
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -724,6 +752,13 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 			lexicalManifestDigest(indexedBuildRows) != lexicalManifestDigest(expectedBuildRows) {
 			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
 				generationID, build.ID)
+		}
+		if authorization != nil {
+			if _, err := s.authorizeProviderOperationTx(
+				ctx, tx, *authorization, time.Now().UTC(),
+			); err != nil {
+				return fmt.Errorf("authorizing rendition publication: %w", err)
+			}
 		}
 
 		result, err := tx.ExecContext(ctx, `
