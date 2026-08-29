@@ -643,6 +643,8 @@ func (container zipContainer) measurement(name string, isWorksheet bool) xmlMeas
 func inspectXML(
 	data []byte, measurements *CapabilityMeasurements, mode xmlMeasurement, home string,
 ) (bool, error) {
+	entryHome := home
+	home = documentBaseOrigin(data, home)
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	depth, roots := 0, 0
 	styleDepth := 0
@@ -701,6 +703,12 @@ func inspectXML(
 			inherited := xmlScope{home: home}
 			if len(bases) != 0 {
 				inherited = bases[len(bases)-1]
+			}
+			if isHTMLBase(value) {
+				// The document base has already moved home. Its own href says
+				// where the document resolves from, so it resolves from where
+				// the document sits rather than from its own answer.
+				inherited.home = entryHome
 			}
 			scope, external, attrErr := inspectXMLAttributes(value.Attr, inherited)
 			if attrErr != nil {
@@ -966,6 +974,49 @@ func nonLocatorXMLAttribute(attribute xml.Attr) bool {
 
 // markupStyleNamespace reports whether a <style> element carries CSS. ODF
 // names an unrelated <style:style> element in its own namespace.
+// documentBaseOrigin returns the directory a markup document's references
+// resolve from, after any HTML <base href> it carries.
+//
+// Unlike xml:base, which shifts the subtree it appears on, <base> sets the base
+// URI of the whole document: a renderer resolves every reference against it,
+// including those written before it. The first one with an href wins. Reading
+// it up front is what makes that document-wide effect representable in a single
+// forward pass, and without it a base of "../../" moved where a renderer
+// resolved while containment was still measured from the entry's own directory,
+// so a later reference could spend the difference and leave the container.
+func documentBaseOrigin(data []byte, home string) string {
+	if home == "" {
+		return home
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return home
+		}
+		element, ok := token.(xml.StartElement)
+		if !ok || !isHTMLBase(element) {
+			continue
+		}
+		for _, attribute := range element.Attr {
+			if !strings.EqualFold(attribute.Name.Local, "href") {
+				continue
+			}
+			// The href is classified as a locator by the main pass, which is
+			// where an external or escaping base is rejected. Here it only
+			// moves the origin.
+			return resolveArchiveDir(home, attribute.Value)
+		}
+	}
+}
+
+// isHTMLBase reports whether an element is the HTML <base>, which states the
+// base URI of the document holding it.
+func isHTMLBase(element xml.StartElement) bool {
+	return strings.EqualFold(element.Name.Local, "base") &&
+		markupStyleNamespace(element.Name.Space)
+}
+
 func markupStyleNamespace(space string) bool {
 	switch space {
 	case "", "http://www.w3.org/1999/xhtml", "http://www.w3.org/2000/svg":
@@ -1808,12 +1859,21 @@ func ooxmlDeclaredTypes(files []*zip.File, limit int64) contentDeclarations {
 			declared[file.Name] = []string{declaredType}
 		}
 	}
+	overridden := make(map[string]bool, len(document.Overrides))
 	for _, override := range document.Overrides {
 		declaredType := normalizeDeclaredType(override.ContentType)
 		for _, part := range declaredPartNames(override.PartName) {
-			// An Override replaces the Default for that part rather than
-			// adding to it.
-			declared[part] = []string{declaredType}
+			// An Override replaces the Default for that part rather than adding
+			// to it, but a part named by two Overrides is declared twice. The
+			// package is invalid either way and consumers need not agree on
+			// which one wins, so the part is inspected under both: keeping only
+			// the last let a second declaration of "opaque" hide a part that a
+			// consumer taking the first reads as markup.
+			if !overridden[part] {
+				overridden[part] = true
+				delete(declared, part)
+			}
+			declared.add(part, declaredType)
 		}
 	}
 	return declared

@@ -688,6 +688,53 @@ func TestInspectFollowsDeclaredContainerParts(t *testing.T) {
 		})
 	}
 
+	// A part named by two Overrides is declared twice. The package is invalid
+	// either way and consumers need not agree on which one wins, so the part is
+	// inspected under both: keeping only the last let a second declaration of
+	// "opaque" hide a part that a consumer taking the first reads as markup.
+	for _, order := range [][2]string{
+		{"application/xml", "application/octet-stream"},
+		{"application/octet-stream", "application/xml"},
+	} {
+		t.Run("conflicting OOXML declarations "+order[0], func(t *testing.T) {
+			t.Parallel()
+			contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+				`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+				`<Override PartName="/xl/report.bin" ContentType="` + order[0] + `"/>` +
+				`<Override PartName="/xl/report.bin" ContentType="` + order[1] + `"/></Types>`
+			data := zipBytes(t, []zipEntry{
+				{name: "[Content_Types].xml", body: contentTypes},
+				{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+				{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+			})
+			record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+		})
+	}
+
+	// An Override still replaces the Default for its part, so a part its
+	// extension declares as markup is not inspected when the Override says
+	// otherwise and nothing else declares it.
+	t.Run("Override replaces the Default", func(t *testing.T) {
+		t.Parallel()
+		contentTypes := `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+			`<Default Extension="bin" ContentType="application/xml"/>` +
+			`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+			`<Override PartName="/xl/report.bin" ContentType="image/png"/></Types>`
+		data := zipBytes(t, []zipEntry{
+			{name: "[Content_Types].xml", body: contentTypes},
+			{name: "xl/workbook.xml", body: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`},
+			{name: "xl/report.bin", body: `<root><img src="https://example.invalid/t.png"/></root>`},
+		})
+		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, "book.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+		require.NoError(t, err)
+		assert.True(t, record.Eligible, record.Reason)
+	})
+
 	t.Run("second EPUB rootfile", func(t *testing.T) {
 		t.Parallel()
 		container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` +
@@ -1007,6 +1054,70 @@ func TestInspectUsesEPUBContainerPackagePath(t *testing.T) {
 	assert.Equal(t, media.CapabilityReasonSemanticUnits, record.Reason)
 	assert.Equal(t, int64(2), record.Measurements.Resources)
 	assert.Equal(t, int64(2), record.Measurements.SpineItems)
+}
+
+// Unlike xml:base, an HTML <base> sets the base URI of the whole document, so a
+// renderer resolves every reference against it. Containment measured from the
+// entry's own directory let a climbing base buy distance for every reference
+// after it.
+func TestInspectMeasuresContainmentFromTheDocumentBase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, base, reference string
+		eligible              bool
+	}{
+		{name: "base climbs and reference spends it", base: "../../", reference: "../secret"},
+		{name: "base climbs and reference spends more", base: "../../", reference: "../../secret"},
+		// The base moves where the document resolves from, not how far a
+		// reference may go once it is there.
+		{name: "base climbs and reference stays inside", base: "../../",
+			reference: "cover.png", eligible: true},
+		{name: "base climbs one level", base: "../", reference: "cover.png", eligible: true},
+		// A base descends, so a reference has further to climb before it leaves.
+		{name: "base descends", base: "assets/", reference: "../../../secret", eligible: true},
+		// The base is a locator itself, and resolves from where the document
+		// sits rather than from its own answer.
+		{name: "base leaves the container", base: "../../../../",
+			reference: "cover.png"},
+		{name: "remote base", base: "https://example.invalid/", reference: "cover.png"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := zipBytes(t, validEPUBEntries(
+				zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+					`<item id="c" href="text/c.xhtml" media-type="application/xhtml+xml"/>` +
+					`</manifest><spine><itemref idref="c"/></spine></package>`},
+				zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+					`<head><base href="` + tt.base + `"/></head>` +
+					`<body><img src="` + tt.reference + `"/></body></html>`},
+			))
+			record, err := media.InspectCapability(bytes.NewReader(data),
+				inspectionPolicy(data, "book.epub", "application/epub+zip"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.eligible, record.Eligible, record.Reason)
+		})
+	}
+
+	// A <base> applies to the whole document, including references written
+	// before it, so reading it only when it is reached would leave those
+	// measured against the directory the renderer no longer uses.
+	t.Run("reference before the base", func(t *testing.T) {
+		t.Parallel()
+		data := zipBytes(t, validEPUBEntries(
+			zipEntry{name: "OPS/content.opf", body: `<package><manifest>` +
+				`<item id="c" href="text/c.xhtml" media-type="application/xhtml+xml"/>` +
+				`</manifest><spine><itemref idref="c"/></spine></package>`},
+			zipEntry{name: "OPS/text/c.xhtml", body: `<html xmlns="http://www.w3.org/1999/xhtml">` +
+				`<head><link href="../secret"/><base href="../../"/></head>` +
+				`<body/></html>`},
+		))
+		record, err := media.InspectCapability(bytes.NewReader(data),
+			inspectionPolicy(data, "book.epub", "application/epub+zip"))
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonExternalReference, record.Reason)
+	})
 }
 
 // A standalone document has no container, so a rooted path names no part of one
