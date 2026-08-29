@@ -146,6 +146,9 @@ func (s *Store) bootstrapTx() error {
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
 		}
+		if err := ensureProcessingIncarnationTx(tx); err != nil {
+			return err
+		}
 		primary, err := ensurePrimaryBlobStoreTx(tx)
 		if err != nil {
 			return err

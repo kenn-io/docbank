@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/docbank/document"
 )
 
 // SearchHit is a search result with its display path.
@@ -632,6 +634,47 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 	ctx context.Context, attachment RenditionAttachmentRecord,
 	head RenditionHeadRecord, generationID string,
 ) error {
+	return s.publishRenditionAndLexicalHeads(ctx, attachment, head, generationID, nil)
+}
+
+// PublishAuthorizedRenditionAndLexicalHeads binds the verified provider
+// operation and exact retained outputs to a grant in the transaction that
+// makes its rendition and lexical heads visible.
+func (s *Store) PublishAuthorizedRenditionAndLexicalHeads(
+	ctx context.Context, attachment RenditionAttachmentRecord,
+	head RenditionHeadRecord, generationID string,
+	authorization ProviderOperationAuthorizationRequest,
+	operation document.RenditionAuthorization,
+) error {
+	if authorization.PriorAuthorization == nil {
+		return fmt.Errorf("publishing authorized rendition: %w", ErrProcessingConsentRequired)
+	}
+	operationChecksum, err := operation.Fingerprint()
+	if err != nil {
+		return fmt.Errorf("fingerprinting rendition authorization: %w", err)
+	}
+	return s.publishRenditionAndLexicalHeads(
+		ctx, attachment, head, generationID, &providerPublicationAuthorization{
+			consent: authorization, operationChecksum: operationChecksum,
+			inputClass: string(operation.InputKind), sourceSHA256: operation.SourceSHA256,
+			renditionRequestFingerprint: operation.RenditionRequestFingerprint,
+		},
+	)
+}
+
+type providerPublicationAuthorization struct {
+	consent                     ProviderOperationAuthorizationRequest
+	operationChecksum           string
+	inputClass                  string
+	sourceSHA256                string
+	renditionRequestFingerprint string
+}
+
+func (s *Store) publishRenditionAndLexicalHeads(
+	ctx context.Context, attachment RenditionAttachmentRecord,
+	head RenditionHeadRecord, generationID string,
+	authorization *providerPublicationAuthorization,
+) error {
 	normalized, err := normalizeRenditionAttachmentRecord(attachment)
 	if err != nil {
 		return fmt.Errorf("publishing rendition attachment: %w", err)
@@ -651,6 +694,11 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		return fmt.Errorf("publishing rendition attachment: vault %q does not match store vault %q",
 			normalized.VaultID, s.vaultID)
 	}
+	if authorization != nil &&
+		(authorization.consent.ProfileFingerprint != normalized.Profile.Fingerprint ||
+			authorization.consent.DisclosureFingerprint != normalized.Profile.RenditionDisclosureFingerprint) {
+		return errors.New("provider authorization does not match rendition publication policy")
+	}
 
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
@@ -669,6 +717,12 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 		if build.RenditionRequestFingerprint != normalized.Profile.RenditionRequestFingerprint ||
 			build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
 			return errors.New("rendition attachment profile does not match build component identity")
+		}
+		if authorization != nil &&
+			(authorization.operationChecksum != build.AuthorizationChecksum ||
+				authorization.sourceSHA256 != build.SourceSHA256 ||
+				authorization.renditionRequestFingerprint != build.RenditionRequestFingerprint) {
+			return errors.New("provider authorization does not match rendition build operation")
 		}
 		if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
 			return err
@@ -724,6 +778,29 @@ func (s *Store) PublishRenditionAndLexicalHeads(
 			lexicalManifestDigest(indexedBuildRows) != lexicalManifestDigest(expectedBuildRows) {
 			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
 				generationID, build.ID)
+		}
+		if authorization != nil {
+			authority, err := normalizeConsentAuthority(authorization.consent)
+			if err != nil {
+				return err
+			}
+			if !slices.Equal(authority.inputs, []string{authorization.inputClass}) {
+				return errors.New("processing consent input classes do not match rendition build input")
+			}
+			retained := make([]string, len(build.Artifacts))
+			for index, artifact := range build.Artifacts {
+				retained[index] = artifact.Role
+			}
+			slices.Sort(retained)
+			retained = slices.Compact(retained)
+			if !slices.Equal(authority.retained, retained) {
+				return errors.New("processing consent retained artifact classes do not match rendition build artifacts")
+			}
+			if _, err := s.authorizeProviderOperationTx(
+				ctx, tx, authorization.consent, time.Now().UTC(),
+			); err != nil {
+				return fmt.Errorf("authorizing rendition publication: %w", err)
+			}
 		}
 
 		result, err := tx.ExecContext(ctx, `

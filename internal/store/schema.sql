@@ -12,6 +12,80 @@ CREATE TEMP TABLE IF NOT EXISTS docbank_processing_schema_v1_expected (
 );
 DELETE FROM docbank_processing_schema_v1_expected;
 INSERT INTO docbank_processing_schema_v1_expected(object_type, object_name, object_sql) VALUES
+('table', 'processing_incarnations', 'CREATE TABLE processing_incarnations (
+    incarnation_id TEXT PRIMARY KEY,
+    created_at     TEXT NOT NULL
+)'),
+('table', 'current_processing_incarnation', 'CREATE TABLE current_processing_incarnation (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    incarnation_id TEXT NOT NULL UNIQUE REFERENCES processing_incarnations(incarnation_id)
+)'),
+('trigger', 'current_processing_incarnation_immutable_update', 'CREATE TRIGGER current_processing_incarnation_immutable_update
+BEFORE UPDATE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, ''current processing incarnation is immutable'');
+END'),
+('trigger', 'current_processing_incarnation_immutable_delete', 'CREATE TRIGGER current_processing_incarnation_immutable_delete
+BEFORE DELETE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, ''current processing incarnation is immutable'');
+END'),
+('table', 'processing_consent_grants', 'CREATE TABLE processing_consent_grants (
+    grant_id                  TEXT PRIMARY KEY,
+    vault_uid                 TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id            TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal                 TEXT NOT NULL,
+    scope                     TEXT NOT NULL,
+    profile_fingerprint       TEXT NOT NULL,
+    disclosure_fingerprint    TEXT NOT NULL,
+    input_classes_json        TEXT NOT NULL,
+    retained_classes_json     TEXT NOT NULL,
+    revocation_fence          INTEGER NOT NULL CHECK (revocation_fence >= 0),
+    issued_at                 TEXT NOT NULL,
+    expires_at                TEXT
+)'),
+('index', 'processing_consent_grants_authority', 'CREATE INDEX processing_consent_grants_authority
+    ON processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    )'),
+('table', 'processing_consent_revocations', 'CREATE TABLE processing_consent_revocations (
+    revocation_id  TEXT PRIMARY KEY,
+    vault_uid      TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal      TEXT NOT NULL,
+    scope          TEXT NOT NULL,
+    fence          INTEGER NOT NULL CHECK (fence > 0),
+    revoked_at     TEXT NOT NULL,
+    UNIQUE (vault_uid, incarnation_id, principal, scope, fence)
+)'),
+('index', 'processing_consent_revocations_scope', 'CREATE INDEX processing_consent_revocations_scope
+    ON processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    )'),
+('trigger', 'processing_incarnations_immutable_update', 'CREATE TRIGGER processing_incarnations_immutable_update
+BEFORE UPDATE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, ''processing incarnation records are immutable'');
+END'),
+('trigger', 'processing_incarnations_immutable_delete', 'CREATE TRIGGER processing_incarnations_immutable_delete
+BEFORE DELETE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, ''processing incarnation records are immutable'');
+END'),
+('trigger', 'processing_consent_grants_immutable_update', 'CREATE TRIGGER processing_consent_grants_immutable_update
+BEFORE UPDATE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, ''processing consent grant records are immutable'');
+END'),
+('trigger', 'processing_consent_grants_immutable_delete', 'CREATE TRIGGER processing_consent_grants_immutable_delete
+BEFORE DELETE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, ''processing consent grant records are immutable'');
+END'),
+('trigger', 'processing_consent_revocations_immutable_update', 'CREATE TRIGGER processing_consent_revocations_immutable_update
+BEFORE UPDATE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, ''processing consent revocation records are immutable'');
+END'),
+('trigger', 'processing_consent_revocations_immutable_delete', 'CREATE TRIGGER processing_consent_revocations_immutable_delete
+BEFORE DELETE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, ''processing consent revocation records are immutable'');
+END'),
 ('table', 'processing_profiles', 'CREATE TABLE processing_profiles (
     profile_fingerprint               TEXT PRIMARY KEY,
     canonical_profile                 TEXT NOT NULL
@@ -233,6 +307,8 @@ SELECT CASE
         SELECT 1 FROM sqlite_schema
         WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
            OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
+            'processing_incarnations', 'current_processing_incarnation',
+            'processing_consent_grants', 'processing_consent_revocations',
             'processing_profiles', 'rendition_builds', 'rendition_artifacts',
             'rendition_units', 'rendition_lexical_segments',
             'rendition_attachments', 'rendition_heads',
@@ -248,6 +324,8 @@ SELECT CASE
         SELECT type, name, sql FROM sqlite_schema
         WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
            OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
+            'processing_incarnations', 'current_processing_incarnation',
+            'processing_consent_grants', 'processing_consent_revocations',
             'processing_profiles', 'rendition_builds', 'rendition_artifacts',
             'rendition_units', 'rendition_lexical_segments',
             'rendition_attachments', 'rendition_heads',
@@ -259,6 +337,8 @@ SELECT CASE
         SELECT type, name, sql FROM sqlite_schema
         WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
            OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
+            'processing_incarnations', 'current_processing_incarnation',
+            'processing_consent_grants', 'processing_consent_revocations',
             'processing_profiles', 'rendition_builds', 'rendition_artifacts',
             'rendition_units', 'rendition_lexical_segments',
             'rendition_attachments', 'rendition_heads',
@@ -726,6 +806,97 @@ WHEN NEW.supersedes IS NOT NULL AND EXISTS (
     WHERE prior.identity = NEW.supersedes AND prior.node_id != NEW.node_id
 ) BEGIN
     SELECT RAISE(ABORT, 'provenance supersession must stay on one node');
+END;
+
+-- Processing consent is scoped to a random local incarnation. The pointer is
+-- deliberately not backup authority: a restored database keeps the imported
+-- grant history while the fresh restore target retains its own incarnation.
+CREATE TABLE IF NOT EXISTS processing_incarnations (
+    incarnation_id TEXT PRIMARY KEY,
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS current_processing_incarnation (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    incarnation_id TEXT NOT NULL UNIQUE REFERENCES processing_incarnations(incarnation_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS current_processing_incarnation_immutable_update
+BEFORE UPDATE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, 'current processing incarnation is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS current_processing_incarnation_immutable_delete
+BEFORE DELETE ON current_processing_incarnation BEGIN
+    SELECT RAISE(ABORT, 'current processing incarnation is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS processing_consent_grants (
+    grant_id                  TEXT PRIMARY KEY,
+    vault_uid                 TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id            TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal                 TEXT NOT NULL,
+    scope                     TEXT NOT NULL,
+    profile_fingerprint       TEXT NOT NULL,
+    disclosure_fingerprint    TEXT NOT NULL,
+    input_classes_json        TEXT NOT NULL,
+    retained_classes_json     TEXT NOT NULL,
+    revocation_fence          INTEGER NOT NULL CHECK (revocation_fence >= 0),
+    issued_at                 TEXT NOT NULL,
+    expires_at                TEXT
+);
+
+CREATE INDEX IF NOT EXISTS processing_consent_grants_authority
+    ON processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    );
+
+CREATE TABLE IF NOT EXISTS processing_consent_revocations (
+    revocation_id  TEXT PRIMARY KEY,
+    vault_uid      TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    incarnation_id TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
+    principal      TEXT NOT NULL,
+    scope          TEXT NOT NULL,
+    fence          INTEGER NOT NULL CHECK (fence > 0),
+    revoked_at     TEXT NOT NULL,
+    UNIQUE (vault_uid, incarnation_id, principal, scope, fence)
+);
+
+CREATE INDEX IF NOT EXISTS processing_consent_revocations_scope
+    ON processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    );
+
+CREATE TRIGGER IF NOT EXISTS processing_incarnations_immutable_update
+BEFORE UPDATE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, 'processing incarnation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_incarnations_immutable_delete
+BEFORE DELETE ON processing_incarnations BEGIN
+    SELECT RAISE(ABORT, 'processing incarnation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_grants_immutable_update
+BEFORE UPDATE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_grants_immutable_delete
+BEFORE DELETE ON processing_consent_grants BEGIN
+    SELECT RAISE(ABORT, 'processing consent grant records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_revocations_immutable_update
+BEFORE UPDATE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS processing_consent_revocations_immutable_delete
+BEFORE DELETE ON processing_consent_revocations BEGIN
+    SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
 END;
 
 -- Processing profiles are immutable canonical policy snapshots. Rendition

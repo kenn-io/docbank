@@ -709,6 +709,10 @@ func TestProcessingMetadataOpenRejectsMismatchedCompleteSchemas(t *testing.T) {
 			t.Helper()
 			corruptProcessingSchemaBoundForTest(t, path, driver)
 		},
+		"current layout with weakened consent bound": func(t *testing.T, path string, driver docsqlite.Driver) {
+			t.Helper()
+			corruptProcessingConsentSchemaBoundForTest(t, path, driver)
+		},
 		"current layout with extra trigger": func(t *testing.T, path string, driver docsqlite.Driver) {
 			t.Helper()
 			addProcessingSchemaTriggerForTest(t, path, driver)
@@ -1053,6 +1057,32 @@ func corruptProcessingSchemaBoundForTest(t *testing.T, path string, driver docsq
 			'1'
 		)
 		WHERE type='table' AND name='rendition_builds'`)
+	require.NoError(t, err)
+	changed, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, changed)
+	_, err = db.Exec(`PRAGMA writable_schema = OFF`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+}
+
+func corruptProcessingConsentSchemaBoundForTest(
+	t *testing.T, path string, driver docsqlite.Driver,
+) {
+	t.Helper()
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	require.NoError(t, db.Ping())
+	_, err = db.Exec(`PRAGMA writable_schema = ON`)
+	require.NoError(t, err)
+	result, err := db.Exec(`
+		UPDATE sqlite_schema
+		SET sql=replace(sql, 'CHECK (revocation_fence >= 0)', 'CHECK (1)')
+		WHERE type='table' AND name='processing_consent_grants'
+		  AND instr(sql, 'CHECK (revocation_fence >= 0)') > 0`)
 	require.NoError(t, err)
 	changed, err := result.RowsAffected()
 	require.NoError(t, err)
