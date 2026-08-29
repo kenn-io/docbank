@@ -6,8 +6,255 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
+
+const (
+	// MaxDocumentSourceFenceIDs bounds the stable content-version authority a
+	// consumer may supply to one search or coverage request.
+	MaxDocumentSourceFenceIDs = 4096
+	// DefaultDocumentSearchLimit is used when DocumentSearchRequest.Limit is zero.
+	DefaultDocumentSearchLimit = 20
+	// MaxDocumentSearchLimit bounds one public document-search response.
+	MaxDocumentSearchLimit = 100
+	// MaxRenditionBytes bounds one embedded rendition read.
+	MaxRenditionBytes = int64(64 << 20)
+)
+
+// ProcessingOptions binds named portable profiles to process-local provider
+// implementations. Secrets remain inside the provider values; profiles and
+// plans contain only immutable non-secret identity.
+type ProcessingOptions struct {
+	Profiles       map[string]ProcessingProfileConfig
+	SpoolDirectory string
+}
+
+type EmbeddingFailureClass string
+
+const (
+	EmbeddingFailureTransient EmbeddingFailureClass = "transient"
+	EmbeddingFailurePermanent EmbeddingFailureClass = "permanent"
+	EmbeddingFailureCapacity  EmbeddingFailureClass = "capacity"
+)
+
+// EmbeddingErrorClassifier lets an embedded provider preserve its retry and
+// capacity semantics without exposing provider-specific errors to core.
+type EmbeddingErrorClassifier func(error) (EmbeddingFailureClass, time.Duration)
+
+// ProcessingProfileConfig supplies the exact providers executable for one
+// named portable profile. EmbeddingProviders is keyed by binding name.
+type ProcessingProfileConfig struct {
+	Profile              document.ProcessingProfileV1
+	RenditionProvider    document.RenditionProvider
+	RenditionDisclosure  ProcessingRuntimeDisclosure
+	EmbeddingProviders   map[string]document.EmbeddingProvider
+	EmbeddingDisclosures map[string]ProcessingRuntimeDisclosure
+	EmbeddingClassifiers map[string]EmbeddingErrorClassifier
+	Tokenizers           map[string]document.Tokenizer
+}
+
+// ProcessingSelector binds work to one stable node, immutable content
+// version, and named processing profile.
+type ProcessingSelector struct {
+	NodeID           int64  `json:"node_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Profile          string `json:"profile"`
+}
+
+type ProcessingPlanRequest struct {
+	Selector ProcessingSelector `json:"selector"`
+}
+
+type ProcessingFlowHop struct {
+	Capability        string                      `json:"capability"`
+	ProviderID        string                      `json:"provider_id"`
+	TrustBoundary     string                      `json:"trust_boundary"`
+	InputClasses      []string                    `json:"input_classes"`
+	RuntimeDisclosure ProcessingRuntimeDisclosure `json:"runtime_disclosure"`
+}
+
+// ProcessingRuntimeDisclosure is the complete non-secret runtime identity and
+// provider-visible data policy reviewed for one processing hop.
+type ProcessingRuntimeDisclosure struct {
+	ImmediateProcessor    string   `json:"immediate_processor"`
+	UltimateProcessor     string   `json:"ultimate_processor"`
+	Endpoint              string   `json:"endpoint"`
+	Deployment            string   `json:"deployment"`
+	Model                 string   `json:"model,omitzero"`
+	ModelRevision         string   `json:"model_revision,omitzero"`
+	VectorSpace           string   `json:"vector_space,omitzero"`
+	MetadataClasses       []string `json:"metadata_classes"`
+	RetainedArtifactRoles []string `json:"retained_artifact_roles"`
+}
+
+type ProcessingEstimate struct {
+	SourceBytes   int64 `json:"source_bytes"`
+	ProviderCalls int   `json:"provider_calls"`
+	VectorSpaces  int   `json:"vector_spaces"`
+}
+
+// ProcessingPlan is the complete bounded disclosure reviewed before work is
+// enqueued. Fingerprint covers every other field.
+type ProcessingPlan struct {
+	Fingerprint        string              `json:"fingerprint"`
+	VaultUID           string              `json:"vault_uid"`
+	Selector           ProcessingSelector  `json:"selector"`
+	ProfileFingerprint string              `json:"profile_fingerprint"`
+	Flow               []ProcessingFlowHop `json:"flow"`
+	DisclosedClasses   []string            `json:"disclosed_classes"`
+	RetainedClasses    []string            `json:"retained_classes"`
+	Estimate           ProcessingEstimate  `json:"estimate"`
+	ConsentRequired    bool                `json:"consent_required"`
+	BackupConsequence  string              `json:"backup_consequence"`
+}
+
+type StartProcessingRequest struct {
+	PlanRequest     ProcessingPlanRequest `json:"plan_request"`
+	PlanFingerprint string                `json:"plan_fingerprint"`
+	Consent         bool                  `json:"consent"`
+}
+
+type ProcessingJob struct {
+	ID                 string   `json:"id"`
+	RenditionJobID     string   `json:"rendition_job_id,omitzero"`
+	AttachmentID       string   `json:"attachment_id,omitzero"`
+	EmbeddingJobIDs    []string `json:"embedding_job_ids"`
+	ProfileFingerprint string   `json:"profile_fingerprint"`
+	ContentVersionID   string   `json:"content_version_id"`
+}
+
+type ProcessingStatusRequest struct {
+	JobID string `json:"job_id"`
+}
+
+type ProcessingStatus struct {
+	JobID             string   `json:"job_id"`
+	State             string   `json:"state"`
+	Phase             string   `json:"phase"`
+	FailureCode       string   `json:"failure_code,omitzero"`
+	EmbeddingJobIDs   []string `json:"embedding_job_ids"`
+	CompletedBindings int      `json:"completed_bindings"`
+}
+
+type RenditionRequest struct {
+	Selector ProcessingSelector `json:"selector"`
+	MaxBytes int64              `json:"max_bytes,omitzero"`
+}
+
+// RenditionContent exposes one exact active sanitized-Markdown artifact. The
+// reader holds a vault lifecycle lease until Close.
+type RenditionContent struct {
+	VaultUID           string
+	NodeID             int64
+	ContentVersionID   string
+	ProfileFingerprint string
+	AttachmentID       string
+	BuildID            string
+	ArtifactID         string
+	SHA256             string
+	Size               int64
+	Completeness       string
+	Warnings           []string
+	Reader             VerifiedReadCloser
+}
+
+type DocumentSourceFence struct {
+	VaultUID          string   `json:"vault_uid"`
+	ContentVersionIDs []string `json:"content_version_ids"`
+}
+
+type CoverageRequest struct {
+	Profile string              `json:"profile"`
+	Fence   DocumentSourceFence `json:"fence"`
+}
+
+type CoverageClass struct {
+	Name                      string `json:"name"`
+	Required                  bool   `json:"required"`
+	State                     string `json:"state"`
+	Complete                  int    `json:"complete"`
+	Unavailable               int    `json:"unavailable"`
+	Stale                     int    `json:"stale"`
+	Ineligible                int    `json:"ineligible"`
+	Rebuilding                int    `json:"rebuilding"`
+	PreviousGenerationServing int    `json:"previous_generation_serving"`
+	Total                     int    `json:"total"`
+}
+
+type CoverageReport struct {
+	VaultUID           string          `json:"vault_uid"`
+	ProfileFingerprint string          `json:"profile_fingerprint"`
+	State              string          `json:"state"`
+	Renditions         CoverageClass   `json:"renditions"`
+	Embeddings         []CoverageClass `json:"embeddings"`
+}
+
+type DocumentSearchMode string
+
+const (
+	DocumentSearchAuto     DocumentSearchMode = "auto"
+	DocumentSearchLexical  DocumentSearchMode = "lexical"
+	DocumentSearchSemantic DocumentSearchMode = "semantic"
+	DocumentSearchHybrid   DocumentSearchMode = "hybrid"
+)
+
+type DocumentSearchRequest struct {
+	Query     string              `json:"query"`
+	Mode      DocumentSearchMode  `json:"mode"`
+	Limit     int                 `json:"limit,omitzero"`
+	Profile   string              `json:"profile"`
+	BindingID string              `json:"binding_id,omitzero"`
+	Fence     DocumentSourceFence `json:"fence"`
+	Explain   bool                `json:"explain,omitzero"`
+}
+
+type DocumentEvidenceReference struct {
+	Kind                   string `json:"kind"`
+	BuildID                string `json:"build_id,omitzero"`
+	SegmentID              string `json:"segment_id,omitzero"`
+	VectorSpaceID          string `json:"vector_space_id,omitzero"`
+	EmbeddingSetID         string `json:"embedding_set_id,omitzero"`
+	InputGenerationID      string `json:"input_generation_id,omitzero"`
+	InputID                string `json:"input_id,omitzero"`
+	InputKind              string `json:"input_kind,omitzero"`
+	SourceManifestChecksum string `json:"source_manifest_checksum,omitzero"`
+}
+
+type DocumentSearchTrace struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
+type DocumentSearchResult struct {
+	VaultUID         string                      `json:"vault_uid"`
+	NodeID           int64                       `json:"node_id"`
+	ContentVersionID string                      `json:"content_version_id"`
+	Rank             int                         `json:"rank"`
+	Score            float64                     `json:"score"`
+	Path             string                      `json:"path"`
+	Excerpt          string                      `json:"excerpt,omitzero"`
+	LexicalRank      int                         `json:"lexical_rank,omitzero"`
+	SemanticRank     int                         `json:"semantic_rank,omitzero"`
+	Evidence         []DocumentEvidenceReference `json:"evidence"`
+}
+
+type DocumentSearchCoverage struct {
+	BindingRequired   bool   `json:"binding_required"`
+	ScopedDocuments   int    `json:"scoped_documents"`
+	CompleteDocuments int    `json:"complete_documents"`
+	State             string `json:"state"`
+}
+
+type DocumentSearchReport struct {
+	RequestedMode DocumentSearchMode     `json:"requested_mode"`
+	ActualMode    DocumentSearchMode     `json:"actual_mode"`
+	Coverage      DocumentSearchCoverage `json:"coverage"`
+	Degradations  []string               `json:"degradations"`
+	Results       []DocumentSearchResult `json:"results"`
+	Truncated     bool                   `json:"truncated"`
+	Trace         []DocumentSearchTrace  `json:"trace"`
+}
 
 // ContentIdentity is the canonical identity of uncompressed document bytes.
 type ContentIdentity struct {

@@ -20,6 +20,8 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Importing Documents](https://docbank.ai/usage/importing.md): Bulk import semantics — recursion, idempotency, collision suffixing, and failure handling.
 - [Organizing & Tagging](https://docbank.ai/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
 - [Searching](https://docbank.ai/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
+- [Document processing](https://docbank.ai/usage/document-processing.md): Preview, consent to, and run configured document derivatives without losing source authority.
+- [Document processing search](https://docbank.ai/usage/search.md): Search only the exact document versions a consumer currently authorizes.
 - [Web application](https://docbank.ai/usage/web.md): Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 - [Interactive terminal browser](https://docbank.ai/usage/tui.md): Browse documents, inspect authority, storage, backups, and permanent history, and safely move or restore recoverable trash from the TUI.
 
@@ -34,12 +36,14 @@ Every documentation page is also published as raw Markdown at the same path with
 ## Automate & Integrate
 - [Docbank for Agents](https://docbank.ai/agents.md): Why agents use docbank, which interface to choose, and the safety model for document automation.
 - [Agent Integration Guide](https://docbank.ai/agents/integration.md): Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
+- [Model Context Protocol](https://docbank.ai/usage/mcp.md): Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 - [Embed in Go](https://docbank.ai/embedding.md): Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 - [Document Understanding in Go](https://docbank.ai/document-understanding.md): Normalize and prepare documents for search, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
 
 ## Reference
 - [CLI Reference](https://docbank.ai/cli-reference.md): Every docbank command, flag, output format, and error behavior.
 - [Configuration](https://docbank.ai/configuration.md): Vault location, data layout, config.toml, and environment variables.
+- [Document processing configuration](https://docbank.ai/usage/configuration.md): Configure executable processing profiles while keeping credentials outside portable policy.
 - [HTTP API](https://docbank.ai/architecture/http-api.md): The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 
 ## How It Works
@@ -52,6 +56,7 @@ Every documentation page is also published as raw Markdown at the same path with
 - [Backup & Recovery](https://docbank.ai/architecture/backup.md): Docbank's JSONL-native Kit snapshot and restore architecture.
 - [Integrity & Trust](https://docbank.ai/architecture/integrity.md): What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
 - [Audited History](https://docbank.ai/architecture/audited-history.md): The permanent, tamper-evident history model for protected directory scopes, content versions, backup, agents, and future interactive clients.
+- [Document derivatives](https://docbank.ai/architecture/document-derivatives.md): Authority, retention, retrieval, and rendition format for processed document derivatives.
 
 ## Project
 - [Roadmap](https://docbank.ai/roadmap.md): What is implemented today and what each phase adds.

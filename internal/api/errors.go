@@ -16,11 +16,12 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
-	Title  string   `json:"title"`
-	Status int      `json:"status"`
-	Detail string   `json:"detail,omitzero"`
-	Code   string   `json:"code,omitzero"`
-	Errors []string `json:"errors,omitempty"`
+	Title              string   `json:"title"`
+	Status             int      `json:"status"`
+	Detail             string   `json:"detail,omitzero"`
+	Code               string   `json:"code,omitzero"`
+	Errors             []string `json:"errors,omitempty"`
+	ObservedScopeCount int      `json:"observed_scope_count,omitzero"`
 }
 
 func (e *Error) Error() string  { return e.Detail }
@@ -82,6 +83,10 @@ var storeErrCodes = []struct {
 	{store.ErrAuditPreviewStale, http.StatusConflict, "audit_preview_stale"},
 	{store.ErrAuditNotEnrolled, http.StatusUnprocessableEntity, "audit_not_enrolled"},
 	{store.ErrInvalidAuditCursor, http.StatusUnprocessableEntity, "invalid_audit_cursor"},
+	{store.ErrInvalidDocumentQuery, http.StatusUnprocessableEntity, "invalid_document_query"},
+	{store.ErrInvalidDocumentCursor, http.StatusUnprocessableEntity, "invalid_document_cursor"},
+	{store.ErrDocumentCursorExpired, http.StatusUnprocessableEntity, "cursor_expired"},
+	{store.ErrDocumentCursorCapacity, http.StatusServiceUnavailable, "cursor_capacity"},
 	{store.ErrBlobStorePrimary, http.StatusConflict, "blob_store_primary"},
 	{store.ErrBlobStoreNotEmpty, http.StatusConflict, "blob_store_not_empty"},
 	{store.ErrBlobStoreState, http.StatusConflict, "blob_store_state"},

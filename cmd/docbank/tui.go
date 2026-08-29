@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -204,6 +205,64 @@ func (b *tuiDaemonBackend) BackupList(
 ) ([]api.BackupSnapshot, error) {
 	return withTUIClient(ctx, b, func(c *client.Client) ([]api.BackupSnapshot, error) {
 		return c.BackupList(ctx, "")
+	})
+}
+
+func (b *tuiDaemonBackend) ProcessingProfiles(
+	ctx context.Context,
+) ([]api.ProcessingProfileSummary, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) ([]api.ProcessingProfileSummary, error) {
+		return c.ProcessingProfiles(ctx)
+	})
+}
+
+func (b *tuiDaemonBackend) PlanProcessing(
+	ctx context.Context, request api.ProcessingPlanRequest,
+) (api.ProcessingPlan, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.ProcessingPlan, error) {
+		return c.PlanProcessing(ctx, request)
+	})
+}
+
+func (b *tuiDaemonBackend) DocumentCoverage(
+	ctx context.Context, profile string, fence api.DocumentSourceFence,
+) (api.CoverageReport, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.CoverageReport, error) {
+		return c.DocumentCoverage(ctx, profile, fence)
+	})
+}
+
+func (b *tuiDaemonBackend) SearchDocuments(
+	ctx context.Context, request api.DocumentSearchRequest,
+) (api.DocumentSearchReport, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.DocumentSearchReport, error) {
+		return c.SearchDocuments(ctx, request)
+	})
+}
+
+func (b *tuiDaemonBackend) StartProcessingStream(
+	ctx context.Context, request api.StartProcessingRequest,
+) (doctui.ProcessingEventStream, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (doctui.ProcessingEventStream, error) {
+		return c.StartProcessingStream(ctx, request)
+	})
+}
+
+func (b *tuiDaemonBackend) ProcessingStatus(ctx context.Context, jobID string) (api.ProcessingStatus, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (api.ProcessingStatus, error) { return c.ProcessingStatus(ctx, jobID) })
+}
+
+func (b *tuiDaemonBackend) RenditionForSelector(ctx context.Context, selector api.ProcessingSelector, maxBytes int64) (doctui.Rendition, error) {
+	return withTUIClient(ctx, b, func(c *client.Client) (doctui.Rendition, error) {
+		stream, err := c.RenditionForSelector(ctx, selector, maxBytes)
+		if err != nil {
+			return doctui.Rendition{}, err
+		}
+		var markdown bytes.Buffer
+		if _, err := stream.CopyVerified(&markdown); err != nil {
+			return doctui.Rendition{}, err
+		}
+		return doctui.Rendition{Markdown: markdown.String(), AttachmentID: stream.AttachmentID, BuildID: stream.BuildID, ArtifactID: stream.ArtifactID, SHA256: stream.BlobHash, Size: stream.Size, Completeness: stream.Completeness, Warnings: stream.Warnings}, nil
 	})
 }
 

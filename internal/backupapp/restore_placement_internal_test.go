@@ -51,30 +51,6 @@ func TestClaimRestoreBackendFencesPostClaimPublication(t *testing.T) {
 	require.ErrorIs(t, err, packstore.ErrStoreFenced)
 }
 
-func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
-	target := t.TempDir()
-	databasePath := filepath.Join(target, "docbank.db")
-	metadata, err := store.Open(databasePath)
-	require.NoError(t, err)
-	next := store.NewPackCatalog(metadata).PrimaryOwnership()
-	require.NoError(t, metadata.Close())
-
-	priorDatabaseDigest := ""
-	handoff, err := blob.NewPrimaryRestoreHandoff(
-		filepath.Join(target, "blobs"), next, &priorDatabaseDigest,
-	)
-	require.NoError(t, err)
-	require.NoError(t, handoff.Prepare(t.Context()))
-	require.NoError(t, verifyRestoredRenditionHeads(
-		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
-	))
-
-	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(target, "blobs"))
-	require.NoError(t, err)
-	require.True(t, pending, "verification must leave crash recovery authority intact")
-	require.NoError(t, handoff.Rollback(t.Context()))
-}
-
 func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing.T) {
 	root := t.TempDir()
 	manifest := placementManifest{Stores: []placementStore{

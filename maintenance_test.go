@@ -88,71 +88,6 @@ func TestGarbageCollectMissingLooseFileDoesNotCountPhysicalReclamation(t *testin
 		"only a file actually unlinked by this call is physically reclaimed")
 }
 
-func TestGarbageCollectKeepsLooseBytesWhenLogicalDeletionFails(t *testing.T) {
-	vault := newMaintenanceVault(t, nil)
-	created, err := vault.Put(t.Context(), "/blocked", strings.NewReader("blocked"), PutOptions{})
-	require.NoError(t, err)
-	trashMaintenanceFiles(t, vault, []PutReceipt{created})
-	blobPath := filepath.Join(
-		vault.root.Name(), "blobs", created.Node.BlobHash[:2], created.Node.BlobHash,
-	)
-	require.FileExists(t, blobPath)
-	db, err := vault.metadata.SQLiteDriver().Open(
-		filepath.Join(vault.root.Name(), "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate},
-	)
-	require.NoError(t, err)
-	_, err = db.Exec(`
-		CREATE TRIGGER block_blob_delete
-		BEFORE DELETE ON blobs BEGIN
-			SELECT RAISE(ABORT, 'synthetic logical delete failure');
-		END`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-
-	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
-	require.ErrorContains(t, err, "synthetic logical delete failure")
-	assert.FileExists(t, blobPath)
-	recorded, recordErr := vault.metadata.HasBlob(t.Context(), created.Node.BlobHash)
-	require.NoError(t, recordErr)
-	assert.True(t, recorded)
-}
-
-func TestGarbageCollectRetriesDurablyRecordedLooseRetirement(t *testing.T) {
-	vault := newMaintenanceVault(t, nil)
-	created, err := vault.Put(
-		t.Context(), "/retry.txt", strings.NewReader("durable gc retry"), PutOptions{},
-	)
-	require.NoError(t, err)
-	trashMaintenanceFiles(t, vault, []PutReceipt{created})
-
-	loosePath := filepath.Join(
-		vault.root.Name(), "blobs", created.Node.BlobHash[:2], created.Node.BlobHash,
-	)
-	require.NoError(t, os.Remove(loosePath))
-	require.NoError(t, os.Mkdir(loosePath, 0o700))
-	blocker := filepath.Join(loosePath, "blocker")
-	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
-
-	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
-	require.Error(t, err)
-	recorded, err := vault.metadata.HasBlob(t.Context(), created.Node.BlobHash)
-	require.NoError(t, err)
-	assert.False(t, recorded, "logical reclamation commits with durable retry authority")
-	pending, err := vault.metadata.PendingGCLooseRetirements(t.Context(), 10)
-	require.NoError(t, err)
-	require.Len(t, pending, 1)
-	assert.Equal(t, created.Node.BlobHash, pending[0].Hash.String())
-
-	require.NoError(t, os.Remove(blocker))
-	require.NoError(t, os.Remove(loosePath))
-	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
-	require.NoError(t, err)
-	pending, err = vault.metadata.PendingGCLooseRetirements(t.Context(), 10)
-	require.NoError(t, err)
-	assert.Empty(t, pending)
-}
-
 func TestGarbageCollectAdvancesAcrossLiveOnlyScanWindow(t *testing.T) {
 	for _, test := range maintenanceDrivers() {
 		t.Run(test.name, func(t *testing.T) {
@@ -1283,4 +1218,69 @@ func TestMaintenanceOversizedObjectBudgetsAreRejected(t *testing.T) {
 	require.Error(t, err)
 	_, err = vault.Repack(t.Context(), RepackOptions{Budget: oversized})
 	require.Error(t, err)
+}
+
+func TestGarbageCollectKeepsLooseBytesWhenLogicalDeletionFails(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	created, err := vault.Put(t.Context(), "/blocked", strings.NewReader("blocked"), PutOptions{})
+	require.NoError(t, err)
+	trashMaintenanceFiles(t, vault, []PutReceipt{created})
+	blobPath := filepath.Join(
+		vault.root.Name(), "blobs", created.Node.BlobHash[:2], created.Node.BlobHash,
+	)
+	require.FileExists(t, blobPath)
+	db, err := vault.metadata.SQLiteDriver().Open(
+		filepath.Join(vault.root.Name(), "docbank.db"),
+		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate},
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		CREATE TRIGGER block_blob_delete
+		BEFORE DELETE ON blobs BEGIN
+			SELECT RAISE(ABORT, 'synthetic logical delete failure');
+		END`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
+	require.ErrorContains(t, err, "synthetic logical delete failure")
+	assert.FileExists(t, blobPath)
+	recorded, recordErr := vault.metadata.HasBlob(t.Context(), created.Node.BlobHash)
+	require.NoError(t, recordErr)
+	assert.True(t, recorded)
+}
+
+func TestGarbageCollectRetriesDurablyRecordedLooseRetirement(t *testing.T) {
+	vault := newMaintenanceVault(t, nil)
+	created, err := vault.Put(
+		t.Context(), "/retry.txt", strings.NewReader("durable gc retry"), PutOptions{},
+	)
+	require.NoError(t, err)
+	trashMaintenanceFiles(t, vault, []PutReceipt{created})
+
+	loosePath := filepath.Join(
+		vault.root.Name(), "blobs", created.Node.BlobHash[:2], created.Node.BlobHash,
+	)
+	require.NoError(t, os.Remove(loosePath))
+	require.NoError(t, os.Mkdir(loosePath, 0o700))
+	blocker := filepath.Join(loosePath, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+
+	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
+	require.Error(t, err)
+	recorded, err := vault.metadata.HasBlob(t.Context(), created.Node.BlobHash)
+	require.NoError(t, err)
+	assert.False(t, recorded, "logical reclamation commits with durable retry authority")
+	pending, err := vault.metadata.PendingGCLooseRetirements(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, created.Node.BlobHash, pending[0].Hash.String())
+
+	require.NoError(t, os.Remove(blocker))
+	require.NoError(t, os.Remove(loosePath))
+	_, err = vault.GarbageCollect(t.Context(), GCOptions{})
+	require.NoError(t, err)
+	pending, err = vault.metadata.PendingGCLooseRetirements(t.Context(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
 }

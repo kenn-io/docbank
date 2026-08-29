@@ -36,6 +36,38 @@ func (provider syntheticRenditionProvider) Render(
 
 var _ RenditionProvider = syntheticRenditionProvider{}
 
+type syntheticResumableRenditionProvider struct {
+	syntheticRenditionProvider
+
+	resume                *RenditionResumeHandle
+	checkpoint            RenditionResumeCheckpoint
+	calls                 int
+	ignoreCheckpointError bool
+	uploadWasNil          bool
+}
+
+func (provider *syntheticResumableRenditionProvider) RenderResumable(
+	_ context.Context, upload AuthorizedUpload, _ RenditionAuthorization,
+	resume *RenditionResumeHandle, checkpoint RenditionResumeCheckpoint,
+) (RenditionResult, error) {
+	provider.calls++
+	provider.uploadWasNil = upload == nil
+	if resume != nil {
+		resumeValue := *resume
+		provider.resume = &resumeValue
+	}
+	provider.checkpoint = checkpoint
+	if resume == nil {
+		if err := checkpoint(RenditionResumeHandle{Value: "remote-job-1"}); err != nil &&
+			!provider.ignoreCheckpointError {
+			return RenditionResult{}, err
+		}
+	}
+	return provider.result, provider.err
+}
+
+var _ ResumableRenditionProvider = (*syntheticResumableRenditionProvider)(nil)
+
 type syntheticAuthorizedUpload struct {
 	io.ReadCloser
 
@@ -411,7 +443,7 @@ func TestRenditionProviderContractRejectsUnclassifiedErrors(t *testing.T) {
 	)
 	cause := errors.New("raw provider body with secret")
 	providerError, err := NewRenditionProviderError(
-		RenditionErrorRateLimited, 30*time.Second, cause,
+		RenditionErrorRateLimited, "provider detail is intentionally not rendered", 30*time.Second, cause,
 	)
 	require.NoError(t, err)
 	require.NoError(t, ValidateRenditionProviderError(providerError))
