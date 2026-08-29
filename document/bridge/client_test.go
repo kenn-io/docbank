@@ -349,7 +349,7 @@ func TestBridgeContractRejectsUnsafeOrCorruptResponses(t *testing.T) {
 		},
 		"Docbank frontmatter injection": {
 			mutate: func(value map[string]any) {
-				markdown := []byte("---\ncontract: docbank-sanitized-markdown/v1\n---\nsecret\n")
+				markdown := []byte("---\r\ncontract: docbank-sanitized-markdown/v1\r\n---\r\nsecret\r\n")
 				completedResultMap(value)["provider_markdown"] = binaryPayload(markdown, "text/markdown")
 			},
 			want: "frontmatter",
@@ -388,6 +388,48 @@ func TestBridgeContractRejectsUnsafeOrCorruptResponses(t *testing.T) {
 			requireBridgeErrorContains(t, err, test.want)
 		})
 	}
+}
+
+func TestBridgeContractRejectsReservedFrontmatterInMarkdownArtifact(t *testing.T) {
+	fixture := newBridgeFixture(t).withStructuredArtifact(t)
+	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+		ID: fixture.descriptor.ID, ContractVersion: document.RenditionProviderContractVersion,
+		PolicyFingerprint: fixture.descriptor.PolicyFingerprint,
+		TrustBoundary:     fixture.descriptor.TrustBoundary,
+		SupportedFormats:  fixture.descriptor.SupportedFormats,
+		ReturnsMarkdown:   true, ReturnsStructured: true,
+		ArtifactRoles: []document.EvidenceArtifactRole{
+			document.EvidenceArtifactMarkdown, document.EvidenceArtifactStructured,
+		},
+	})
+	require.NoError(t, err)
+	fixture.descriptor = descriptor
+	fixture.authorization.DescriptorFingerprint = descriptor.Fingerprint
+	fixture.authorization.AllowedArtifactRoles = descriptor.ArtifactRoles
+	fixture.authorization.MaxArtifactBytes = 8 << 10
+	fixture.authorization.MaxTotalResultBytes = 1 << 20
+	fixture.artifact = []byte("---\r\n" + strings.Repeat("x", 4096) +
+		"\r\ndocbank-sanitized-markdown/v1\r\n---\r\n")
+	artifact := map[string]any{
+		"role": string(document.EvidenceArtifactMarkdown), "media_type": "text/markdown",
+		"byte_length": len(fixture.artifact), "sha256": sha256String(fixture.artifact),
+		"location": "result", "artifact_id": "markdown-1",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == jobsPath {
+			writeBridgeJSON(t, response, http.StatusOK,
+				completedEnvelope(t, fixture, "job-markdown-frontmatter", []map[string]any{artifact}))
+			return
+		}
+		response.Header().Set("Content-Type", "text/markdown")
+		_, writeErr := response.Write(fixture.artifact)
+		assert.NoError(t, writeErr)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+	_, err = client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	requireBridgeErrorContains(t, err, "frontmatter")
 }
 
 func TestBridgeContractRejectsRecordedUnknownMajorResponse(t *testing.T) {

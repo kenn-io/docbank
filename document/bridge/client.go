@@ -408,6 +408,10 @@ func (client *Client) decodeCompleted(
 		if err != nil {
 			return document.RenditionResult{}, err
 		}
+		if artifact.Role == document.EvidenceArtifactMarkdown && injectsDocbankFrontmatter(payload) {
+			return document.RenditionResult{}, malformedError(
+				"bridge provider Markdown artifact attempts Docbank frontmatter injection", nil)
+		}
 		artifactByteBudget -= int64(len(payload))
 		artifacts = append(artifacts, document.RenditionArtifact{
 			Role: artifact.Role, MediaType: artifact.MediaType, Payload: payload, SHA256: artifact.SHA256,
@@ -662,12 +666,10 @@ func decodeInlinePayload(value binaryPayloadRecord, maxBytes int) ([]byte, error
 }
 
 func injectsDocbankFrontmatter(markdown []byte) bool {
-	prefix := markdown
-	if len(prefix) > 4096 {
-		prefix = prefix[:4096]
-	}
-	return bytes.HasPrefix(prefix, []byte("---\n")) &&
-		bytes.Contains(prefix, []byte("docbank-sanitized-markdown/v1"))
+	frontmatter := bytes.HasPrefix(markdown, []byte("---\n")) ||
+		bytes.HasPrefix(markdown, []byte("---\r\n")) ||
+		bytes.HasPrefix(markdown, []byte("---\r"))
+	return frontmatter && bytes.Contains(markdown, []byte("docbank-sanitized-markdown/v1"))
 }
 
 func requireMediaType(got, want string) error {
