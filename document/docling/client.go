@@ -349,6 +349,10 @@ func (client *Client) submit(
 	ctx context.Context, expiresAt time.Time, usage *requestUsage, metadata document.AuthorizedUploadMetadata, source []byte,
 	includeMarkdown bool,
 ) (taskResponse, error) {
+	if strings.ContainsAny(metadata.Filename, "\r\n") {
+		return taskResponse{}, classifiedError(document.RenditionErrorPolicyRejected,
+			"Docling upload filename contains a newline", nil)
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	fileHeader := make(textproto.MIMEHeader)
@@ -496,13 +500,18 @@ func (client *Client) request(
 	usage.requests++
 	response, err := client.http.Do(request)
 	if err != nil {
+		var requestErr error
 		if !time.Now().Before(expiresAt) {
-			return nil, 0, classifiedError(document.RenditionErrorPolicyRejected, "Docling authorization expired", nil)
+			requestErr = classifiedError(document.RenditionErrorPolicyRejected, "Docling authorization expired", nil)
+		} else if ctxErr := ctx.Err(); ctxErr != nil {
+			requestErr = classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", ctxErr)
+		} else {
+			requestErr = classifiedError(document.RenditionErrorTransient, "Docling request failed", err)
 		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, 0, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", ctxErr)
+		if method == http.MethodPost {
+			requestErr = ambiguousSubmissionError(requestErr)
 		}
-		return nil, 0, classifiedError(document.RenditionErrorTransient, "Docling request failed", err)
+		return nil, 0, requestErr
 	}
 	defer func() { _ = response.Body.Close() }()
 	responseBody, err := readBounded(response.Body, min(maxResponseBytes, client.maxResponseBytes))

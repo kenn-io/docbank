@@ -114,6 +114,30 @@ func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClientRejectsMultipartFilenameNewlinesBeforeSubmission(t *testing.T) {
+	for _, testCase := range []struct{ name, filename string }{
+		{name: "carriage return", filename: "report\r.pdf"},
+		{name: "line feed", filename: "report\n.pdf"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", testCase.filename, []byte("synthetic PDF bytes"))
+			var requests atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				requests.Add(1)
+			}))
+			t.Cleanup(server.Close)
+
+			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorPolicyRejected, providerErr.Code())
+			assert.Zero(t, requests.Load())
+		})
+	}
+}
+
 func TestClientOmitsUnauthorizedProviderMarkdown(t *testing.T) {
 	for _, testCase := range []struct {
 		name            string
@@ -400,6 +424,37 @@ func TestClientTreatsFailedUploadTransportAsAmbiguousSubmission(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
 	assert.True(t, consumed.Load())
+}
+
+func TestClientTreatsInFlightSubmissionDeadlinesAsAmbiguous(t *testing.T) {
+	for _, testCase := range []struct {
+		name               string
+		authorizationLimit bool
+	}{
+		{name: "operation timeout"},
+		{name: "authorization expiry", authorizationLimit: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "ambiguous.pdf", []byte("synthetic PDF bytes"))
+			client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				_, err := io.Copy(io.Discard, request.Body)
+				require.NoError(t, err)
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			})})
+			if testCase.authorizationLimit {
+				fixture.authorization.ExpiresAt = time.Now().UTC().Add(25 * time.Millisecond).Format(timestampForm)
+			} else {
+				client.totalTimeout = 25 * time.Millisecond
+			}
+
+			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+		})
+	}
 }
 
 func TestClientTreatsUnreadableSuccessfulSubmissionAsAmbiguous(t *testing.T) {
