@@ -149,6 +149,7 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 	}{
 		{name: "blank registered page", want: true, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}}, "texts": []any{map[string]any{"text": "one", "prov": []any{map[string]any{"page_no": 1}}}}}},
 		{name: "page gap", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "3": map[string]any{}}, "texts": []any{}}},
+		{name: "aliased page", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "01": map[string]any{}}, "texts": []any{}}},
 		{name: "unlocated text", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}}, "texts": []any{map[string]any{"text": "one"}}}},
 		{name: "cross page provenance", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}}, "texts": []any{map[string]any{"text": "one", "prov": []any{map[string]any{"page_no": 1}, map[string]any{"page_no": 2}}}}}},
 		{name: "v2 drift", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "2.0.0", "pages": map[string]any{"1": map[string]any{}}, "texts": []any{}}},
@@ -298,6 +299,38 @@ func TestClientTreatsFailedUploadTransportAsAmbiguousSubmission(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
 	assert.True(t, consumed.Load())
+}
+
+func TestClientTreatsUnreadableSuccessfulSubmissionAsAmbiguous(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "ambiguous.pdf", []byte("synthetic PDF bytes"))
+	for _, testCase := range []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{name: "invalid content type", contentType: "text/plain", body: "accepted"},
+		{name: "malformed task", contentType: "application/json", body: "{"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", testCase.contentType)
+				response.WriteHeader(http.StatusAccepted)
+				_, err := io.WriteString(response, testCase.body)
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+
+			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+			causeErr, ok := errors.AsType[*document.RenditionProviderError](errors.Unwrap(providerErr))
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorMalformedEvidence, causeErr.Code())
+		})
+	}
 }
 
 func TestClientRecoversKnownTaskWithoutResubmitting(t *testing.T) {

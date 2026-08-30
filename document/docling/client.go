@@ -226,7 +226,7 @@ func (client *Client) Render(
 		if err != nil {
 			if document.IsRenditionProviderErrorRetryable(err) {
 				if pollAttempts >= client.maxPollAttempts {
-					return document.RenditionResult{}, ambiguousSubmissionError()
+					return document.RenditionResult{}, ambiguousSubmissionError(err)
 				}
 				usage.retries++
 				continue
@@ -249,7 +249,7 @@ func (client *Client) Render(
 			return document.RenditionResult{}, err
 		}
 		if resultAttempts >= client.maxPollAttempts {
-			return document.RenditionResult{}, ambiguousSubmissionError()
+			return document.RenditionResult{}, ambiguousSubmissionError(err)
 		}
 		usage.retries++
 		if err := waitContext(totalCtx, client.pollInterval); err != nil {
@@ -365,20 +365,24 @@ func (client *Client) submit(
 	bodyBytes, status, err := client.request(ctx, expiresAt, usage, http.MethodPost, convertPath,
 		writer.FormDataContentType(), body.Bytes(), client.maxResponseBytes)
 	if err != nil {
-		if document.IsRenditionProviderErrorRetryable(err) {
-			return taskResponse{}, ambiguousSubmissionError()
+		if document.IsRenditionProviderErrorRetryable(err) || status == http.StatusOK || status == http.StatusAccepted {
+			return taskResponse{}, ambiguousSubmissionError(err)
 		}
 		return taskResponse{}, err
 	}
 	if status != http.StatusOK && status != http.StatusAccepted {
 		return taskResponse{}, statusError("submission", status)
 	}
-	return parseTask(bodyBytes)
+	task, err := parseTask(bodyBytes)
+	if err != nil {
+		return taskResponse{}, ambiguousSubmissionError(err)
+	}
+	return task, nil
 }
 
-func ambiguousSubmissionError() error {
+func ambiguousSubmissionError(cause error) error {
 	return classifiedError(document.RenditionErrorAmbiguousSubmission,
-		"Docling submission outcome is unknown", nil)
+		"Docling submission outcome is unknown", cause)
 }
 
 func (client *Client) poll(ctx context.Context, expiresAt time.Time, usage *requestUsage, taskID string) (taskResponse, error) {
@@ -580,7 +584,7 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 	pages := make(map[int64][]string, len(wire.Pages))
 	for key := range wire.Pages {
 		page, err := strconv.ParseInt(key, 10, 64)
-		if err != nil || page < 1 {
+		if err != nil || page < 1 || strconv.FormatInt(page, 10) != key {
 			return document.SourceEvidenceV1{}, nil, false
 		}
 		pages[page] = nil
