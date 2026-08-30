@@ -68,6 +68,9 @@ func writeNodeStat(cmd *cobra.Command, node api.Node) error {
 	if node.Kind == "file" {
 		_, _ = fmt.Fprintf(w, "version:\t%s\n", node.CurrentVersionID)
 		_, _ = fmt.Fprintf(w, "sha256:\t%s\n", node.BlobHash)
+		if node.MD5 != "" {
+			_, _ = fmt.Fprintf(w, "md5:\t%s\n", node.MD5)
+		}
 		_, _ = fmt.Fprintf(w, "size:\t%d\n", node.Size)
 		mimeType := "not recorded"
 		if node.MimeType != "" {

@@ -530,6 +530,7 @@ func (s *Store) taggedNodes(
 		  SELECT n.id AS id, n.parent_id AS parent_id, n.name AS name, n.kind AS kind,
 		         COALESCE(n.current_version_id, '') AS current_version_id,
 		         COALESCE(cv.blob_hash, '') AS blob_hash,
+		         COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=cv.blob_hash), '') AS md5,
 		         COALESCE(cv.size, 0) AS size, COALESCE(cv.mime_type, '') AS mime_type,
 		         n.revision AS revision, n.created_at AS created_at,
 		         n.modified_at AS modified_at, n.trashed_at AS trashed_at
@@ -555,7 +556,7 @@ func (s *Store) taggedNodes(
 		SELECT totals.total, totals.live_total, COALESCE(page.id, 0), page.parent_id,
 		       COALESCE(page.name, ''), COALESCE(page.kind, ''),
 		       COALESCE(page.current_version_id, ''), COALESCE(page.blob_hash, ''),
-		       COALESCE(page.size, 0), COALESCE(page.mime_type, ''),
+		       COALESCE(page.md5, ''), COALESCE(page.size, 0), COALESCE(page.mime_type, ''),
 		       COALESCE(page.revision, 0), COALESCE(page.created_at, ''),
 		       COALESCE(page.modified_at, ''), page.trashed_at,
 		       COALESCE(paths.path, '')
@@ -574,7 +575,7 @@ func (s *Store) taggedNodes(
 		var tagged TaggedNode
 		if err := rows.Scan(&assignmentTotal, &liveTotal, &tagged.Node.ID, &tagged.Node.ParentID,
 			&tagged.Node.Name, &tagged.Node.Kind, &tagged.Node.CurrentVersionID,
-			&tagged.Node.BlobHash, &tagged.Node.Size, &tagged.Node.MimeType,
+			&tagged.Node.BlobHash, &tagged.Node.MD5, &tagged.Node.Size, &tagged.Node.MimeType,
 			&tagged.Node.Revision, &tagged.Node.CreatedAt, &tagged.Node.ModifiedAt,
 			&tagged.Node.TrashedAt, &tagged.Path); err != nil {
 			return nil, 0, 0, fmt.Errorf("listing nodes for tag %s: scanning page: %w", tagID, err)

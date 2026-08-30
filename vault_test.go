@@ -3,6 +3,7 @@ package docbank
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // Test coverage for explicitly auxiliary interoperability metadata.
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -1344,6 +1345,18 @@ func testEmbeddedVersions(t *testing.T, driver docsqlite.Driver) {
 	require.NoError(err)
 	third, err := vault.Put(ctx, "/notes/entry.md", strings.NewReader("third\n"), PutOptions{})
 	require.NoError(err)
+	firstMD5 := md5.Sum([]byte("first\n"))   //nolint:gosec // Explicit auxiliary-checksum expectation.
+	secondMD5 := md5.Sum([]byte("second\n")) //nolint:gosec // Explicit auxiliary-checksum expectation.
+	thirdMD5 := md5.Sum([]byte("third\n"))   //nolint:gosec // Explicit auxiliary-checksum expectation.
+	wantFirstMD5 := hex.EncodeToString(firstMD5[:])
+	wantSecondMD5 := hex.EncodeToString(secondMD5[:])
+	wantThirdMD5 := hex.EncodeToString(thirdMD5[:])
+	require.Equal(wantFirstMD5, receipt.Node.MD5)
+	require.Equal(wantFirstMD5, receipt.Version.MD5)
+
+	current, err := vault.Stat(ctx, "/notes/entry.md")
+	require.NoError(err)
+	require.Equal(wantThirdMD5, current.MD5)
 
 	page, err := vault.Versions(ctx, receipt.Node.ID, VersionsOptions{Limit: 2})
 	require.NoError(err)
@@ -1354,6 +1367,9 @@ func testEmbeddedVersions(t *testing.T, driver docsqlite.Driver) {
 	require.Equal([]string{third.Version.ID, second.Version.ID}, []string{
 		page.Items[0].ID, page.Items[1].ID,
 	})
+	require.Equal([]string{wantThirdMD5, wantSecondMD5}, []string{
+		page.Items[0].MD5, page.Items[1].MD5,
+	})
 
 	secondPage, err := vault.Versions(ctx, receipt.Node.ID, VersionsOptions{Limit: 2, Offset: 2})
 	require.NoError(err)
@@ -1362,6 +1378,7 @@ func testEmbeddedVersions(t *testing.T, driver docsqlite.Driver) {
 	require.Equal(2, secondPage.Offset)
 	require.Len(secondPage.Items, 1)
 	require.Equal([]string{receipt.Version.ID}, []string{secondPage.Items[0].ID})
+	require.Equal(wantFirstMD5, secondPage.Items[0].MD5)
 
 	defaultPage, err := vault.Versions(ctx, receipt.Node.ID, VersionsOptions{})
 	require.NoError(err)

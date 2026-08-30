@@ -50,6 +50,12 @@ func (g *OperationGate) Maintain(fn func() error) error {
 	return g.maintainContext(context.Background(), fn)
 }
 
+// MaintainContext is Maintain with cancellation while waiting for exclusive
+// daemon-owned maintenance admission.
+func (g *OperationGate) MaintainContext(ctx context.Context, fn func() error) error {
+	return g.maintainContext(ctx, fn)
+}
+
 // PhysicalMutate serializes a short physical-authority commit with backup
 // preservation without blocking unrelated logical document mutations.
 func (g *OperationGate) PhysicalMutate(fn func() error) error {

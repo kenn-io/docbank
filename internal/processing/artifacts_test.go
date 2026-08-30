@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // Test coverage for explicitly auxiliary interoperability metadata.
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -23,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 var errInjectedPublication = errors.New("injected publication failure")
@@ -47,11 +49,22 @@ func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, artifact.Size, physical.LogicalBytes)
 	}
-
 	view, err := fixture.catalog.ActiveRendition(
 		t.Context(), fixture.versionID, fixture.profile.Fingerprint,
 	)
 	require.NoError(t, err)
+	for _, artifact := range view.Build.Artifacts {
+		checksum, checksumErr := fixture.catalog.BlobChecksums(t.Context(), artifact.BlobHash)
+		if artifact.Role == "sanitized_markdown" {
+			require.NoError(t, checksumErr)
+			assert.Equal(t, artifact.MD5, checksum.MD5)
+			assert.Len(t, artifact.MD5, 32)
+		} else {
+			require.ErrorIs(t, checksumErr, store.ErrNotFound)
+			assert.Empty(t, artifact.MD5)
+		}
+	}
+
 	assert.Equal(t, published.BuildID, view.Build.ID)
 	active, err := fixture.catalog.ActiveLexicalGeneration(t.Context())
 	require.NoError(t, err)
@@ -61,6 +74,24 @@ func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, fixture.versionID, hits[0].Node.CurrentVersionID)
 	assert.Equal(t, store.SearchMatchContent, hits[0].Match)
+}
+
+func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
+	// Mutation caught: loading the first publication hydrates the Markdown MD5,
+	// which must not change the immutable build declaration used by a retry.
+	fixture := newPublicationFixture(t)
+	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+	require.NoError(t, err)
+	ids := publicationIDs{"b1", "51", "91"}
+
+	first := fixture.stage(t, ids, "searchable mercury evidence", "first markdown")
+	first.Build.Warnings = nil
+	_, err = publisher.PublishRendition(t.Context(), first)
+	require.NoError(t, err)
+	retry := fixture.stage(t, ids, "searchable mercury evidence", "first markdown")
+	retry.Build.Warnings = nil
+	_, err = publisher.PublishRendition(t.Context(), retry)
+	require.NoError(t, err, "an exact retry must reuse the immutable build")
 }
 
 func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
@@ -77,6 +108,71 @@ func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
 
 	_, err = publisher.PublishRendition(t.Context(), staged)
 	require.NoError(t, err)
+}
+
+func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T) {
+	root := t.TempDir()
+	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+
+	payloads := [][]byte{[]byte("first legacy original"), []byte("second legacy original")}
+	for index, payload := range payloads {
+		receipt, writeErr := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(payload))
+		require.NoError(t, writeErr)
+		encoding, encodingErr := receipt.EncodingName()
+		require.NoError(t, encodingErr)
+		_, createErr := catalog.CreateFile(t.Context(), catalog.RootID(),
+			"legacy-"+strconv.Itoa(index)+".bin", receipt.Hash, receipt.Size,
+			"application/octet-stream", store.BlobPhysical{
+				Encoding: encoding, StoredBytes: receipt.StoredSize,
+				PackEligible: receipt.PackEligible, Created: receipt.Created,
+			})
+		require.NoError(t, createErr)
+	}
+	packed, err := blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 2, packed.BlobsPacked)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	interrupted := &cancelOnSecondChecksumOpen{delegate: blobs, cancel: cancel}
+	completed, err := BackfillAuxiliaryChecksums(ctx, catalog, interrupted, 10)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, completed)
+
+	completed, err = BackfillAuxiliaryChecksums(t.Context(), catalog, blobs, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, completed)
+	completed, err = BackfillAuxiliaryChecksums(t.Context(), catalog, blobs, 10)
+	require.NoError(t, err)
+	assert.Zero(t, completed, "completed rows must not be recomputed")
+
+	for _, payload := range payloads {
+		sha := sha256.Sum256(payload)
+		record, lookupErr := catalog.BlobChecksums(t.Context(), hex.EncodeToString(sha[:]))
+		require.NoError(t, lookupErr)
+		want := md5.Sum(payload) //nolint:gosec // Explicit auxiliary MD5 assertion.
+		assert.Equal(t, hex.EncodeToString(want[:]), record.MD5)
+	}
+}
+
+type cancelOnSecondChecksumOpen struct {
+	delegate auxiliaryChecksumBlobReader
+	cancel   context.CancelFunc
+	calls    int
+}
+
+func (r *cancelOnSecondChecksumOpen) OpenStreamContext(
+	ctx context.Context, hash string,
+) (packstore.VerifiedReadCloser, int64, error) {
+	r.calls++
+	if r.calls == 2 {
+		r.cancel()
+	}
+	return r.delegate.OpenStreamContext(ctx, hash)
 }
 
 func TestPublishRenditionRejectsLexicalSegmentLimitOutsideCanonicalProfile(t *testing.T) {
@@ -676,7 +772,7 @@ func processingBlobPhysical(t *testing.T, receipt blob.WriteReceipt) store.BlobP
 	require.NoError(t, err)
 	return store.BlobPhysical{
 		Encoding: encoding, StoredBytes: receipt.StoredSize,
-		PackEligible: receipt.PackEligible, Created: receipt.Created,
+		PackEligible: receipt.PackEligible, MD5: receipt.MD5, Created: receipt.Created,
 	}
 }
 

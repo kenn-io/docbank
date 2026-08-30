@@ -40,11 +40,14 @@ func (s *Store) ContentReferencesByHash(
 	// recursive path projection runs only for live nodes in the selected page.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE matching AS (
-			SELECT v.version_id, v.node_id, v.blob_hash, v.size, v.mime_type,
+			SELECT v.version_id, v.node_id, v.blob_hash,
+			       COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=v.blob_hash), '') AS md5,
+			       v.size, v.mime_type,
 			       v.recorded_at, v.node_revision, v.introduced_operation_id,
 			       v.transition_kind, v.source_version_id,
 			       n.parent_id, n.name, n.kind, n.current_version_id,
 			       current.blob_hash AS current_blob_hash,
+			       COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=current.blob_hash), '') AS current_md5,
 			       current.size AS current_size, current.mime_type AS current_mime_type,
 			       n.revision, n.created_at, n.modified_at, n.trashed_at,
 			       n.trashed_at IS NOT NULL AS trashed_sort,
@@ -74,14 +77,16 @@ func (s *Store) ContentReferencesByHash(
 		)
 		SELECT totals.total,
 		       COALESCE(page.version_id, ''), COALESCE(page.node_id, 0),
-		       COALESCE(page.blob_hash, ''), COALESCE(page.size, 0),
+		       COALESCE(page.blob_hash, ''), COALESCE(page.md5, ''),
+		       COALESCE(page.size, 0),
 		       COALESCE(page.mime_type, ''), COALESCE(page.recorded_at, ''),
 		       COALESCE(page.node_revision, 0),
 		       COALESCE(page.introduced_operation_id, ''),
 		       COALESCE(page.transition_kind, ''), page.source_version_id,
 		       COALESCE(page.node_id, 0), page.parent_id, COALESCE(page.name, ''),
 		       COALESCE(page.kind, ''), COALESCE(page.current_version_id, ''),
-		       COALESCE(page.current_blob_hash, ''), COALESCE(page.current_size, 0),
+		       COALESCE(page.current_blob_hash, ''), COALESCE(page.current_md5, ''),
+		       COALESCE(page.current_size, 0),
 		       COALESCE(page.current_mime_type, ''), COALESCE(page.revision, 0),
 		       COALESCE(page.created_at, ''), COALESCE(page.modified_at, ''),
 		       page.trashed_at, COALESCE(paths.path, ''),
@@ -102,11 +107,11 @@ func (s *Store) ContentReferencesByHash(
 		if err := rows.Scan(
 			&total,
 			&ref.Version.ID, &ref.Version.NodeID, &ref.Version.BlobHash,
-			&ref.Version.Size, &ref.Version.MimeType, &ref.Version.RecordedAt,
+			&ref.Version.MD5, &ref.Version.Size, &ref.Version.MimeType, &ref.Version.RecordedAt,
 			&ref.Version.NodeRevision, &ref.Version.IntroducedOperationID,
 			&ref.Version.TransitionKind, &ref.Version.SourceVersionID,
 			&ref.Node.ID, &ref.Node.ParentID, &ref.Node.Name, &ref.Node.Kind,
-			&ref.Node.CurrentVersionID, &ref.Node.BlobHash, &ref.Node.Size,
+			&ref.Node.CurrentVersionID, &ref.Node.BlobHash, &ref.Node.MD5, &ref.Node.Size,
 			&ref.Node.MimeType, &ref.Node.Revision, &ref.Node.CreatedAt,
 			&ref.Node.ModifiedAt, &ref.Node.TrashedAt, &ref.Path, &ref.IsCurrent,
 		); err != nil {

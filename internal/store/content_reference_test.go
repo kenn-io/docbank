@@ -13,6 +13,8 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	ctx := t.Context()
 	wanted := fakeHash("a1")
 	replacement := fakeHash("b2")
+	const wantedMD5 = "f6fdffe48c908deb0f4c3bd36c032e72"
+	const replacementMD5 = "8d777f385d3dfec8815d20f7496026dc"
 
 	historical, err := s.CreateFile(ctx, s.RootID(), "historical.txt", wanted, 10, "text/plain")
 	require.NoError(t, err)
@@ -28,6 +30,10 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	require.NoError(t, err)
 	trashed, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
 	require.NoError(t, err)
+	require.NoError(t, s.RecordVerifiedBlobChecksum(ctx,
+		BlobChecksumRecord{BlobSHA256: wanted, MD5: wantedMD5}))
+	require.NoError(t, s.RecordVerifiedBlobChecksum(ctx,
+		BlobChecksumRecord{BlobSHA256: replacement, MD5: replacementMD5}))
 
 	refs, total, err := s.ContentReferencesByHash(ctx, wanted, 10, 0)
 	require.NoError(t, err)
@@ -36,6 +42,8 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 
 	assert.Equal(t, current.ID, refs[0].Node.ID, "live current references sort first")
 	assert.Equal(t, current.CurrentVersionID, refs[0].Version.ID)
+	assert.Equal(t, wantedMD5, refs[0].Version.MD5)
+	assert.Equal(t, wantedMD5, refs[0].Node.MD5)
 	assert.True(t, refs[0].IsCurrent)
 	assert.Equal(t, "/current.txt", refs[0].Path)
 	assert.Nil(t, refs[0].Node.TrashedAt)
@@ -45,6 +53,8 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	assert.False(t, refs[1].IsCurrent)
 	assert.Equal(t, replacement, refs[1].Node.BlobHash,
 		"the node projection describes its current authority")
+	assert.Equal(t, wantedMD5, refs[1].Version.MD5)
+	assert.Equal(t, replacementMD5, refs[1].Node.MD5)
 	assert.Equal(t, "/historical.txt", refs[1].Path)
 
 	assert.Equal(t, trashed.ID, refs[2].Node.ID, "trashed references sort last")

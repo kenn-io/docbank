@@ -100,6 +100,7 @@ type RenditionArtifactRecord struct {
 	ID       string
 	Role     string
 	BlobHash string
+	MD5      string
 	Size     int64
 	Checksum string
 	State    RenditionArtifactState
@@ -309,7 +310,7 @@ func stageRenditionBuildTx(
 		if loadErr != nil {
 			return loadErr
 		}
-		if !reflect.DeepEqual(stored, normalized) {
+		if !renditionBuildDeclarationEqual(stored, normalized) {
 			return fmt.Errorf("rendition build %s names different immutable metadata", normalized.ID)
 		}
 		return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
@@ -318,6 +319,19 @@ func stageRenditionBuildTx(
 		return err
 	}
 	return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
+}
+
+func renditionBuildDeclarationEqual(first, second RenditionBuildRecord) bool {
+	// MD5 is hydrated from the blob checksum catalog after publication. It is
+	// not part of the immutable rendition build declaration.
+	clearDerivedMD5 := func(record RenditionBuildRecord) RenditionBuildRecord {
+		record.Artifacts = append([]RenditionArtifactRecord(nil), record.Artifacts...)
+		for index := range record.Artifacts {
+			record.Artifacts[index].MD5 = ""
+		}
+		return record
+	}
+	return reflect.DeepEqual(clearDerivedMD5(first), clearDerivedMD5(second))
 }
 
 func validateRenditionArtifactRolesForProfile(
@@ -943,8 +957,10 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 	}
 	record.Artifacts = make([]RenditionArtifactRecord, 0, record.DeclaredArtifactCount)
 	rows, err := tx.QueryContext(ctx, `
-		SELECT artifact_id,role,blob_hash,size,checksum,state
-		FROM rendition_artifacts WHERE build_id=? ORDER BY artifact_id`, buildID)
+		SELECT a.artifact_id,a.role,a.blob_hash,COALESCE(c.md5,''),a.size,a.checksum,a.state
+		FROM rendition_artifacts a
+		LEFT JOIN blob_checksums c ON c.blob_sha256=a.blob_hash
+		WHERE a.build_id=? ORDER BY a.artifact_id`, buildID)
 	if err != nil {
 		return RenditionBuildRecord{}, err
 	}
@@ -954,7 +970,7 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 			return RenditionBuildRecord{}, fmt.Errorf("rendition build %s exceeds artifact limit", buildID)
 		}
 		var artifact RenditionArtifactRecord
-		if err := rows.Scan(&artifact.ID, &artifact.Role, &artifact.BlobHash,
+		if err := rows.Scan(&artifact.ID, &artifact.Role, &artifact.BlobHash, &artifact.MD5,
 			&artifact.Size, &artifact.Checksum, &artifact.State); err != nil {
 			_ = rows.Close()
 			return RenditionBuildRecord{}, err

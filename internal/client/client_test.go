@@ -3,6 +3,7 @@ package client_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // Test coverage for explicitly auxiliary interoperability metadata.
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -694,6 +695,9 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	sum := sha256.Sum256(content)
 	wantHash := hex.EncodeToString(sum[:])
 	assert.Equal(t, wantHash, node.BlobHash)
+	auxiliary := md5.Sum(content) //nolint:gosec // Explicit auxiliary MD5 assertion.
+	wantMD5 := hex.EncodeToString(auxiliary[:])
+	assert.Equal(t, wantMD5, node.MD5)
 	require.NotEmpty(t, node.CurrentVersionID)
 
 	page, err := c.Versions(t.Context(), node.ID, 10, 0)
@@ -701,6 +705,7 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, page.Total)
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, node.CurrentVersionID, page.Items[0].ID)
+	assert.Equal(t, wantMD5, page.Items[0].MD5)
 	version, err := c.Version(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, page.Items[0], version)

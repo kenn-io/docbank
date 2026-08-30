@@ -23,6 +23,7 @@ type Node struct {
 	Kind             string  `json:"kind"`
 	CurrentVersionID string  `json:"current_version_id,omitzero"`
 	BlobHash         string  `json:"blob_hash,omitzero"`
+	MD5              string  `json:"md5,omitzero"`
 	Size             int64   `json:"size"`
 	MediaType        string  `json:"media_type,omitzero"`
 	Revision         int64   `json:"revision"`
@@ -36,6 +37,7 @@ type ContentVersion struct {
 	ID                    string  `json:"id"`
 	NodeID                int64   `json:"node_id"`
 	BlobHash              string  `json:"blob_hash"`
+	MD5                   string  `json:"md5,omitzero"`
 	Size                  int64   `json:"size"`
 	MediaType             string  `json:"media_type,omitzero"`
 	RecordedAt            string  `json:"recorded_at"`
@@ -280,7 +282,7 @@ type VersionContentRange struct {
 func fromStoreNode(node store.Node) Node {
 	return Node{
 		ID: node.ID, ParentID: node.ParentID, Name: node.Name, Kind: node.Kind,
-		CurrentVersionID: node.CurrentVersionID, BlobHash: node.BlobHash,
+		CurrentVersionID: node.CurrentVersionID, BlobHash: node.BlobHash, MD5: node.MD5,
 		Size: node.Size, MediaType: node.MimeType, Revision: node.Revision,
 		CreatedAt: node.CreatedAt, ModifiedAt: node.ModifiedAt, TrashedAt: node.TrashedAt,
 	}
@@ -288,7 +290,7 @@ func fromStoreNode(node store.Node) Node {
 
 func fromStoreVersion(version store.ContentVersion) ContentVersion {
 	return ContentVersion{
-		ID: version.ID, NodeID: version.NodeID, BlobHash: version.BlobHash,
+		ID: version.ID, NodeID: version.NodeID, BlobHash: version.BlobHash, MD5: version.MD5,
 		Size: version.Size, MediaType: version.MimeType, RecordedAt: version.RecordedAt,
 		NodeRevision:          version.NodeRevision,
 		IntroducedOperationID: version.IntroducedOperationID,

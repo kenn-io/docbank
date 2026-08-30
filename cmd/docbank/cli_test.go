@@ -686,13 +686,20 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	assert.Contains(t, out, "extract:plain-text")
 	assert.Contains(t, out, "running")
 
-	out, err = runCLI(t, "jobs", "--json")
-	require.NoError(t, err)
 	var got api.JobList
-	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 1)
+	require.Eventually(t, func() bool {
+		out, err = runCLI(t, "jobs", "--json")
+		if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Items) != 2 {
+			return false
+		}
+		return got.Items[1].Name == "maintenance:auxiliary-checksums" &&
+			got.Items[1].Status == "completed"
+	}, 5*time.Second, 25*time.Millisecond)
+	require.Len(t, got.Items, 2)
 	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
 	assert.Equal(t, "running", got.Items[0].Status)
+	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[1].Name)
+	assert.Equal(t, "completed", got.Items[1].Status)
 }
 
 func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
@@ -734,10 +741,11 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 2)
+	require.Len(t, got.Items, 3)
 	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
-	assert.Equal(t, "storage:pack", got.Items[1].Name)
-	assert.Equal(t, "running", got.Items[1].Status)
+	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[1].Name)
+	assert.Equal(t, "storage:pack", got.Items[2].Name)
+	assert.Equal(t, "running", got.Items[2].Status)
 
 	time.Sleep(100 * time.Millisecond)
 	_, _, found, err := client.Find(t.Context(), home)
@@ -778,11 +786,12 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 2)
+	require.Len(t, got.Items, 3)
 	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
 	assert.Equal(t, "running", got.Items[0].Status)
-	assert.Equal(t, "watch:sessions", got.Items[1].Name)
-	assert.Equal(t, "running", got.Items[1].Status)
+	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[1].Name)
+	assert.Equal(t, "watch:sessions", got.Items[2].Name)
+	assert.Equal(t, "running", got.Items[2].Status)
 
 	out, err = runCLI(t, "watch", "list", "--json")
 	require.NoError(t, err)

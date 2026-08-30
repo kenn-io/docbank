@@ -2,8 +2,10 @@
 package api_test
 
 import (
+	"crypto/md5" //nolint:gosec // Test coverage for explicitly auxiliary interoperability metadata.
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -138,19 +140,21 @@ func TestContentStreamsBlob(t *testing.T) {
 
 func TestFileNodeExposesBlobIdentity(t *testing.T) {
 	ts, s := newTestServer(t, nil)
-	n := createFileWithContent(t, ts, s, "/identity.txt", "identity")
+	n := createFileWithChecksum(t, s, "identity.txt", "identity")
 	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d", n.ID), nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var got api.Node
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, n.BlobHash, got.BlobHash)
+	md5sum := md5.Sum([]byte("identity")) //nolint:gosec // Explicit auxiliary MD5 assertion.
+	assert.Equal(t, hex.EncodeToString(md5sum[:]), got.MD5)
 	assert.Equal(t, n.Size, got.Size)
 	assert.Equal(t, n.CurrentVersionID, got.CurrentVersionID)
 }
 
 func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
 	ts, s := newTestServer(t, nil)
-	n := createFileWithContent(t, ts, s, "/versioned.txt", "stable version bytes")
+	n := createFileWithChecksum(t, s, "versioned.txt", "stable version bytes")
 	require.NotEmpty(t, n.CurrentVersionID)
 
 	resp, body := get(t, ts,
@@ -165,6 +169,8 @@ func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
 	assert.Equal(t, n.CurrentVersionID, version.ID)
 	assert.Equal(t, n.ID, version.NodeID)
 	assert.Equal(t, n.BlobHash, version.BlobHash)
+	md5sum := md5.Sum([]byte("stable version bytes")) //nolint:gosec // Explicit auxiliary MD5 assertion.
+	assert.Equal(t, hex.EncodeToString(md5sum[:]), version.MD5)
 	assert.Equal(t, "content_create", version.TransitionKind)
 	assert.Equal(t, int64(1), version.NodeRevision)
 
@@ -187,6 +193,21 @@ func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/nodes/"+strconv.FormatInt(s.RootID(), 10)+"/versions", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"not_file"`)
+}
+
+func createFileWithChecksum(t *testing.T, s *testStore, name, content string) store.Node {
+	t.Helper()
+	receipt, err := s.Blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))
+	require.NoError(t, err)
+	encoding, err := receipt.EncodingName()
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), name, receipt.Hash, receipt.Size,
+		"text/plain", store.BlobPhysical{
+			Encoding: encoding, StoredBytes: receipt.StoredSize,
+			PackEligible: receipt.PackEligible, Created: receipt.Created, MD5: receipt.MD5,
+		})
+	require.NoError(t, err)
+	return node
 }
 
 func TestContentReferenceLookupIsLogicalPaginatedAndRepresentationNeutral(t *testing.T) {
