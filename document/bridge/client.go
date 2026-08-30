@@ -38,6 +38,7 @@ const (
 	maxBridgeIdentifier     = 128
 	maxBridgeErrorMessage   = 1024
 	maxBridgeSecret         = 64 << 10
+	maxBridgeCleanupTimeout = 5 * time.Second
 )
 
 var _ document.RenditionProvider = (*Client)(nil)
@@ -137,18 +138,19 @@ func (client *Client) Render(
 	idempotencyDigest := sha256.Sum256(manifestJSON)
 	idempotencyKey := hex.EncodeToString(idempotencyDigest[:])
 	envelope, err := client.submit(ctx, upload, manifestJSON, idempotencyKey)
-	if err != nil {
-		return document.RenditionResult{}, err
-	}
 	jobID := envelope.JobID
 	jobStatus := envelope.Status
 	defer func() {
 		if jobID != "" && (jobStatus == JobQueued || jobStatus == JobRunning) {
-			cancelCtx, cancelRemote := context.WithTimeout(context.WithoutCancel(ctx), client.requestTimeout)
+			cleanupTimeout := min(client.requestTimeout, maxBridgeCleanupTimeout)
+			cancelCtx, cancelRemote := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 			defer cancelRemote()
 			_ = client.cancelJob(cancelCtx, jobID)
 		}
 	}()
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
 
 	var retryDelay time.Duration
 	for attempt := 0; ; attempt++ {
@@ -244,13 +246,13 @@ func (client *Client) submit(
 		return jobEnvelope{}, client.statusError(status, envelope)
 	}
 	if err := client.validateEnvelope(envelope, upload.Metadata()); err != nil {
-		return jobEnvelope{}, err
+		return envelope, err
 	}
 	if status == http.StatusOK && envelope.Status != JobCompleted {
-		return jobEnvelope{}, malformedError("bridge synchronous response is not completed", nil)
+		return envelope, malformedError("bridge synchronous response is not completed", nil)
 	}
 	if status == http.StatusAccepted && envelope.Status != JobQueued && envelope.Status != JobRunning {
-		return jobEnvelope{}, malformedError("bridge accepted response has an invalid status", nil)
+		return envelope, malformedError("bridge accepted response has an invalid status", nil)
 	}
 	return envelope, nil
 }

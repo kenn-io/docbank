@@ -872,6 +872,67 @@ func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
 	require.Eventually(t, func() bool { return deletes.Load() == 1 }, time.Second, time.Millisecond)
 }
 
+func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	var cleanupBudget atomic.Int64
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.Method {
+			case http.MethodPost:
+				_, err := io.Copy(io.Discard, request.Body)
+				require.NoError(t, err)
+				require.NoError(t, request.Body.Close())
+				return bridgeHTTPResponse(t, request, http.StatusAccepted,
+					pendingEnvelope(fixture, "job-cleanup-bound", JobQueued)), nil
+			case http.MethodGet:
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			case http.MethodDelete:
+				deadline, ok := request.Context().Deadline()
+				require.True(t, ok)
+				cleanupBudget.Store(int64(time.Until(deadline)))
+				return &http.Response{
+					StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request,
+				}, nil
+			default:
+				return nil, errors.New("unexpected bridge request")
+			}
+		})})
+	client.requestTimeout = maxBridgeTimeout
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	budget := time.Duration(cleanupBudget.Load())
+	assert.Positive(t, budget)
+	assert.LessOrEqual(t, budget, 5*time.Second)
+}
+
+func TestBridgeContractCancelsAcceptedJobAfterEnvelopeValidationFailure(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	var deletes atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodPost:
+			value := pendingEnvelope(fixture, "job-invalid-envelope", JobQueued)
+			value["retry_after_millis"] = int64((3 * time.Second) / time.Millisecond)
+			writeBridgeJSON(t, response, http.StatusAccepted, value)
+		case http.MethodDelete:
+			deletes.Add(1)
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			response.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	requireBridgeErrorContains(t, err, "retry delay")
+	assert.Equal(t, int64(1), deletes.Load())
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
