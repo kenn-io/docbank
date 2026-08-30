@@ -31,12 +31,11 @@ import (
 )
 
 type testUpload struct {
-	*bytes.Reader
+	io.ReadCloser
 
 	metadata document.AuthorizedUploadMetadata
 }
 
-func (upload *testUpload) Close() error                                { return nil }
 func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
 
 type testSecrets map[string]string
@@ -734,6 +733,45 @@ func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
 	})
 }
 
+func TestBridgeContractInterruptsBlockedUploadAfterRequestTimeout(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	sourceReader, sourceWriter := io.Pipe()
+	t.Cleanup(func() { _ = sourceWriter.Close() })
+	upload := &testUpload{ReadCloser: sourceReader, metadata: fixture.metadata}
+	drainDone := make(chan struct{})
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			go func() {
+				_, _ = io.Copy(io.Discard, request.Body)
+				close(drainDone)
+			}()
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})})
+	client.requestTimeout = 20 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		var providerError *document.RenditionProviderError
+		require.ErrorAs(t, err, &providerError)
+		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+	case <-time.After(200 * time.Millisecond):
+		_ = sourceReader.CloseWithError(errors.New("release blocked test upload"))
+		<-done
+		t.Fatal("bridge request timeout did not interrupt the blocked upload")
+	}
+	select {
+	case <-drainDone:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP request body reader did not stop")
+	}
+}
+
 func TestBridgeContractRejectsUnboundedOrExtendedStableErrors(t *testing.T) {
 	tests := map[string]map[string]any{
 		"empty message": {
@@ -1086,7 +1124,7 @@ func (fixture bridgeFixture) withStructuredArtifact(t *testing.T) bridgeFixture 
 }
 
 func (fixture bridgeFixture) upload() document.AuthorizedUpload {
-	return &testUpload{Reader: bytes.NewReader(fixture.source), metadata: fixture.metadata}
+	return &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(fixture.source)), metadata: fixture.metadata}
 }
 
 func newTestBridgeClient(

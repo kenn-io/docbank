@@ -46,6 +46,19 @@ type AuthorizedUpload interface {
 	Metadata() AuthorizedUploadMetadata
 }
 
+// InterruptAuthorizedUpload closes the source behind a provider upload so a
+// blocked read can stop. Provider adapters must call it only when abandoning
+// the rendition because the authorized stream cannot be verified afterward.
+func InterruptAuthorizedUpload(upload AuthorizedUpload) error {
+	if nilInterface(upload) {
+		return nil
+	}
+	if sealed, ok := upload.(*sealedAuthorizedUpload); ok {
+		return sealed.interrupt()
+	}
+	return upload.Close()
+}
+
 // RenditionTrustBoundary identifies where provider-controlled processing occurs.
 type RenditionTrustBoundary string
 
@@ -714,6 +727,14 @@ func (upload *sealedAuthorizedUpload) Close() error {
 	defer upload.mu.Unlock()
 	upload.providerClosed = true
 	return nil
+}
+
+func (upload *sealedAuthorizedUpload) interrupt() error {
+	closeErr := upload.source.Close()
+	upload.mu.Lock()
+	defer upload.mu.Unlock()
+	upload.providerClosed = true
+	return closeErr
 }
 
 func (upload *sealedAuthorizedUpload) verify(ctx context.Context) error {

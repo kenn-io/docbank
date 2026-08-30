@@ -234,11 +234,11 @@ func (client *Client) submit(
 		uploadDone <- writeErr
 		_ = bodyWriter.CloseWithError(writeErr)
 	}()
-	completion := multipartCompletion{reader: bodyReader, done: uploadDone}
+	completion := multipartCompletion{reader: bodyReader, upload: upload, done: uploadDone}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.origin+jobsPath, bodyReader)
 	if err != nil {
-		completion.abort(err)
-		return jobEnvelope{}, fmt.Errorf("bridge: create submission: %w", err)
+		return jobEnvelope{}, errors.Join(
+			fmt.Errorf("bridge: create submission: %w", err), completion.abort(err))
 	}
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", jobMediaType)
@@ -278,12 +278,14 @@ func (client *Client) submit(
 
 type multipartCompletion struct {
 	reader *io.PipeReader
+	upload document.AuthorizedUpload
 	done   <-chan error
 }
 
-func (completion multipartCompletion) abort(cause error) {
+func (completion multipartCompletion) abort(cause error) error {
 	completion.close(cause)
-	<-completion.done
+	interruptErr := document.InterruptAuthorizedUpload(completion.upload)
+	return errors.Join(interruptErr, <-completion.done)
 }
 
 func (completion multipartCompletion) close(cause error) {
@@ -295,11 +297,7 @@ func (completion multipartCompletion) wait(ctx context.Context) error {
 	case err := <-completion.done:
 		return err
 	case <-ctx.Done():
-		completion.close(ctx.Err())
-		if err := <-completion.done; err != nil {
-			return errors.Join(ctx.Err(), err)
-		}
-		return ctx.Err()
+		return errors.Join(ctx.Err(), completion.abort(ctx.Err()))
 	}
 }
 
@@ -381,7 +379,7 @@ func (client *Client) doJobRequest(
 	}
 	if err := client.authorizeRequest(request); err != nil {
 		if completion != nil {
-			completion.abort(err)
+			err = errors.Join(err, completion.abort(err))
 		} else if request.Body != nil {
 			_ = request.Body.Close()
 		}
@@ -390,7 +388,7 @@ func (client *Client) doJobRequest(
 	response, err := client.http.Do(request)
 	if err != nil {
 		if completion != nil {
-			completion.abort(err)
+			err = errors.Join(err, completion.abort(err))
 		}
 		if contextErr := parentCtx.Err(); contextErr != nil {
 			return jobEnvelope{}, 0, contextErr
@@ -422,9 +420,10 @@ func (client *Client) doJobRequest(
 			if cause == nil {
 				cause = errors.New("bridge rejected submission")
 			}
-			completion.close(cause)
+			completionErr = completion.abort(cause)
+		} else {
+			completionErr = completion.wait(requestCtx)
 		}
-		completionErr = completion.wait(requestCtx)
 	}
 	if responseErr != nil {
 		if completionErr != nil {
