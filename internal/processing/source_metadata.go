@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
@@ -39,7 +40,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v6")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v7")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -339,6 +340,13 @@ func (c *metadataCollector) extractPDF(data []byte) {
 	c.timestamp("created", "pdf.info", "CreationDate", metadata.Info.CreationDate)
 	c.timestamp("modified", "pdf.info", "ModDate", metadata.Info.ModDate)
 	c.integer("page_count", "pdf.info", "Pages", metadata.Pages)
+	for _, issue := range metadata.Issues {
+		namespace := "pdf.info"
+		if issue.SourceField == "XMP" {
+			namespace = "xmp"
+		}
+		c.warn("unparseable_pdf_metadata", namespace, issue.SourceField, "optional PDF metadata was omitted")
+	}
 	if len(metadata.XMP) != 0 {
 		c.extractXMLText(metadata.XMP, "xmp")
 	}
@@ -783,48 +791,117 @@ func (c *metadataCollector) extractCalendar(data []byte) {
 }
 
 func (c *metadataCollector) extractID3(data []byte) {
-	if len(data) >= 10 {
-		tagEnd := min(10+synchsafeInt(data[6:10]), len(data))
-		for offset := 10; offset+10 <= tagEnd; {
-			id := string(data[offset : offset+4])
-			if strings.Trim(id, "\x00") == "" {
-				break
-			}
-			size := int(binary.BigEndian.Uint32(data[offset+4 : offset+8]))
-			if data[3] >= 4 {
-				size = synchsafeInt(data[offset+4 : offset+8])
-			}
-			offset += 10
-			if size < 1 || offset+size > tagEnd {
-				break
-			}
-			payload := data[offset : offset+size]
-			offset += size
-			value := ""
-			if payload[0] == 0 || payload[0] == 3 {
-				value = strings.TrimRight(string(payload[1:]), "\x00")
-			}
-			if value == "" {
-				continue
-			}
+	if len(data) < 10 || data[3] < 3 || data[3] > 4 || data[5]&0xc0 != 0 {
+		return
+	}
+	tagSize := synchsafeInt(data[6:10])
+	if tagSize > len(data)-10 {
+		return
+	}
+	tagEnd := 10 + tagSize
+	for offset := 10; offset+10 <= tagEnd; {
+		id := string(data[offset : offset+4])
+		if strings.Trim(id, "\x00") == "" {
+			return
+		}
+		if strings.IndexFunc(id, func(value rune) bool {
+			return (value < 'A' || value > 'Z') && (value < '0' || value > '9')
+		}) >= 0 {
+			return
+		}
+		size := int(binary.BigEndian.Uint32(data[offset+4 : offset+8]))
+		if data[3] == 4 {
+			size = synchsafeInt(data[offset+4 : offset+8])
+		}
+		unsupportedFlags := data[offset+9]
+		offset += 10
+		if size < 1 || size > tagEnd-offset {
+			return
+		}
+		payload := data[offset : offset+size]
+		offset += size
+		if unsupportedFlags != 0 {
+			continue
+		}
+		value, ok := decodeID3Text(data[3], payload)
+		if ok {
 			c.addID3Frame(id, value)
 		}
 	}
-	if len(c.record.Fields) > 0 {
-		return
+}
+
+func decodeID3Text(version byte, payload []byte) (string, bool) {
+	if len(payload) < 2 {
+		return "", false
 	}
-	text := string(data)
-	for _, frame := range []string{"TIT2", "TPE1", "TALB", "TDRC"} {
-		_, after, ok := strings.Cut(text, frame)
+	var value string
+	switch payload[0] {
+	case 0:
+		runes := make([]rune, len(payload)-1)
+		for index, character := range payload[1:] {
+			runes[index] = rune(character)
+		}
+		value = string(runes)
+	case 1:
+		var ok bool
+		value, ok = decodeID3UTF16(payload[1:], true)
 		if !ok {
-			continue
+			return "", false
 		}
-		value := strings.TrimLeft(after, "\x00\x01\x02\x03\x04 \r\n")
-		if end := strings.IndexByte(value, 0); end >= 0 {
-			value = value[:end]
+	case 2:
+		if version != 4 {
+			return "", false
 		}
-		c.addID3Frame(frame, value)
+		var ok bool
+		value, ok = decodeID3UTF16(payload[1:], false)
+		if !ok {
+			return "", false
+		}
+	case 3:
+		if version != 4 || !utf8.Valid(payload[1:]) {
+			return "", false
+		}
+		value = string(payload[1:])
+	default:
+		return "", false
 	}
+	value = strings.Trim(value, "\x00")
+	value = strings.ReplaceAll(value, "\x00", "; ")
+	return value, value != ""
+}
+
+func decodeID3UTF16(data []byte, withBOM bool) (string, bool) {
+	var order binary.ByteOrder = binary.BigEndian
+	if withBOM {
+		if len(data) < 2 {
+			return "", false
+		}
+		switch {
+		case bytes.Equal(data[:2], []byte{0xfe, 0xff}):
+		case bytes.Equal(data[:2], []byte{0xff, 0xfe}):
+			order = binary.LittleEndian
+		default:
+			return "", false
+		}
+		data = data[2:]
+	}
+	if len(data)%2 != 0 {
+		return "", false
+	}
+	units := make([]uint16, len(data)/2)
+	for index := range units {
+		units[index] = order.Uint16(data[index*2:])
+	}
+	for index, unit := range units {
+		if unit >= 0xd800 && unit <= 0xdbff {
+			if index+1 >= len(units) || units[index+1] < 0xdc00 || units[index+1] > 0xdfff {
+				return "", false
+			}
+		} else if unit >= 0xdc00 && unit <= 0xdfff && (index == 0 || units[index-1] < 0xd800 || units[index-1] > 0xdbff) {
+			return "", false
+		}
+	}
+	return string(utf16.Decode(units)), true
 }
 func synchsafeInt(value []byte) int {
 	if len(value) < 4 {

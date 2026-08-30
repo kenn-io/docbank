@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,11 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
 		{name: "JPEG EXIF and GPS", payload: []byte("\xff\xd8\xff\xe1Exif\x00\x00ImageDescription=Synthetic image\x00GPSLatitude=51.5\x00GPSLongitude=-0.1\x00\xff\xd9"), keys: []string{"description", "image.exif.gps_latitude", "image.exif.gps_longitude"}, sensitive: "image.exif.gps_latitude"},
-		{name: "ID3 media tags", payload: []byte("ID3xxxxTIT2\x00Synthetic song\x00TPE1\x00Ada\x00TALB\x00Synthetic album\x00"), keys: []string{"creators", "media.id3.album", "title"}},
+		{name: "ID3 media tags", payload: syntheticID3Tag(4,
+			syntheticID3Frame{id: "TIT2", encoding: 3, text: []byte("Synthetic song")},
+			syntheticID3Frame{id: "TPE1", encoding: 3, text: []byte("Ada")},
+			syntheticID3Frame{id: "TALB", encoding: 3, text: []byte("Synthetic album")}),
+			keys: []string{"creators", "media.id3.album", "title"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			metadata := ExtractSourceMetadata(testCase.payload)
@@ -79,6 +84,59 @@ func TestExtractSourceMetadataUsesAuthoritativePDFInfo(t *testing.T) {
 	title, found := sourceMetadataString(metadata, "title")
 	require.True(t, found)
 	assert.Equal(t, "Quarterly report", title)
+}
+
+func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticMetadataPDFWithInfo(2,
+		"<< /Title 42 /Author (Ada) /Subject (Synthetic) >>"))
+	pageCount, found := sourceMetadataInteger(metadata, "page_count")
+	require.True(t, found)
+	assert.Equal(t, int64(2), pageCount)
+	creators, found := sourceMetadataStrings(metadata, "creators")
+	require.True(t, found)
+	assert.Equal(t, []string{"Ada"}, creators)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_pdf_metadata")
+	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "unparseable_pdf_pages")
+}
+
+func TestExtractSourceMetadataPreservesPDFPagesWhenXMPIsMalformed(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticMetadataPDFWithInfoAndMetadata(2,
+		"<< /Title (Quarterly report) >>",
+		"<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length 4 >>\nstream\nnope\nendstream"))
+	pageCount, found := sourceMetadataInteger(metadata, "page_count")
+	require.True(t, found)
+	assert.Equal(t, int64(2), pageCount)
+	title, found := sourceMetadataString(metadata, "title")
+	require.True(t, found)
+	assert.Equal(t, "Quarterly report", title)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_pdf_metadata")
+	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "unparseable_pdf_pages")
+}
+
+func TestExtractID3TextEncodingsAndFrameBoundary(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		version  byte
+		encoding byte
+		text     []byte
+		want     string
+	}{
+		{name: "Latin-1", version: 3, encoding: 0, text: []byte{'C', 'a', 'f', 0xe9}, want: "Café"},
+		{name: "UTF-16 with BOM", version: 3, encoding: 1, text: []byte{0xfe, 0xff, 0x00, 'C', 0x00, 'a', 0x00, 'f', 0x00, 0xe9}, want: "Café"},
+		{name: "UTF-16BE", version: 4, encoding: 2, text: []byte{0x00, 'C', 0x00, 'a', 0x00, 'f', 0x00, 0xe9}, want: "Café"},
+		{name: "UTF-8", version: 4, encoding: 3, text: []byte("Café"), want: "Café"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadata := ExtractSourceMetadata(syntheticID3TextTag(testCase.version, testCase.encoding, testCase.text))
+			title, found := sourceMetadataString(metadata, "title")
+			require.True(t, found)
+			assert.Equal(t, testCase.want, title)
+		})
+	}
+
+	metadata := ExtractSourceMetadata(append(syntheticID3TextTag(4, 3, nil), []byte("TIT2\x00Decoy audio bytes")...))
+	_, found := sourceMetadataString(metadata, "title")
+	assert.False(t, found)
 }
 
 func TestExtractXMLTextDoesNotCopyWrittenFrames(t *testing.T) {
@@ -261,6 +319,17 @@ func sourceMetadataWarningCodes(metadata document.SourceMetadataV1) []string {
 }
 
 func syntheticMetadataPDF(pageCount int) []byte {
+	return syntheticMetadataPDFWithInfo(pageCount,
+		"<< /Title (Quarterly report) /Author (Ada; Grace) /Subject (Synthetic) /Keywords (one,two) /CreationDate (D:20240102030405) >>")
+}
+
+func syntheticMetadataPDFWithInfo(pageCount int, info string) []byte {
+	xmp := `<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/"><rdf:RDF><rdf:Description xmp:ModifyDate="2024-01-03T04:05:06Z"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">Synthetic PDF description</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>`
+	return syntheticMetadataPDFWithInfoAndMetadata(pageCount, info,
+		fmt.Sprintf("<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n%s\nendstream", len(xmp), xmp))
+}
+
+func syntheticMetadataPDFWithInfoAndMetadata(pageCount int, info, metadata string) []byte {
 	kids := make([]string, 0, pageCount)
 	objects := []string{
 		"",
@@ -274,11 +343,9 @@ func syntheticMetadataPDF(pageCount int) []byte {
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pageCount)
 	objects = append(objects, "<< /Length 14 >>\nstream\n/Title (Decoy)\nendstream")
 	infoObject := len(objects) + 1
-	objects = append(objects,
-		"<< /Title (Quarterly report) /Author (Ada; Grace) /Subject (Synthetic) /Keywords (one,two) /CreationDate (D:20240102030405) >>")
-	xmp := `<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/"><rdf:RDF><rdf:Description xmp:ModifyDate="2024-01-03T04:05:06Z"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">Synthetic PDF description</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>`
+	objects = append(objects, info)
 	metadataObject := len(objects) + 1
-	objects = append(objects, fmt.Sprintf("<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n%s\nendstream", len(xmp), xmp))
+	objects = append(objects, metadata)
 	objects[0] = fmt.Sprintf("<< /Type /Catalog /Pages 2 0 R /Metadata %d 0 R /Count 99 >>", metadataObject)
 	var output bytes.Buffer
 	_, _ = output.WriteString("%PDF-1.4\n")
@@ -296,6 +363,44 @@ func syntheticMetadataPDF(pageCount int) []byte {
 		"trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n",
 		len(objects)+1, infoObject, xref)
 	return output.Bytes()
+}
+
+func syntheticID3TextTag(version, encoding byte, text []byte) []byte {
+	return syntheticID3Tag(version, syntheticID3Frame{id: "TIT2", encoding: encoding, text: text})
+}
+
+type syntheticID3Frame struct {
+	id       string
+	encoding byte
+	text     []byte
+}
+
+func syntheticID3Tag(version byte, frames ...syntheticID3Frame) []byte {
+	var body bytes.Buffer
+	for _, source := range frames {
+		payload := append([]byte{source.encoding}, source.text...)
+		frame := make([]byte, 10+len(payload))
+		copy(frame, source.id)
+		if version == 4 {
+			putSynchsafe(frame[4:8], len(payload))
+		} else {
+			binary.BigEndian.PutUint32(frame[4:8], uint32(len(payload)))
+		}
+		copy(frame[10:], payload)
+		_, _ = body.Write(frame)
+	}
+	tag := make([]byte, 10, 10+body.Len())
+	copy(tag, "ID3")
+	tag[3] = version
+	putSynchsafe(tag[6:10], body.Len())
+	return append(tag, body.Bytes()...)
+}
+
+func putSynchsafe(target []byte, value int) {
+	target[0] = byte(value >> 21 & 0x7f)
+	target[1] = byte(value >> 14 & 0x7f)
+	target[2] = byte(value >> 7 & 0x7f)
+	target[3] = byte(value & 0x7f)
 }
 
 func syntheticOOXML(t *testing.T) []byte {

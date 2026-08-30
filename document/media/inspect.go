@@ -1383,11 +1383,17 @@ func CountPDFPages(data []byte) (int64, error) {
 	return formatdetect.CountPDFPages(data)
 }
 
-// PDFMetadata contains metadata resolved from authoritative PDF objects.
+// PDFMetadata contains optional metadata resolved after core PDF validation.
 type PDFMetadata struct {
-	Pages int64
-	Info  PDFInfoMetadata
-	XMP   []byte
+	Pages  int64
+	Info   PDFInfoMetadata
+	XMP    []byte
+	Issues []PDFMetadataIssue
+}
+
+// PDFMetadataIssue identifies optional metadata that could not be resolved.
+type PDFMetadataIssue struct {
+	SourceField string
 }
 
 // PDFInfoMetadata contains the standard document information fields that
@@ -1402,6 +1408,10 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	if err != nil {
 		return PDFMetadata{}, err
 	}
+	issues := make([]PDFMetadataIssue, len(metadata.Issues))
+	for index, issue := range metadata.Issues {
+		issues[index] = PDFMetadataIssue{SourceField: issue.SourceField}
+	}
 	return PDFMetadata{
 		Pages: metadata.Pages,
 		Info: PDFInfoMetadata{
@@ -1409,7 +1419,7 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 			Subject: metadata.Info.Subject, Keywords: metadata.Info.Keywords,
 			CreationDate: metadata.Info.CreationDate, ModDate: metadata.Info.ModDate,
 		},
-		XMP: metadata.XMP,
+		XMP: metadata.XMP, Issues: issues,
 	}, nil
 }
 

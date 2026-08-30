@@ -188,12 +188,18 @@ type PDFMeasurements struct {
 	MaxEntryBytes   int64
 }
 
-// PDFMetadata contains metadata resolved from the authoritative trailer and
-// catalog objects in one validated PDF object graph.
+// PDFMetadata contains optional metadata resolved after the authoritative core
+// object graph and page tree have been validated.
 type PDFMetadata struct {
-	Pages int64
-	Info  PDFInfoMetadata
-	XMP   []byte
+	Pages  int64
+	Info   PDFInfoMetadata
+	XMP    []byte
+	Issues []PDFMetadataIssue
+}
+
+// PDFMetadataIssue identifies optional metadata that could not be resolved.
+type PDFMetadataIssue struct {
+	SourceField string
 }
 
 // PDFInfoMetadata contains the standard document information dictionary
@@ -271,7 +277,7 @@ func CountPDFPages(data []byte) (int64, error) {
 // stream instead of scanning unrelated object or page-stream bytes.
 func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	sourceBytes := int64(len(data))
-	context, err := validatePDFObjectGraph(data, PDFLimits{
+	context, err := readPDFMetadataObjectGraph(data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -286,7 +292,7 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	if context.Info != nil {
 		dictionary, err := context.DereferenceDict(*context.Info)
 		if err != nil {
-			return PDFMetadata{}, fmt.Errorf("resolve PDF information dictionary: %w", err)
+			metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "Info"})
 		}
 		if dictionary != nil {
 			for _, field := range []struct {
@@ -306,7 +312,8 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 				}
 				text, err := context.DereferenceStringOrHexLiteral(object, model.V10, nil)
 				if err != nil {
-					return PDFMetadata{}, fmt.Errorf("resolve PDF information field %s: %w", field.name, err)
+					metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: field.name})
+					continue
 				}
 				*field.value = text
 			}
@@ -315,16 +322,10 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	if object, found := context.RootDict.Find("Metadata"); found {
 		stream, _, err := context.DereferenceStreamDict(object)
 		if err != nil {
-			return PDFMetadata{}, fmt.Errorf("resolve PDF catalog metadata: %w", err)
-		}
-		if stream != nil {
+			metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "XMP"})
+		} else if stream != nil {
 			if err := stream.DecodeWithLimit(sourceBytes); err != nil {
-				if !errors.Is(err, filter.ErrUnsupportedFilter) {
-					if errors.Is(err, filter.ErrDecodeLimitExceeded) {
-						return PDFMetadata{}, ErrPDFExpandedBytes
-					}
-					return PDFMetadata{}, fmt.Errorf("decode PDF catalog metadata: %w", err)
-				}
+				metadata.Issues = append(metadata.Issues, PDFMetadataIssue{SourceField: "XMP"})
 			} else {
 				metadata.XMP = append([]byte(nil), stream.Content...)
 			}
@@ -333,25 +334,64 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	return metadata, nil
 }
 
-func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+	configuration := pdfConfiguration(len(data), limits)
+	context, err := api.ReadContext(bytes.NewReader(data), configuration)
+	if err != nil {
+		return nil, fmt.Errorf("read PDF object graph: %w", err)
+	}
+	if context.Encrypt != nil {
+		return nil, ErrPDFEncrypted
+	}
+	if context.RootDict == nil {
+		return nil, errors.New("PDF catalog is missing")
+	}
+	info := context.Info
+	context.Info = nil
+	metadata, hasMetadata := context.RootDict.Find("Metadata")
+	if hasMetadata {
+		context.RootDict.Delete("Metadata")
+	}
+	err = api.ValidateContext(context)
+	if err == nil {
+		var external bool
+		external, err = pdfHasExternalReference(context)
+		if external {
+			err = ErrPDFExternalReference
+		}
+	}
+	context.Info = info
+	if hasMetadata {
+		context.RootDict.Insert("Metadata", metadata)
+	}
+	if err != nil {
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+			return nil, ErrPDFExpandedBytes
+		}
+		return nil, fmt.Errorf("validate PDF object graph: %w", err)
+	}
+	return context, nil
+}
+
+func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
 	resourceLimits := model.DefaultResourceLimits()
 	resourceLimits.MaxStreamBytes = limits.MaxEntryBytes
 	resourceLimits.MaxDecodeBytes = min(limits.MaxEntryBytes, limits.MaxExpandedBytes)
 	resourceLimits.MaxImageBytes = limits.MaxExpandedBytes
 	resourceLimits.MaxImagePixels = limits.MaxExpandedBytes
-	resourceLimits.MaxObjectCount = min(resourceLimits.MaxObjectCount, len(data)+1)
-	resourceLimits.MaxXRefEntries = min(resourceLimits.MaxXRefEntries, len(data)+1)
-	resourceLimits.MaxObjectStreamCount = min(resourceLimits.MaxObjectStreamCount, len(data)+1)
+	resourceLimits.MaxObjectCount = min(resourceLimits.MaxObjectCount, sourceBytes+1)
+	resourceLimits.MaxXRefEntries = min(resourceLimits.MaxXRefEntries, sourceBytes+1)
+	resourceLimits.MaxObjectStreamCount = min(resourceLimits.MaxObjectStreamCount, sourceBytes+1)
 	resourceLimits.MaxObjectStreamFirst = min(resourceLimits.MaxObjectStreamFirst, limits.MaxEntryBytes)
 	resourceLimits.MaxRecursionDepth = maxPDFPageTreeDepth
-
-	configuration := &model.Configuration{
-		Reader15:       true,
-		ValidationMode: model.ValidationRelaxed,
-		Offline:        true,
-		Cmd:            model.VALIDATE,
-		Limits:         resourceLimits,
+	return &model.Configuration{
+		Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
+		Cmd: model.VALIDATE, Limits: resourceLimits,
 	}
+}
+
+func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+	configuration := pdfConfiguration(len(data), limits)
 	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
 	if err != nil {
 		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
