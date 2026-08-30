@@ -239,7 +239,8 @@ func (client *Client) Render(
 	var result doclingResult
 	resultAttempts := 0
 	for {
-		result, err = client.result(totalCtx, expiresAt, usage, task.id)
+		result, err = client.result(totalCtx, expiresAt, usage, task.id,
+			int64(authorization.MaxTotalResultBytes))
 		resultAttempts++
 		if err == nil {
 			break
@@ -259,9 +260,13 @@ func (client *Client) Render(
 		}
 	}
 	partialSuccess = partialSuccess || result.status == "partial_success"
-	if result.filename != "" && result.filename != metadata.Filename {
+	if authorization.DiscloseFilename && result.filename != metadata.Filename {
 		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
 			"Docling result source identity does not match upload", nil)
+	}
+	if injectsDocbankFrontmatter(result.markdown) {
+		return document.RenditionResult{}, malformedError(
+			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
 	evidence, structured, usable := mapEvidence(result.document, authorization.MediaFamily)
 	if !usable {
@@ -357,7 +362,8 @@ func (client *Client) submit(
 	if err := writer.Close(); err != nil {
 		return taskResponse{}, classifiedError(document.RenditionErrorTransient, "could not prepare Docling upload", err)
 	}
-	bodyBytes, status, err := client.request(ctx, expiresAt, usage, http.MethodPost, convertPath, writer.FormDataContentType(), body.Bytes())
+	bodyBytes, status, err := client.request(ctx, expiresAt, usage, http.MethodPost, convertPath,
+		writer.FormDataContentType(), body.Bytes(), client.maxResponseBytes)
 	if err != nil {
 		if document.IsRenditionProviderErrorRetryable(err) {
 			return taskResponse{}, ambiguousSubmissionError()
@@ -376,7 +382,8 @@ func ambiguousSubmissionError() error {
 }
 
 func (client *Client) poll(ctx context.Context, expiresAt time.Time, usage *requestUsage, taskID string) (taskResponse, error) {
-	body, status, err := client.request(ctx, expiresAt, usage, http.MethodGet, pollPath+taskID, "", nil)
+	body, status, err := client.request(ctx, expiresAt, usage, http.MethodGet, pollPath+taskID,
+		"", nil, client.maxResponseBytes)
 	if err != nil {
 		return taskResponse{}, err
 	}
@@ -393,8 +400,11 @@ func (client *Client) poll(ctx context.Context, expiresAt time.Time, usage *requ
 	return task, nil
 }
 
-func (client *Client) result(ctx context.Context, expiresAt time.Time, usage *requestUsage, taskID string) (doclingResult, error) {
-	body, status, err := client.request(ctx, expiresAt, usage, http.MethodGet, resultPath+taskID, "", nil)
+func (client *Client) result(
+	ctx context.Context, expiresAt time.Time, usage *requestUsage, taskID string, maxResultBytes int64,
+) (doclingResult, error) {
+	body, status, err := client.request(ctx, expiresAt, usage, http.MethodGet, resultPath+taskID,
+		"", nil, maxResultBytes)
 	if err != nil {
 		return doclingResult{}, err
 	}
@@ -439,7 +449,8 @@ func (client *Client) result(ctx context.Context, expiresAt time.Time, usage *re
 }
 
 func (client *Client) request(
-	ctx context.Context, expiresAt time.Time, usage *requestUsage, method, path, contentType string, body []byte,
+	ctx context.Context, expiresAt time.Time, usage *requestUsage, method, path, contentType string,
+	body []byte, maxResponseBytes int64,
 ) ([]byte, int, error) {
 	if err := checkOperation(ctx, expiresAt); err != nil {
 		return nil, 0, err
@@ -472,7 +483,7 @@ func (client *Client) request(
 		return nil, 0, classifiedError(document.RenditionErrorTransient, "Docling request failed", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	responseBody, err := readBounded(response.Body, client.maxResponseBytes)
+	responseBody, err := readBounded(response.Body, min(maxResponseBytes, client.maxResponseBytes))
 	usage.outputBytes += int64(len(responseBody))
 	if err != nil {
 		return nil, response.StatusCode, err
@@ -637,6 +648,13 @@ func degradedEvidence(family, markdown string) document.SourceEvidenceV1 {
 		Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: markdown,
 			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone}}},
 	}
+}
+
+func injectsDocbankFrontmatter(markdown []byte) bool {
+	frontmatter := bytes.HasPrefix(markdown, []byte("---\n")) ||
+		bytes.HasPrefix(markdown, []byte("---\r\n")) ||
+		bytes.HasPrefix(markdown, []byte("---\r"))
+	return frontmatter && bytes.Contains(markdown, []byte("docbank-sanitized-markdown/v1"))
 }
 
 func allowsStructured(authorization document.RenditionAuthorization) bool {

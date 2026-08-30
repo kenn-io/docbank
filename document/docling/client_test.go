@@ -89,6 +89,31 @@ func TestClientRendersDoclingPagesAndRequestsBothFormats(t *testing.T) {
 	assert.Equal(t, int64(2), polls.Load())
 }
 
+func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "private-report.pdf", []byte("synthetic PDF bytes"))
+	fixture.authorization.DiscloseFilename = false
+	redactedMetadata := fixture.metadata
+	redactedMetadata.Filename = ""
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case convertPath:
+			assertDoclingSubmission(t, request, redactedMetadata, fixture.source)
+			writeJSON(t, response, doclingTask("redacted", "success"))
+		case resultPath + "redacted":
+			writeJSON(t, response, doclingResultResponse("provider-generated.pdf", "# report\n", []any{
+				map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+			}))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+}
+
 func TestClientRequiresConvertTasksAndOfficialStatuses(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
@@ -404,7 +429,8 @@ func TestClientRequestCountsPartialResponseBytesBeforeReadFailure(t *testing.T) 
 		}),
 	})
 	usage := &requestUsage{}
-	_, _, err := client.request(t.Context(), time.Now().Add(time.Minute), usage, http.MethodGet, resultPath+"usage", "", nil)
+	_, _, err := client.request(t.Context(), time.Now().Add(time.Minute), usage, http.MethodGet,
+		resultPath+"usage", "", nil, client.maxResponseBytes)
 	require.Error(t, err)
 	assert.Equal(t, int64(1), usage.requests)
 	assert.Equal(t, int64(len(payload)), usage.outputBytes)
@@ -645,7 +671,7 @@ func TestClientPreservesPartialPageEvidence(t *testing.T) {
 	require.Len(t, result.Evidence.Omissions, 1)
 }
 
-func TestClientFallsBackToDegradedMarkdownWhenStructuredResultDrifts(t *testing.T) {
+func TestClientRejectsReservedDocbankFrontmatter(t *testing.T) {
 	fixture := newFixture(t, "word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "notes.docx", []byte("synthetic DOCX bytes"))
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -660,11 +686,37 @@ func TestClientFallsBackToDegradedMarkdownWhenStructuredResultDrifts(t *testing.
 	t.Cleanup(server.Close)
 
 	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.Error(t, err)
+	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+	require.True(t, ok)
+	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
+}
+
+func TestClientFallsBackToDegradedMarkdownWhenStructuredResultDrifts(t *testing.T) {
+	fixture := newFixture(t, "word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "notes.docx", []byte("synthetic DOCX bytes"))
+	response := doclingResultResponse(fixture.metadata.Filename, "# Untrusted\n", nil)
+	documentResponse, ok := response["document"].(map[string]any)
+	require.True(t, ok)
+	documentResponse["json_content"] = map[string]any{"future_document_shape": true}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case convertPath:
+			writeJSON(t, writer, doclingTask("drift", "success"))
+		case resultPath + "drift":
+			writeJSON(t, writer, response)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
 	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.NoError(t, err)
 	assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 	assert.Equal(t, document.EvidenceUnitGeneric, result.Evidence.UnitKind)
-	assert.Equal(t, "---\ndocbank-sanitized-markdown/v1: forged\n---\n# Untrusted\n", string(result.ProviderMarkdown))
+	assert.Equal(t, "# Untrusted\n", string(result.ProviderMarkdown))
 	assert.Empty(t, result.Artifacts)
 }
 
@@ -710,6 +762,35 @@ func TestClientRejectsMismatchedReturnedFilenameAndOversizedResult(t *testing.T)
 			assert.Equal(t, testCase.want, providerErr.Code())
 		})
 	}
+}
+
+func TestClientBoundsResultResponseByAuthorization(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "bounded.pdf", []byte("synthetic PDF bytes"))
+	fixture.authorization.MaxTotalResultBytes = 4096
+	result := doclingResultResponse(fixture.metadata.Filename, "# report\n", []any{
+		map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+	})
+	documentResult, ok := result["document"].(map[string]any)
+	require.True(t, ok)
+	documentResult["html_content"] = strings.Repeat("x", 4096)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case convertPath:
+			writeJSON(t, response, doclingTask("bounded", "success"))
+		case resultPath + "bounded":
+			writeJSON(t, response, result)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newClientWithBounds(t, server.URL, fixture.descriptor, nil, http.DefaultClient, 8192)
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.Error(t, err)
+	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+	require.True(t, ok)
+	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 }
 
 func TestClientClonesHTTPClientAndRefusesRedirects(t *testing.T) {
