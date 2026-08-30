@@ -255,8 +255,12 @@ func (client *Client) submit(
 			return envelope, classifiedError(document.RenditionErrorAmbiguousSubmission,
 				"bridge submission outcome is ambiguous", 0, err)
 		}
-		if _, ok := errors.AsType[*document.RenditionProviderError](err); ok {
-			return envelope, err
+		if providerError, exact := err.(*document.RenditionProviderError); exact { //nolint:errorlint // the outer contract requires this exact top-level type
+			return envelope, providerError
+		}
+		if providerError, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+			return envelope, classifiedError(providerError.Code(),
+				"bridge request failed during upload cleanup", providerError.RetryAfter(), err)
 		}
 		return envelope, classifiedError(document.RenditionErrorAmbiguousSubmission,
 			"bridge submission outcome is ambiguous", 0, err)

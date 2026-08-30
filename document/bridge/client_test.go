@@ -658,7 +658,7 @@ func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *tes
 			})})
 		baseline := runtime.NumGoroutine()
 		for range 10 {
-			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			var providerError *document.RenditionProviderError
 			require.ErrorAs(t, err, &providerError)
 			assert.Equal(t, document.RenditionErrorAuthentication, providerError.Code())
