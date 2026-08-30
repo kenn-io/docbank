@@ -141,7 +141,7 @@ func (client *Client) Render(
 	jobID := envelope.JobID
 	jobStatus := envelope.Status
 	defer func() {
-		if jobID != "" && (jobStatus == JobQueued || jobStatus == JobRunning) {
+		if jobID != "" && jobStatus != JobCompleted && jobStatus != JobFailed && jobStatus != JobCanceled {
 			cleanupTimeout := min(client.requestTimeout, maxBridgeCleanupTimeout)
 			cancelCtx, cancelRemote := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 			defer cancelRemote()
@@ -386,32 +386,42 @@ func (client *Client) doJobRequest(
 		return jobEnvelope{}, 0, err
 	}
 	defer func() { _ = response.Body.Close() }()
+	var envelope jobEnvelope
+	var responseErr error
+	if response.StatusCode != http.StatusNotFound && response.StatusCode != http.StatusGone {
+		if err := requireMediaType(response.Header.Get("Content-Type"), jobMediaType); err != nil {
+			responseErr = err
+		} else {
+			body, err := readBounded(response.Body, client.maxResponseBytes)
+			if err != nil {
+				responseErr = err
+			} else if len(body) != 0 {
+				if err := json.Unmarshal(body, &envelope); err != nil {
+					responseErr = malformedError("bridge response JSON is invalid", err)
+				}
+			}
+		}
+	}
 	var completionErr error
 	if completion != nil {
+		if responseErr != nil ||
+			(response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted) {
+			cause := responseErr
+			if cause == nil {
+				cause = errors.New("bridge rejected submission")
+			}
+			completion.close(cause)
+		}
 		completionErr = completion.wait(requestCtx)
 	}
-	withCompletionError := func(responseErr error) error {
-		if completionErr == nil {
-			return responseErr
+	if responseErr != nil {
+		if completionErr != nil {
+			responseErr = errors.Join(completionErr, responseErr)
 		}
-		return errors.Join(completionErr, responseErr)
+		return jobEnvelope{}, response.StatusCode, responseErr
 	}
-	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
-		return jobEnvelope{}, response.StatusCode, completionErr
-	}
-	if err := requireMediaType(response.Header.Get("Content-Type"), jobMediaType); err != nil {
-		return jobEnvelope{}, response.StatusCode, withCompletionError(err)
-	}
-	body, err := readBounded(response.Body, client.maxResponseBytes)
-	if err != nil {
-		return jobEnvelope{}, response.StatusCode, withCompletionError(err)
-	}
-	var envelope jobEnvelope
-	if len(body) != 0 {
-		if err := json.Unmarshal(body, &envelope); err != nil {
-			return jobEnvelope{}, response.StatusCode,
-				withCompletionError(malformedError("bridge response JSON is invalid", err))
-		}
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
+		return envelope, response.StatusCode, nil
 	}
 	return envelope, response.StatusCode, completionErr
 }

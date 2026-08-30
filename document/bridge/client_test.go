@@ -119,6 +119,24 @@ func TestBridgeContractCancelsAcceptedResponseAfterUploadFailure(t *testing.T) {
 	assert.Equal(t, int64(1), deletes.Load())
 }
 
+func TestBridgeContractPreservesEarlyHTTPErrorWhileUploadIsBlocked(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			value := pendingEnvelope(fixture, "job-rejected-upload", JobFailed)
+			value["error"] = map[string]any{
+				"code": document.RenditionErrorRateLimited, "message": "synthetic rate limit",
+			}
+			return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
+		})})
+	client.requestTimeout = 20 * time.Millisecond
+
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorRateLimited, providerError.Code())
+}
+
 func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	fixture.authorization.DiscloseFilename = false
@@ -938,6 +956,30 @@ func TestBridgeContractCancelsAcceptedJobAfterEnvelopeValidationFailure(t *testi
 
 	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 	requireBridgeErrorContains(t, err, "retry delay")
+	assert.Equal(t, int64(1), deletes.Load())
+}
+
+func TestBridgeContractCancelsAcceptedJobWithInvalidStatus(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	var deletes atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodPost:
+			assertMultipartRequest(t, request, fixture.authorization, fixture.source)
+			writeBridgeJSON(t, response, http.StatusAccepted,
+				pendingEnvelope(fixture, "job-invalid-status", JobStatus("future")))
+		case http.MethodDelete:
+			deletes.Add(1)
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			response.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	requireBridgeErrorContains(t, err, "invalid status")
 	assert.Equal(t, int64(1), deletes.Load())
 }
 
