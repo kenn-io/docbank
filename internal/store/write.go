@@ -256,6 +256,11 @@ func (s *Store) EnsureBlobTx(tx *sql.Tx, hash string, size int64, physical ...Bl
 	if err != nil {
 		return fmt.Errorf("checking blob %s insertion: %w", hash, err)
 	}
+	if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
+		BlobSHA256: hash, MD5: storage.MD5,
+	}); err != nil {
+		return err
+	}
 	if inserted != 0 {
 		return writeLooseLocationTx(
 			context.Background(), tx, s.primaryStoreID, hash, storage,

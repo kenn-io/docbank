@@ -103,6 +103,12 @@ type metadataBlob struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type metadataBlobChecksum struct {
+	Type       string `json:"type"`
+	BlobSHA256 string `json:"blob_sha256"`
+	MD5        string `json:"md5"`
+}
+
 type metadataNode struct {
 	Type             string  `json:"type"`
 	ID               int64   `json:"id"`
@@ -308,6 +314,9 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportBlobs(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
+	if err := exportBlobChecksums(ctx, tx, write, backupScoped); err != nil {
+		return err
+	}
 	if err := exportNodes(ctx, tx, write); err != nil {
 		return err
 	}
@@ -381,6 +390,49 @@ ORDER BY b.hash`
 		}
 	}
 	return rowsError("blob", rows)
+}
+
+func exportBlobChecksums(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	var checksumTable bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='blob_checksums'
+	)`).Scan(&checksumTable); err != nil {
+		return fmt.Errorf("detecting blob checksum schema: %w", err)
+	}
+	// Released source layouts predate auxiliary checksums. Their deterministic
+	// cutover stream intentionally omits records for a later verified backfill.
+	if !checksumTable {
+		return nil
+	}
+	query := `SELECT blob_sha256,md5 FROM blob_checksums ORDER BY blob_sha256`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+SELECT c.blob_sha256,c.md5 FROM blob_checksums c
+JOIN backup_authorized_blobs a ON a.hash=c.blob_sha256
+ORDER BY c.blob_sha256`
+	}
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("exporting blob checksums: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataBlobChecksum{Type: metadataBlobChecksumType}
+		if err := rows.Scan(&record.BlobSHA256, &record.MD5); err != nil {
+			return fmt.Errorf("scanning blob checksum metadata: %w", err)
+		}
+		if err := validateBlobChecksumRecord(BlobChecksumRecord{
+			BlobSHA256: record.BlobSHA256, MD5: record.MD5,
+		}); err != nil {
+			return fmt.Errorf("validating blob checksum metadata for export: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("blob checksum", rows)
 }
 
 func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -677,6 +729,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		SELECT
 		  (SELECT COUNT(*) FROM nodes),
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
+		    + (SELECT COUNT(*) FROM blob_checksums)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
@@ -829,6 +882,14 @@ func (s *Store) importMetadataRecord(
 			v.Size, maxPackEligibleBytes, blobStoreRolePrimary,
 		)
 		return err
+	case metadataBlobChecksumType:
+		var v metadataBlobChecksum
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return ensureBlobChecksumTx(tx, BlobChecksumRecord{
+			BlobSHA256: v.BlobSHA256, MD5: v.MD5,
+		})
 	case "node":
 		var v metadataNode
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -984,12 +1045,14 @@ const (
 	metadataAuditScopeType                = "audit_scope"
 	metadataAuditMembershipType           = "audit_membership"
 	metadataAuditRecordType               = "audit_record"
+	metadataBlobChecksumType              = "blob_checksum"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
+	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},

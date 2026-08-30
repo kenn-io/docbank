@@ -25,6 +25,7 @@ type Node struct {
 	Kind             string `json:"kind" enum:"dir,file"`
 	CurrentVersionID string `json:"current_version_id,omitzero" format:"uuid"`
 	BlobHash         string `json:"blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
+	MD5              string `json:"md5,omitzero" pattern:"^[0-9a-f]{32}$"`
 	Size             int64  `json:"size"`
 	MimeType         string `json:"mime_type,omitzero"`
 	Revision         int64  `json:"revision"`
@@ -83,6 +84,7 @@ type ContentVersion struct {
 	ID                    string  `json:"id" format:"uuid"`
 	NodeID                int64   `json:"node_id"`
 	BlobHash              string  `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	MD5                   string  `json:"md5,omitzero" pattern:"^[0-9a-f]{32}$"`
 	Size                  int64   `json:"size" minimum:"0"`
 	MimeType              string  `json:"mime_type,omitzero"`
 	RecordedAt            string  `json:"recorded_at"`
@@ -923,7 +925,7 @@ type BackupRestoreEvent struct {
 func fromStoreNode(n store.Node) Node {
 	out := Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Kind: n.Kind,
-		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash,
+		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash, MD5: n.MD5,
 		Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
 		CreatedAt: n.CreatedAt, ModifiedAt: n.ModifiedAt,
 	}
@@ -935,7 +937,7 @@ func fromStoreNode(n store.Node) Node {
 
 func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 	return ContentVersion{
-		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, Size: v.Size,
+		ID: v.ID, NodeID: v.NodeID, BlobHash: v.BlobHash, MD5: v.MD5, Size: v.Size,
 		MimeType: v.MimeType, RecordedAt: v.RecordedAt, NodeRevision: v.NodeRevision,
 		IntroducedOperationID: v.IntroducedOperationID,
 		TransitionKind:        v.TransitionKind, SourceVersionID: v.SourceVersionID,

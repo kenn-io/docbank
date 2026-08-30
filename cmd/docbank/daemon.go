@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docweb "go.kenn.io/docbank/internal/web"
 )
@@ -149,6 +150,24 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
+	if err := jobSupervisor.Start("maintenance:auxiliary-checksums", func(ctx context.Context) error {
+		for {
+			completed := 0
+			err := operationGate.MaintainContext(ctx, func() error {
+				var backfillErr error
+				completed, backfillErr = processing.BackfillAuxiliaryChecksums(ctx, s, blobs, 100)
+				return backfillErr
+			})
+			if err != nil {
+				return err
+			}
+			if completed == 0 {
+				return nil
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
+	}
 	placementRunner := blob.PlacementRunner{
 		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
 	}

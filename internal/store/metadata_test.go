@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
 	"go.kenn.io/kit/packstore"
 )
@@ -41,6 +42,50 @@ func TestExportMetadataPreservesV1JavaScriptSeparatorEscapes(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	assert.Contains(t, exported.String(), `"name":"line\u2028paragraph\u2029"`)
 	assert.NotContains(t, exported.String(), "line\u2028paragraph\u2029")
+}
+
+func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		driver docsqlite.Driver
+	}{
+		{name: "default", driver: DefaultSQLiteDriver()},
+		{name: "pure Go", driver: modernc.Driver{}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			source, err := Open(filepath.Join(t.TempDir(), "source.db"), testCase.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, source.Close()) })
+			const md5sum = "f6fdffe48c908deb0f4c3bd36c032e72"
+			_, err = source.CreateFile(t.Context(), source.RootID(), "source.bin",
+				metadataHashCurrent, 9, "application/octet-stream", BlobPhysical{
+					Encoding: "raw", StoredBytes: 9, PackEligible: true,
+					Created: true, MD5: md5sum,
+				})
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+			assert.Contains(t, exported.String(),
+				`{"type":"blob_checksum","blob_sha256":"`+metadataHashCurrent+`","md5":"`+md5sum+`"}`)
+
+			target, err := Open(filepath.Join(t.TempDir(), "target.db"), testCase.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, target.Close()) })
+			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+			record, err := target.BlobChecksums(t.Context(), metadataHashCurrent)
+			require.NoError(t, err)
+			assert.Equal(t, md5sum, record.MD5)
+
+			malformed := strings.Replace(exported.String(), md5sum, strings.ToUpper(md5sum), 1)
+			rejected, err := Open(filepath.Join(t.TempDir(), "rejected.db"), testCase.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rejected.Close()) })
+			err = rejected.ImportMetadata(t.Context(), strings.NewReader(malformed))
+			require.ErrorContains(t, err, "canonical lowercase MD5")
+			_, err = rejected.BlobChecksums(t.Context(), metadataHashCurrent)
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
 }
 
 func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {

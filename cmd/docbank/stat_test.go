@@ -32,6 +32,7 @@ func TestStatCLIInspectsLiveAndTrashedNodes(t *testing.T) {
 	assert.Contains(t, out, "kind:      file")
 	assert.Contains(t, out, "version:   "+node.CurrentVersionID)
 	assert.Contains(t, out, "sha256:    "+node.BlobHash)
+	assert.Contains(t, out, "md5:       "+node.MD5)
 	assert.Contains(t, out, "mime:      \"text/plain; charset=utf-8\"")
 
 	out, err = runCLI(t, "stat", selector, "--json")

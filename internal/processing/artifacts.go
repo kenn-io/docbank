@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // Auxiliary MD5 is interoperability metadata; SHA-256 remains authoritative.
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 // StagedArtifact binds one immutable catalog member to its retained payload.
@@ -41,6 +43,7 @@ type StagedRendition struct {
 type PublishedArtifact struct {
 	ID   string
 	Hash string
+	MD5  string
 	Size int64
 }
 
@@ -70,6 +73,69 @@ type renditionPublicationCatalog interface {
 		ctx context.Context, attachment store.RenditionAttachmentRecord,
 		head store.RenditionHeadRecord, generationID string,
 	) error
+}
+
+type auxiliaryChecksumCatalog interface {
+	MissingBlobChecksumTargets(ctx context.Context, limit int) ([]store.BlobChecksumTarget, error)
+	RecordVerifiedBlobChecksum(ctx context.Context, record store.BlobChecksumRecord) error
+}
+
+type auxiliaryChecksumBlobReader interface {
+	OpenStreamContext(
+		ctx context.Context, hash string,
+	) (packstore.VerifiedReadCloser, int64, error)
+}
+
+// BackfillAuxiliaryChecksums computes one resumable batch over exact retained
+// originals and sanitized Markdown. Progress is committed only after the
+// mixed-store stream reaches verified EOF with its cataloged size.
+func BackfillAuxiliaryChecksums(
+	ctx context.Context, catalog auxiliaryChecksumCatalog,
+	blobs auxiliaryChecksumBlobReader, limit int,
+) (int, error) {
+	if catalog == nil || blobs == nil {
+		return 0, errors.New("auxiliary checksum backfill requires catalog and blob stores")
+	}
+	targets, err := catalog.MissingBlobChecksumTargets(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	completed := 0
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return completed, err
+		}
+		stream, size, err := blobs.OpenStreamContext(ctx, target.BlobSHA256)
+		if err != nil {
+			return completed, fmt.Errorf("opening checksum target %s: %w", target.BlobSHA256, err)
+		}
+		if size != target.Size {
+			_ = stream.Close()
+			return completed, fmt.Errorf(
+				"checksum target %s size changed: catalog=%d stream=%d",
+				target.BlobSHA256, target.Size, size,
+			)
+		}
+		digest := md5.New() //nolint:gosec // Auxiliary MD5 never grants content authority.
+		read, copyErr := io.Copy(digest, stream)
+		closeErr := stream.Close()
+		if err := errors.Join(copyErr, closeErr); err != nil {
+			return completed, fmt.Errorf("verifying checksum target %s: %w", target.BlobSHA256, err)
+		}
+		if read != target.Size {
+			return completed, fmt.Errorf(
+				"checksum target %s length changed: catalog=%d read=%d",
+				target.BlobSHA256, target.Size, read,
+			)
+		}
+		if err := catalog.RecordVerifiedBlobChecksum(ctx, store.BlobChecksumRecord{
+			BlobSHA256: target.BlobSHA256, MD5: hex.EncodeToString(digest.Sum(nil)),
+		}); err != nil {
+			return completed, fmt.Errorf("recording checksum target %s: %w", target.BlobSHA256, err)
+		}
+		completed++
+	}
+	return completed, nil
 }
 
 // ArtifactPublisher verifies retained bytes, stages immutable catalog and FTS
@@ -119,7 +185,7 @@ func (p *ArtifactPublisher) PublishRendition(
 			}
 			receipt, writeErr := p.blobs.WriteDetailedContext(ctx, reader)
 			if receipt.Hash != "" {
-				if err := p.recordRenditionReceipt(ctx, receipt); err != nil {
+				if err := p.recordRenditionReceipt(ctx, record.Role, receipt); err != nil {
 					if writeErr != nil {
 						return fmt.Errorf("publishing rendition artifact %s: %w",
 							record.ID, errors.Join(writeErr, err))
@@ -136,8 +202,14 @@ func (p *ArtifactPublisher) PublishRendition(
 					record.ID, receipt.Hash, receipt.Size, record.BlobHash, record.Size,
 				)
 			}
+			publishedMD5 := ""
+			if record.Role == "sanitized_markdown" {
+				publishedMD5 = receipt.MD5
+			}
 			verified = append(verified, verifiedArtifact{
-				published: PublishedArtifact{ID: record.ID, Hash: receipt.Hash, Size: receipt.Size},
+				published: PublishedArtifact{
+					ID: record.ID, Hash: receipt.Hash, MD5: publishedMD5, Size: receipt.Size,
+				},
 			})
 			if record.Role == "normalized_evidence" {
 				normalizedEvidence = evidence.Bytes()
@@ -175,16 +247,20 @@ func (p *ArtifactPublisher) PublishRendition(
 }
 
 func (p *ArtifactPublisher) recordRenditionReceipt(
-	ctx context.Context, receipt blob.WriteReceipt,
+	ctx context.Context, role string, receipt blob.WriteReceipt,
 ) error {
 	encoding, err := receipt.EncodingName()
 	if err != nil {
 		return err
 	}
-	if err := p.catalog.RecordRenditionBlob(ctx, receipt.Hash, receipt.Size, store.BlobPhysical{
+	physical := store.BlobPhysical{
 		Encoding: encoding, StoredBytes: receipt.StoredSize,
 		PackEligible: receipt.PackEligible, Created: receipt.Created,
-	}); err != nil {
+	}
+	if role == "sanitized_markdown" {
+		physical.MD5 = receipt.MD5
+	}
+	if err := p.catalog.RecordRenditionBlob(ctx, receipt.Hash, receipt.Size, physical); err != nil {
 		return fmt.Errorf("recording retained bytes as rendition staging: %w", err)
 	}
 	return nil

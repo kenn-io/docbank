@@ -472,6 +472,19 @@ CREATE TABLE IF NOT EXISTS blobs (
     created_at TEXT NOT NULL
 );
 
+-- MD5 is auxiliary interoperability metadata over the same exact logical
+-- bytes. SHA-256 remains the sole content identity and authority.
+CREATE TABLE IF NOT EXISTS blob_checksums (
+    blob_sha256 TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    md5         TEXT NOT NULL
+        CHECK (length(md5) = 32 AND md5 NOT GLOB '*[^0-9a-f]*')
+);
+
+CREATE TRIGGER IF NOT EXISTS blob_checksums_immutable_update
+BEFORE UPDATE ON blob_checksums BEGIN
+    SELECT RAISE(ABORT, 'blob checksum records are immutable');
+END;
+
 -- Physical placement authority is store-scoped. The logical blobs table says
 -- which content Docbank retains; these rows say where verified bytes live.
 -- Lifecycle and placement policy stay in Go.
