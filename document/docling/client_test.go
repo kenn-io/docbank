@@ -58,7 +58,7 @@ func TestClientRendersDoclingPagesAndRequestsBothFormats(t *testing.T) {
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
 			assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
-			assertDoclingSubmission(t, request, fixture.metadata, fixture.source)
+			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"})
 			writeJSON(t, response, doclingTask("task-1", "pending"))
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
 			if polls.Add(1) == 1 {
@@ -97,7 +97,7 @@ func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
-			assertDoclingSubmission(t, request, redactedMetadata, fixture.source)
+			assertDoclingSubmission(t, request, redactedMetadata, fixture.source, []string{"md", "json"})
 			writeJSON(t, response, doclingTask("redacted", "success"))
 		case resultPath + "redacted":
 			writeJSON(t, response, doclingResultResponse("provider-generated.pdf", "# report\n", []any{
@@ -112,6 +112,46 @@ func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
 	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
 	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.NoError(t, err)
+}
+
+func TestClientOmitsUnauthorizedProviderMarkdown(t *testing.T) {
+	for _, testCase := range []struct {
+		name            string
+		returnsMarkdown bool
+	}{
+		{name: "authorization omits Markdown", returnsMarkdown: true},
+		{name: "descriptor omits Markdown", returnsMarkdown: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+			fixture.descriptor.ReturnsMarkdown = testCase.returnsMarkdown
+			descriptor, err := document.NewRenditionDescriptor(fixture.descriptor)
+			require.NoError(t, err)
+			fixture.descriptor = descriptor
+			fixture.authorization.DescriptorFingerprint = descriptor.Fingerprint
+			fixture.authorization.MaxProviderMarkdownBytes = 0
+
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case convertPath:
+					assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"json"})
+					writeJSON(t, response, doclingTask("json-only", "success"))
+				case resultPath + "json-only":
+					writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# not authorized\n", []any{
+						map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+					}))
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.NoError(t, err)
+			assert.Empty(t, result.ProviderMarkdown)
+		})
+	}
 }
 
 func TestClientRequiresConvertTasksAndOfficialStatuses(t *testing.T) {
@@ -938,7 +978,9 @@ func newClientWithBounds(t *testing.T, origin string, descriptor document.Rendit
 	return client
 }
 
-func assertDoclingSubmission(t *testing.T, request *http.Request, metadata document.AuthorizedUploadMetadata, source []byte) {
+func assertDoclingSubmission(
+	t *testing.T, request *http.Request, metadata document.AuthorizedUploadMetadata, source []byte, wantFormats []string,
+) {
 	t.Helper()
 	mediaType, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	require.NoError(t, err)
@@ -969,7 +1011,7 @@ func assertDoclingSubmission(t *testing.T, request *http.Request, metadata docum
 			t.Errorf("unexpected form field %q", part.FormName())
 		}
 	}
-	assert.Equal(t, []string{"md", "json"}, formats)
+	assert.Equal(t, wantFormats, formats)
 }
 
 type resultOption func(map[string]any)

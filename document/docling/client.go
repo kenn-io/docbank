@@ -201,7 +201,8 @@ func (client *Client) Render(
 		return document.RenditionResult{}, err
 	}
 	usage := &requestUsage{}
-	task, err := client.submit(totalCtx, expiresAt, usage, metadata, source)
+	includeMarkdown := client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0
+	task, err := client.submit(totalCtx, expiresAt, usage, metadata, source, includeMarkdown)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -264,16 +265,20 @@ func (client *Client) Render(
 		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
 			"Docling result source identity does not match upload", nil)
 	}
-	if injectsDocbankFrontmatter(result.markdown) {
+	providerMarkdown := result.markdown
+	if !includeMarkdown {
+		providerMarkdown = nil
+	}
+	if injectsDocbankFrontmatter(providerMarkdown) {
 		return document.RenditionResult{}, malformedError(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
 	evidence, structured, usable := mapEvidence(result.document, authorization.MediaFamily)
 	if !usable {
-		if len(result.markdown) == 0 || int64(len(result.markdown)) > int64(authorization.MaxProviderMarkdownBytes) {
+		if len(providerMarkdown) == 0 || int64(len(providerMarkdown)) > int64(authorization.MaxProviderMarkdownBytes) {
 			return document.RenditionResult{}, malformedError("Docling result has no usable bounded evidence", nil)
 		}
-		evidence = degradedEvidence(authorization.MediaFamily, string(result.markdown))
+		evidence = degradedEvidence(authorization.MediaFamily, string(providerMarkdown))
 		structured = nil
 	}
 	if partialSuccess {
@@ -286,7 +291,7 @@ func (client *Client) Render(
 			return document.RenditionResult{}, err
 		}
 	}
-	if len(result.markdown) > authorization.MaxProviderMarkdownBytes {
+	if len(providerMarkdown) > authorization.MaxProviderMarkdownBytes {
 		return document.RenditionResult{}, malformedError("Docling Markdown exceeds authorization", nil)
 	}
 	artifacts := make([]document.RenditionArtifact, 0, 1)
@@ -309,7 +314,7 @@ func (client *Client) Render(
 			"authorization fingerprint is invalid", err)
 	}
 	return document.RenditionResult{
-		Evidence: evidence, ProviderMarkdown: append([]byte(nil), result.markdown...), Artifacts: artifacts,
+		Evidence: evidence, ProviderMarkdown: append([]byte(nil), providerMarkdown...), Artifacts: artifacts,
 		Receipt: document.RenditionReceipt{
 			ProviderID: client.descriptor.ID, DescriptorFingerprint: client.descriptor.Fingerprint,
 			PolicyFingerprint:           authorization.PolicyFingerprint,
@@ -338,6 +343,7 @@ type doclingResult struct {
 
 func (client *Client) submit(
 	ctx context.Context, expiresAt time.Time, usage *requestUsage, metadata document.AuthorizedUploadMetadata, source []byte,
+	includeMarkdown bool,
 ) (taskResponse, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -351,7 +357,11 @@ func (client *Client) submit(
 	if _, err := part.Write(source); err != nil {
 		return taskResponse{}, classifiedError(document.RenditionErrorTransient, "could not prepare Docling upload", err)
 	}
-	for _, format := range []string{"md", "json"} {
+	formats := []string{"json"}
+	if includeMarkdown {
+		formats = []string{"md", "json"}
+	}
+	for _, format := range formats {
 		if err := writer.WriteField("to_formats", format); err != nil {
 			return taskResponse{}, classifiedError(document.RenditionErrorTransient, "could not prepare Docling upload", err)
 		}
