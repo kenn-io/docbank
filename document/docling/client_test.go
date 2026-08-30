@@ -334,7 +334,7 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 	}{
 		{name: "submit 401", operation: "submit", status: http.StatusUnauthorized, want: document.RenditionErrorAuthentication},
 		{name: "submit 429", operation: "submit", status: http.StatusTooManyRequests, want: document.RenditionErrorRateLimited},
-		{name: "submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorTransient},
+		{name: "submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorAmbiguousSubmission},
 		{name: "submit 404", operation: "submit", status: http.StatusNotFound, want: document.RenditionErrorMalformedEvidence},
 		{name: "submit 400", operation: "submit", status: http.StatusBadRequest, want: document.RenditionErrorPolicyRejected},
 		{name: "submit 413", operation: "submit", status: http.StatusRequestEntityTooLarge, want: document.RenditionErrorPolicyRejected},
@@ -346,7 +346,7 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 		{name: "result 410", operation: "result", status: http.StatusGone, want: document.RenditionErrorUnknownJob},
 		{name: "oversized submit 401", operation: "submit", status: http.StatusUnauthorized, want: document.RenditionErrorAuthentication, maxBytes: 8},
 		{name: "oversized submit 429", operation: "submit", status: http.StatusTooManyRequests, want: document.RenditionErrorRateLimited, maxBytes: 8},
-		{name: "oversized submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorTransient, maxBytes: 8},
+		{name: "oversized submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorAmbiguousSubmission, maxBytes: 8},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

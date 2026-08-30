@@ -385,7 +385,11 @@ func (client *Client) submit(
 		return taskResponse{}, err
 	}
 	if status != http.StatusOK && status != http.StatusAccepted {
-		return taskResponse{}, statusError("submission", status)
+		err := statusError("submission", status)
+		if status >= http.StatusInternalServerError && status < 600 {
+			return taskResponse{}, ambiguousSubmissionError(err)
+		}
+		return taskResponse{}, err
 	}
 	task, err := parseTask(bodyBytes)
 	if err != nil {
