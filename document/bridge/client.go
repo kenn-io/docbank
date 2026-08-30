@@ -36,6 +36,7 @@ const (
 	maxBridgePollAttempts   = 10_000
 	maxBridgeResponseBytes  = int64(512 << 20)
 	maxBridgeIdentifier     = 128
+	maxBridgeErrorMessage   = 1024
 	maxBridgeSecret         = 64 << 10
 )
 
@@ -771,6 +772,9 @@ func providerErrorFromEnvelope(envelope jobEnvelope) error {
 	var providerError bridgeError
 	if err := json.Unmarshal(envelope.Error, &providerError, json.RejectUnknownMembers(true)); err != nil {
 		return malformedError("bridge failed response has an unknown member or invalid value", err)
+	}
+	if providerError.Message == "" || utf8.RuneCountInString(providerError.Message) > maxBridgeErrorMessage {
+		return malformedError("bridge error message is outside bounds", nil)
 	}
 	if providerError.RetryAfterMillis < 0 ||
 		providerError.RetryAfterMillis > int64(maxBridgeTimeout/time.Millisecond) {

@@ -710,6 +710,12 @@ func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
 
 func TestBridgeContractRejectsUnboundedOrExtendedStableErrors(t *testing.T) {
 	tests := map[string]map[string]any{
+		"empty message": {
+			"code": string(document.RenditionErrorRateLimited), "message": "",
+		},
+		"long message": {
+			"code": string(document.RenditionErrorRateLimited), "message": strings.Repeat("x", 1025),
+		},
 		"unknown member": {
 			"code": string(document.RenditionErrorRateLimited), "message": "slow down", "internal": "private",
 		},
