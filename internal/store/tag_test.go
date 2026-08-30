@@ -153,7 +153,9 @@ func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
 	require.NotNil(t, nodes[0].Node.TrashedAt)
 	assert.Empty(t, nodes[0].Path)
 
-	live, err := s.Mkdir(ctx, s.RootID(), "live")
+	const liveMD5 = "098f6bcd4621d373cade4e832627b4f6"
+	live, err := s.CreateFile(ctx, s.RootID(), "live.txt", fakeHash("c4"), 4, "text/plain",
+		BlobPhysical{Encoding: "raw", StoredBytes: 4, PackEligible: true, Created: true, MD5: liveMD5})
 	require.NoError(t, err)
 	_, err = s.AssignTag(ctx, first.ID, live.ID, live.Revision)
 	require.NoError(t, err)
@@ -163,7 +165,8 @@ func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
 	assert.Equal(t, 1, omittedTrashed)
 	require.Len(t, liveNodes, 1)
 	assert.Equal(t, live.ID, liveNodes[0].Node.ID)
-	assert.Equal(t, "/live", liveNodes[0].Path)
+	assert.Equal(t, liveMD5, liveNodes[0].Node.MD5)
+	assert.Equal(t, "/live.txt", liveNodes[0].Path)
 
 	_, _, err = s.NodeTags(ctx, 99999, 10, 0)
 	require.ErrorIs(t, err, ErrNotFound)
