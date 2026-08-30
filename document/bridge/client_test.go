@@ -895,7 +895,36 @@ func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
 	defer cancel()
 	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, context.DeadlineExceeded, err)
 	require.Eventually(t, func() bool { return deletes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestBridgeContractClassifiesInternalTotalTimeout(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodPost:
+			assertMultipartRequest(t, request, fixture.authorization, fixture.source)
+			writeBridgeJSON(t, response, http.StatusAccepted,
+				pendingEnvelope(fixture, "job-total-timeout", JobQueued))
+		case http.MethodGet:
+			<-request.Context().Done()
+		case http.MethodDelete:
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			response.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
+	client.totalTimeout = 20 * time.Millisecond
+
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorCapacity, providerError.Code())
+	assert.True(t, document.IsRenditionProviderErrorRetryable(err))
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {

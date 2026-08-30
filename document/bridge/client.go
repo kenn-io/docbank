@@ -121,8 +121,20 @@ func (client *Client) Render(
 	if client == nil {
 		return document.RenditionResult{}, errors.New("bridge: client is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, client.totalTimeout)
+	parentCtx := ctx
+	ctx, cancel := context.WithTimeout(parentCtx, client.totalTimeout)
 	defer cancel()
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if parentErr := parentCtx.Err(); parentErr != nil {
+			retErr = parentErr
+		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			retErr = classifiedError(document.RenditionErrorCapacity,
+				"bridge total timeout reached", 0, retErr)
+		}
+	}()
 	metadata := upload.Metadata()
 	if strings.ContainsAny(metadata.Filename, "\r\n") {
 		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
