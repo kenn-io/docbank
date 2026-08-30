@@ -193,6 +193,7 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 		{name: "unlocated text", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}}, "texts": []any{map[string]any{"text": "one"}}}},
 		{name: "cross page provenance", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}}, "texts": []any{map[string]any{"text": "one", "prov": []any{map[string]any{"page_no": 1}, map[string]any{"page_no": 2}}}}}},
 		{name: "v2 drift", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "2.0.0", "pages": map[string]any{"1": map[string]any{}}, "texts": []any{}}},
+		{name: "unknown top-level field", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}}, "texts": []any{}, "future_content": []any{map[string]any{"text": "not mapped"}}}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			raw, err := json.Marshal(testCase.raw)
@@ -329,6 +330,7 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 		operation string
 		status    int
 		want      document.RenditionErrorCode
+		maxBytes  int64
 	}{
 		{name: "submit 401", operation: "submit", status: http.StatusUnauthorized, want: document.RenditionErrorAuthentication},
 		{name: "submit 429", operation: "submit", status: http.StatusTooManyRequests, want: document.RenditionErrorRateLimited},
@@ -342,6 +344,9 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 		{name: "poll 410", operation: "poll", status: http.StatusGone, want: document.RenditionErrorUnknownJob},
 		{name: "result 404", operation: "result", status: http.StatusNotFound, want: document.RenditionErrorUnknownJob},
 		{name: "result 410", operation: "result", status: http.StatusGone, want: document.RenditionErrorUnknownJob},
+		{name: "oversized submit 401", operation: "submit", status: http.StatusUnauthorized, want: document.RenditionErrorAuthentication, maxBytes: 8},
+		{name: "oversized submit 429", operation: "submit", status: http.StatusTooManyRequests, want: document.RenditionErrorRateLimited, maxBytes: 8},
+		{name: "oversized submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorTransient, maxBytes: 8},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -367,6 +372,9 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+			if testCase.maxBytes != 0 {
+				client = newClientWithBounds(t, server.URL, fixture.descriptor, nil, http.DefaultClient, testCase.maxBytes)
+			}
 			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			require.Error(t, err)
 			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
@@ -718,6 +726,7 @@ func TestClientRejectsResultWrapperIdentityAndStatusFailures(t *testing.T) {
 		{name: "missing wrapper filename", result: doclingResultResponse("", "# report\n", nil), want: document.RenditionErrorPolicyRejected},
 		{name: "conflicting inner filename", result: doclingResultResponseWithInnerFilename("report.pdf", "other.pdf", "# report\n", nil), want: document.RenditionErrorPolicyRejected},
 		{name: "failed wrapper status", result: doclingResultResponse("report.pdf", "# report\n", nil, withResultStatus("failure")), want: document.RenditionErrorMalformedEvidence},
+		{name: "success with errors", result: doclingResultResponse("report.pdf", "# report\n", nil, withResultErrors([]any{map[string]any{"message": "private"}})), want: document.RenditionErrorMalformedEvidence},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

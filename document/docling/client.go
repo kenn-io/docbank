@@ -262,6 +262,9 @@ func (client *Client) Render(
 		}
 	}
 	partialSuccess = partialSuccess || result.status == "partial_success"
+	if !partialSuccess && len(result.errors) != 0 {
+		return document.RenditionResult{}, malformedError("Docling successful result contains errors", nil)
+	}
 	if authorization.DiscloseFilename && result.filename != metadata.Filename {
 		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
 			"Docling result source identity does not match upload", nil)
@@ -500,11 +503,11 @@ func (client *Client) request(
 	defer func() { _ = response.Body.Close() }()
 	responseBody, err := readBounded(response.Body, min(maxResponseBytes, client.maxResponseBytes))
 	usage.outputBytes += int64(len(responseBody))
-	if err != nil {
-		return nil, response.StatusCode, err
-	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return responseBody, response.StatusCode, nil
+	}
+	if err != nil {
+		return nil, response.StatusCode, err
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/json" {
@@ -574,6 +577,18 @@ func parseTask(body []byte) (taskResponse, error) {
 }
 
 func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1, []byte, bool) {
+	var topLevel map[string]json.RawMessage
+	if json.Unmarshal(raw, &topLevel) != nil {
+		return document.SourceEvidenceV1{}, nil, false
+	}
+	for field := range topLevel {
+		switch field {
+		case "schema_name", "version", "name", "origin", "furniture", "body", "groups", "texts", "pictures", "tables",
+			"key_value_items", "form_items", "field_regions", "field_items", "pages":
+		default:
+			return document.SourceEvidenceV1{}, nil, false
+		}
+	}
 	var wire struct {
 		SchemaName string `json:"schema_name"`
 		Version    string `json:"version"`
