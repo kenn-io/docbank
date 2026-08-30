@@ -39,7 +39,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v5")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v6")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -427,8 +427,12 @@ func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 	var stack []element
 	for {
 		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return
+		}
 		if err != nil {
-			break
+			c.warnMalformedXML(namespace, "XML")
+			return
 		}
 		switch value := token.(type) {
 		case xml.StartElement:
@@ -483,6 +487,10 @@ func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 			c.extractXMLValue(namespace, current.name.Local, current.text.string())
 		}
 	}
+}
+
+func (c *metadataCollector) warnMalformedXML(namespace, source string) {
+	c.warn("malformed_metadata", namespace, source, "embedded XML metadata is malformed")
 }
 
 func xmpAttributeAllowed(name xml.Name) bool {
@@ -570,6 +578,7 @@ func (c *metadataCollector) extractOfficeApp(data []byte) {
 		Words  string `xml:"Words"`
 	}
 	if err := xml.Unmarshal(data, &properties); err != nil {
+		c.warnMalformedXML("office.core", "app.xml")
 		return
 	}
 	for _, field := range []struct {
@@ -593,7 +602,11 @@ func (c *metadataCollector) extractOfficeCustom(data []byte) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	for {
 		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return
+		}
 		if err != nil {
+			c.warnMalformedXML("office.custom", "custom.xml")
 			return
 		}
 		start, ok := token.(xml.StartElement)
@@ -611,7 +624,8 @@ func (c *metadataCollector) extractOfficeCustom(data []byte) {
 		for depth > 0 {
 			inner, innerErr := decoder.Token()
 			if innerErr != nil {
-				break
+				c.warnMalformedXML("office.custom", name)
+				return
 			}
 			switch value := inner.(type) {
 			case xml.StartElement:
@@ -1038,8 +1052,11 @@ func parseSourceTimestamp(raw string) (document.SourceMetadataTimestampV1, bool)
 		}
 	}
 	if len(value) == 8 && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
-		value = value[:4] + "-" + value[4:6] + "-" + value[6:]
-		return document.SourceMetadataTimestampV1{Raw: raw, Normalized: value, Precision: document.SourceMetadataPrecisionDate, Timezone: document.SourceMetadataTimezoneOmitted}, true
+		parsed, err := time.Parse("20060102", value)
+		if err != nil {
+			return document.SourceMetadataTimestampV1{}, false
+		}
+		return document.SourceMetadataTimestampV1{Raw: raw, Normalized: parsed.Format("2006-01-02"), Precision: document.SourceMetadataPrecisionDate, Timezone: document.SourceMetadataTimezoneOmitted}, true
 	}
 	if len(value) == 15 && value[8] == 'T' {
 		value = value[:4] + "-" + value[4:6] + "-" + value[6:8] + "T" + value[9:11] + ":" + value[11:13] + ":" + value[13:15]

@@ -127,6 +127,27 @@ func TestExtractXMLTextReadsXMPAttributesAndRDFCollections(t *testing.T) {
 	})
 }
 
+func TestMalformedXMLMetadataEmitsWarnings(t *testing.T) {
+	t.Run("generic", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractXMLText([]byte(`<root><title>Partial title</title><description>`), "xmp")
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "malformed_metadata")
+	})
+	t.Run("office custom", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractOfficeCustom([]byte(`<Properties><property name="Matter Number"><lpwstr>MAT-001`))
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "malformed_metadata")
+	})
+	t.Run("office app", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractOfficeApp([]byte(`<Properties><Pages>7</Pages>`))
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "malformed_metadata")
+	})
+}
+
 func TestExtractCalendarRetainsUnsupportedNamedTimezone(t *testing.T) {
 	metadata := ExtractSourceMetadata([]byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR"))
 	raw, found := sourceMetadataString(metadata, "calendar.start.raw")
@@ -309,6 +330,22 @@ func TestParseSourceTimestampPreservesExplicitZeroOffset(t *testing.T) {
 			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &stamp}}}}
 	_, _, err := document.MarshalSourceMetadataV1(record)
 	require.NoError(t, err)
+}
+
+func TestInvalidCompactDateDoesNotDiscardOtherMetadata(t *testing.T) {
+	metadata := emptySourceMetadata()
+	collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+	collector.string("title", "pdf.info", "Title", "Synthetic report", false)
+	collector.timestamp("created", "pdf.info", "CreationDate", "D:20241399")
+	metadata = canonicalSourceMetadataResult(metadata)
+
+	title, found := sourceMetadataString(metadata, "title")
+	require.True(t, found)
+	assert.Equal(t, "Synthetic report", title)
+	_, found = sourceMetadataTimestamp(metadata, "created")
+	assert.False(t, found)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_timestamp")
+	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "extraction_limit")
 }
 
 func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
