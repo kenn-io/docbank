@@ -25,7 +25,7 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		keys      []string
 		sensitive string
 	}{
-		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "keywords", "page_count", "subject", "title"}},
+		{name: "PDF info and XMP", payload: syntheticMetadataPDF(9), keys: []string{"created", "creators", "description", "keywords", "modified", "page_count", "subject", "title"}},
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
@@ -96,6 +96,35 @@ func TestExtractXMLTextDoesNotCopyWrittenFrames(t *testing.T) {
 	_, found = sourceMetadataString(metadata, "title")
 	assert.False(t, found)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "value_too_large")
+}
+
+func TestExtractXMLTextReadsXMPAttributesAndRDFCollections(t *testing.T) {
+	const xmp = `<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+		<rdf:RDF><rdf:Description xmp:CreateDate="2024-01-02T03:04:05Z">
+			<dc:title><rdf:Alt><rdf:li xml:lang="fr">Rapport</rdf:li><rdf:li xml:lang="x-default">Synthetic report</rdf:li></rdf:Alt></dc:title>
+			<dc:creator><rdf:Seq><rdf:li>Ada</rdf:li><rdf:li>Grace</rdf:li></rdf:Seq></dc:creator>
+		</rdf:Description></rdf:RDF>
+	</x:xmpmeta>`
+
+	t.Run("attribute", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractXMLText([]byte(xmp), "xmp")
+		created, found := sourceMetadataTimestamp(metadata, "created")
+		require.True(t, found)
+		assert.Equal(t, "2024-01-02T03:04:05Z", created.Raw)
+	})
+	t.Run("collection", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractXMLText([]byte(xmp), "xmp")
+		title, found := sourceMetadataString(metadata, "title")
+		require.True(t, found)
+		assert.Equal(t, "Synthetic report", title)
+		creators, found := sourceMetadataStrings(metadata, "creators")
+		require.True(t, found)
+		assert.Equal(t, []string{"Ada", "Grace"}, creators)
+	})
 }
 
 func TestExtractCalendarRetainsUnsupportedNamedTimezone(t *testing.T) {
@@ -184,6 +213,15 @@ func sourceMetadataString(metadata document.SourceMetadataV1, key string) (strin
 	return "", false
 }
 
+func sourceMetadataStrings(metadata document.SourceMetadataV1, key string) ([]string, bool) {
+	for _, field := range metadata.Fields {
+		if field.Key == key && field.Value.Kind == document.SourceMetadataStringList {
+			return field.Value.Strings, true
+		}
+	}
+	return nil, false
+}
+
 func sourceMetadataTimestamp(metadata document.SourceMetadataV1, key string) (document.SourceMetadataTimestampV1, bool) {
 	for _, field := range metadata.Fields {
 		if field.Key == key && field.Value.Timestamp != nil {
@@ -204,7 +242,7 @@ func sourceMetadataWarningCodes(metadata document.SourceMetadataV1) []string {
 func syntheticMetadataPDF(pageCount int) []byte {
 	kids := make([]string, 0, pageCount)
 	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R /Count 99 >>",
+		"",
 		"",
 	}
 	for index := range pageCount {
@@ -213,9 +251,14 @@ func syntheticMetadataPDF(pageCount int) []byte {
 			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Label (page-%d) >>", index+1))
 	}
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pageCount)
+	objects = append(objects, "<< /Length 14 >>\nstream\n/Title (Decoy)\nendstream")
+	infoObject := len(objects) + 1
 	objects = append(objects,
-		"<< /Length 14 >>\nstream\n/Title (Decoy)\nendstream",
 		"<< /Title (Quarterly report) /Author (Ada; Grace) /Subject (Synthetic) /Keywords (one,two) /CreationDate (D:20240102030405) >>")
+	xmp := `<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/"><rdf:RDF><rdf:Description xmp:ModifyDate="2024-01-03T04:05:06Z"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">Synthetic PDF description</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>`
+	metadataObject := len(objects) + 1
+	objects = append(objects, fmt.Sprintf("<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n%s\nendstream", len(xmp), xmp))
+	objects[0] = fmt.Sprintf("<< /Type /Catalog /Pages 2 0 R /Metadata %d 0 R /Count 99 >>", metadataObject)
 	var output bytes.Buffer
 	_, _ = output.WriteString("%PDF-1.4\n")
 	offsets := make([]int, len(objects))
@@ -230,7 +273,7 @@ func syntheticMetadataPDF(pageCount int) []byte {
 	}
 	_, _ = fmt.Fprintf(&output,
 		"trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n",
-		len(objects)+1, len(objects), xref)
+		len(objects)+1, infoObject, xref)
 	return output.Bytes()
 }
 

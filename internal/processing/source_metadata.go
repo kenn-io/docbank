@@ -28,13 +28,18 @@ const (
 	maxSourceMetadataOriginalBytes       = 64 << 20
 	maxSourceMetadataAggregateValueBytes = 1 << 20
 	maxSourceMetadataXMLDepth            = 64
+	rdfNamespace                         = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+	xmlNamespace                         = "http://www.w3.org/XML/1998/namespace"
+	xmpBasicNamespace                    = "http://ns.adobe.com/xap/1.0/"
+	xmpDublinCoreNamespace               = "http://purl.org/dc/elements/1.1/"
+	xmpPDFNamespace                      = "http://ns.adobe.com/pdf/1.3/"
 )
 
 var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v4")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v5")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -406,11 +411,18 @@ func (text *boundedSourceMetadataText) string() string {
 	return string(text.value)
 }
 
+type sourceMetadataXMLMember struct {
+	value    string
+	language string
+}
+
 func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	type element struct {
-		name string
-		text boundedSourceMetadataText
+		name    xml.Name
+		text    boundedSourceMetadataText
+		members []sourceMetadataXMLMember
+		lang    string
 	}
 	var stack []element
 	for {
@@ -424,7 +436,16 @@ func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 				c.warn("xml_depth_limit", namespace, value.Name.Local, "embedded XML nesting exceeds the extraction limit")
 				return
 			}
-			stack = append(stack, element{name: value.Name.Local})
+			current := element{name: value.Name}
+			for _, attribute := range value.Attr {
+				if attribute.Name.Space == xmlNamespace && attribute.Name.Local == "lang" {
+					current.lang = attribute.Value
+				}
+				if namespace == "xmp" && xmpAttributeAllowed(attribute.Name) {
+					c.extractXMLValue(namespace, attribute.Name.Local, attribute.Value)
+				}
+			}
+			stack = append(stack, current)
 		case xml.CharData:
 			for index := range stack {
 				stack[index].text.write(value)
@@ -436,11 +457,81 @@ func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 			current := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			if current.text.overflow {
-				c.warn("value_too_large", namespace, current.name, "embedded XML value was omitted")
+				c.warn("value_too_large", namespace, current.name.Local, "embedded XML value was omitted")
 				continue
 			}
-			c.extractXMLValue(namespace, current.name, current.text.string())
+			if namespace == "xmp" && current.name.Space == rdfNamespace && current.name.Local == "li" {
+				for index := len(stack) - 1; index >= 0; index-- {
+					if stack[index].name.Space == rdfNamespace || !sourceMetadataXMLValueAllowed(stack[index].name.Local) {
+						continue
+					}
+					if len(stack[index].members) >= document.MaxSourceMetadataListValues {
+						c.warn("value_too_large", namespace, stack[index].name.Local, "embedded XML collection was omitted")
+						break
+					}
+					stack[index].members = append(stack[index].members, sourceMetadataXMLMember{
+						value: current.text.string(), language: current.lang,
+					})
+					break
+				}
+				continue
+			}
+			if len(current.members) != 0 {
+				c.extractXMLCollection(namespace, current.name.Local, current.members)
+				continue
+			}
+			c.extractXMLValue(namespace, current.name.Local, current.text.string())
 		}
+	}
+}
+
+func xmpAttributeAllowed(name xml.Name) bool {
+	switch name.Space {
+	case xmpBasicNamespace:
+		return strings.EqualFold(name.Local, "CreateDate") || strings.EqualFold(name.Local, "ModifyDate")
+	case xmpDublinCoreNamespace:
+		return sourceMetadataXMLValueAllowed(name.Local)
+	case xmpPDFNamespace:
+		return strings.EqualFold(name.Local, "Keywords")
+	default:
+		return false
+	}
+}
+
+func sourceMetadataXMLValueAllowed(name string) bool {
+	switch strings.ToLower(name) {
+	case "title", "creator", "author", "subject", "description", "keywords", "language",
+		"created", "createdate", "modified", "modifydate":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *metadataCollector) extractXMLCollection(namespace, name string, members []sourceMetadataXMLMember) {
+	values := make([]string, 0, len(members))
+	defaultValue := ""
+	for _, member := range members {
+		if value := strings.TrimSpace(member.value); value != "" {
+			values = append(values, value)
+			if strings.EqualFold(member.language, "x-default") {
+				defaultValue = value
+			}
+		}
+	}
+	if len(values) == 0 {
+		return
+	}
+	switch strings.ToLower(name) {
+	case "creator", "author":
+		c.strings("creators", namespace, name, values, false)
+	case "keywords":
+		c.strings("keywords", namespace, name, values, false)
+	default:
+		if defaultValue == "" {
+			defaultValue = values[0]
+		}
+		c.extractXMLValue(namespace, name, defaultValue)
 	}
 }
 
