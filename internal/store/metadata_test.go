@@ -76,14 +76,24 @@ func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T)
 			require.NoError(t, err)
 			assert.Equal(t, md5sum, record.MD5)
 
-			malformed := strings.Replace(exported.String(), md5sum, strings.ToUpper(md5sum), 1)
-			rejected, err := Open(filepath.Join(t.TempDir(), "rejected.db"), testCase.driver)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, rejected.Close()) })
-			err = rejected.ImportMetadata(t.Context(), strings.NewReader(malformed))
-			require.ErrorContains(t, err, "canonical lowercase MD5")
-			_, err = rejected.BlobChecksums(t.Context(), metadataHashCurrent)
-			require.ErrorIs(t, err, ErrNotFound)
+			for _, invalid := range []struct {
+				name string
+				md5  string
+			}{
+				{name: "uppercase", md5: strings.ToUpper(md5sum)},
+				{name: "empty", md5: ""},
+			} {
+				t.Run(invalid.name, func(t *testing.T) {
+					malformed := strings.Replace(exported.String(), md5sum, invalid.md5, 1)
+					rejected, err := Open(filepath.Join(t.TempDir(), "rejected.db"), testCase.driver)
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, rejected.Close()) })
+					err = rejected.ImportMetadata(t.Context(), strings.NewReader(malformed))
+					require.ErrorContains(t, err, "canonical lowercase MD5")
+					_, err = rejected.BlobChecksums(t.Context(), metadataHashCurrent)
+					require.ErrorIs(t, err, ErrNotFound)
+				})
+			}
 		})
 	}
 }

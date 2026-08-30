@@ -887,9 +887,13 @@ func (s *Store) importMetadataRecord(
 		if err := decodeMetadataRecord(raw, &v); err != nil {
 			return err
 		}
-		return ensureBlobChecksumTx(tx, BlobChecksumRecord{
+		record := BlobChecksumRecord{
 			BlobSHA256: v.BlobSHA256, MD5: v.MD5,
-		})
+		}
+		if err := validateBlobChecksumRecord(record); err != nil {
+			return err
+		}
+		return ensureBlobChecksumTx(tx, record)
 	case "node":
 		var v metadataNode
 		if err := decodeMetadataRecord(raw, &v); err != nil {
