@@ -110,18 +110,32 @@ func (s *Store) RecordVerifiedBlobChecksum(ctx context.Context, record BlobCheck
 func (s *Store) MissingBlobChecksumTargets(
 	ctx context.Context, limit int,
 ) ([]BlobChecksumTarget, error) {
+	return s.MissingBlobChecksumTargetsAfter(ctx, "", limit)
+}
+
+// MissingBlobChecksumTargetsAfter returns the next ordered page after one
+// SHA-256 cursor. Callers can keep later blobs progressing while a failed
+// target waits for retry.
+func (s *Store) MissingBlobChecksumTargetsAfter(
+	ctx context.Context, afterSHA256 string, limit int,
+) ([]BlobChecksumTarget, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("blob checksum backfill limit must be between 1 and 1000")
+	}
+	if afterSHA256 != "" {
+		if err := validateCatalogSHA256(afterSHA256, "blob checksum backfill cursor"); err != nil {
+			return nil, err
+		}
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash,b.size FROM blobs b
 		LEFT JOIN blob_checksums c ON c.blob_sha256=b.hash
-		WHERE c.blob_sha256 IS NULL AND (
+		WHERE b.hash>? AND c.blob_sha256 IS NULL AND (
 		  EXISTS(SELECT 1 FROM content_versions v WHERE v.blob_hash=b.hash)
 		  OR EXISTS(SELECT 1 FROM rendition_artifacts a
 		            WHERE a.blob_hash=b.hash AND a.role='sanitized_markdown')
 		)
-		ORDER BY b.hash LIMIT ?`, limit)
+		ORDER BY b.hash LIMIT ?`, afterSHA256, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing missing blob checksums: %w", err)
 	}

@@ -160,7 +160,7 @@ func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T)
 }
 
 type cancelOnSecondChecksumOpen struct {
-	delegate auxiliaryChecksumBlobReader
+	delegate verifiedBlobReader
 	cancel   context.CancelFunc
 	calls    int
 }

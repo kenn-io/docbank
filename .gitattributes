@@ -6,3 +6,5 @@ document/testdata/normalized-evidence-v1.golden.json -text
 document/testdata/rendition-v1.golden.md -text
 # The processing profile golden bundle is a byte-for-byte oracle, not a text file.
 document/testdata/profile-v1.golden.json -text
+# The source metadata golden bundle is a byte-for-byte oracle, not a text file.
+document/testdata/source-metadata-v1.golden.json -text

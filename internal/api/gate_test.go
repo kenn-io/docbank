@@ -121,6 +121,20 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 	require.NoError(t, <-maintenanceDone)
 }
 
+func TestDaemonLogicalMutationDoesNotFailCloseRouteMutations(t *testing.T) {
+	g := NewOperationGate()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- g.MutateContext(t.Context(), func() error { close(entered); <-release; return nil }) }()
+	<-entered
+	reached := false
+	require.NoError(t, g.mutate(func() error { reached = true; return nil }))
+	assert.True(t, reached)
+	close(release)
+	require.NoError(t, <-done)
+}
+
 func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 	g := NewOperationGate()
 	captureEntered := make(chan struct{})

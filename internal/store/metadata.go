@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -107,6 +108,24 @@ type metadataBlobChecksum struct {
 	Type       string `json:"type"`
 	BlobSHA256 string `json:"blob_sha256"`
 	MD5        string `json:"md5"`
+}
+
+type metadataSourceMetadataGeneration struct {
+	Type                 string `json:"type"`
+	GenerationID         string `json:"generation_id"`
+	SourceSHA256         string `json:"source_sha256"`
+	ContractVersion      string `json:"contract_version"`
+	ExtractorFingerprint string `json:"extractor_fingerprint"`
+	CanonicalJSON        []byte `json:"canonical_json" format:"byte"`
+	Checksum             string `json:"checksum"`
+	CreatedAt            string `json:"created_at"`
+}
+
+type metadataSourceMetadataHead struct {
+	Type         string `json:"type"`
+	SourceSHA256 string `json:"source_sha256"`
+	GenerationID string `json:"generation_id"`
+	PublishedAt  string `json:"published_at"`
 }
 
 type metadataNode struct {
@@ -317,6 +336,9 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportBlobChecksums(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
+	if err := exportSourceMetadata(ctx, tx, write, backupScoped); err != nil {
+		return err
+	}
 	if err := exportNodes(ctx, tx, write); err != nil {
 		return err
 	}
@@ -433,6 +455,85 @@ ORDER BY c.blob_sha256`
 		}
 	}
 	return rowsError("blob checksum", rows)
+}
+
+func exportSourceMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool) error {
+	var present bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
+		WHERE type='table' AND name='source_metadata_generations')`).Scan(&present); err != nil {
+		return fmt.Errorf("detecting source metadata schema: %w", err)
+	}
+	if !present {
+		return nil
+	}
+	query := `SELECT generation_id,source_sha256,contract_version,extractor_fingerprint,
+		canonical_json,checksum,created_at FROM source_metadata_generations ORDER BY generation_id`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+SELECT g.generation_id,g.source_sha256,g.contract_version,g.extractor_fingerprint,
+g.canonical_json,g.checksum,g.created_at FROM source_metadata_generations g
+JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_id`
+	}
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("exporting source metadata: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataSourceMetadataGeneration{Type: metadataSourceMetadataGenerationType}
+		if err := rows.Scan(&record.GenerationID, &record.SourceSHA256, &record.ContractVersion,
+			&record.ExtractorFingerprint, &record.CanonicalJSON, &record.Checksum, &record.CreatedAt); err != nil {
+			return err
+		}
+		if err := validateSourceMetadataGenerationRecord(record); err != nil {
+			return fmt.Errorf("validating source metadata for export: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	headQuery := `SELECT source_sha256,generation_id,published_at FROM source_metadata_heads ORDER BY source_sha256`
+	if backupScoped {
+		headQuery = BackupBlobAuthorityCTE + `
+SELECT h.source_sha256,h.generation_id,h.published_at FROM source_metadata_heads h
+JOIN backup_authorized_blobs a ON a.hash=h.source_sha256 ORDER BY h.source_sha256`
+	}
+	heads, err := tx.QueryContext(ctx, headQuery)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = heads.Close() }()
+	for heads.Next() {
+		record := metadataSourceMetadataHead{Type: metadataSourceMetadataHeadType}
+		if err := heads.Scan(&record.SourceSHA256, &record.GenerationID, &record.PublishedAt); err != nil {
+			return err
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return heads.Err()
+}
+
+func validateSourceMetadataGenerationRecord(record metadataSourceMetadataGeneration) error {
+	if record.Type != metadataSourceMetadataGenerationType || record.ContractVersion != document.SourceMetadataContractV1 {
+		return errors.New("invalid source metadata generation record")
+	}
+	metadata, checksum, err := document.DecodeSourceMetadataV1(record.CanonicalJSON)
+	if err != nil {
+		return err
+	}
+	if parsed, parseErr := packstore.ParseHash(record.ExtractorFingerprint); parseErr != nil || parsed.String() != record.ExtractorFingerprint {
+		return errors.New("source metadata extractor fingerprint is invalid")
+	}
+	if metadata.ContractVersion != record.ContractVersion || checksum != record.Checksum ||
+		sourceMetadataGenerationID(record.SourceSHA256, record.ContractVersion, record.ExtractorFingerprint, record.Checksum) != record.GenerationID {
+		return errors.New("source metadata generation identity or checksum does not match canonical evidence")
+	}
+	return nil
 }
 
 func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -730,6 +831,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM nodes),
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM blob_checksums)
+		    + (SELECT COUNT(*) FROM source_metadata_generations)
+		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
@@ -894,6 +997,27 @@ func (s *Store) importMetadataRecord(
 			return err
 		}
 		return ensureBlobChecksumTx(tx, record)
+	case metadataSourceMetadataGenerationType:
+		var v metadataSourceMetadataGeneration
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validateSourceMetadataGenerationRecord(v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
+			generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
+		) VALUES(?,?,?,?,?,?,?)`, v.GenerationID, v.SourceSHA256, v.ContractVersion,
+			v.ExtractorFingerprint, v.CanonicalJSON, v.Checksum, v.CreatedAt)
+		return err
+	case metadataSourceMetadataHeadType:
+		var v metadataSourceMetadataHead
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
+			VALUES(?,?,?)`, v.SourceSHA256, v.GenerationID, v.PublishedAt)
+		return err
 	case "node":
 		var v metadataNode
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1050,6 +1174,8 @@ const (
 	metadataAuditMembershipType           = "audit_membership"
 	metadataAuditRecordType               = "audit_record"
 	metadataBlobChecksumType              = "blob_checksum"
+	metadataSourceMetadataGenerationType  = "source_metadata_generation"
+	metadataSourceMetadataHeadType        = "source_metadata_head"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
@@ -1057,6 +1183,8 @@ var metadataHeaderFields = []string{metadataTypeField, "format", "version", audi
 var metadataRequiredFields = map[string][]string{
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
+	metadataSourceMetadataGenerationType:   {metadataTypeField, "generation_id", "source_sha256", "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
+	metadataSourceMetadataHeadType:         {metadataTypeField, "source_sha256", "generation_id", "published_at"},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},

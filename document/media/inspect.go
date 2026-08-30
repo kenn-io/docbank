@@ -1378,6 +1378,51 @@ func inspectPDF(data []byte, policy InspectionPolicy) CapabilityRecord {
 	return record
 }
 
+// CountPDFPages returns the page count from the authoritative PDF object graph.
+func CountPDFPages(data []byte) (int64, error) {
+	return formatdetect.CountPDFPages(data)
+}
+
+// PDFMetadata contains optional metadata resolved after core PDF validation.
+type PDFMetadata struct {
+	Pages  int64
+	Info   PDFInfoMetadata
+	XMP    []byte
+	Issues []PDFMetadataIssue
+}
+
+// PDFMetadataIssue identifies optional metadata that could not be resolved.
+type PDFMetadataIssue struct {
+	SourceField string
+}
+
+// PDFInfoMetadata contains the standard document information fields that
+// Docbank recognizes.
+type PDFInfoMetadata struct {
+	Title, Author, Subject, Keywords, CreationDate, ModDate string
+}
+
+// ReadPDFMetadata resolves PDF metadata from the validated object graph.
+func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
+	metadata, err := formatdetect.ReadPDFMetadata(data)
+	if err != nil {
+		return PDFMetadata{}, err
+	}
+	issues := make([]PDFMetadataIssue, len(metadata.Issues))
+	for index, issue := range metadata.Issues {
+		issues[index] = PDFMetadataIssue{SourceField: issue.SourceField}
+	}
+	return PDFMetadata{
+		Pages: metadata.Pages,
+		Info: PDFInfoMetadata{
+			Title: metadata.Info.Title, Author: metadata.Info.Author,
+			Subject: metadata.Info.Subject, Keywords: metadata.Info.Keywords,
+			CreationDate: metadata.Info.CreationDate, ModDate: metadata.Info.ModDate,
+		},
+		XMP: metadata.XMP, Issues: issues,
+	}, nil
+}
+
 func inspectWAV(data []byte, policy InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/wav", Format: "wav"}
 	if len(data) < 44 || !bytes.Equal(data[:4], []byte("RIFF")) ||

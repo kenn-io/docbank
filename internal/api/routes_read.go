@@ -54,11 +54,19 @@ func nodeOutputAt(n store.Node, path string) *nodeOutput {
 // nodeWithPath loads the node's display path and builds the single-node
 // response. Every single-node endpoint returns this shape.
 func nodeWithPath(ctx context.Context, d Deps, id int64) (*nodeOutput, error) {
-	view, err := d.Store.NodeViewByID(ctx, id)
+	view, err := d.Store.NodeSourceMetadataViewByID(ctx, id)
 	if err != nil {
 		return nil, FromStoreError(err)
 	}
-	return nodeOutputAt(view.Node, view.Path), nil
+	return nodeOutputFromSourceMetadataView(ctx, view), nil
+}
+
+func nodeOutputFromSourceMetadataView(ctx context.Context, view store.NodeSourceMetadataView) *nodeOutput {
+	out := nodeOutputAt(view.Node, view.Path)
+	if view.SourceMetadata != nil {
+		out.Body.SourceMetadata = fromStoreSourceMetadata(*view.SourceMetadata, browserSessionRequest(ctx))
+	}
+	return out
 }
 
 func contentResponses() map[string]*huma.Response {
@@ -153,7 +161,15 @@ func registerReadRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &contentVersionOutput{Body: fromStoreContentVersion(version)}, nil
+		body := fromStoreContentVersion(version)
+		metadata, metadataErr := d.Store.ContentVersionSourceMetadata(ctx, version.ID)
+		if metadataErr == nil {
+			body.SourceMetadata = fromStoreSourceMetadata(metadata, browserSessionRequest(ctx))
+		}
+		if metadataErr != nil && !errors.Is(metadataErr, store.ErrNotFound) {
+			return nil, FromStoreError(metadataErr)
+		}
+		return &contentVersionOutput{Body: body}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -213,11 +229,11 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Path))
 		}
-		view, err := d.Store.NodeViewByPath(ctx, in.Path)
+		view, err := d.Store.NodeSourceMetadataViewByPath(ctx, in.Path)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return nodeOutputAt(view.Node, view.Path), nil
+		return nodeOutputFromSourceMetadataView(ctx, view), nil
 	})
 
 	type childrenPage struct {

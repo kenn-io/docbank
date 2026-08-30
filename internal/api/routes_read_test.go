@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -52,6 +53,47 @@ func TestStatByIDAndPath(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/path?path=%2Fnope", nil)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Contains(t, body, `"code":"not_found"`)
+}
+
+func TestStatAndContentVersionDetailExposeActiveSourceMetadata(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", testHash("metadata"), 9, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{
+			{Key: "email.bcc", Namespace: "email", Sensitive: true, SourceField: "Bcc",
+				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Hidden recipient"}},
+			{Key: "title", Namespace: "pdf.info", SourceField: "Title",
+				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Synthetic report"}},
+		}})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("extractor"), canonical)
+	require.NoError(t, err)
+
+	paths := []string{fmt.Sprintf("/api/v1/nodes/%d", node.ID), "/api/v1/versions/" + node.CurrentVersionID}
+	for _, path := range paths {
+		resp, body := get(t, ts, path, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		assert.Contains(t, body, `"source_metadata"`)
+		assert.Contains(t, body, "Synthetic report")
+		assert.Contains(t, body, "Hidden recipient")
+		assert.Contains(t, body, `"filename":"report.pdf"`)
+	}
+
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var issued struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &issued))
+	require.NotEmpty(t, issued.Token)
+	webHeaders := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
+	resp, body = get(t, ts, paths[0], webHeaders)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, body, "Synthetic report")
+	assert.NotContains(t, body, "Hidden recipient")
+	assert.NotContains(t, body, `"sensitive":true`)
 }
 
 func TestStatTrashedNodeHasNoLivePath(t *testing.T) {

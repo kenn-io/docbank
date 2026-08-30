@@ -485,6 +485,35 @@ BEFORE UPDATE ON blob_checksums BEGIN
     SELECT RAISE(ABORT, 'blob checksum records are immutable');
 END;
 
+-- Source metadata is immutable evidence derived only from verified original
+-- bytes. New extractor behavior creates a new generation; it never rewrites
+-- an older observation. The small head table selects the active generation.
+CREATE TABLE IF NOT EXISTS source_metadata_generations (
+    generation_id        TEXT PRIMARY KEY,
+    source_sha256        TEXT NOT NULL REFERENCES blobs(hash) ON DELETE CASCADE,
+    contract_version     TEXT NOT NULL,
+    extractor_fingerprint TEXT NOT NULL,
+    canonical_json       BLOB NOT NULL,
+    checksum             TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    UNIQUE (source_sha256, contract_version, extractor_fingerprint),
+    UNIQUE (source_sha256, generation_id)
+);
+
+CREATE TABLE IF NOT EXISTS source_metadata_heads (
+    source_sha256 TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL UNIQUE
+        REFERENCES source_metadata_generations(generation_id) ON DELETE CASCADE,
+    published_at TEXT NOT NULL,
+    FOREIGN KEY (source_sha256, generation_id)
+        REFERENCES source_metadata_generations(source_sha256, generation_id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS source_metadata_generations_immutable_update
+BEFORE UPDATE ON source_metadata_generations BEGIN
+    SELECT RAISE(ABORT, 'source metadata generations are immutable');
+END;
+
 -- Physical placement authority is store-scoped. The logical blobs table says
 -- which content Docbank retains; these rows say where verified bytes live.
 -- Lifecycle and placement policy stay in Go.

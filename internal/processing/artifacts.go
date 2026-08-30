@@ -80,7 +80,7 @@ type auxiliaryChecksumCatalog interface {
 	RecordVerifiedBlobChecksum(ctx context.Context, record store.BlobChecksumRecord) error
 }
 
-type auxiliaryChecksumBlobReader interface {
+type verifiedBlobReader interface {
 	OpenStreamContext(
 		ctx context.Context, hash string,
 	) (packstore.VerifiedReadCloser, int64, error)
@@ -91,7 +91,7 @@ type auxiliaryChecksumBlobReader interface {
 // mixed-store stream reaches verified EOF with its cataloged size.
 func BackfillAuxiliaryChecksums(
 	ctx context.Context, catalog auxiliaryChecksumCatalog,
-	blobs auxiliaryChecksumBlobReader, limit int,
+	blobs verifiedBlobReader, limit int,
 ) (int, error) {
 	if catalog == nil || blobs == nil {
 		return 0, errors.New("auxiliary checksum backfill requires catalog and blob stores")
@@ -100,42 +100,55 @@ func BackfillAuxiliaryChecksums(
 	if err != nil {
 		return 0, err
 	}
+	return BackfillAuxiliaryChecksumTargets(ctx, catalog, blobs, targets)
+}
+
+// BackfillAuxiliaryChecksumTargets processes a previously selected batch. A
+// bad member is reported but does not prevent later hashes from progressing.
+func BackfillAuxiliaryChecksumTargets(ctx context.Context, catalog auxiliaryChecksumCatalog,
+	blobs verifiedBlobReader, targets []store.BlobChecksumTarget) (int, error) {
 	completed := 0
+	var targetErrors error
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
-			return completed, err
+			return completed, errors.Join(targetErrors, err)
 		}
 		stream, size, err := blobs.OpenStreamContext(ctx, target.BlobSHA256)
 		if err != nil {
-			return completed, fmt.Errorf("opening checksum target %s: %w", target.BlobSHA256, err)
+			targetErrors = errors.Join(targetErrors, fmt.Errorf("opening checksum target %s: %w", target.BlobSHA256, err))
+			continue
 		}
 		if size != target.Size {
-			_ = stream.Close()
-			return completed, fmt.Errorf(
+			closeErr := stream.Close()
+			targetErrors = errors.Join(targetErrors, fmt.Errorf(
 				"checksum target %s size changed: catalog=%d stream=%d",
 				target.BlobSHA256, target.Size, size,
-			)
+			), closeErr)
+			continue
 		}
 		digest := md5.New() //nolint:gosec // Auxiliary MD5 never grants content authority.
 		read, copyErr := io.Copy(digest, stream)
 		closeErr := stream.Close()
 		if err := errors.Join(copyErr, closeErr); err != nil {
-			return completed, fmt.Errorf("verifying checksum target %s: %w", target.BlobSHA256, err)
+			targetErrors = errors.Join(targetErrors, fmt.Errorf("verifying checksum target %s: %w", target.BlobSHA256, err))
+			continue
 		}
 		if read != target.Size {
-			return completed, fmt.Errorf(
+			targetErrors = errors.Join(targetErrors, fmt.Errorf(
 				"checksum target %s length changed: catalog=%d read=%d",
 				target.BlobSHA256, target.Size, read,
-			)
+			))
+			continue
 		}
 		if err := catalog.RecordVerifiedBlobChecksum(ctx, store.BlobChecksumRecord{
 			BlobSHA256: target.BlobSHA256, MD5: hex.EncodeToString(digest.Sum(nil)),
 		}); err != nil {
-			return completed, fmt.Errorf("recording checksum target %s: %w", target.BlobSHA256, err)
+			targetErrors = errors.Join(targetErrors, fmt.Errorf("recording checksum target %s: %w", target.BlobSHA256, err))
+			continue
 		}
 		completed++
 	}
-	return completed, nil
+	return completed, targetErrors
 }
 
 // ArtifactPublisher verifies retained bytes, stages immutable catalog and FTS
