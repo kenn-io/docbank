@@ -196,7 +196,7 @@ func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID stri
 		return SourceMetadataView{}, err
 	}
 	facts := SourceMetadataAttachmentFacts{NodeID: node.ID, ContentVersionID: version.ID}
-	if version.ID == node.CurrentVersionID {
+	if version.ID == node.CurrentVersionID && node.TrashedAt == nil {
 		path, _ := s.Path(ctx, node.ID)
 		facts.Filename = node.Name
 		facts.Extension = strings.ToLower(filepath.Ext(node.Name))

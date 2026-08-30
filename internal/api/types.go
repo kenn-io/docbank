@@ -960,10 +960,19 @@ func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 	}
 }
 
-func fromStoreSourceMetadata(view store.SourceMetadataView) *SourceMetadata {
+func fromStoreSourceMetadata(view store.SourceMetadataView, redactSensitive bool) *SourceMetadata {
+	fields := view.Metadata.Fields
+	if redactSensitive {
+		fields = make([]document.SourceMetadataFieldV1, 0, len(view.Metadata.Fields))
+		for _, field := range view.Metadata.Fields {
+			if !field.Sensitive {
+				fields = append(fields, field)
+			}
+		}
+	}
 	return &SourceMetadata{ContractVersion: view.Metadata.ContractVersion,
 		ExtractorFingerprint: view.Generation.ExtractorFingerprint,
-		Checksum:             view.Generation.Checksum, Fields: view.Metadata.Fields,
+		Checksum:             view.Generation.Checksum, Fields: fields,
 		Warnings: view.Metadata.Warnings, Attachment: view.Attachment}
 }
 

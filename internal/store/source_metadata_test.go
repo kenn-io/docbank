@@ -88,6 +88,34 @@ func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
 	assert.Empty(t, view.Attachment.IngestedAt)
 }
 
+func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
+	require.NoError(t, err)
+	node, _, err := s.IngestFile(ctx, ingest, s.RootID(), "report.pdf", fakeHash("a1"), 12,
+		"application/pdf", "/synthetic/report.pdf", "2024-01-02T03:04:05Z")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+
+	view, err := s.ContentVersionSourceMetadata(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, node.ID, view.Attachment.NodeID)
+	assert.Equal(t, node.CurrentVersionID, view.Attachment.ContentVersionID)
+	assert.Empty(t, view.Attachment.Filename)
+	assert.Empty(t, view.Attachment.Extension)
+	assert.Empty(t, view.Attachment.Path)
+	assert.Empty(t, view.Attachment.SourcePath)
+	assert.Empty(t, view.Attachment.FilesystemMTime)
+	assert.Empty(t, view.Attachment.IngestedAt)
+}
+
 func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string

@@ -66,7 +66,7 @@ func nodeOutputWithSourceMetadata(ctx context.Context, d Deps, out *nodeOutput) 
 	if out.Body.Kind == "file" && out.Body.CurrentVersionID != "" {
 		metadata, metadataErr := d.Store.ContentVersionSourceMetadata(ctx, out.Body.CurrentVersionID)
 		if metadataErr == nil {
-			out.Body.SourceMetadata = fromStoreSourceMetadata(metadata)
+			out.Body.SourceMetadata = fromStoreSourceMetadata(metadata, browserSessionRequest(ctx))
 		}
 		if metadataErr != nil && !errors.Is(metadataErr, store.ErrNotFound) {
 			return nil, FromStoreError(metadataErr)
@@ -170,7 +170,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		body := fromStoreContentVersion(version)
 		metadata, metadataErr := d.Store.ContentVersionSourceMetadata(ctx, version.ID)
 		if metadataErr == nil {
-			body.SourceMetadata = fromStoreSourceMetadata(metadata)
+			body.SourceMetadata = fromStoreSourceMetadata(metadata, browserSessionRequest(ctx))
 		}
 		if metadataErr != nil && !errors.Is(metadataErr, store.ErrNotFound) {
 			return nil, FromStoreError(metadataErr)
