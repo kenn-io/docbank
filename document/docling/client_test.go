@@ -207,6 +207,23 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 	}
 }
 
+func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"schema_name": "DoclingDocument", "version": "1.7.0",
+		"pages":  map[string]any{"1": map[string]any{}},
+		"texts":  []any{map[string]any{"text": "page text", "prov": []any{map[string]any{"page_no": 1}}}},
+		"tables": []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "cell text"}}}}},
+	})
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf")
+	require.True(t, usable)
+	assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+	assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+		Kind: document.EvidenceOmissionField, Field: "tables", Reason: "Docling structured content is not mapped",
+	}}, evidence.Omissions)
+	require.NoError(t, document.ValidateSourceEvidenceV1(evidence))
+}
+
 func TestClientRejectsChangedTaskIDWhilePolling(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -242,6 +259,42 @@ func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
 	_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
 	require.ErrorContains(t, err, "authorization is not current")
 	assert.Zero(t, requests.Load())
+}
+
+func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+	t.Run("cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		reads := 0
+		_, err := readExact(ctx, readerFunc(func([]byte) (int, error) {
+			reads++
+			if reads == 2 {
+				cancel()
+			}
+			if reads == 200 {
+				return 0, errors.New("synthetic terminal read failure")
+			}
+			return 0, nil
+		}), fixture.metadata)
+		require.Error(t, err)
+		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorCanceled, providerErr.Code())
+		assert.Less(t, reads, 200)
+	})
+	t.Run("no progress", func(t *testing.T) {
+		reads := 0
+		_, err := readExact(t.Context(), readerFunc(func([]byte) (int, error) {
+			reads++
+			if reads == 101 {
+				return 0, errors.New("synthetic terminal read failure")
+			}
+			return 0, nil
+		}), fixture.metadata)
+		require.Error(t, err)
+		require.ErrorIs(t, err, io.ErrNoProgress)
+		assert.Equal(t, 100, reads)
+	})
 }
 
 func TestClientStopsAtAuthorizationExpiryBeforeFollowupEgress(t *testing.T) {
@@ -497,7 +550,9 @@ func TestClientRequestCountsPartialResponseBytesBeforeReadFailure(t *testing.T) 
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(&readOnceError{payload: payload}),
+				Body: io.NopCloser(readerFunc(func(buffer []byte) (int, error) {
+					return copy(buffer, payload), errors.New("synthetic response read failure")
+				})),
 			}, nil
 		}),
 	})
@@ -515,17 +570,10 @@ func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Respons
 	return function(request)
 }
 
-type readOnceError struct {
-	payload []byte
-}
+type readerFunc func([]byte) (int, error)
 
-func (reader *readOnceError) Read(buffer []byte) (int, error) {
-	if len(reader.payload) == 0 {
-		return 0, errors.New("synthetic response read failure")
-	}
-	n := copy(buffer, reader.payload)
-	reader.payload = reader.payload[n:]
-	return n, errors.New("synthetic response read failure")
+func (function readerFunc) Read(buffer []byte) (int, error) {
+	return function(buffer)
 }
 
 type delayedReader struct {

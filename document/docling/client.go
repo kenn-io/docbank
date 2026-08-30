@@ -33,19 +33,20 @@ const (
 	pollPath    = "/v1/status/poll/"
 	resultPath  = "/v1/result/"
 
-	defaultRequestTimeout   = 30 * time.Second
-	defaultTotalTimeout     = 10 * time.Minute
-	defaultPollInterval     = time.Second
-	defaultMaxPollAttempts  = 300
-	defaultMaxResponseBytes = int64(512 << 20)
-	defaultMaxDocumentBytes = int64(64 << 20)
-	maxTimeout              = 24 * time.Hour
-	maxPollAttempts         = 10_000
-	maxResponseBytes        = int64(512 << 20)
-	maxDocumentBytes        = int64(1 << 30)
-	maxSecretBytes          = 64 << 10
-	maxTaskIDBytes          = 120
-	timestampForm           = "2006-01-02T15:04:05.000000000Z"
+	defaultRequestTimeout    = 30 * time.Second
+	defaultTotalTimeout      = 10 * time.Minute
+	defaultPollInterval      = time.Second
+	defaultMaxPollAttempts   = 300
+	defaultMaxResponseBytes  = int64(512 << 20)
+	defaultMaxDocumentBytes  = int64(64 << 20)
+	maxTimeout               = 24 * time.Hour
+	maxPollAttempts          = 10_000
+	maxResponseBytes         = int64(512 << 20)
+	maxDocumentBytes         = int64(1 << 30)
+	maxSecretBytes           = 64 << 10
+	maxTaskIDBytes           = 120
+	maxConsecutiveEmptyReads = 100
+	timestampForm            = "2006-01-02T15:04:05.000000000Z"
 )
 
 var _ document.RenditionProvider = (*Client)(nil)
@@ -582,7 +583,13 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 				PageNo int64 `json:"page_no"`
 			} `json:"prov"`
 		} `json:"texts"`
-		Pages map[string]json.RawMessage `json:"pages"`
+		Pages         map[string]json.RawMessage `json:"pages"`
+		Tables        []json.RawMessage          `json:"tables"`
+		Pictures      []json.RawMessage          `json:"pictures"`
+		KeyValueItems []json.RawMessage          `json:"key_value_items"`
+		FormItems     []json.RawMessage          `json:"form_items"`
+		FieldRegions  []json.RawMessage          `json:"field_regions"`
+		FieldItems    []json.RawMessage          `json:"field_items"`
 	}
 	if len(raw) == 0 || json.Unmarshal(raw, &wire) != nil || wire.SchemaName != "DoclingDocument" || !supportedDoclingMajor(wire.Version) || len(wire.Pages) == 0 {
 		return document.SourceEvidenceV1{}, nil, false
@@ -640,6 +647,27 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 			Locator: document.SourceEvidenceLocatorV1{Kind: locatorKind, IndexOrigin: document.EvidenceIndexOriginOne, Start: index, End: index},
 		})
 	}
+	for _, field := range []struct {
+		name   string
+		values []json.RawMessage
+	}{
+		{name: "tables", values: wire.Tables},
+		{name: "pictures", values: wire.Pictures},
+		{name: "key_value_items", values: wire.KeyValueItems},
+		{name: "form_items", values: wire.FormItems},
+		{name: "field_regions", values: wire.FieldRegions},
+		{name: "field_items", values: wire.FieldItems},
+	} {
+		if len(field.values) == 0 {
+			continue
+		}
+		evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{
+			Kind: document.EvidenceOmissionField, Field: field.name, Reason: "Docling structured content is not mapped",
+		})
+	}
+	if len(evidence.Omissions) != 0 {
+		evidence.Completeness = document.EvidencePartial
+	}
 	return evidence, append([]byte(nil), raw...), true
 }
 
@@ -679,15 +707,34 @@ func allowsStructured(authorization document.RenditionAuthorization) bool {
 }
 
 func readExact(ctx context.Context, upload io.Reader, metadata document.AuthorizedUploadMetadata) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", err)
-	}
-	data, err := io.ReadAll(io.LimitReader(upload, metadata.ByteLength+1))
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", ctxErr)
+	limited := &io.LimitedReader{R: upload, N: metadata.ByteLength + 1}
+	data := make([]byte, 0, 32<<10)
+	buffer := make([]byte, 32<<10)
+	emptyReads := 0
+	for limited.N > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", err)
 		}
-		return nil, classifiedError(document.RenditionErrorTransient, "could not read the authorized upload", err)
+		count, err := limited.Read(buffer)
+		if count > 0 {
+			data = append(data, buffer[:count]...)
+			emptyReads = 0
+		}
+		switch {
+		case errors.Is(err, io.EOF):
+			limited.N = 0
+		case err != nil:
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", ctxErr)
+			}
+			return nil, classifiedError(document.RenditionErrorTransient, "could not read the authorized upload", err)
+		case count == 0:
+			emptyReads++
+			if emptyReads >= maxConsecutiveEmptyReads {
+				return nil, classifiedError(document.RenditionErrorTransient,
+					"authorized upload stopped making progress", io.ErrNoProgress)
+			}
+		}
 	}
 	if int64(len(data)) != metadata.ByteLength || sha256Hex(data) != metadata.SHA256 {
 		return nil, classifiedError(document.RenditionErrorPolicyRejected, "authorized upload identity mismatch", nil)
@@ -818,7 +865,9 @@ func parsePartialPages(raw []json.RawMessage) ([]int64, error) {
 func partialSuccessEvidence(
 	evidence document.SourceEvidenceV1, family string, pages []int64,
 ) (document.SourceEvidenceV1, error) {
-	if family != "pdf" || evidence.Completeness != document.EvidenceComplete || len(pages) == 0 {
+	if family != "pdf" ||
+		(evidence.Completeness != document.EvidenceComplete && evidence.Completeness != document.EvidencePartial) ||
+		len(pages) == 0 {
 		return document.SourceEvidenceV1{}, malformedError("Docling partial result lacks exact PDF page evidence", nil)
 	}
 	unitByPage := make(map[int64]int, len(evidence.Units))
