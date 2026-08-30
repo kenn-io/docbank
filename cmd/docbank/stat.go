@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 )
@@ -77,11 +79,45 @@ func writeNodeStat(cmd *cobra.Command, node api.Node) error {
 			mimeType = strconv.Quote(node.MimeType)
 		}
 		_, _ = fmt.Fprintf(w, "mime:\t%s\n", mimeType)
+		if node.SourceMetadata != nil {
+			_, _ = fmt.Fprintf(w, "metadata:\t%s (%d fields, %d warnings)\n",
+				node.SourceMetadata.ContractVersion, len(node.SourceMetadata.Fields), len(node.SourceMetadata.Warnings))
+			for _, field := range node.SourceMetadata.Fields {
+				_, _ = fmt.Fprintf(w, "  %s:\t%s%s\n", field.Key, sourceMetadataDisplayValue(field.Value),
+					map[bool]string{true: " [sensitive]"}[field.Sensitive])
+			}
+		}
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing node details: %w", err)
 	}
 	return nil
+}
+
+func sourceMetadataDisplayValue(value document.SourceMetadataValueV1) string {
+	switch value.Kind {
+	case document.SourceMetadataString:
+		return strconv.Quote(value.String)
+	case document.SourceMetadataStringList:
+		return strconv.Quote(strings.Join(value.Strings, "; "))
+	case document.SourceMetadataInteger:
+		if value.Integer != nil {
+			return strconv.FormatInt(*value.Integer, 10)
+		}
+	case document.SourceMetadataNumber:
+		if value.Number != nil {
+			return strconv.FormatFloat(*value.Number, 'g', -1, 64)
+		}
+	case document.SourceMetadataBoolean:
+		if value.Boolean != nil {
+			return strconv.FormatBool(*value.Boolean)
+		}
+	case document.SourceMetadataTimestamp:
+		if value.Timestamp != nil {
+			return strconv.Quote(value.Timestamp.Raw)
+		}
+	}
+	return "not recorded"
 }
 
 func nodeState(node api.Node) string {

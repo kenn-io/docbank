@@ -188,47 +188,27 @@ type PDFMeasurements struct {
 	MaxEntryBytes   int64
 }
 
+// PDFMetadata contains metadata resolved from the authoritative trailer and
+// catalog objects in one validated PDF object graph.
+type PDFMetadata struct {
+	Pages int64
+	Info  PDFInfoMetadata
+	XMP   []byte
+}
+
+// PDFInfoMetadata contains the standard document information dictionary
+// fields that Docbank recognizes.
+type PDFInfoMetadata struct {
+	Title, Author, Subject, Keywords, CreationDate, ModDate string
+}
+
 // InspectPDF validates the authoritative PDF object graph and measures every
 // supported stream under the supplied limits. Opaque image filters are rejected
 // because their decoded size cannot be established without rendering them.
 func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
-	resourceLimits := model.DefaultResourceLimits()
-	resourceLimits.MaxStreamBytes = limits.MaxEntryBytes
-	resourceLimits.MaxDecodeBytes = min(limits.MaxEntryBytes, limits.MaxExpandedBytes)
-	resourceLimits.MaxImageBytes = limits.MaxExpandedBytes
-	resourceLimits.MaxImagePixels = limits.MaxExpandedBytes
-	resourceLimits.MaxObjectCount = min(resourceLimits.MaxObjectCount, len(data)+1)
-	resourceLimits.MaxXRefEntries = min(resourceLimits.MaxXRefEntries, len(data)+1)
-	resourceLimits.MaxObjectStreamCount = min(resourceLimits.MaxObjectStreamCount, len(data)+1)
-	resourceLimits.MaxObjectStreamFirst = min(resourceLimits.MaxObjectStreamFirst, limits.MaxEntryBytes)
-	resourceLimits.MaxRecursionDepth = maxPDFPageTreeDepth
-
-	configuration := &model.Configuration{
-		Reader15:       true,
-		ValidationMode: model.ValidationRelaxed,
-		Offline:        true,
-		Cmd:            model.VALIDATE,
-		Limits:         resourceLimits,
-	}
-	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
+	context, err := validatePDFObjectGraph(data, limits)
 	if err != nil {
-		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
-			return PDFMeasurements{}, ErrPDFExpandedBytes
-		}
-		return PDFMeasurements{}, fmt.Errorf("validate PDF object graph: %w", err)
-	}
-	if context.Encrypt != nil {
-		return PDFMeasurements{}, ErrPDFEncrypted
-	}
-	external, err := pdfHasExternalReference(context)
-	if err != nil {
-		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
-			return PDFMeasurements{}, ErrPDFExpandedBytes
-		}
-		return PDFMeasurements{}, fmt.Errorf("inspect PDF object graph: %w", err)
-	}
-	if external {
-		return PDFMeasurements{}, ErrPDFExternalReference
+		return PDFMeasurements{}, err
 	}
 
 	measurements := PDFMeasurements{Pages: int64(context.PageCount)}
@@ -267,6 +247,132 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 		measurements.MaxEntryBytes = max(measurements.MaxEntryBytes, decodedBytes)
 	}
 	return measurements, nil
+}
+
+// CountPDFPages returns the authoritative page-tree count without decoding
+// unrelated content streams. Parsing remains bounded by the source size.
+func CountPDFPages(data []byte) (int64, error) {
+	sourceBytes := int64(len(data))
+	context, err := validatePDFObjectGraph(data, PDFLimits{
+		MaxExpandedBytes: sourceBytes,
+		MaxEntryBytes:    sourceBytes,
+		MaxEntries:       sourceBytes,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if context.PageCount <= 0 {
+		return 0, errors.New("PDF page tree is empty")
+	}
+	return int64(context.PageCount), nil
+}
+
+// ReadPDFMetadata resolves the document information dictionary and catalog XMP
+// stream instead of scanning unrelated object or page-stream bytes.
+func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
+	sourceBytes := int64(len(data))
+	context, err := validatePDFObjectGraph(data, PDFLimits{
+		MaxExpandedBytes: sourceBytes,
+		MaxEntryBytes:    sourceBytes,
+		MaxEntries:       sourceBytes,
+	})
+	if err != nil {
+		return PDFMetadata{}, err
+	}
+	if context.PageCount <= 0 {
+		return PDFMetadata{}, errors.New("PDF page tree is empty")
+	}
+	metadata := PDFMetadata{Pages: int64(context.PageCount)}
+	if context.Info != nil {
+		dictionary, err := context.DereferenceDict(*context.Info)
+		if err != nil {
+			return PDFMetadata{}, fmt.Errorf("resolve PDF information dictionary: %w", err)
+		}
+		if dictionary != nil {
+			for _, field := range []struct {
+				name  string
+				value *string
+			}{
+				{"Title", &metadata.Info.Title},
+				{"Author", &metadata.Info.Author},
+				{"Subject", &metadata.Info.Subject},
+				{"Keywords", &metadata.Info.Keywords},
+				{"CreationDate", &metadata.Info.CreationDate},
+				{"ModDate", &metadata.Info.ModDate},
+			} {
+				object, found := dictionary.Find(field.name)
+				if !found {
+					continue
+				}
+				text, err := context.DereferenceStringOrHexLiteral(object, model.V10, nil)
+				if err != nil {
+					return PDFMetadata{}, fmt.Errorf("resolve PDF information field %s: %w", field.name, err)
+				}
+				*field.value = text
+			}
+		}
+	}
+	if object, found := context.RootDict.Find("Metadata"); found {
+		stream, _, err := context.DereferenceStreamDict(object)
+		if err != nil {
+			return PDFMetadata{}, fmt.Errorf("resolve PDF catalog metadata: %w", err)
+		}
+		if stream != nil {
+			if err := stream.DecodeWithLimit(sourceBytes); err != nil {
+				if !errors.Is(err, filter.ErrUnsupportedFilter) {
+					if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+						return PDFMetadata{}, ErrPDFExpandedBytes
+					}
+					return PDFMetadata{}, fmt.Errorf("decode PDF catalog metadata: %w", err)
+				}
+			} else {
+				metadata.XMP = append([]byte(nil), stream.Content...)
+			}
+		}
+	}
+	return metadata, nil
+}
+
+func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+	resourceLimits := model.DefaultResourceLimits()
+	resourceLimits.MaxStreamBytes = limits.MaxEntryBytes
+	resourceLimits.MaxDecodeBytes = min(limits.MaxEntryBytes, limits.MaxExpandedBytes)
+	resourceLimits.MaxImageBytes = limits.MaxExpandedBytes
+	resourceLimits.MaxImagePixels = limits.MaxExpandedBytes
+	resourceLimits.MaxObjectCount = min(resourceLimits.MaxObjectCount, len(data)+1)
+	resourceLimits.MaxXRefEntries = min(resourceLimits.MaxXRefEntries, len(data)+1)
+	resourceLimits.MaxObjectStreamCount = min(resourceLimits.MaxObjectStreamCount, len(data)+1)
+	resourceLimits.MaxObjectStreamFirst = min(resourceLimits.MaxObjectStreamFirst, limits.MaxEntryBytes)
+	resourceLimits.MaxRecursionDepth = maxPDFPageTreeDepth
+
+	configuration := &model.Configuration{
+		Reader15:       true,
+		ValidationMode: model.ValidationRelaxed,
+		Offline:        true,
+		Cmd:            model.VALIDATE,
+		Limits:         resourceLimits,
+	}
+	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
+	if err != nil {
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+			return nil, ErrPDFExpandedBytes
+		}
+		return nil, fmt.Errorf("validate PDF object graph: %w", err)
+	}
+	if context.Encrypt != nil {
+		return nil, ErrPDFEncrypted
+	}
+	external, err := pdfHasExternalReference(context)
+	if err != nil {
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+			return nil, ErrPDFExpandedBytes
+		}
+		return nil, fmt.Errorf("inspect PDF object graph: %w", err)
+	}
+	if external {
+		return nil, ErrPDFExternalReference
+	}
+	return context, nil
 }
 
 func pdfHasExternalReference(context *model.Context) (bool, error) {

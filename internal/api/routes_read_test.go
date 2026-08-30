@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -52,6 +53,27 @@ func TestStatByIDAndPath(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/path?path=%2Fnope", nil)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Contains(t, body, `"code":"not_found"`)
+}
+
+func TestStatAndContentVersionDetailExposeActiveSourceMetadata(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", testHash("metadata"), 9, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Synthetic report"}}}})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("extractor"), canonical)
+	require.NoError(t, err)
+
+	for _, path := range []string{fmt.Sprintf("/api/v1/nodes/%d", node.ID), "/api/v1/versions/" + node.CurrentVersionID} {
+		resp, body := get(t, ts, path, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		assert.Contains(t, body, `"source_metadata"`)
+		assert.Contains(t, body, "Synthetic report")
+		assert.Contains(t, body, `"filename":"report.pdf"`)
+	}
 }
 
 func TestStatTrashedNodeHasNoLivePath(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
@@ -31,6 +32,31 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestClientPreservesSourceMetadataOnStatAndVersionDetail(t *testing.T) {
+	metadata := &api.SourceMetadata{ContractVersion: document.SourceMetadataContractV1,
+		ExtractorFingerprint: strings.Repeat("a", 64), Checksum: strings.Repeat("b", 64),
+		Fields:   []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Synthetic"}}},
+		Warnings: []document.SourceMetadataWarningV1{}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/versions/") {
+			_ = json.MarshalWrite(w, api.ContentVersion{ID: "11111111-1111-4111-8111-111111111111", NodeID: 7, BlobHash: strings.Repeat("c", 64), Size: 3, NodeRevision: 1, IntroducedOperationID: "22222222-2222-4222-8222-222222222222", TransitionKind: "content_create", SourceMetadata: metadata})
+			return
+		}
+		_ = json.MarshalWrite(w, api.Node{ID: 7, Name: "report.pdf", Kind: "file", Revision: 1, Path: "/report.pdf", SourceMetadata: metadata})
+	}))
+	t.Cleanup(server.Close)
+	c := client.New(server.URL, "")
+	node, err := c.Stat(t.Context(), "/report.pdf")
+	require.NoError(t, err)
+	require.NotNil(t, node.SourceMetadata)
+	assert.Equal(t, "Synthetic", node.SourceMetadata.Fields[0].Value.String)
+	version, err := c.Version(t.Context(), "11111111-1111-4111-8111-111111111111")
+	require.NoError(t, err)
+	require.NotNil(t, version.SourceMetadata)
+	assert.Equal(t, metadata.Checksum, version.SourceMetadata.Checksum)
+}
 
 // serverKey is the fixed key every test server in this file is built with:
 // production always has an effective key (see cmd/docbank/daemon.go and

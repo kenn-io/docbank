@@ -151,22 +151,121 @@ func runServe(ctx context.Context) (retErr error) {
 	}()
 	operationGate := api.NewOperationGate()
 	if err := jobSupervisor.Start("maintenance:auxiliary-checksums", func(ctx context.Context) error {
+		cursor := ""
+		retries := newBackfillRetrySet()
 		for {
+			targets, listErr := s.MissingBlobChecksumTargetsAfter(ctx, cursor, 100)
+			if listErr != nil {
+				return listErr
+			}
+			if len(targets) == 0 {
+				cursor = ""
+				if len(retries) == 0 {
+					return nil
+				}
+				if err := waitDaemonJob(ctx, retries.waitDelay(time.Now().UTC(), 10*time.Second)); err != nil {
+					return err
+				}
+				continue
+			}
+			cursor = targets[len(targets)-1].BlobSHA256
 			completed := 0
-			err := operationGate.MaintainContext(ctx, func() error {
-				var backfillErr error
-				completed, backfillErr = processing.BackfillAuxiliaryChecksums(ctx, s, blobs, 100)
-				return backfillErr
+			err := operationGate.MutateContext(ctx, func() error {
+				var batchErr error
+				for _, target := range targets {
+					now := time.Now().UTC()
+					if !retries.ready(target.BlobSHA256, now) {
+						continue
+					}
+					done, targetErr := processing.BackfillAuxiliaryChecksumTargets(
+						ctx, s, blobs, []store.BlobChecksumTarget{target})
+					completed += done
+					if targetErr != nil {
+						retries.failed(target.BlobSHA256, now)
+						batchErr = errors.Join(batchErr, targetErr)
+					} else {
+						retries.succeeded(target.BlobSHA256)
+					}
+				}
+				return batchErr
 			})
 			if err != nil {
-				return err
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Warn("auxiliary checksum backfill will retry", "completed", completed, "error", err)
 			}
-			if completed == 0 {
-				return nil
+			if err := waitDaemonJob(ctx, 100*time.Millisecond); err != nil {
+				return err
 			}
 		}
 	}); err != nil {
 		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
+	}
+	if err := jobSupervisor.Start("extract:source-metadata", func(ctx context.Context) error {
+		idleDelay := time.Second
+		cursor := ""
+		retries := newBackfillRetrySet()
+		seen := make(map[string]struct{})
+		for {
+			targets, listErr := s.MissingSourceMetadataTargetsAfter(
+				ctx, processing.SourceMetadataExtractorFingerprint, cursor, 10)
+			if listErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Warn("listing source metadata targets will retry", "error", listErr)
+				if err := waitDaemonJob(ctx, 5*time.Second); err != nil {
+					return err
+				}
+				continue
+			}
+			if len(targets) == 0 {
+				cursor = ""
+				retries.retain(seen)
+				clear(seen)
+				delay := retries.waitDelay(time.Now().UTC(), idleDelay)
+				if err := waitDaemonJob(ctx, delay); err != nil {
+					return err
+				}
+				idleDelay = min(idleDelay*2, 10*time.Second)
+				continue
+			}
+			cursor = targets[len(targets)-1].SourceSHA256
+			idleDelay = time.Second
+			completed := 0
+			err := operationGate.MutateContext(ctx, func() error {
+				var batchErr error
+				for _, target := range targets {
+					seen[target.SourceSHA256] = struct{}{}
+					now := time.Now().UTC()
+					if !retries.ready(target.SourceSHA256, now) {
+						continue
+					}
+					done, targetErr := processing.BackfillSourceMetadataTargets(
+						ctx, s, blobs, []store.SourceMetadataTarget{target})
+					completed += done
+					if targetErr != nil {
+						retries.failed(target.SourceSHA256, now)
+						batchErr = errors.Join(batchErr, targetErr)
+					} else {
+						retries.succeeded(target.SourceSHA256)
+					}
+				}
+				return batchErr
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Warn("source metadata backfill will retry", "completed", completed, "error", err)
+			}
+			if err := waitDaemonJob(ctx, 100*time.Millisecond); err != nil {
+				return err
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("starting source metadata backfill: %w", err)
 	}
 	placementRunner := blob.PlacementRunner{
 		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
@@ -343,6 +442,17 @@ func runServe(ctx context.Context) (retErr error) {
 		return shutdownErr
 	}
 	return serveErr
+}
+
+func waitDaemonJob(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validateConfiguredWatchStores(

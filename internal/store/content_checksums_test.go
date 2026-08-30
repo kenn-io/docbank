@@ -58,3 +58,18 @@ func TestAuxiliaryChecksumValidationAndMissingBackfillTargets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, targets)
 }
+
+func TestMissingBlobChecksumTargetsCanAdvancePastAFailingHash(t *testing.T) {
+	s := newTestStore(t)
+	for index, hash := range []string{fakeHash("a1"), fakeHash("b2"), fakeHash("c3")} {
+		_, err := s.CreateFile(t.Context(), s.RootID(), "source-"+string(rune('a'+index))+".bin", hash, 4, "")
+		require.NoError(t, err)
+	}
+
+	first, err := s.MissingBlobChecksumTargetsAfter(t.Context(), "", 1)
+	require.NoError(t, err)
+	require.Equal(t, []BlobChecksumTarget{{BlobSHA256: fakeHash("a1"), Size: 4}}, first)
+	second, err := s.MissingBlobChecksumTargetsAfter(t.Context(), first[0].BlobSHA256, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []BlobChecksumTarget{{BlobSHA256: fakeHash("b2"), Size: 4}}, second)
+}

@@ -37,7 +37,13 @@ func NewOperationGate() *OperationGate {
 // Mutate runs fn as an ordinary mutation, excluding maintenance while the
 // complete physical-write and metadata-publication operation is in flight.
 func (g *OperationGate) Mutate(fn func() error) error {
-	if err := g.mu.Acquire(context.Background(), 1); err != nil {
+	return g.MutateContext(context.Background(), fn)
+}
+
+// MutateContext runs a daemon-owned logical mutation on the shared side of
+// the maintenance gate, with cancellation while waiting for admission.
+func (g *OperationGate) MutateContext(ctx context.Context, fn func() error) error {
+	if err := g.mu.Acquire(ctx, 1); err != nil {
 		return fmt.Errorf("acquiring mutation gate: %w", err)
 	}
 	defer g.mu.Release(1)
