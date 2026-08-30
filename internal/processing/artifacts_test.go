@@ -76,6 +76,24 @@ func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
 	assert.Equal(t, store.SearchMatchContent, hits[0].Match)
 }
 
+func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
+	// Mutation caught: loading the first publication hydrates the Markdown MD5,
+	// which must not change the immutable build declaration used by a retry.
+	fixture := newPublicationFixture(t)
+	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+	require.NoError(t, err)
+	ids := publicationIDs{"b1", "51", "91"}
+
+	first := fixture.stage(t, ids, "searchable mercury evidence", "first markdown")
+	first.Build.Warnings = nil
+	_, err = publisher.PublishRendition(t.Context(), first)
+	require.NoError(t, err)
+	retry := fixture.stage(t, ids, "searchable mercury evidence", "first markdown")
+	retry.Build.Warnings = nil
+	_, err = publisher.PublishRendition(t.Context(), retry)
+	require.NoError(t, err, "an exact retry must reuse the immutable build")
+}
+
 func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
 	// Mutation caught: exact slice comparison rejects a warning-free build
 	// when one representation uses nil and the other uses an empty slice.

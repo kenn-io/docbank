@@ -310,7 +310,7 @@ func stageRenditionBuildTx(
 		if loadErr != nil {
 			return loadErr
 		}
-		if !reflect.DeepEqual(stored, normalized) {
+		if !renditionBuildDeclarationEqual(stored, normalized) {
 			return fmt.Errorf("rendition build %s names different immutable metadata", normalized.ID)
 		}
 		return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
@@ -319,6 +319,19 @@ func stageRenditionBuildTx(
 		return err
 	}
 	return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
+}
+
+func renditionBuildDeclarationEqual(first, second RenditionBuildRecord) bool {
+	// MD5 is hydrated from the blob checksum catalog after publication. It is
+	// not part of the immutable rendition build declaration.
+	clearDerivedMD5 := func(record RenditionBuildRecord) RenditionBuildRecord {
+		record.Artifacts = append([]RenditionArtifactRecord(nil), record.Artifacts...)
+		for index := range record.Artifacts {
+			record.Artifacts[index].MD5 = ""
+		}
+		return record
+	}
+	return reflect.DeepEqual(clearDerivedMD5(first), clearDerivedMD5(second))
 }
 
 func validateRenditionArtifactRolesForProfile(
