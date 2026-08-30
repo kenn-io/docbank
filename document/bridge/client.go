@@ -234,12 +234,19 @@ func (client *Client) submit(
 	envelope, status, err := client.doJobRequest(request, &completion)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return jobEnvelope{}, contextErr
+			return envelope, contextErr
+		}
+		if (status == http.StatusOK || status == http.StatusAccepted) && envelope.JobID != "" {
+			if validationErr := client.validateEnvelope(envelope, upload.Metadata()); validationErr != nil {
+				err = errors.Join(err, validationErr)
+			}
+			return envelope, classifiedError(document.RenditionErrorAmbiguousSubmission,
+				"bridge submission outcome is ambiguous", 0, err)
 		}
 		if _, ok := errors.AsType[*document.RenditionProviderError](err); ok {
-			return jobEnvelope{}, err
+			return envelope, err
 		}
-		return jobEnvelope{}, classifiedError(document.RenditionErrorAmbiguousSubmission,
+		return envelope, classifiedError(document.RenditionErrorAmbiguousSubmission,
 			"bridge submission outcome is ambiguous", 0, err)
 	}
 	if status != http.StatusOK && status != http.StatusAccepted {
@@ -379,28 +386,34 @@ func (client *Client) doJobRequest(
 		return jobEnvelope{}, 0, err
 	}
 	defer func() { _ = response.Body.Close() }()
+	var completionErr error
 	if completion != nil {
-		if err := completion.wait(requestCtx); err != nil {
-			return jobEnvelope{}, response.StatusCode, err
+		completionErr = completion.wait(requestCtx)
+	}
+	withCompletionError := func(responseErr error) error {
+		if completionErr == nil {
+			return responseErr
 		}
+		return errors.Join(completionErr, responseErr)
 	}
 	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
-		return jobEnvelope{}, response.StatusCode, nil
+		return jobEnvelope{}, response.StatusCode, completionErr
 	}
 	if err := requireMediaType(response.Header.Get("Content-Type"), jobMediaType); err != nil {
-		return jobEnvelope{}, response.StatusCode, err
+		return jobEnvelope{}, response.StatusCode, withCompletionError(err)
 	}
 	body, err := readBounded(response.Body, client.maxResponseBytes)
 	if err != nil {
-		return jobEnvelope{}, response.StatusCode, err
+		return jobEnvelope{}, response.StatusCode, withCompletionError(err)
 	}
 	var envelope jobEnvelope
 	if len(body) != 0 {
 		if err := json.Unmarshal(body, &envelope); err != nil {
-			return jobEnvelope{}, response.StatusCode, malformedError("bridge response JSON is invalid", err)
+			return jobEnvelope{}, response.StatusCode,
+				withCompletionError(malformedError("bridge response JSON is invalid", err))
 		}
 	}
-	return envelope, response.StatusCode, nil
+	return envelope, response.StatusCode, completionErr
 }
 
 func (client *Client) validateEnvelope(

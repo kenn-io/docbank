@@ -96,19 +96,27 @@ func TestBridgeDescriptorPreservesEmptyArtifactRoles(t *testing.T) {
 	assert.Equal(t, descriptor, got)
 }
 
-func TestBridgeContractRejectsAcceptedResponseBeforeUploadCompletion(t *testing.T) {
+func TestBridgeContractCancelsAcceptedResponseAfterUploadFailure(t *testing.T) {
 	fixture := newBridgeFixture(t)
+	var deletes atomic.Int64
 	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
 		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method == http.MethodDelete {
+				deletes.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request,
+				}, nil
+			}
 			require.NoError(t, request.Body.Close())
 			return bridgeHTTPResponse(t, request, http.StatusAccepted,
 				pendingEnvelope(fixture, "job-incomplete-upload", JobQueued)), nil
 		})})
 
-	_, err := client.submit(t.Context(), fixture.upload(), []byte("{}"), strings.Repeat("a", 64))
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 	var providerError *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerError)
 	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+	assert.Equal(t, int64(1), deletes.Load())
 }
 
 func TestBridgeContractWithholdsFilenameWhenDisclosureIsDisabled(t *testing.T) {

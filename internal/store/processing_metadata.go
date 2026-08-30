@@ -1491,6 +1491,11 @@ func validateMetadataRenditionBuild(value metadataRenditionBuild) error {
 			return err
 		}
 	}
+	if err := validateLegacyProviderOperationIdentity(
+		value.ProviderOperationID, value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
+	); err != nil {
+		return err
+	}
 	if err := validateUUIDv4(value.VaultID); err != nil {
 		return err
 	}

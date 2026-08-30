@@ -488,6 +488,11 @@ func normalizeRenditionBuildRecord(record RenditionBuildRecord) (RenditionBuildR
 	); err != nil {
 		return RenditionBuildRecord{}, err
 	}
+	if err := validateLegacyProviderOperationIdentity(
+		record.ProviderOperationID, record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
+	); err != nil {
+		return RenditionBuildRecord{}, err
+	}
 	if err := validateMetadataTime("rendition build completed_at", record.CompletedAt); err != nil {
 		return RenditionBuildRecord{}, err
 	}
@@ -682,6 +687,23 @@ func normalizeRenditionBuildRecord(record RenditionBuildRecord) (RenditionBuildR
 		}
 	}
 	return record, nil
+}
+
+func validateLegacyProviderOperationIdentity(
+	providerOperationID, renditionRequestFingerprint, evidenceLexicalFingerprint string,
+) error {
+	if providerOperationID != legacyPlainTextProvider {
+		return nil
+	}
+	profile, err := legacyPlainTextProfile()
+	if err != nil {
+		return fmt.Errorf("validating legacy provider operation identity: %w", err)
+	}
+	if renditionRequestFingerprint != profile.RenditionRequestFingerprint ||
+		evidenceLexicalFingerprint != profile.EvidenceLexicalFingerprint {
+		return errors.New("provider operation ID is reserved for the legacy plain-text profile")
+	}
+	return nil
 }
 
 func normalizeRenditionAttachmentRecord(record RenditionAttachmentRecord) (RenditionAttachmentRecord, error) {

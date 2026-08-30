@@ -224,6 +224,15 @@ func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testin
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestRenditionCatalogReservesLegacyProviderOperationForLegacyProfile(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
+	build.ProviderOperationID = legacyPlainTextProvider
+
+	err := s.StageRenditionBuild(t.Context(), build)
+	require.ErrorContains(t, err, "reserved for the legacy plain-text profile")
+}
+
 func TestRenditionCatalogValidatesEveryArtifactMembership(t *testing.T) {
 	for name, mutate := range map[string]func(*RenditionArtifactRecord){
 		"checksum disagreement": func(record *RenditionArtifactRecord) { record.Checksum = fakeHash("2f") },
@@ -510,6 +519,10 @@ func TestRenditionCatalogPortableLimitsRejectMaxPlusOne(t *testing.T) {
 	overStringMax := atStringMax
 	overStringMax.ProviderOperationID += "o"
 	require.Error(t, validateMetadataRenditionBuild(overStringMax))
+	reservedOperation := value
+	reservedOperation.ProviderOperationID = legacyPlainTextProvider
+	require.ErrorContains(t, validateMetadataRenditionBuild(reservedOperation),
+		"reserved for the legacy plain-text profile")
 
 	jsonPrefix, jsonSuffix := `{"receipt":"`, `"}`
 	atJSONMax := value
