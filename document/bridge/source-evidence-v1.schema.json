@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docbank.dev/schemas/source-evidence-v1.schema.json",
+  "title": "Docbank source-evidence/v1",
+  "description": "Wire-shape schema. document.ValidateSourceEvidenceV1 is authoritative for semantic, aggregate, sequence, normalization, and referential constraints.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "completeness", "family", "unit_kind", "units"],
+  "properties": {
+    "contract_version": {"const": "source-evidence/v1"},
+    "completeness": {"enum": ["complete", "partial", "degraded_provenance"]},
+    "family": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "unit_kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
+    "artifacts": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/artifact"}},
+    "omissions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/omission"}},
+    "units": {"type": "array", "minItems": 1, "maxItems": 100000, "items": {"$ref": "#/$defs/unit"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "text_range": {
+      "type": "object", "additionalProperties": false,
+      "required": ["end", "start"],
+      "properties": {"end": {"type": "integer", "minimum": 0}, "start": {"type": "integer", "minimum": 0}}
+    },
+    "point": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}
+    },
+    "polygon": {
+      "type": "object", "additionalProperties": false,
+      "required": ["points"],
+      "properties": {"points": {"type": "array", "minItems": 3, "maxItems": 10000, "items": {"$ref": "#/$defs/point"}}}
+    },
+    "box": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bottom", "left", "right", "top"],
+      "properties": {
+        "bottom": {"type": "integer"}, "left": {"type": "integer"},
+        "right": {"type": "integer"}, "top": {"type": "integer"}
+      }
+    },
+    "geometry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["coordinate_origin", "coordinate_space", "height", "orientation", "scale", "unit", "width"],
+      "properties": {
+        "boxes": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/box"}},
+        "coordinate_origin": {"enum": ["bottom_left", "top_left"]},
+        "coordinate_space": {"enum": ["image", "page", "unit"]},
+        "height": {"type": "integer", "minimum": 0},
+        "orientation": {"type": "integer"},
+        "polygons": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/polygon"}},
+        "scale": {"type": "integer", "minimum": 1},
+        "unit": {"enum": ["normalized", "pixel", "point"]},
+        "width": {"type": "integer", "minimum": 0}
+      }
+    },
+    "confidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["interpretation", "maximum", "minimum", "value"],
+      "properties": {
+        "interpretation": {"enum": ["higher_is_better", "lower_is_better", "probability"]},
+        "maximum": {"type": "number"}, "minimum": {"type": "number"}, "value": {"type": "number"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pointer", "provider_id", "role", "sha256"],
+      "properties": {
+        "pointer": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "provider_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "role": {"enum": ["provider_image", "provider_markdown", "structured_evidence", "provider_transcript"]},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "omission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "reason"],
+      "properties": {
+        "field": {"type": "string", "maxLength": 1024},
+        "kind": {"enum": ["field", "range", "unit"]},
+        "locator": {"$ref": "#/$defs/locator"},
+        "range": {"$ref": "#/$defs/text_range"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "unit_order": {"type": "integer", "minimum": 0}
+      }
+    },
+    "locator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["end", "index_origin", "kind", "start"],
+      "properties": {
+        "end": {"type": "integer", "minimum": 0},
+        "index_origin": {"enum": ["none", "one", "zero"]},
+        "kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
+        "name": {"type": "string", "maxLength": 1024},
+        "start": {"type": "integer", "minimum": 0}
+      }
+    },
+    "region": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "order", "provider_id", "text_range"],
+      "properties": {
+        "artifact_provider_id": {"type": "string", "maxLength": 1024},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "geometry": {"$ref": "#/$defs/geometry"},
+        "kind": {"enum": ["code", "figure", "footer", "heading", "header", "image", "list", "paragraph", "table", "table_cell"]},
+        "order": {"type": "integer", "minimum": 0},
+        "parent_provider_id": {"type": "string", "maxLength": 1024},
+        "provider_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "text_range": {"$ref": "#/$defs/text_range"}
+      }
+    },
+    "table_cell": {
+      "type": "object", "additionalProperties": false,
+      "required": ["column", "column_span", "header", "order", "row", "row_span", "text_range"],
+      "properties": {
+        "column": {"type": "integer", "minimum": 0},
+        "column_span": {"type": "integer", "minimum": 1},
+        "header": {"type": "boolean"},
+        "order": {"type": "integer", "minimum": 0},
+        "region_provider_id": {"type": "string", "maxLength": 1024},
+        "row": {"type": "integer", "minimum": 0},
+        "row_span": {"type": "integer", "minimum": 1},
+        "text_range": {"$ref": "#/$defs/text_range"}
+      }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cells", "columns", "order", "provider_id", "rows"],
+      "properties": {
+        "cells": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/table_cell"}},
+        "columns": {"type": "integer", "minimum": 1},
+        "order": {"type": "integer", "minimum": 0},
+        "provider_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "region_provider_id": {"type": "string", "maxLength": 1024},
+        "rows": {"type": "integer", "minimum": 1}
+      }
+    },
+    "unit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["locator", "order", "text"],
+      "properties": {
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "heading_path": {"type": "array", "maxItems": 256, "items": {"type": "string", "minLength": 1}},
+        "locator": {"$ref": "#/$defs/locator"},
+        "omissions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/omission"}},
+        "order": {"type": "integer", "minimum": 0},
+        "provider_id": {"type": "string", "maxLength": 1024},
+        "regions": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/region"}},
+        "tables": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/table"}},
+        "text": {"type": "string", "maxLength": 268435456}
+      }
+    }
+  }
+}
