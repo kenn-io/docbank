@@ -30,7 +30,7 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
-		{name: "JPEG EXIF and GPS", payload: []byte("\xff\xd8\xff\xe1Exif\x00\x00ImageDescription=Synthetic image\x00GPSLatitude=51.5\x00GPSLongitude=-0.1\x00\xff\xd9"), keys: []string{"description", "image.exif.gps_latitude", "image.exif.gps_longitude"}, sensitive: "image.exif.gps_latitude"},
+		{name: "JPEG EXIF", payload: syntheticExifJPEG(), keys: []string{"creators", "description"}},
 		{name: "ID3 media tags", payload: syntheticID3Tag(4,
 			syntheticID3Frame{id: "TIT2", encoding: 3, text: []byte("Synthetic song")},
 			syntheticID3Frame{id: "TPE1", encoding: 3, text: []byte("Ada")},
@@ -142,7 +142,7 @@ func TestExtractID3TextEncodingsAndFrameBoundary(t *testing.T) {
 func TestExtractXMLTextDoesNotCopyWrittenFrames(t *testing.T) {
 	collector := metadataCollector{record: new(emptySourceMetadata()), seen: map[string]bool{}}
 	require.NotPanics(t, func() {
-		collector.extractXMLText([]byte(`<root>prefix<group><title>Synthetic</title></group></root>`), "xmp")
+		collector.extractXMLText([]byte(`<root>prefix<group><title>Synthetic</title></group></root>`), "office.core")
 	})
 	title, found := sourceMetadataString(*collector.record, "title")
 	require.True(t, found)
@@ -150,7 +150,7 @@ func TestExtractXMLTextDoesNotCopyWrittenFrames(t *testing.T) {
 
 	metadata := emptySourceMetadata()
 	collector = metadataCollector{record: &metadata, seen: map[string]bool{}}
-	collector.extractXMLText([]byte(`<root><title>`+strings.Repeat("x", document.MaxSourceMetadataValueBytes+1)+`</title></root>`), "xmp")
+	collector.extractXMLText([]byte(`<root><title>`+strings.Repeat("x", document.MaxSourceMetadataValueBytes+1)+`</title></root>`), "office.core")
 	_, found = sourceMetadataString(metadata, "title")
 	assert.False(t, found)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "value_too_large")
@@ -183,6 +183,31 @@ func TestExtractXMLTextReadsXMPAttributesAndRDFCollections(t *testing.T) {
 		require.True(t, found)
 		assert.Equal(t, []string{"Ada", "Grace"}, creators)
 	})
+}
+
+func TestExtractXMLTextSkipsXMPStructureAndUnknownNamespaces(t *testing.T) {
+	t.Run("RDF structure", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractXMLText([]byte(`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><rdf:Description><dc:title>Synthetic title</dc:title></rdf:Description></rdf:RDF>`), "xmp")
+		_, found := sourceMetadataString(metadata, "description")
+		assert.False(t, found)
+	})
+	t.Run("unknown property namespace", func(t *testing.T) {
+		metadata := emptySourceMetadata()
+		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+		collector.extractXMLText([]byte(`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:unknown="https://example.test/xmp"><rdf:Description><unknown:title>Fabricated title</unknown:title></rdf:Description></rdf:RDF>`), "xmp")
+		_, found := sourceMetadataString(metadata, "title")
+		assert.False(t, found)
+	})
+}
+
+func TestExtractImageIgnoresMetadataLikeEntropyBytes(t *testing.T) {
+	data := append([]byte{0xff, 0xd8, 0xff, 0xda, 0x00, 0x02}, []byte("ImageDescription=Fabricated entropy\x00")...)
+	data = append(data, 0xff, 0xd9)
+	metadata := ExtractSourceMetadata(data)
+	_, found := sourceMetadataString(metadata, "description")
+	assert.False(t, found)
 }
 
 func TestMalformedXMLMetadataEmitsWarnings(t *testing.T) {
@@ -367,6 +392,37 @@ func syntheticMetadataPDFWithInfoAndMetadata(pageCount int, info, metadata strin
 
 func syntheticID3TextTag(version, encoding byte, text []byte) []byte {
 	return syntheticID3Tag(version, syntheticID3Frame{id: "TIT2", encoding: encoding, text: text})
+}
+
+func syntheticExifJPEG() []byte {
+	description := []byte("Synthetic image\x00")
+	artist := []byte("Ada\x00")
+	const directoryEnd = 38
+	tiff := make([]byte, directoryEnd+len(description)+len(artist))
+	copy(tiff, "II")
+	binary.LittleEndian.PutUint16(tiff[2:4], 42)
+	binary.LittleEndian.PutUint32(tiff[4:8], 8)
+	binary.LittleEndian.PutUint16(tiff[8:10], 2)
+	for _, entry := range []struct {
+		offset int
+		tag    uint16
+		value  []byte
+		start  int
+	}{
+		{offset: 10, tag: 0x010e, value: description, start: directoryEnd},
+		{offset: 22, tag: 0x013b, value: artist, start: directoryEnd + len(description)},
+	} {
+		binary.LittleEndian.PutUint16(tiff[entry.offset:], entry.tag)
+		binary.LittleEndian.PutUint16(tiff[entry.offset+2:], 2)
+		binary.LittleEndian.PutUint32(tiff[entry.offset+4:], uint32(len(entry.value)))
+		binary.LittleEndian.PutUint32(tiff[entry.offset+8:], uint32(entry.start))
+		copy(tiff[entry.start:], entry.value)
+	}
+	segment := append([]byte("Exif\x00\x00"), tiff...)
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe1, 0, 0}
+	binary.BigEndian.PutUint16(jpeg[4:6], uint16(len(segment)+2))
+	jpeg = append(jpeg, segment...)
+	return append(jpeg, 0xff, 0xd9)
 }
 
 type syntheticID3Frame struct {

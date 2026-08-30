@@ -40,7 +40,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v7")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v8")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -230,7 +230,7 @@ func (c *metadataCollector) string(key, namespace, source, value string, sensiti
 	c.record.Fields = append(c.record.Fields, document.SourceMetadataFieldV1{Key: key, Namespace: namespace,
 		SourceField: source, Sensitive: sensitive, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: value}})
 }
-func (c *metadataCollector) strings(key, namespace, source string, values []string, sensitive bool) {
+func (c *metadataCollector) strings(key, namespace, source string, values []string) {
 	filtered := make([]string, 0, len(values))
 	valueBytes := 0
 	for _, value := range values {
@@ -266,7 +266,7 @@ func (c *metadataCollector) strings(key, namespace, source string, values []stri
 	}
 	c.seen[key] = true
 	c.record.Fields = append(c.record.Fields, document.SourceMetadataFieldV1{Key: key, Namespace: namespace,
-		SourceField: source, Sensitive: sensitive, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: filtered}})
+		SourceField: source, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: filtered}})
 }
 func (c *metadataCollector) integer(key, namespace, source string, value int64) {
 	if c.seen[key] {
@@ -334,9 +334,9 @@ func (c *metadataCollector) extractPDF(data []byte) {
 		return
 	}
 	c.string("title", "pdf.info", "Title", metadata.Info.Title, false)
-	c.strings("creators", "pdf.info", "Author", splitValues(metadata.Info.Author), false)
+	c.strings("creators", "pdf.info", "Author", splitValues(metadata.Info.Author))
 	c.string("subject", "pdf.info", "Subject", metadata.Info.Subject, false)
-	c.strings("keywords", "pdf.info", "Keywords", splitValues(metadata.Info.Keywords), false)
+	c.strings("keywords", "pdf.info", "Keywords", splitValues(metadata.Info.Keywords))
 	c.timestamp("created", "pdf.info", "CreationDate", metadata.Info.CreationDate)
 	c.timestamp("modified", "pdf.info", "ModDate", metadata.Info.ModDate)
 	c.integer("page_count", "pdf.info", "Pages", metadata.Pages)
@@ -474,7 +474,7 @@ func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 			}
 			if namespace == "xmp" && current.name.Space == rdfNamespace && current.name.Local == "li" {
 				for index := len(stack) - 1; index >= 0; index-- {
-					if stack[index].name.Space == rdfNamespace || !sourceMetadataXMLValueAllowed(stack[index].name.Local) {
+					if !xmpPropertyAllowed(stack[index].name) {
 						continue
 					}
 					if len(stack[index].members) >= document.MaxSourceMetadataListValues {
@@ -486,6 +486,9 @@ func (c *metadataCollector) extractXMLText(data []byte, namespace string) {
 					})
 					break
 				}
+				continue
+			}
+			if namespace == "xmp" && !xmpPropertyAllowed(current.name) {
 				continue
 			}
 			if len(current.members) != 0 {
@@ -502,23 +505,22 @@ func (c *metadataCollector) warnMalformedXML(namespace, source string) {
 }
 
 func xmpAttributeAllowed(name xml.Name) bool {
+	return xmpPropertyAllowed(name)
+}
+
+func xmpPropertyAllowed(name xml.Name) bool {
 	switch name.Space {
 	case xmpBasicNamespace:
 		return strings.EqualFold(name.Local, "CreateDate") || strings.EqualFold(name.Local, "ModifyDate")
 	case xmpDublinCoreNamespace:
-		return sourceMetadataXMLValueAllowed(name.Local)
+		switch strings.ToLower(name.Local) {
+		case "title", "creator", "subject", "description", "language":
+			return true
+		default:
+			return false
+		}
 	case xmpPDFNamespace:
 		return strings.EqualFold(name.Local, "Keywords")
-	default:
-		return false
-	}
-}
-
-func sourceMetadataXMLValueAllowed(name string) bool {
-	switch strings.ToLower(name) {
-	case "title", "creator", "author", "subject", "description", "keywords", "language",
-		"created", "createdate", "modified", "modifydate":
-		return true
 	default:
 		return false
 	}
@@ -540,9 +542,9 @@ func (c *metadataCollector) extractXMLCollection(namespace, name string, members
 	}
 	switch strings.ToLower(name) {
 	case "creator", "author":
-		c.strings("creators", namespace, name, values, false)
+		c.strings("creators", namespace, name, values)
 	case "keywords":
-		c.strings("keywords", namespace, name, values, false)
+		c.strings("keywords", namespace, name, values)
 	default:
 		if defaultValue == "" {
 			defaultValue = values[0]
@@ -556,13 +558,13 @@ func (c *metadataCollector) extractXMLValue(namespace, name, text string) {
 	case "title":
 		c.string("title", namespace, name, text, false)
 	case "creator", "author":
-		c.strings("creators", namespace, name, splitValues(text), false)
+		c.strings("creators", namespace, name, splitValues(text))
 	case "subject":
 		c.string("subject", namespace, name, text, false)
 	case "description":
 		c.string("description", namespace, name, text, false)
 	case "keywords":
-		c.strings("keywords", namespace, name, splitValues(text), false)
+		c.strings("keywords", namespace, name, splitValues(text))
 	case "language":
 		c.string("language", namespace, name, text, false)
 	case "created", "createdate":
@@ -673,7 +675,7 @@ func (c *metadataCollector) extractEmail(message *mail.Message) {
 		c.timestamp("email.sent", "email", "Date", date)
 	}
 	if values := message.Header["Received"]; len(values) > 0 {
-		c.strings("email.received", "email", "Received", values, false)
+		c.strings("email.received", "email", "Received", values)
 	}
 	parts := 0
 	count, err := countEmailAttachments(message.Header, message.Body, 0, &parts)
@@ -785,7 +787,7 @@ func (c *metadataCollector) extractCalendar(data []byte) {
 				c.timestamp("calendar.end", "calendar", name, value)
 			}
 		case "ORGANIZER":
-			c.strings("creators", "calendar", name, []string{value}, false)
+			c.strings("creators", "calendar", name, []string{value})
 		}
 	}
 }
@@ -914,7 +916,7 @@ func (c *metadataCollector) addID3Frame(frame, value string) {
 	case "TIT2":
 		c.string("title", "media.id3", "TIT2", value, false)
 	case "TPE1":
-		c.strings("creators", "media.id3", "TPE1", splitValues(value), false)
+		c.strings("creators", "media.id3", "TPE1", splitValues(value))
 	case "TALB":
 		c.string("media.id3.album", "media.id3", "TALB", value, false)
 	case "TDRC":
@@ -945,23 +947,6 @@ func (c *metadataCollector) extractImage(data []byte) {
 			c.extractExifTIFF(segment[6:])
 		}
 		offset += length
-	}
-	text := string(data)
-	for _, item := range []struct {
-		marker, key string
-		sensitive   bool
-	}{{"ImageDescription=", "description", false}, {"Artist=", "creators", false}, {"GPSLatitude=", "image.exif.gps_latitude", true}, {"GPSLongitude=", "image.exif.gps_longitude", true}} {
-		if index := strings.Index(text, item.marker); index >= 0 {
-			value := text[index+len(item.marker):]
-			if end := strings.IndexAny(value, "\x00\r\n;"); end >= 0 {
-				value = value[:end]
-			}
-			if item.key == "creators" {
-				c.strings(item.key, "image.exif", strings.TrimSuffix(item.marker, "="), splitValues(value), item.sensitive)
-			} else {
-				c.string(item.key, "image.exif", strings.TrimSuffix(item.marker, "="), value, item.sensitive)
-			}
-		}
 	}
 	if len(c.record.Fields) == 0 {
 		c.warn("unparseable_metadata", "image.exif", "APP1", "image contained no supported metadata values")
@@ -1047,7 +1032,7 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 	root := reader.entries(rootOffset)
 	c.string("description", "image.exif", "ImageDescription", exifASCII(root[0x010e]), false)
 	if artist := exifASCII(root[0x013b]); artist != "" {
-		c.strings("creators", "image.exif", "Artist", splitValues(artist), false)
+		c.strings("creators", "image.exif", "Artist", splitValues(artist))
 	}
 	if stamp := exifASCII(root[0x0132]); stamp != "" {
 		c.timestamp("modified", "image.exif", "DateTime", stamp)

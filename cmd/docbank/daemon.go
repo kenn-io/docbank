@@ -153,6 +153,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := jobSupervisor.Start("maintenance:auxiliary-checksums", func(ctx context.Context) error {
 		cursor := ""
 		retries := newBackfillRetrySet()
+		seen := make(map[string]struct{})
 		for {
 			targets, listErr := s.MissingBlobChecksumTargetsAfter(ctx, cursor, 100)
 			if listErr != nil {
@@ -160,6 +161,8 @@ func runServe(ctx context.Context) (retErr error) {
 			}
 			if len(targets) == 0 {
 				cursor = ""
+				retries.retain(seen)
+				clear(seen)
 				if len(retries) == 0 {
 					return nil
 				}
@@ -173,6 +176,7 @@ func runServe(ctx context.Context) (retErr error) {
 			err := operationGate.MutateContext(ctx, func() error {
 				var batchErr error
 				for _, target := range targets {
+					seen[target.BlobSHA256] = struct{}{}
 					now := time.Now().UTC()
 					if !retries.ready(target.BlobSHA256, now) {
 						continue
