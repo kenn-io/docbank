@@ -55,6 +55,14 @@ type SourceMetadataView struct {
 	Attachment SourceMetadataAttachmentFacts
 }
 
+// NodeSourceMetadataView binds a node, its path, and any active source
+// metadata to one read snapshot.
+type NodeSourceMetadataView struct {
+	Node           Node
+	Path           string
+	SourceMetadata *SourceMetadataView
+}
+
 func sourceMetadataGenerationID(source, contract, fingerprint, checksum string) string {
 	h := sha256.New()
 	for _, value := range []string{source, contract, fingerprint, checksum} {
@@ -120,8 +128,14 @@ func (s *Store) PublishSourceMetadata(
 
 // ActiveSourceMetadata returns the selected generation for one retained blob.
 func (s *Store) ActiveSourceMetadata(ctx context.Context, sourceSHA256 string) (SourceMetadataGeneration, document.SourceMetadataV1, error) {
+	return activeSourceMetadata(ctx, s.db, sourceSHA256)
+}
+
+func activeSourceMetadata(
+	ctx context.Context, q metadataQuerier, sourceSHA256 string,
+) (SourceMetadataGeneration, document.SourceMetadataV1, error) {
 	var generation SourceMetadataGeneration
-	err := s.db.QueryRowContext(ctx, `SELECT g.generation_id,g.source_sha256,g.contract_version,
+	err := q.QueryRowContext(ctx, `SELECT g.generation_id,g.source_sha256,g.contract_version,
 		g.extractor_fingerprint,g.canonical_json,g.checksum,g.created_at
 		FROM source_metadata_heads h JOIN source_metadata_generations g ON g.generation_id=h.generation_id
 		WHERE h.source_sha256=?`, sourceSHA256).Scan(&generation.GenerationID, &generation.SourceSHA256,
@@ -183,29 +197,110 @@ func (s *Store) MissingSourceMetadataTargetsAfter(
 // ContentVersionSourceMetadata joins active evidence with attachment facts for
 // an authenticated content-version detail read.
 func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID string) (SourceMetadataView, error) {
-	version, err := s.ContentVersionByID(ctx, versionID)
+	if err := validateUUIDv4(versionID); err != nil {
+		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SourceMetadataView{}, fmt.Errorf("starting source-metadata snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	version, err := scanContentVersion(tx.QueryRowContext(ctx,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
+	if err != nil {
+		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, err)
+	}
+	node, err := nodeByIDTx(tx, version.NodeID)
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
-	generation, metadata, err := s.ActiveSourceMetadata(ctx, version.BlobHash)
+	view, err := sourceMetadataViewForVersion(ctx, tx, version, node)
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
-	node, err := s.NodeByID(ctx, version.NodeID)
+	if err := tx.Commit(); err != nil {
+		return SourceMetadataView{}, fmt.Errorf("closing source-metadata snapshot: %w", err)
+	}
+	return view, nil
+}
+
+func sourceMetadataViewForVersion(
+	ctx context.Context, q metadataQuerier, version ContentVersion, node Node,
+) (SourceMetadataView, error) {
+	generation, metadata, err := activeSourceMetadata(ctx, q, version.BlobHash)
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
 	facts := SourceMetadataAttachmentFacts{NodeID: node.ID, ContentVersionID: version.ID}
 	if version.ID == node.CurrentVersionID && node.TrashedAt == nil {
-		path, _ := s.Path(ctx, node.ID)
 		facts.Filename = node.Name
 		facts.Extension = strings.ToLower(filepath.Ext(node.Name))
-		facts.Path = path
-		_ = s.db.QueryRowContext(ctx, `SELECT p.original_path,COALESCE(p.original_mtime,''),i.started_at
+		facts.Path, err = pathOf(ctx, q, node.ID)
+		if err != nil {
+			return SourceMetadataView{}, err
+		}
+		err = q.QueryRowContext(ctx, `SELECT p.original_path,COALESCE(p.original_mtime,''),i.started_at
 			FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=?
 			AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 			ORDER BY i.started_at DESC,p.identity DESC LIMIT 1`, node.ID).Scan(
 			&facts.SourcePath, &facts.FilesystemMTime, &facts.IngestedAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return SourceMetadataView{}, fmt.Errorf("reading source-metadata provenance: %w", err)
+		}
 	}
 	return SourceMetadataView{Generation: generation, Metadata: metadata, Attachment: facts}, nil
+}
+
+// NodeSourceMetadataViewByID returns one node detail from a single read snapshot.
+func (s *Store) NodeSourceMetadataViewByID(ctx context.Context, id int64) (NodeSourceMetadataView, error) {
+	return s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
+		return nodeByIDTx(tx, id)
+	})
+}
+
+// NodeSourceMetadataViewByPath resolves a live path and returns one node detail
+// from a single read snapshot.
+func (s *Store) NodeSourceMetadataViewByPath(ctx context.Context, path string) (NodeSourceMetadataView, error) {
+	return s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
+		return nodeByPath(ctx, tx, s.rootID, path)
+	})
+}
+
+func (s *Store) nodeSourceMetadataView(
+	ctx context.Context, resolve func(*sql.Tx) (Node, error),
+) (NodeSourceMetadataView, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return NodeSourceMetadataView{}, fmt.Errorf("starting node source-metadata snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	node, err := resolve(tx)
+	if err != nil {
+		return NodeSourceMetadataView{}, err
+	}
+	nodeView, err := nodeViewForNode(ctx, tx, node)
+	if err != nil {
+		return NodeSourceMetadataView{}, err
+	}
+	view := NodeSourceMetadataView{Node: nodeView.Node, Path: nodeView.Path}
+	if !node.IsDir() && node.CurrentVersionID != "" {
+		version, versionErr := scanContentVersion(tx.QueryRowContext(ctx,
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ? AND node_id = ?`,
+			node.CurrentVersionID, node.ID))
+		if versionErr != nil {
+			return NodeSourceMetadataView{}, versionErr
+		}
+		metadata, metadataErr := sourceMetadataViewForVersion(ctx, tx, version, node)
+		if metadataErr == nil {
+			view.SourceMetadata = &metadata
+		} else if !errors.Is(metadataErr, ErrNotFound) {
+			return NodeSourceMetadataView{}, metadataErr
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return NodeSourceMetadataView{}, fmt.Errorf("closing node source-metadata snapshot: %w", err)
+	}
+	return view, nil
 }

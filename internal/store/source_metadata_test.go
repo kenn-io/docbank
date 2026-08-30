@@ -116,6 +116,33 @@ func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
 	assert.Empty(t, view.Attachment.IngestedAt)
 }
 
+func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "before.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+
+	node, _, err = s.Move(ctx, node.ID, s.RootID(), "after.pdf", node.Revision)
+	require.NoError(t, err)
+
+	viewByID, err := s.NodeSourceMetadataViewByID(ctx, node.ID)
+	require.NoError(t, err)
+	require.NotNil(t, viewByID.SourceMetadata)
+	assert.Equal(t, viewByID.Node.Name, viewByID.SourceMetadata.Attachment.Filename)
+	assert.Equal(t, viewByID.Path, viewByID.SourceMetadata.Attachment.Path)
+
+	viewByPath, err := s.NodeSourceMetadataViewByPath(ctx, "/after.pdf")
+	require.NoError(t, err)
+	require.NotNil(t, viewByPath.SourceMetadata)
+	assert.Equal(t, viewByPath.Node.Name, viewByPath.SourceMetadata.Attachment.Filename)
+	assert.Equal(t, viewByPath.Path, viewByPath.SourceMetadata.Attachment.Path)
+}
+
 func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
