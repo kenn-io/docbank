@@ -613,6 +613,10 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 	if json.Unmarshal(raw, &topLevel) != nil {
 		return document.SourceEvidenceV1{}, nil, false
 	}
+	texts, ok := topLevel["texts"]
+	if !ok || bytes.Equal(bytes.TrimSpace(texts), []byte("null")) {
+		return document.SourceEvidenceV1{}, nil, false
+	}
 	for field := range topLevel {
 		switch field {
 		case "schema_name", "version", "name", "origin", "furniture", "body", "groups", "texts", "pictures", "tables",

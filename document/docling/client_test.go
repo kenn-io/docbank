@@ -30,6 +30,9 @@ import (
 //go:embed testdata/docling-pages.json
 var recordedPagesResponse []byte
 
+//go:embed testdata/docling-task.json
+var recordedTaskResponse []byte
+
 //go:embed testdata/docling-schema-drift.json
 var recordedSchemaDriftResponse []byte
 
@@ -183,6 +186,10 @@ func TestClientOmitsUnauthorizedProviderMarkdown(t *testing.T) {
 }
 
 func TestClientRequiresConvertTasksAndOfficialStatuses(t *testing.T) {
+	task, err := parseTask(recordedTaskResponse)
+	require.NoError(t, err)
+	assert.Equal(t, taskResponse{id: "task-1", status: "pending"}, task)
+
 	for _, testCase := range []struct {
 		name string
 		body string
@@ -216,6 +223,8 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 		want bool
 	}{
 		{name: "blank registered page", want: true, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}}, "texts": []any{map[string]any{"text": "one", "prov": []any{map[string]any{"page_no": 1}}}}}},
+		{name: "missing texts", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}}}},
+		{name: "null texts", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}}, "texts": nil}},
 		{name: "page gap", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "3": map[string]any{}}, "texts": []any{}}},
 		{name: "aliased page", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}, "01": map[string]any{}}, "texts": []any{}}},
 		{name: "unlocated text", want: false, raw: map[string]any{"schema_name": "DoclingDocument", "version": "1.7.0", "pages": map[string]any{"1": map[string]any{}}, "texts": []any{map[string]any{"text": "one"}}}},
