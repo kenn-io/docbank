@@ -453,6 +453,9 @@ func (client *Client) result(
 	if status != http.StatusOK {
 		return doclingResult{}, statusError("result", status)
 	}
+	if !utf8.Valid(body) {
+		return doclingResult{}, malformedError("Docling result JSON is not valid UTF-8", nil)
+	}
 	var wire struct {
 		Status   string            `json:"status"`
 		Document json.RawMessage   `json:"document"`

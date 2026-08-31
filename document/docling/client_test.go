@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -870,6 +871,38 @@ func TestClientRejectsResultWrapperIdentityAndStatusFailures(t *testing.T) {
 			assert.Equal(t, testCase.want, providerErr.Code())
 		})
 	}
+}
+
+func TestClientRejectsInvalidUTF8ResultJSON(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+	result := doclingResultResponse(fixture.metadata.Filename, "# report\n", []any{
+		map[string]any{"text": "invalid-marker", "prov": []any{map[string]any{"page_no": 1}}},
+	})
+	body, err := json.Marshal(result)
+	require.NoError(t, err)
+	body = bytes.Replace(body, []byte("invalid-marker"), []byte{'i', 'n', 'v', 'a', 'l', 'i', 'd', 0xff}, 1)
+	require.False(t, utf8.Valid(body))
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case convertPath:
+			writeJSON(t, response, doclingTask("invalid-utf8", "success"))
+		case resultPath + "invalid-utf8":
+			response.Header().Set("Content-Type", "application/json")
+			_, writeErr := response.Write(body)
+			assert.NoError(t, writeErr)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+
+	_, err = document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.Error(t, err)
+	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+	require.True(t, ok)
+	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 }
 
 func TestMapEvidenceOnlyClaimsEstablishedNaturalProvenance(t *testing.T) {
