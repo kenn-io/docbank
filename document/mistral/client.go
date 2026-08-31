@@ -66,6 +66,7 @@ type Result struct {
 	ReturnedModel  string
 	UnitsProcessed int
 	ProviderBytes  *int64
+	ResponseBytes  int64
 	Metrics        RequestMetrics
 }
 
@@ -122,7 +123,7 @@ type wireUsage struct {
 // Client calls the single endpoint derived from its policy.
 type Client struct {
 	policy        Policy
-	apiKey        string
+	credential    func(context.Context) (string, error)
 	maxRetries    int
 	maxRetryDelay time.Duration
 	http          *http.Client
@@ -135,6 +136,21 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 	}
 	if config.APIKey == "" || config.APIKey != strings.TrimSpace(config.APIKey) {
 		return nil, errors.New("mistral OCR API key is required and must not contain surrounding whitespace")
+	}
+	apiKey := config.APIKey
+	return newClientWithCredential(policy, config, func(context.Context) (string, error) {
+		return apiKey, nil
+	})
+}
+
+func newClientWithCredential(
+	policy Policy, config ClientConfig, credential func(context.Context) (string, error),
+) (*Client, error) {
+	if policy.digest == "" {
+		return nil, errors.New("mistral policy is invalid; use NewPolicy")
+	}
+	if credential == nil {
+		return nil, errors.New("mistral OCR credential resolver is required")
 	}
 	if config.Timeout == 0 {
 		config.Timeout = DefaultTimeout
@@ -169,7 +185,7 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 		return http.ErrUseLastResponse
 	}
 	return &Client{
-		policy: policy, apiKey: config.APIKey, maxRetries: config.MaxRetries,
+		policy: policy, credential: credential, maxRetries: config.MaxRetries,
 		maxRetryDelay: config.MaxRetryDelay, http: httpClient,
 	}, nil
 }
@@ -221,6 +237,20 @@ func (c *Client) process(
 	method UnitBoundMethod,
 	maxUnits int,
 ) (Result, error) {
+	return c.processWith(ctx, snapshotForAttempt, readVerifiedDocument, nil, options, method, maxUnits,
+		c.policy.values.MaxResponseBytes)
+}
+
+func (c *Client) processWith(
+	ctx context.Context,
+	snapshotForAttempt func() (preparedSnapshot, error),
+	readDocument func(context.Context, preparedSnapshot) ([]byte, error),
+	beforeEgress func() error,
+	options requestOptions,
+	method UnitBoundMethod,
+	maxUnits int,
+	maxResponseBytes int64,
+) (Result, error) {
 	requests := 0
 	var providerLatency time.Duration
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -238,7 +268,8 @@ func (c *Client) process(
 			return Result{}, newProcessError(err, requests, providerLatency)
 		}
 		result, retryHeader, requested, latency, processErr := c.processOnce(
-			ctx, snapshot, prefix, suffix, encodedLength, method, maxUnits,
+			ctx, snapshot, readDocument, beforeEgress, prefix, suffix, encodedLength, method, maxUnits,
+			maxResponseBytes,
 		)
 		if requested {
 			requests++
@@ -284,12 +315,15 @@ func (c *Client) validatePreparedSnapshot(
 func (c *Client) processOnce(
 	ctx context.Context,
 	snapshot preparedSnapshot,
+	readDocument func(context.Context, preparedSnapshot) ([]byte, error),
+	beforeEgress func() error,
 	prefix, suffix []byte,
 	encodedLength int64,
 	method UnitBoundMethod,
 	maxUnits int,
+	maxResponseBytes int64,
 ) (Result, string, bool, time.Duration, error) {
-	documentBytes, err := readVerifiedDocument(ctx, snapshot)
+	documentBytes, err := readDocument(ctx, snapshot)
 	if err != nil {
 		return Result{}, "", false, 0, err
 	}
@@ -315,7 +349,25 @@ func (c *Client) processOnce(
 	}
 	request.ContentLength = encodedLength
 	request.Header.Set("Content-Type", mediaTypeJSON)
-	request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if beforeEgress != nil {
+		if err := beforeEgress(); err != nil {
+			return Result{}, "", false, 0, err
+		}
+	}
+	apiKey, err := c.credential(ctx)
+	if err != nil {
+		return Result{}, "", false, 0, &credentialError{cause: err}
+	}
+	if apiKey == "" || len(apiKey) > 64<<10 || apiKey != strings.TrimSpace(apiKey) ||
+		strings.ContainsAny(apiKey, "\r\n\x00") {
+		return Result{}, "", false, 0, &credentialError{}
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	if beforeEgress != nil {
+		if err := beforeEgress(); err != nil {
+			return Result{}, "", false, 0, err
+		}
+	}
 
 	started := time.Now()
 	response, err := c.http.Do(request)
@@ -332,7 +384,7 @@ func (c *Client) processOnce(
 		return Result{}, response.Header.Get("Retry-After"), true, latency, &transientError{status: response.StatusCode}
 	}
 	if response.StatusCode >= http.StatusBadRequest {
-		return Result{}, "", true, latency, fmt.Errorf("mistral OCR HTTP %d: %w", response.StatusCode, ErrPermanentResponse)
+		return Result{}, "", true, latency, &permanentResponseError{status: response.StatusCode}
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return Result{}, "", true, latency, fmt.Errorf("mistral OCR unexpected HTTP %d", response.StatusCode)
@@ -349,7 +401,7 @@ func (c *Client) processOnce(
 	// request body. Read both sides concurrently so neither blocks the other.
 	bodyDone := make(chan bodyResult, 1)
 	go func() {
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, c.policy.values.MaxResponseBytes+1))
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		bodyDone <- bodyResult{body: body, err: readErr}
 	}()
 	streamResults := streamDone
@@ -383,7 +435,7 @@ func (c *Client) processOnce(
 					cause: fmt.Errorf("read Mistral OCR response: %w", result.err),
 				}
 			}
-			if int64(len(body)) > c.policy.values.MaxResponseBytes {
+			if int64(len(body)) > maxResponseBytes {
 				latency = time.Since(started)
 				return Result{}, "", true, latency, ErrResponseTooLarge
 			}
@@ -409,7 +461,9 @@ func (c *Client) processOnce(
 	if err := validateWireResult(wire, c.policy.values.Model, snapshot, method, maxUnits); err != nil {
 		return Result{}, "", true, latency, err
 	}
-	return providerNeutralResult(wire, snapshot.format), "", true, latency, nil
+	result := providerNeutralResult(wire, snapshot.format)
+	result.ResponseBytes = int64(len(body))
+	return result, "", true, latency, nil
 }
 
 func newProcessError(err error, requests int, providerLatency time.Duration) error {
@@ -427,6 +481,19 @@ type transientError struct {
 	status int
 	cause  error
 }
+
+type credentialError struct{ cause error }
+
+func (e *credentialError) Error() string { return "Mistral OCR credential is unavailable" }
+func (e *credentialError) Unwrap() error { return e.cause }
+
+type permanentResponseError struct{ status int }
+
+func (e *permanentResponseError) Error() string {
+	return fmt.Sprintf("mistral OCR HTTP %d: %s", e.status, ErrPermanentResponse)
+}
+
+func (e *permanentResponseError) Unwrap() error { return ErrPermanentResponse }
 
 func (e *transientError) Error() string {
 	if e.cause != nil {
@@ -655,7 +722,8 @@ func validateWireResult(
 		return errors.New("mistral OCR response omitted model")
 	}
 	if result.Model != expectedModel {
-		return fmt.Errorf("mistral OCR response model %q does not match requested model", result.Model)
+		return fmt.Errorf("mistral OCR response model %q does not match requested model: %w",
+			result.Model, ErrCapabilityContract)
 	}
 	if result.Pages == nil {
 		return errors.New("mistral OCR response omitted pages")
