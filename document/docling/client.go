@@ -360,14 +360,21 @@ func (client *Client) submit(
 	ctx context.Context, expiresAt time.Time, usage *requestUsage, metadata document.AuthorizedUploadMetadata, source []byte,
 	includeMarkdown bool,
 ) (taskResponse, error) {
-	if strings.ContainsAny(metadata.Filename, "\r\n") {
+	filename := metadata.Filename
+	if filename == "" {
+		filename = "document"
+		if extensions, _ := mime.ExtensionsByType(metadata.MediaType); len(extensions) != 0 {
+			filename += extensions[0]
+		}
+	}
+	if strings.ContainsAny(filename, "\r\n") {
 		return taskResponse{}, classifiedError(document.RenditionErrorPolicyRejected,
 			"Docling upload filename contains a newline", nil)
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	fileHeader := make(textproto.MIMEHeader)
-	fileHeader.Set("Content-Disposition", multipart.FileContentDisposition("files", metadata.Filename))
+	fileHeader.Set("Content-Disposition", multipart.FileContentDisposition("files", filename))
 	fileHeader.Set("Content-Type", metadata.MediaType)
 	part, err := writer.CreatePart(fileHeader)
 	if err != nil {

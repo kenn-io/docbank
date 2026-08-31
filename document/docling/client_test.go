@@ -107,7 +107,7 @@ func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "private-report.pdf", []byte("synthetic PDF bytes"))
 	fixture.authorization.DiscloseFilename = false
 	redactedMetadata := fixture.metadata
-	redactedMetadata.Filename = ""
+	redactedMetadata.Filename = "document.pdf"
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
