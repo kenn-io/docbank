@@ -676,8 +676,9 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 			return document.SourceEvidenceV1{}, nil, false
 		}
 	}
+	hasMappedText := false
 	for _, text := range wire.Texts {
-		if text.Text == "" {
+		if strings.TrimSpace(text.Text) == "" {
 			continue
 		}
 		if len(text.Prov) == 0 {
@@ -696,6 +697,10 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 			return document.SourceEvidenceV1{}, nil, false
 		}
 		pages[page] = append(pages[page], text.Text)
+		hasMappedText = true
+	}
+	if !hasMappedText {
+		return document.SourceEvidenceV1{}, nil, false
 	}
 	evidence := document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,

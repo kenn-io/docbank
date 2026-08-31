@@ -1031,17 +1031,14 @@ func TestClientRejectsReservedDocbankFrontmatter(t *testing.T) {
 	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 }
 
-func TestClientFallsBackToDegradedMarkdownWhenStructuredResultDrifts(t *testing.T) {
-	fixture := newFixture(t, "word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "notes.docx", []byte("synthetic DOCX bytes"))
-	response := doclingResultResponse(fixture.metadata.Filename, "# Untrusted\n", nil)
-	documentResponse, ok := response["document"].(map[string]any)
-	require.True(t, ok)
-	documentResponse["json_content"] = map[string]any{"future_document_shape": true}
+func TestClientFallsBackToDegradedMarkdownWhenStructuredTextIsBlank(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "blank.pdf", []byte("synthetic PDF bytes"))
+	response := doclingResultResponse(fixture.metadata.Filename, "# Table only\n", []any{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case convertPath:
-			writeJSON(t, writer, doclingTask("drift", "success"))
-		case resultPath + "drift":
+			writeJSON(t, writer, doclingTask("blank", "success"))
+		case resultPath + "blank":
 			writeJSON(t, writer, response)
 		default:
 			http.NotFound(writer, request)
@@ -1054,7 +1051,7 @@ func TestClientFallsBackToDegradedMarkdownWhenStructuredResultDrifts(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 	assert.Equal(t, document.EvidenceUnitGeneric, result.Evidence.UnitKind)
-	assert.Equal(t, "# Untrusted\n", string(result.ProviderMarkdown))
+	assert.Equal(t, "# Table only\n", result.Evidence.Units[0].Text)
 	assert.Empty(t, result.Artifacts)
 }
 
