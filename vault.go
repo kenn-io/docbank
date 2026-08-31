@@ -356,10 +356,12 @@ func (v *Vault) Versions(
 
 // PutOptions controls one embedded content write. Expected is optional; when
 // present, no node or version authority is granted unless both fields match
-// the independently computed durable bytes.
+// the independently computed durable bytes. A positive IfRevision requires an
+// existing file at that exact revision and rejects stale replacement attempts.
 type PutOptions struct {
-	MediaType string
-	Expected  *ContentIdentity
+	MediaType  string
+	Expected   *ContentIdentity
+	IfRevision int64
 }
 
 // CreateOptions controls one immutable content creation. Expected is required;
@@ -374,7 +376,9 @@ type CreateOptions struct {
 
 // Put stores a reader at an absolute virtual file path. Missing parent
 // directories are created. An unchanged retry converges on the current
-// version; changed bytes create a new immutable version on the same node.
+// version; changed bytes create a new immutable version on the same node. A
+// positive IfRevision makes both unchanged and changed writes conditional on
+// the existing file's current node revision.
 func (v *Vault) Put(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions,
 ) (PutReceipt, error) {
@@ -718,9 +722,27 @@ func (v *Vault) write(
 			return PutReceipt{}, errors.New("expected content size must not be negative")
 		}
 	}
+	if opts.IfRevision < 0 {
+		return PutReceipt{}, errors.New("docbank put revision must not be negative")
+	}
 
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
+	if opts.IfRevision > 0 {
+		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)
+		if lookupErr != nil {
+			return PutReceipt{}, lookupErr
+		}
+		if existing.IsDir() {
+			return PutReceipt{}, fmt.Errorf("virtual path %q: %w", canonicalPath, store.ErrNotFile)
+		}
+		if existing.Revision != opts.IfRevision {
+			return PutReceipt{}, fmt.Errorf(
+				"virtual path %q at revision %d, expected %d: %w",
+				canonicalPath, existing.Revision, opts.IfRevision, ErrStaleRevision,
+			)
+		}
+	}
 	var receipt PutReceipt
 	var physicalCreated bool
 	err = v.blobs.WithMutation(ctx, func() (resultErr error) {
@@ -770,6 +792,9 @@ func (v *Vault) write(
 		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)
 		switch {
 		case errors.Is(lookupErr, store.ErrNotFound):
+			if opts.IfRevision > 0 {
+				return lookupErr
+			}
 			var created store.ContentWriteReceipt
 			var createErr error
 			if provenance == nil {
@@ -807,11 +832,15 @@ func (v *Vault) write(
 			}
 			return fmt.Errorf("virtual path %q: %w", canonicalPath, store.ErrNotFile)
 		case existing.BlobHash == hash && existing.Size == size && existing.MimeType == opts.MediaType:
+			revision := existing.Revision
+			if opts.IfRevision > 0 {
+				revision = opts.IfRevision
+			}
 			var confirmed store.ContentWriteReceipt
 			var confirmErr error
 			if provenance == nil {
 				confirmed, confirmErr = v.metadata.ConfirmContentWithReceipt(
-					ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
+					ctx, existing.ID, revision, hash, size, opts.MediaType, physical,
 				)
 			} else {
 				confirmed, confirmErr = v.metadata.ConfirmIngestedContentWithReceipt(
@@ -836,8 +865,12 @@ func (v *Vault) write(
 				return fmt.Errorf("virtual path %q already has different content or media type: %w",
 					canonicalPath, ErrContentConflict)
 			}
+			revision := existing.Revision
+			if opts.IfRevision > 0 {
+				revision = opts.IfRevision
+			}
 			updated, replaceErr := v.metadata.ReplaceContentWithReceipt(
-				ctx, existing.ID, existing.Revision, hash, size, opts.MediaType, physical,
+				ctx, existing.ID, revision, hash, size, opts.MediaType, physical,
 			)
 			if replaceErr != nil {
 				return replaceErr

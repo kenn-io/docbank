@@ -268,6 +268,49 @@ func TestEmbeddedImmutableCreate(t *testing.T) {
 	require.True(t, receipt.Created)
 }
 
+func TestEmbeddedPutRequiresCurrentRevision(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	created, err := vault.Put(
+		t.Context(), "/external.txt", strings.NewReader("first\n"),
+		docbank.PutOptions{MediaType: "text/plain"},
+	)
+	require.NoError(t, err)
+
+	unchanged, err := vault.Put(
+		t.Context(), "/external.txt", strings.NewReader("first\n"),
+		docbank.PutOptions{MediaType: "text/plain", IfRevision: created.Node.Revision},
+	)
+	require.NoError(t, err)
+	require.Equal(t, created.Version.ID, unchanged.Version.ID)
+	require.Equal(t, created.Node.Revision, unchanged.Node.Revision)
+
+	replaced, err := vault.Put(
+		t.Context(), "/external.txt", strings.NewReader("second\n"),
+		docbank.PutOptions{MediaType: "text/plain", IfRevision: created.Node.Revision},
+	)
+	require.NoError(t, err)
+	require.NotEqual(t, created.Version.ID, replaced.Version.ID)
+
+	_, err = vault.Put(
+		t.Context(), "/external.txt", strings.NewReader("third\n"),
+		docbank.PutOptions{MediaType: "text/plain", IfRevision: created.Node.Revision},
+	)
+	require.ErrorIs(t, err, docbank.ErrStaleRevision)
+
+	current, err := vault.Stat(t.Context(), "/external.txt")
+	require.NoError(t, err)
+	require.Equal(t, replaced.Version.ID, current.CurrentVersionID)
+
+	_, err = vault.Put(
+		t.Context(), "/external.txt", strings.NewReader("invalid\n"),
+		docbank.PutOptions{MediaType: "text/plain", IfRevision: -1},
+	)
+	require.Error(t, err)
+}
+
 func TestVaultMoveTrashRestoreExternalAPI(t *testing.T) {
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
