@@ -358,6 +358,7 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 	}{
 		{name: "submit 401", operation: "submit", status: http.StatusUnauthorized, want: document.RenditionErrorAuthentication},
 		{name: "submit 429", operation: "submit", status: http.StatusTooManyRequests, want: document.RenditionErrorRateLimited},
+		{name: "submit 408", operation: "submit", status: http.StatusRequestTimeout, want: document.RenditionErrorAmbiguousSubmission},
 		{name: "submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorAmbiguousSubmission},
 		{name: "submit 404", operation: "submit", status: http.StatusNotFound, want: document.RenditionErrorMalformedEvidence},
 		{name: "submit 400", operation: "submit", status: http.StatusBadRequest, want: document.RenditionErrorPolicyRejected},
@@ -540,24 +541,38 @@ func TestClientRecoversKnownTaskWithoutResubmitting(t *testing.T) {
 }
 
 func TestClientReturnsAmbiguousSubmissionWhenKnownTaskRecoveryExhausts(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case convertPath:
-			writeJSON(t, response, doclingTask("recovery", "pending"))
-		case pollPath + "recovery":
-			response.WriteHeader(http.StatusServiceUnavailable)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.Error(t, err)
-	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-	require.True(t, ok)
-	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+	for _, testCase := range []struct {
+		name       string
+		pollStatus int
+	}{
+		{name: "transient failures", pollStatus: http.StatusServiceUnavailable},
+		{name: "still pending", pollStatus: http.StatusOK},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case convertPath:
+					writeJSON(t, response, doclingTask("recovery", "pending"))
+				case pollPath + "recovery":
+					if testCase.pollStatus == http.StatusOK {
+						writeJSON(t, response, doclingTask("recovery", "pending"))
+					} else {
+						response.WriteHeader(testCase.pollStatus)
+					}
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+		})
+	}
 }
 
 func TestClientReceiptCountsEveryResponseBodyAndRequest(t *testing.T) {

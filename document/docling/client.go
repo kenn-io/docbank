@@ -214,8 +214,8 @@ func (client *Client) Render(
 			return document.RenditionResult{}, taskStatusError(task.status)
 		}
 		if pollAttempts >= client.maxPollAttempts {
-			return document.RenditionResult{}, classifiedError(document.RenditionErrorCapacity,
-				"Docling polling limit reached", nil)
+			return document.RenditionResult{}, ambiguousSubmissionError(classifiedError(
+				document.RenditionErrorCapacity, "Docling polling limit reached", nil))
 		}
 		if err := waitContext(totalCtx, client.pollInterval); err != nil {
 			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
@@ -390,7 +390,7 @@ func (client *Client) submit(
 	}
 	if status != http.StatusOK && status != http.StatusAccepted {
 		err := statusError("submission", status)
-		if status >= http.StatusInternalServerError && status < 600 {
+		if status == http.StatusRequestTimeout || status >= http.StatusInternalServerError && status < 600 {
 			return taskResponse{}, ambiguousSubmissionError(err)
 		}
 		return taskResponse{}, err
