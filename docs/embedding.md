@@ -65,7 +65,10 @@ func StoreSession(ctx context.Context, root string, sessionID string, jsonl []by
 type converges on the current version; changed bytes append an immutable content
 version while preserving the node ID. Supply `PutOptions.Expected` when the
 caller already knows the SHA-256 and byte count and wants Docbank to reject a
-mismatched stream before granting metadata authority.
+mismatched stream before granting metadata authority. Supply a positive
+`PutOptions.IfRevision` when replacing content derived from an earlier read.
+Docbank rejects the write with `ErrStaleRevision` if the file has changed since
+that revision, including when the new bytes happen to match the current head.
 
 Use `Create` when an application owns an immutable key and must never replace
 different content already stored there. It requires the expected SHA-256 and
