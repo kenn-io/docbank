@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,9 +41,15 @@ type testUpload struct {
 	io.Reader
 
 	metadata document.AuthorizedUploadMetadata
+	close    func() error
 }
 
-func (*testUpload) Close() error                                       { return nil }
+func (upload *testUpload) Close() error {
+	if upload.close != nil {
+		return upload.close()
+	}
+	return nil
+}
 func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
 
 type testSecrets map[string]string
@@ -297,6 +304,43 @@ func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
 	_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
 	require.ErrorContains(t, err, "authorization is not current")
 	assert.Zero(t, requests.Load())
+}
+
+func TestClientTotalTimeoutInterruptsBlockedUpload(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "blocked.pdf", []byte("synthetic PDF bytes"))
+	entered := make(chan struct{})
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	upload := &testUpload{
+		Reader: readerFunc(func([]byte) (int, error) {
+			close(entered)
+			<-released
+			return 0, errors.New("synthetic interrupted read")
+		}),
+		metadata: fixture.metadata,
+		close: func() error {
+			releaseOnce.Do(func() { close(released) })
+			return nil
+		},
+	}
+	client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, http.DefaultClient)
+	client.totalTimeout = 10 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Render(t.Context(), upload, fixture.authorization)
+		done <- err
+	}()
+	<-entered
+	select {
+	case err := <-done:
+		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
+	case <-time.After(250 * time.Millisecond):
+		require.NoError(t, upload.Close())
+		<-done
+		t.Fatal("Client.Render did not interrupt the blocked upload")
+	}
 }
 
 func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {

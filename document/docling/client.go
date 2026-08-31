@@ -192,7 +192,9 @@ func (client *Client) Render(
 	if err := checkOperation(totalCtx, expiresAt); err != nil {
 		return document.RenditionResult{}, err
 	}
+	stopInterrupt := context.AfterFunc(totalCtx, func() { _ = document.InterruptAuthorizedUpload(upload) })
 	source, err := readExact(totalCtx, upload, metadata)
+	stopInterrupt()
 	if err != nil {
 		if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
 			return document.RenditionResult{}, operationErr
