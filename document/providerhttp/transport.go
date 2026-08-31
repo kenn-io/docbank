@@ -37,6 +37,18 @@ func RefuseRedirects(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+// IsolateClient clones client without ambient cookies and refuses redirects.
+// The transport and other configured client policy remain unchanged.
+func IsolateClient(client *http.Client) *http.Client {
+	if client == nil {
+		return nil
+	}
+	isolate := *client
+	isolate.Jar = nil
+	isolate.CheckRedirect = RefuseRedirects
+	return &isolate
+}
+
 // NewTransport returns a transport that resolves once per connection attempt,
 // validates every answer, and connects to one exact allowed IP without an
 // ambient proxy or a second hostname lookup.
