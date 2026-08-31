@@ -458,6 +458,55 @@ func TestClientTreatsInFlightSubmissionDeadlinesAsAmbiguous(t *testing.T) {
 	}
 }
 
+func TestClientClassifiesTotalTimeoutBySubmissionState(t *testing.T) {
+	t.Run("before submission", func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			requests.Add(1)
+		}))
+		t.Cleanup(server.Close)
+		client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+		client.totalTimeout = 25 * time.Millisecond
+		upload := &testUpload{Reader: delayedReader{Reader: bytes.NewReader(fixture.source), delay: 50 * time.Millisecond}, metadata: fixture.metadata}
+
+		_, err := client.Render(t.Context(), upload, fixture.authorization)
+		require.Error(t, err)
+		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
+		assert.Zero(t, requests.Load())
+	})
+
+	t.Run("after submission", func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
+		var submits, polls atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case convertPath:
+				submits.Add(1)
+				writeJSON(t, response, doclingTask("timeout", "pending"))
+			case pollPath + "timeout":
+				polls.Add(1)
+			default:
+				http.NotFound(response, request)
+			}
+		}))
+		t.Cleanup(server.Close)
+		client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+		client.totalTimeout = 25 * time.Millisecond
+		client.pollInterval = 50 * time.Millisecond
+
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+		require.Error(t, err)
+		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+		assert.Equal(t, int64(1), submits.Load())
+		assert.Zero(t, polls.Load())
+	})
+}
+
 func TestClientTreatsUnreadableSuccessfulSubmissionAsAmbiguous(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "ambiguous.pdf", []byte("synthetic PDF bytes"))
 	for _, testCase := range []struct {

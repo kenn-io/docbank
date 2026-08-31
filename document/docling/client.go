@@ -49,7 +49,10 @@ const (
 	timestampForm            = "2006-01-02T15:04:05.000000000Z"
 )
 
-var _ document.RenditionProvider = (*Client)(nil)
+var (
+	_                      document.RenditionProvider = (*Client)(nil)
+	errDoclingTotalTimeout                            = errors.New("docling total timeout")
+)
 
 // SecretResolver resolves the one profile-bound Docling API-key binding.
 type SecretResolver interface {
@@ -191,8 +194,8 @@ func (client *Client) Render(
 	}
 	source, err := readExact(totalCtx, upload, metadata)
 	if err != nil {
-		if !time.Now().Before(expiresAt) {
-			return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected, "Docling authorization expired", nil)
+		if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
+			return document.RenditionResult{}, operationErr
 		}
 		return document.RenditionResult{}, err
 	}
@@ -219,13 +222,16 @@ func (client *Client) Render(
 		}
 		if err := waitContext(totalCtx, client.pollInterval); err != nil {
 			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
-				return document.RenditionResult{}, operationErr
+				return document.RenditionResult{}, knownTaskOperationError(operationErr)
 			}
 			return document.RenditionResult{}, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", err)
 		}
 		nextTask, err := client.poll(totalCtx, expiresAt, usage, task.id)
 		pollAttempts++
 		if err != nil {
+			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
+				return document.RenditionResult{}, knownTaskOperationError(operationErr)
+			}
 			if document.IsRenditionProviderErrorRetryable(err) {
 				if pollAttempts >= client.maxPollAttempts {
 					return document.RenditionResult{}, ambiguousSubmissionError(err)
@@ -247,6 +253,9 @@ func (client *Client) Render(
 		if err == nil {
 			break
 		}
+		if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
+			return document.RenditionResult{}, knownTaskOperationError(operationErr)
+		}
 		if !document.IsRenditionProviderErrorRetryable(err) {
 			return document.RenditionResult{}, err
 		}
@@ -256,7 +265,7 @@ func (client *Client) Render(
 		usage.retries++
 		if err := waitContext(totalCtx, client.pollInterval); err != nil {
 			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
-				return document.RenditionResult{}, operationErr
+				return document.RenditionResult{}, knownTaskOperationError(operationErr)
 			}
 			return document.RenditionResult{}, classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", err)
 		}
@@ -383,7 +392,7 @@ func (client *Client) submit(
 	bodyBytes, status, err := client.request(ctx, expiresAt, usage, http.MethodPost, convertPath,
 		writer.FormDataContentType(), body.Bytes(), client.maxResponseBytes)
 	if err != nil {
-		if document.IsRenditionProviderErrorRetryable(err) || status == http.StatusOK || status == http.StatusAccepted {
+		if status == http.StatusOK || status == http.StatusAccepted {
 			return taskResponse{}, ambiguousSubmissionError(err)
 		}
 		return taskResponse{}, err
@@ -405,6 +414,13 @@ func (client *Client) submit(
 func ambiguousSubmissionError(cause error) error {
 	return classifiedError(document.RenditionErrorAmbiguousSubmission,
 		"Docling submission outcome is unknown", cause)
+}
+
+func knownTaskOperationError(err error) error {
+	if document.IsRenditionProviderErrorRetryable(err) {
+		return ambiguousSubmissionError(err)
+	}
+	return err
 }
 
 func (client *Client) poll(ctx context.Context, expiresAt time.Time, usage *requestUsage, taskID string) (taskResponse, error) {
@@ -500,12 +516,8 @@ func (client *Client) request(
 	usage.requests++
 	response, err := client.http.Do(request)
 	if err != nil {
-		var requestErr error
-		if !time.Now().Before(expiresAt) {
-			requestErr = classifiedError(document.RenditionErrorPolicyRejected, "Docling authorization expired", nil)
-		} else if ctxErr := ctx.Err(); ctxErr != nil {
-			requestErr = classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", ctxErr)
-		} else {
+		requestErr := checkOperation(ctx, expiresAt)
+		if requestErr == nil {
 			requestErr = classifiedError(document.RenditionErrorTransient, "Docling request failed", err)
 		}
 		if method == http.MethodPost {
@@ -520,6 +532,9 @@ func (client *Client) request(
 		return responseBody, response.StatusCode, nil
 	}
 	if err != nil {
+		if operationErr := checkOperation(ctx, expiresAt); operationErr != nil {
+			return nil, response.StatusCode, operationErr
+		}
 		return nil, response.StatusCode, err
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
@@ -530,14 +545,12 @@ func (client *Client) request(
 }
 
 func (client *Client) operationContext(ctx context.Context, expiresAt time.Time) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(client.totalTimeout)
-	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
-		deadline = callerDeadline
+	totalCtx, cancelTotal := context.WithTimeoutCause(ctx, client.totalTimeout, errDoclingTotalTimeout)
+	operationCtx, cancelExpiry := context.WithDeadline(totalCtx, expiresAt)
+	return operationCtx, func() {
+		cancelExpiry()
+		cancelTotal()
 	}
-	if expiresAt.Before(deadline) {
-		deadline = expiresAt
-	}
-	return context.WithDeadline(ctx, deadline)
 }
 
 func checkOperation(ctx context.Context, expiresAt time.Time) error {
@@ -546,6 +559,9 @@ func checkOperation(ctx context.Context, expiresAt time.Time) error {
 	}
 	if !time.Now().Before(expiresAt) {
 		return classifiedError(document.RenditionErrorPolicyRejected, "Docling authorization expired", nil)
+	}
+	if errors.Is(context.Cause(ctx), errDoclingTotalTimeout) {
+		return classifiedError(document.RenditionErrorCapacity, "Docling total timeout reached", errDoclingTotalTimeout)
 	}
 	if err := ctx.Err(); err != nil {
 		return classifiedError(document.RenditionErrorCanceled, "Docling rendering canceled", err)
