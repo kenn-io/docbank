@@ -685,10 +685,10 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
 		Family: family, UnitKind: kind, Units: make([]document.SourceEvidenceUnitV1, 0, len(indexes)),
 	}
-	for order, index := range indexes {
+	for order, page := range indexes {
 		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
-			Order: order, Text: strings.Join(pages[index], "\n\n"),
-			Locator: document.SourceEvidenceLocatorV1{Kind: locatorKind, IndexOrigin: document.EvidenceIndexOriginOne, Start: index, End: index},
+			Order: order, Text: strings.Join(pages[page], "\n\n"),
+			Locator: document.SourceEvidenceLocatorV1{Kind: locatorKind, IndexOrigin: document.EvidenceIndexOriginOne, Start: page, End: page},
 		})
 	}
 	for _, field := range []struct {
