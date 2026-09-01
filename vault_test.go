@@ -135,6 +135,48 @@ func TestVaultSourceMetadataReturnsExactVersionEvidence(t *testing.T) {
 	assert.Equal(t, "/photos/image.jpg", metadata.Attachment.Path)
 }
 
+func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	source := []byte("camera original")
+	created, err := vault.Create(t.Context(), "/photos/image.raw", bytes.NewReader(source), CreateOptions{
+		MediaType: "image/x-raw", Expected: contentIdentity(source),
+	})
+	require.NoError(t, err)
+	previewBytes := []byte("synthetic jpeg preview")
+	written, err := vault.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(previewBytes))
+	require.NoError(t, err)
+	physical, err := blobPhysical(written)
+	require.NoError(t, err)
+	recipe := document.VisualPreviewRecipeV1{ContractVersion: document.VisualPreviewContractV1,
+		MaxEdgePixels: 2048, OutputMediaType: "image/jpeg", OrientationPolicy: "apply",
+		ColorPolicy: "srgb", FramePolicy: "primary", ProcessorFingerprint: strings.Repeat("4", 64)}
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+		ContractVersion: document.VisualPreviewContractV1, SourceSHA256: created.Version.BlobHash,
+		Recipe: recipe, State: document.VisualPreviewReady,
+		Output: &document.VisualPreviewOutputV1{BlobSHA256: written.Hash, Size: written.Size,
+			MediaType: "image/jpeg", Width: 1600, Height: 900},
+	})
+	require.NoError(t, err)
+	_, err = vault.metadata.PublishVisualPreview(t.Context(), created.Version.ID, canonical, &physical)
+	require.NoError(t, err)
+
+	status, err := vault.VisualPreview(t.Context(), created.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.Version.ID, status.Version.ID)
+	assert.Equal(t, document.VisualPreviewReady, status.State)
+
+	content, err := vault.OpenVisualPreview(t.Context(), created.Version.ID)
+	require.NoError(t, err)
+	data, err := io.ReadAll(content.Reader)
+	require.NoError(t, err)
+	require.NoError(t, content.Reader.Verify())
+	require.NoError(t, content.Reader.Close())
+	assert.Equal(t, previewBytes, data)
+}
+
 func TestLeasedLimitedReaderShortRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "short.bin")
 	require.NoError(t, os.WriteFile(path, []byte("12"), 0o600))

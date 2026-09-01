@@ -794,6 +794,69 @@ CREATE INDEX IF NOT EXISTS content_versions_node
     ON content_versions(node_id, node_revision DESC);
 CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
 
+-- Visual previews are immutable exact-version derivatives selected by a small
+-- mutable head. The content version owns their lifecycle; deleting the version
+-- removes its preview catalog, after which ordinary blob GC may reclaim bytes
+-- no other version or derivative retains.
+CREATE TABLE IF NOT EXISTS visual_preview_generations (
+    generation_id         TEXT PRIMARY KEY,
+    vault_uid             TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    content_version_id    TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    source_sha256         TEXT NOT NULL REFERENCES blobs(hash),
+    contract_version      TEXT NOT NULL,
+    recipe_fingerprint    TEXT NOT NULL,
+    canonical_result      BLOB NOT NULL
+        CHECK (length(canonical_result) BETWEEN 2 AND 65536),
+    checksum              TEXT NOT NULL,
+    state                 TEXT NOT NULL CHECK (state IN ('ready', 'unsupported', 'failed')),
+    output_blob_hash      TEXT REFERENCES blobs(hash),
+    output_size           INTEGER,
+    output_media_type     TEXT,
+    output_width          INTEGER,
+    output_height         INTEGER,
+    failure_code          TEXT,
+    failure_detail        TEXT,
+    created_at            TEXT NOT NULL,
+    UNIQUE (content_version_id, recipe_fingerprint),
+    UNIQUE (content_version_id, generation_id),
+    CHECK (
+        (state = 'ready'
+         AND output_blob_hash IS NOT NULL
+         AND output_size > 0
+         AND output_media_type IS NOT NULL
+         AND output_width > 0
+         AND output_height > 0
+         AND failure_code IS NULL
+         AND failure_detail IS NULL)
+        OR
+        (state IN ('unsupported', 'failed')
+         AND output_blob_hash IS NULL
+         AND output_size IS NULL
+         AND output_media_type IS NULL
+         AND output_width IS NULL
+         AND output_height IS NULL
+         AND failure_code IS NOT NULL
+         AND failure_detail IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS visual_preview_generations_output
+    ON visual_preview_generations(output_blob_hash, generation_id)
+    WHERE output_blob_hash IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS visual_preview_heads (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    generation_id      TEXT NOT NULL UNIQUE,
+    published_at       TEXT NOT NULL,
+    FOREIGN KEY (content_version_id, generation_id)
+        REFERENCES visual_preview_generations(content_version_id, generation_id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS visual_preview_generations_immutable_update
+BEFORE UPDATE ON visual_preview_generations BEGIN
+    SELECT RAISE(ABORT, 'visual preview generation records are immutable');
+END;
+
 CREATE TABLE IF NOT EXISTS ingests (
     id          TEXT PRIMARY KEY NOT NULL,
     started_at  TEXT NOT NULL,

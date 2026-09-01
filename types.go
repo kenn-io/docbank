@@ -75,6 +75,22 @@ type SourceMetadata struct {
 	Attachment           SourceMetadataAttachment           `json:"attachment"`
 }
 
+// VisualPreview is the active deterministic preview result for one exact
+// content version. Output is populated only when State is ready; Failure is
+// populated for unsupported and failed results.
+type VisualPreview struct {
+	Version           ContentVersion                   `json:"version"`
+	GenerationID      string                           `json:"generation_id"`
+	RecipeFingerprint string                           `json:"recipe_fingerprint"`
+	Checksum          string                           `json:"checksum"`
+	State             document.VisualPreviewState      `json:"state"`
+	Recipe            document.VisualPreviewRecipeV1   `json:"recipe"`
+	Output            *document.VisualPreviewOutputV1  `json:"output,omitempty"`
+	Failure           *document.VisualPreviewFailureV1 `json:"failure,omitempty"`
+	CreatedAt         string                           `json:"created_at"`
+	PublishedAt       string                           `json:"published_at"`
+}
+
 // ProvenanceSource describes an application-neutral origin for one immutable
 // document creation. Reference may be a URI, archive key, filesystem path, or
 // another stable source-local identifier; Docbank does not interpret it.
@@ -292,6 +308,13 @@ type VersionContent struct {
 	Reader  VerifiedReadCloser
 }
 
+// VisualPreviewContent binds verified preview bytes to their exact cataloged
+// source version and recipe result.
+type VisualPreviewContent struct {
+	Preview VisualPreview
+	Reader  VerifiedReadCloser
+}
+
 // ContentRangeOptions selects a non-empty decoded logical byte range.
 type ContentRangeOptions struct {
 	Offset int64
@@ -341,6 +364,17 @@ func fromStoreSourceMetadata(view store.SourceMetadataView) SourceMetadata {
 			Path: attachment.Path, SourcePath: attachment.SourcePath,
 			IngestedAt: attachment.IngestedAt, FilesystemMTime: attachment.FilesystemMTime,
 		},
+	}
+}
+
+func fromStoreVisualPreview(view store.VisualPreviewView) VisualPreview {
+	generation := view.Generation
+	return VisualPreview{
+		Version: fromStoreVersion(view.Version), GenerationID: generation.GenerationID,
+		RecipeFingerprint: generation.RecipeFingerprint, Checksum: generation.Checksum,
+		State: generation.Preview.State, Recipe: generation.Preview.Recipe,
+		Output: generation.Preview.Output, Failure: generation.Preview.Failure,
+		CreatedAt: generation.CreatedAt, PublishedAt: view.PublishedAt,
 	}
 }
 

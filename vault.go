@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
@@ -45,6 +46,9 @@ var (
 	// ErrInvalidContentRange means a requested logical byte range falls
 	// outside its exact immutable content version.
 	ErrInvalidContentRange = errors.New("docbank invalid content range")
+	// ErrVisualPreviewUnavailable means the exact version has a cataloged
+	// unsupported or failed preview result rather than readable preview bytes.
+	ErrVisualPreviewUnavailable = errors.New("docbank visual preview is unavailable")
 
 	ErrNotFound                 = store.ErrNotFound
 	ErrExists                   = store.ErrExists
@@ -367,6 +371,61 @@ func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMet
 		return SourceMetadata{}, err
 	}
 	return fromStoreSourceMetadata(view), nil
+}
+
+// VisualPreview returns the active canonical preview result for one exact
+// immutable content version, including unsupported and failed outcomes.
+func (v *Vault) VisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
+	if err := v.begin(); err != nil {
+		return VisualPreview{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)
+	if err != nil {
+		return VisualPreview{}, err
+	}
+	return fromStoreVisualPreview(view), nil
+}
+
+// OpenVisualPreview opens verified canonical preview bytes for one exact
+// immutable content version. Call VisualPreview to inspect terminal failures.
+func (v *Vault) OpenVisualPreview(ctx context.Context, versionID string) (*VisualPreviewContent, error) {
+	if err := v.begin(); err != nil {
+		return nil, err
+	}
+	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)
+	if err != nil {
+		v.lifecycle.RUnlock()
+		return nil, err
+	}
+	preview := fromStoreVisualPreview(view)
+	if view.Generation.Preview.State != document.VisualPreviewReady {
+		v.lifecycle.RUnlock()
+		return nil, fmt.Errorf("visual preview for version %q is %s: %w",
+			versionID, view.Generation.Preview.State, ErrVisualPreviewUnavailable)
+	}
+	output := view.Generation.Preview.Output
+	reader, size, err := v.blobs.OpenStreamContext(ctx, output.BlobSHA256)
+	if err != nil {
+		closeErr := closeContentReader(reader)
+		v.lifecycle.RUnlock()
+		return nil, errors.Join(fmt.Errorf(
+			"opening visual preview for version %q: %w: %w",
+			versionID, ErrContentUnavailable, err,
+		), closeErr)
+	}
+	if size != output.Size {
+		closeErr := reader.Close()
+		v.lifecycle.RUnlock()
+		return nil, errors.Join(fmt.Errorf(
+			"visual preview catalog size %d does not match physical size %d: %w",
+			output.Size, size, ErrContentUnavailable,
+		), closeErr)
+	}
+	return &VisualPreviewContent{
+		Preview: preview,
+		Reader:  &leasedReader{VerifiedReadCloser: reader, release: v.lifecycle.RUnlock},
+	}, nil
 }
 
 // PutOptions controls one embedded content write. Expected is optional; when

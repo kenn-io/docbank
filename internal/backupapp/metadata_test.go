@@ -23,6 +23,10 @@ func TestDerivativeAuthorityStatsAcceptEveryCatalogArtifactRole(t *testing.T) {
 		);
 		CREATE TABLE rendition_lexical_segments (
 			build_id TEXT, segment_id TEXT, checksum TEXT, text TEXT, segment_order INTEGER
+		);
+		CREATE TABLE visual_preview_generations (
+			generation_id TEXT, output_blob_hash TEXT, output_size INTEGER,
+			checksum TEXT, state TEXT
 		);`)
 	require.NoError(t, err)
 	roles := []string{
@@ -36,6 +40,10 @@ func TestDerivativeAuthorityStatsAcceptEveryCatalogArtifactRole(t *testing.T) {
 		) VALUES(?,?,?,?,?,?)`, role, "build", role, role+"-blob", index+1, role+"-checksum")
 		require.NoError(t, err)
 	}
+	_, err = db.Exec(`INSERT INTO visual_preview_generations(
+		generation_id,output_blob_hash,output_size,checksum,state
+	) VALUES('preview-generation','preview-blob',17,'preview-checksum','ready')`)
+	require.NoError(t, err)
 
 	stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
 	require.NoError(t, err)
@@ -45,5 +53,5 @@ func TestDerivativeAuthorityStatsAcceptEveryCatalogArtifactRole(t *testing.T) {
 	for index, class := range stats.Classes {
 		classes[index] = class.Class
 	}
-	assert.Equal(t, roles, classes)
+	assert.Equal(t, append(roles, "visual_preview"), classes)
 }

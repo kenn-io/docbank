@@ -1250,6 +1250,9 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		SELECT source_sha256 FROM rendition_builds
 		UNION
 		SELECT blob_hash FROM rendition_artifacts
+		UNION
+		SELECT output_blob_hash FROM visual_preview_generations
+		WHERE output_blob_hash IS NOT NULL
 		ORDER BY source_sha256`)
 	if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)

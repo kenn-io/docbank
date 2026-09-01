@@ -105,6 +105,48 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	}
 
 	if err := func() error {
+		var present bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
+			WHERE type='table' AND name='visual_preview_generations')`).Scan(&present); err != nil {
+			return fmt.Errorf("detecting visual preview catalog: %w", err)
+		}
+		if !present {
+			return nil
+		}
+		rows, err := q.QueryContext(ctx, `
+			SELECT generation_id,output_blob_hash,output_size,checksum
+			FROM visual_preview_generations
+			WHERE state='ready'
+			ORDER BY generation_id`)
+		if err != nil {
+			return fmt.Errorf("listing visual previews: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var generationID, blobHash, checksum string
+			var size int64
+			if err := rows.Scan(&generationID, &blobHash, &size, &checksum); err != nil {
+				return fmt.Errorf("scanning visual preview: %w", err)
+			}
+			item := get("included", "visual_preview")
+			if err := addDerivativeClassBytes(&item.LogicalBytes, size); err != nil {
+				return fmt.Errorf("visual preview: %w", err)
+			}
+			item.Count++
+			item.blobs[blobHash] = struct{}{}
+			for _, field := range []string{generationID, blobHash, checksum, strconv.FormatInt(size, 10)} {
+				writeDerivativeClassField(item.checksum, field)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterating visual previews: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return nil, false, fmt.Errorf("backupapp: %w", err)
+	}
+
+	if err := func() error {
 		rows, err := q.QueryContext(ctx, `
 			SELECT build_id,segment_id,checksum,text
 			FROM rendition_lexical_segments
@@ -147,6 +189,7 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 		string(document.EvidenceArtifactMarkdown),
 		string(document.EvidenceArtifactStructured),
 		string(document.EvidenceArtifactTranscript),
+		"visual_preview",
 		"lexical_projection",
 	}
 	result := &DerivativeAuthorityStats{
