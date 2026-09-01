@@ -34,16 +34,25 @@ fields; other callers must enforce their own disclosure boundary.
 
 ## Current format boundary
 
-Container facts are available for JPEG, PNG, WebP, GIF, and MP4 files through
-20 MiB. JPEG APP1 EXIF and TIFF-based images provide EXIF facts. The TIFF path
-also covers camera RAW formats that retain a standard TIFF header and EXIF
-directories; formats with proprietary container headers need their own bounded
-parser.
+Container facts are available for JPEG, PNG, WebP, GIF, and MP4 files within
+the 20 MiB general inspection limit. JPEG APP1 EXIF and TIFF-based images
+provide EXIF facts. The TIFF path also covers camera RAW formats that retain a
+standard TIFF header and EXIF directories; formats with proprietary container
+headers need their own bounded parser.
 
-The source-metadata worker currently loads originals through 64 MiB for local
-parsing. Larger originals are fully verified but receive an `input_too_large`
-warning instead of extracted fields. Supporting large RAW and video files
-requires a bounded seekable parser rather than a larger memory allowance.
+The source-metadata worker keeps the general in-memory parser for originals
+through 64 MiB. JPEG, TIFF-based, and MP4 originals beyond the general
+inspection limit use bounded media parsing instead. JPEG and TIFF-based files
+use a 20 MiB leading metadata window. The resulting generation includes a
+`metadata_window_limited` warning because metadata after that window may be
+omitted.
+
+For larger MP4 files, the worker verifies the complete content identity, scans
+the top-level box headers, skips media payload boxes, and reads only bounded
+file-type and movie metadata. Malformed or oversized MP4 metadata produces a
+durable warning. Storage and read failures remain retryable errors. Other
+formats larger than 64 MiB still receive `input_too_large` until they have a
+bounded parser.
 
 ## Generations and reads
 
