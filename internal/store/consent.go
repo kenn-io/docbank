@@ -205,6 +205,9 @@ func (s *Store) GrantConsent(
 func (s *Store) RevokeConsent(
 	ctx context.Context, request ProcessingConsentRevocationRequest,
 ) (ProcessingConsentRevocation, error) {
+	s.renditionEgressMu.Lock()
+	defer s.renditionEgressMu.Unlock()
+
 	principal, err := normalizeConsentLabel("principal", request.Principal)
 	if err != nil {
 		return ProcessingConsentRevocation{}, err
@@ -272,15 +275,22 @@ func (s *Store) AuthorizeProviderOperation(
 func (s *Store) authorizeProviderOperationTx(
 	ctx context.Context, tx *sql.Tx, request ProviderOperationAuthorizationRequest, now time.Time,
 ) (ProviderOperationAuthorization, error) {
+	return authorizeProviderOperationTx(ctx, tx, s.vaultID, request, now)
+}
+
+func authorizeProviderOperationTx(
+	ctx context.Context, querier metadataQuerier, vaultID string,
+	request ProviderOperationAuthorizationRequest, now time.Time,
+) (_ ProviderOperationAuthorization, retErr error) {
 	authority, err := normalizeConsentAuthority(request)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
-	incarnationID, err := currentProcessingIncarnationIDTx(ctx, tx)
+	incarnationID, err := currentProcessingIncarnationIDTx(ctx, querier)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
-	fence, err := consentRevocationFenceTx(ctx, tx, s.vaultID, incarnationID,
+	fence, err := consentRevocationFenceTx(ctx, querier, vaultID, incarnationID,
 		authority.principal, authority.scope)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
@@ -290,21 +300,21 @@ func (s *Store) authorizeProviderOperationTx(
 			request.PriorAuthorization.RevocationFence != fence) {
 		return ProviderOperationAuthorization{}, ErrProcessingConsentRevoked
 	}
-	query := `
+	statement := `
 		SELECT grant_id,revocation_fence,expires_at
 		FROM processing_consent_grants
 		WHERE vault_uid=? AND incarnation_id=? AND principal=? AND scope=?
 		  AND profile_fingerprint=? AND disclosure_fingerprint=?
 		  AND input_classes_json=? AND retained_classes_json=?`
-	args := []any{s.vaultID, incarnationID,
+	args := []any{vaultID, incarnationID,
 		authority.principal, authority.scope, authority.profile, authority.disclosure,
 		authority.inputsJSON, authority.retainedJSON}
 	if request.PriorAuthorization != nil {
-		query += ` AND grant_id=?`
+		statement += ` AND grant_id=?`
 		args = append(args, request.PriorAuthorization.GrantID)
 	}
-	query += ` ORDER BY issued_at DESC,grant_id DESC`
-	rows, err := tx.QueryContext(ctx, query, args...)
+	statement += ` ORDER BY issued_at DESC,grant_id DESC`
+	rows, err := querier.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
 	}

@@ -94,6 +94,15 @@ Instructions for autonomous coding agents working in this repository.
   surface is status, pack, and repack. Do not expose Kit's unpack primitive as
   a general API or CLI command; reserve it for tests, migrations, or a
   purpose-built emergency recovery workflow with a demonstrated need.
+- Treat every SQLite `CHECK` or composite `UNIQUE` constraint as a storage
+  compatibility commitment. Use constraints only for permanent structural
+  invariants. Enforce evolving product policy in shared Go validators used by
+  writes, restores, and audits.
+- Never encode enums or other closed value lists in a SQLite schema, including
+  states, phases, kinds, formats, and statuses. Store the value as text and
+  reject unknown values in Go. Apply JSON and text size limits at input
+  boundaries in Go before parsing or allocation; do not bake evolving contract
+  limits into SQLite.
 - Documentation is not the implementation tracker. User- and agent-facing
   pages describe the behavior included in their target release snapshot and
   its current limitations. Architecture and internal pages may preserve

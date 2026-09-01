@@ -1069,6 +1069,61 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
+	const (
+		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+		blob   = `{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
+		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+	)
+	tests := []struct {
+		name       string
+		insert     string
+		countQuery string
+		input      string
+	}{
+		{
+			name: "rendition blob staging",
+			insert: `INSERT INTO rendition_blob_staging(blob_hash)
+				VALUES('` + metadataHashCurrent + `')`,
+			countQuery: `SELECT COUNT(*) FROM rendition_blob_staging`,
+			input:      header + blob + root,
+		},
+		{
+			name: "derivative blob purge",
+			insert: `INSERT INTO derivative_blob_purge_pending(blob_hash)
+				VALUES('` + metadataHashCurrent + `')`,
+			countQuery: `SELECT COUNT(*) FROM derivative_blob_purge_pending`,
+			input:      header + blob + root,
+		},
+		{
+			name:       "derivative pack purge",
+			insert:     `INSERT INTO derivative_pack_purge_pending(store_id,pack_id) VALUES('stale-store','stale-pack')`,
+			countQuery: `SELECT COUNT(*) FROM derivative_pack_purge_pending`,
+			input:      header + root,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := newTestStore(t)
+			conn, err := target.db.Conn(t.Context())
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys=OFF`)
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), test.insert)
+			require.NoError(t, err)
+			_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys=ON`)
+			require.NoError(t, err)
+			require.NoError(t, conn.Close())
+
+			err = target.ImportMetadataForBackupRestore(t.Context(), strings.NewReader(test.input))
+			require.ErrorContains(t, err, "not pristine")
+			var rows int
+			require.NoError(t, target.db.QueryRow(test.countQuery).Scan(&rows))
+			assert.Equal(t, 1, rows, "rejected restore must preserve the target for inspection")
+		})
+	}
+}
+
 func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
 	target := newTestStore(t)
 	generation, err := target.StageLexicalGeneration(t.Context(), fakeHash("cf"))

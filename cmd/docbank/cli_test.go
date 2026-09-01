@@ -689,19 +689,22 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	var got api.JobList
 	require.Eventually(t, func() bool {
 		out, err = runCLI(t, "jobs", "--json")
-		if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Items) != 3 {
+		if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Items) != 4 {
 			return false
 		}
 		return got.Items[1].Name == "extract:source-metadata" &&
-			got.Items[2].Name == "maintenance:auxiliary-checksums" && got.Items[2].Status == "completed"
+			got.Items[2].Name == "maintenance:auxiliary-checksums" && got.Items[2].Status == "completed" &&
+			got.Items[3].Name == "process:renditions" && got.Items[3].Status == "running"
 	}, 5*time.Second, 25*time.Millisecond)
-	require.Len(t, got.Items, 3)
+	require.Len(t, got.Items, 4)
 	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
 	assert.Equal(t, "running", got.Items[0].Status)
 	assert.Equal(t, "extract:source-metadata", got.Items[1].Name)
 	assert.Equal(t, "running", got.Items[1].Status)
 	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[2].Name)
 	assert.Equal(t, "completed", got.Items[2].Status)
+	assert.Equal(t, "process:renditions", got.Items[3].Name)
+	assert.Equal(t, "running", got.Items[3].Status)
 }
 
 func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
@@ -743,12 +746,13 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 4)
+	require.Len(t, got.Items, 5)
 	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
 	assert.Equal(t, "extract:source-metadata", got.Items[1].Name)
 	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[2].Name)
-	assert.Equal(t, "storage:pack", got.Items[3].Name)
-	assert.Equal(t, "running", got.Items[3].Status)
+	assert.Equal(t, "process:renditions", got.Items[3].Name)
+	assert.Equal(t, "storage:pack", got.Items[4].Name)
+	assert.Equal(t, "running", got.Items[4].Status)
 
 	time.Sleep(100 * time.Millisecond)
 	_, _, found, err := client.Find(t.Context(), home)
@@ -789,13 +793,14 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 4)
+	require.Len(t, got.Items, 5)
 	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
 	assert.Equal(t, "running", got.Items[0].Status)
 	assert.Equal(t, "extract:source-metadata", got.Items[1].Name)
 	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[2].Name)
-	assert.Equal(t, "watch:sessions", got.Items[3].Name)
-	assert.Equal(t, "running", got.Items[3].Status)
+	assert.Equal(t, "process:renditions", got.Items[3].Name)
+	assert.Equal(t, "watch:sessions", got.Items[4].Name)
+	assert.Equal(t, "running", got.Items[4].Status)
 
 	out, err = runCLI(t, "watch", "list", "--json")
 	require.NoError(t, err)

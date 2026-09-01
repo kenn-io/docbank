@@ -24,6 +24,38 @@ type syntheticRenditionProvider struct {
 	err        error
 }
 
+type syntheticResumableRenditionProvider struct {
+	syntheticRenditionProvider
+
+	resume                *RenditionResumeHandle
+	checkpoint            RenditionResumeCheckpoint
+	calls                 int
+	ignoreCheckpointError bool
+	uploadWasNil          bool
+}
+
+func (provider *syntheticResumableRenditionProvider) RenderResumable(
+	_ context.Context, upload AuthorizedUpload, _ RenditionAuthorization,
+	resume *RenditionResumeHandle, checkpoint RenditionResumeCheckpoint,
+) (RenditionResult, error) {
+	provider.calls++
+	provider.uploadWasNil = upload == nil
+	if resume != nil {
+		resumeValue := *resume
+		provider.resume = &resumeValue
+	}
+	provider.checkpoint = checkpoint
+	if resume == nil {
+		if err := checkpoint(RenditionResumeHandle{Value: "remote-job-1"}); err != nil &&
+			!provider.ignoreCheckpointError {
+			return RenditionResult{}, err
+		}
+	}
+	return provider.result, provider.err
+}
+
+var _ ResumableRenditionProvider = (*syntheticResumableRenditionProvider)(nil)
+
 func (provider syntheticRenditionProvider) Descriptor() RenditionDescriptor {
 	return provider.descriptor
 }
@@ -799,6 +831,83 @@ func TestRenderRenditionEnforcesFilenameDisclosure(t *testing.T) {
 			assert.Equal(t, testCase.sourceFilename, upload.Metadata().Filename)
 		})
 	}
+}
+
+func TestRenderRenditionWithResumePersistsProviderIssuedHandleAndResumesIt(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	provider := &syntheticResumableRenditionProvider{
+		descriptor: descriptor, result: validRenditionResult(descriptor, authorization)}
+	upload := &syntheticAuthorizedUpload{
+		ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+	}
+	var persisted []RenditionResumeHandle
+
+	result, err := RenderRenditionWithResume(t.Context(), provider, upload, authorization, nil,
+		func(handle RenditionResumeHandle) error {
+			persisted = append(persisted, handle)
+			return nil
+		})
+	require.NoError(t, err)
+	assert.Equal(t, "operation-synthetic-1", result.Receipt.OperationID)
+	assert.Equal(t, []RenditionResumeHandle{{Value: "remote-job-1"}}, persisted)
+	assert.Equal(t, 1, provider.calls)
+
+	provider.result = validRenditionResult(descriptor, authorization)
+	resume := persisted[0]
+	upload = &syntheticAuthorizedUpload{
+		ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+	}
+	_, err = RenderRenditionWithResume(t.Context(), provider, upload, authorization, &resume,
+		func(RenditionResumeHandle) error { return errors.New("resume must not invent a replacement handle") })
+	require.NoError(t, err)
+	require.NotNil(t, provider.resume)
+	assert.Equal(t, resume, *provider.resume)
+	assert.Equal(t, 2, provider.calls)
+	assert.True(t, provider.uploadWasNil, "resume must not expose source bytes for resubmission")
+}
+
+func TestRenderRenditionWithResumeRejectsUnsafeOrUnsupportedHandles(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	upload := func() *syntheticAuthorizedUpload {
+		return &syntheticAuthorizedUpload{
+			ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+		}
+	}
+
+	provider := syntheticRenditionProvider{
+		descriptor: descriptor, result: validRenditionResult(descriptor, authorization),
+	}
+	_, err := RenderRenditionWithResume(t.Context(), provider, upload(), authorization,
+		&RenditionResumeHandle{Value: "remote-job-1"}, nil)
+	require.ErrorContains(t, err, "does not support durable resume")
+
+	resumable := &syntheticResumableRenditionProvider{syntheticRenditionProvider: provider}
+	_, err = RenderRenditionWithResume(t.Context(), resumable, upload(), authorization,
+		&RenditionResumeHandle{Value: "unsafe\nprovider-body"}, nil)
+	require.ErrorContains(t, err, "resume handle")
+	assert.Zero(t, resumable.calls, "an unsafe persisted handle must be rejected before provider work")
+}
+
+func TestRenderRenditionWithResumeSurfacesIgnoredCheckpointFailure(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	provider := &syntheticResumableRenditionProvider{
+		descriptor: descriptor, result: validRenditionResult(descriptor, authorization),
+		ignoreCheckpointError: true,
+	}
+	upload := &syntheticAuthorizedUpload{
+		ReadCloser: io.NopCloser(strings.NewReader("synthetic exact source")), metadata: metadata,
+	}
+	checkpointErr := errors.New("durable checkpoint failed")
+
+	_, err := RenderRenditionWithResume(t.Context(), provider, upload, authorization, nil,
+		func(RenditionResumeHandle) error { return checkpointErr })
+	require.ErrorIs(t, err, checkpointErr)
 }
 
 func TestRenditionProviderContractRejectsTypedNilBoundaryValues(t *testing.T) {

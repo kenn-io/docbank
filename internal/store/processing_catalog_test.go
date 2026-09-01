@@ -24,7 +24,7 @@ const (
 	catalogBuildReplacement = "00000000000000000000000000000000000000000000000000000000000000b2"
 	catalogAttachmentFirst  = "0000000000000000000000000000000000000000000000000000000000000051"
 	catalogAttachmentSecond = "0000000000000000000000000000000000000000000000000000000000000052"
-	catalogCapturedPolicy   = `{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`
+	catalogCapturedPolicy   = `{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":0,"role":"structured_evidence"}],"version":1}`
 )
 
 var catalogBlobContents = map[string][]byte{
@@ -424,7 +424,7 @@ func TestRenditionCatalogCanonicalizesCapturedArtifactRuleOrder(t *testing.T) {
 	s, _ := newRenditionCatalogFixture(t)
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	build.CapturedArtifactPolicy = jsontext.Value(
-		`{"roles":[{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"normalized_evidence"}],"version":1}`,
+		`{"roles":[{"max_count":1,"min_count":0,"role":"structured_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":1,"role":"normalized_evidence"}],"version":1}`,
 	)
 	build.CapturedArtifactPolicyFingerprint = testSHA256([]byte(catalogCapturedPolicy))
 
@@ -714,17 +714,20 @@ func TestProcessingMetadataOpenAcceptsCRLFEmbeddedSchema(t *testing.T) {
 
 func TestProcessingMetadataOpenRejectsMismatchedCompleteSchemas(t *testing.T) {
 	for name, mutate := range map[string]func(*testing.T, string, docsqlite.Driver){
-		"exact 763eec7 processing layout": func(t *testing.T, path string, driver docsqlite.Driver) {
-			t.Helper()
-			replaceProcessingSchemaForTest(t, path, driver, processingSchema763eec7)
-		},
 		"current layout with missing bound": func(t *testing.T, path string, driver docsqlite.Driver) {
 			t.Helper()
-			corruptProcessingSchemaBoundForTest(t, path, driver)
+			corruptProcessingSchemaCheckForTest(
+				t, path, driver, "rendition_builds", "CHECK (declared_artifact_count >= 0)")
 		},
 		"current layout with weakened consent bound": func(t *testing.T, path string, driver docsqlite.Driver) {
 			t.Helper()
-			corruptProcessingConsentSchemaBoundForTest(t, path, driver)
+			corruptProcessingSchemaCheckForTest(
+				t, path, driver, "processing_consent_grants", "CHECK (revocation_fence >= 0)")
+		},
+		"current layout with weakened job bound": func(t *testing.T, path string, driver docsqlite.Driver) {
+			t.Helper()
+			corruptProcessingSchemaCheckForTest(
+				t, path, driver, "rendition_jobs", "CHECK (provider_attempts >= 0)")
 		},
 		"current layout with extra trigger": func(t *testing.T, path string, driver docsqlite.Driver) {
 			t.Helper()
@@ -942,7 +945,7 @@ func catalogProcessingProfileWith(
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
 			CompletenessFingerprint: fakeHash("b1"), LexicalSegmenterFingerprint: fakeHash("b2"),
-			MaxSegmentRunes: 100, MaxUnitRunes: 1000,
+			MaxDocumentChars: 100_000, MaxSegmentRunes: 100, MaxUnitRunes: 1000,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
 			NormalizerFingerprint:      fakeHash("b3"), RenditionContract: document.RenditionContractV1,
 			SanitizerFingerprint: fakeHash("b4"), SourceEvidenceContract: document.SourceEvidenceContractV1,
@@ -1033,54 +1036,8 @@ func testSHA256(value []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func replaceProcessingSchemaForTest(
-	t *testing.T, path string, driver docsqlite.Driver, replacement string,
-) {
-	t.Helper()
-	db, err := driver.Open(path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-	})
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, db.Ping())
-	_, err = db.Exec(`PRAGMA foreign_keys = OFF`)
-	require.NoError(t, err)
-	_, err = db.Exec(dropProcessingSchemaForTest)
-	require.NoError(t, err)
-	_, err = db.Exec(replacement)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-}
-
-func corruptProcessingSchemaBoundForTest(t *testing.T, path string, driver docsqlite.Driver) {
-	t.Helper()
-	db, err := driver.Open(path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-	})
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, db.Ping())
-	_, err = db.Exec(`PRAGMA writable_schema = ON`)
-	require.NoError(t, err)
-	result, err := db.Exec(`
-		UPDATE sqlite_schema
-		SET sql=replace(
-			sql,
-			'length(CAST(provider_operation_id AS BLOB)) BETWEEN 1 AND 4096',
-			'1'
-		)
-		WHERE type='table' AND name='rendition_builds'`)
-	require.NoError(t, err)
-	changed, err := result.RowsAffected()
-	require.NoError(t, err)
-	require.EqualValues(t, 1, changed)
-	_, err = db.Exec(`PRAGMA writable_schema = OFF`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-}
-
-func corruptProcessingConsentSchemaBoundForTest(
-	t *testing.T, path string, driver docsqlite.Driver,
+func corruptProcessingSchemaCheckForTest(
+	t *testing.T, path string, driver docsqlite.Driver, table, check string,
 ) {
 	t.Helper()
 	db, err := driver.Open(path, docsqlite.OpenOptions{
@@ -1093,9 +1050,8 @@ func corruptProcessingConsentSchemaBoundForTest(
 	require.NoError(t, err)
 	result, err := db.Exec(`
 		UPDATE sqlite_schema
-		SET sql=replace(sql, 'CHECK (revocation_fence >= 0)', 'CHECK (1)')
-		WHERE type='table' AND name='processing_consent_grants'
-		  AND instr(sql, 'CHECK (revocation_fence >= 0)') > 0`)
+		SET sql=replace(sql, ?, 'CHECK (1)')
+		WHERE type='table' AND name=? AND instr(sql, ?) > 0`, check, table, check)
 	require.NoError(t, err)
 	changed, err := result.RowsAffected()
 	require.NoError(t, err)
@@ -1119,169 +1075,3 @@ func addProcessingSchemaTriggerForTest(t *testing.T, path string, driver docsqli
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 }
-
-const dropProcessingSchemaForTest = `
-DROP TRIGGER IF EXISTS processing_profiles_immutable_update;
-DROP TRIGGER IF EXISTS rendition_builds_immutable_update;
-DROP TRIGGER IF EXISTS rendition_artifacts_immutable_update;
-DROP TRIGGER IF EXISTS rendition_units_immutable_update;
-DROP TRIGGER IF EXISTS rendition_lexical_segments_immutable_update;
-DROP TRIGGER IF EXISTS rendition_attachments_immutable_update;
-DROP INDEX IF EXISTS rendition_artifacts_blob;
-DROP TABLE IF EXISTS rendition_heads;
-DROP TABLE IF EXISTS rendition_attachments;
-DROP TABLE IF EXISTS rendition_lexical_segments;
-DROP TABLE IF EXISTS rendition_units;
-DROP TABLE IF EXISTS rendition_artifacts;
-DROP TABLE IF EXISTS rendition_builds;
-DROP TABLE IF EXISTS processing_profiles;
-`
-
-// processingSchema763eec7 is the exact processing DDL from the unreleased F4
-// base commit, isolated from the unchanged core schema around it.
-const processingSchema763eec7 = `
-CREATE TABLE IF NOT EXISTS processing_profiles (
-    profile_fingerprint               TEXT PRIMARY KEY,
-    canonical_profile                 TEXT NOT NULL,
-    rendition_request_fingerprint     TEXT NOT NULL,
-    evidence_lexical_fingerprint      TEXT NOT NULL,
-    retention_disclosure_fingerprint  TEXT NOT NULL,
-    attachment_policy_fingerprint     TEXT NOT NULL,
-    consent_fingerprint               TEXT NOT NULL,
-    rendition_disclosure_fingerprint  TEXT NOT NULL,
-    trust_boundary                    TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS rendition_builds (
-    build_id                             TEXT PRIMARY KEY,
-    vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
-    source_sha256                        TEXT NOT NULL REFERENCES blobs(hash),
-    rendition_request_fingerprint        TEXT NOT NULL,
-    evidence_lexical_fingerprint         TEXT NOT NULL,
-    captured_artifact_policy_fingerprint TEXT NOT NULL,
-    captured_artifact_policy_json        TEXT NOT NULL,
-    authorization_checksum               TEXT NOT NULL,
-    provider_operation_id                TEXT NOT NULL,
-    provider_receipt_json                 TEXT NOT NULL,
-    evidence_checksum                    TEXT NOT NULL,
-    rendition_checksum                   TEXT NOT NULL,
-    markdown_checksum                    TEXT NOT NULL,
-    completeness                         TEXT NOT NULL CHECK (completeness IN (
-        'complete', 'partial', 'degraded_provenance'
-    )),
-    partial_success                      INTEGER NOT NULL CHECK (partial_success IN (0, 1)),
-    truncated                            INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-    warnings_json                        TEXT NOT NULL,
-    completed_at                         TEXT NOT NULL,
-    declared_artifact_count              INTEGER NOT NULL CHECK (declared_artifact_count >= 0),
-    unit_count                           INTEGER NOT NULL CHECK (unit_count >= 0),
-    lexical_segment_count                INTEGER NOT NULL CHECK (lexical_segment_count >= 0),
-    UNIQUE (vault_uid, build_id),
-    UNIQUE (
-        vault_uid, source_sha256, rendition_request_fingerprint,
-        evidence_lexical_fingerprint, captured_artifact_policy_fingerprint
-    )
-);
-
-CREATE TABLE IF NOT EXISTS rendition_artifacts (
-    build_id    TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    artifact_id TEXT NOT NULL,
-    role        TEXT NOT NULL,
-    blob_hash   TEXT NOT NULL REFERENCES blobs(hash),
-    size        INTEGER NOT NULL CHECK (size >= 0),
-    checksum    TEXT NOT NULL,
-    state       TEXT NOT NULL CHECK (state = 'verified'),
-    PRIMARY KEY (build_id, artifact_id),
-    UNIQUE (build_id, role, artifact_id)
-);
-
-CREATE INDEX IF NOT EXISTS rendition_artifacts_blob
-    ON rendition_artifacts(blob_hash, build_id);
-
-CREATE TABLE IF NOT EXISTS rendition_units (
-    build_id          TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    unit_id           TEXT NOT NULL,
-    evidence_unit_id  TEXT NOT NULL,
-    unit_order        INTEGER NOT NULL CHECK (unit_order >= 0),
-    checksum          TEXT NOT NULL,
-    heading_path_json TEXT NOT NULL,
-    locator_json      TEXT NOT NULL,
-    PRIMARY KEY (build_id, unit_id),
-    UNIQUE (build_id, unit_order)
-);
-
-CREATE TABLE IF NOT EXISTS rendition_lexical_segments (
-    build_id     TEXT NOT NULL,
-    segment_id   TEXT NOT NULL,
-    unit_id      TEXT NOT NULL,
-    segment_order INTEGER NOT NULL CHECK (segment_order >= 0),
-    char_start   INTEGER NOT NULL CHECK (char_start >= 0),
-    char_end     INTEGER NOT NULL CHECK (char_end >= char_start),
-    checksum     TEXT NOT NULL,
-    text         TEXT NOT NULL,
-    PRIMARY KEY (build_id, segment_id),
-    UNIQUE (build_id, segment_order),
-    FOREIGN KEY (build_id, unit_id)
-        REFERENCES rendition_units(build_id, unit_id)
-);
-
-CREATE TABLE IF NOT EXISTS rendition_attachments (
-    attachment_id                    TEXT PRIMARY KEY,
-    vault_uid                        TEXT NOT NULL,
-    content_version_id               TEXT NOT NULL REFERENCES content_versions(version_id),
-    build_id                          TEXT NOT NULL,
-    profile_fingerprint               TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
-    retention_disclosure_fingerprint  TEXT NOT NULL,
-    attachment_policy_fingerprint     TEXT NOT NULL,
-    consent_fingerprint               TEXT NOT NULL,
-    rendition_disclosure_fingerprint  TEXT NOT NULL,
-    trust_boundary                    TEXT NOT NULL,
-    attached_at                       TEXT NOT NULL,
-    FOREIGN KEY (vault_uid, build_id)
-        REFERENCES rendition_builds(vault_uid, build_id),
-    UNIQUE (content_version_id, profile_fingerprint, attachment_id),
-    UNIQUE (content_version_id, profile_fingerprint, build_id)
-);
-
-CREATE TABLE IF NOT EXISTS rendition_heads (
-    content_version_id          TEXT NOT NULL,
-    profile_fingerprint         TEXT NOT NULL,
-    attachment_id               TEXT NOT NULL,
-    published_at                TEXT NOT NULL,
-    PRIMARY KEY (content_version_id, profile_fingerprint),
-    FOREIGN KEY (content_version_id, profile_fingerprint, attachment_id)
-        REFERENCES rendition_attachments(
-            content_version_id, profile_fingerprint, attachment_id
-        )
-);
-
-CREATE TRIGGER IF NOT EXISTS processing_profiles_immutable_update
-BEFORE UPDATE ON processing_profiles BEGIN
-    SELECT RAISE(ABORT, 'processing profile records are immutable');
-END;
-
-CREATE TRIGGER IF NOT EXISTS rendition_builds_immutable_update
-BEFORE UPDATE ON rendition_builds BEGIN
-    SELECT RAISE(ABORT, 'rendition build records are immutable');
-END;
-
-CREATE TRIGGER IF NOT EXISTS rendition_artifacts_immutable_update
-BEFORE UPDATE ON rendition_artifacts BEGIN
-    SELECT RAISE(ABORT, 'rendition artifact records are immutable');
-END;
-
-CREATE TRIGGER IF NOT EXISTS rendition_units_immutable_update
-BEFORE UPDATE ON rendition_units BEGIN
-    SELECT RAISE(ABORT, 'rendition unit records are immutable');
-END;
-
-CREATE TRIGGER IF NOT EXISTS rendition_lexical_segments_immutable_update
-BEFORE UPDATE ON rendition_lexical_segments BEGIN
-    SELECT RAISE(ABORT, 'rendition lexical segment records are immutable');
-END;
-
-CREATE TRIGGER IF NOT EXISTS rendition_attachments_immutable_update
-BEFORE UPDATE ON rendition_attachments BEGIN
-    SELECT RAISE(ABORT, 'rendition attachment records are immutable');
-END;
-`

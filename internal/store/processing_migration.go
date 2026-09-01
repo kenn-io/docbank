@@ -403,6 +403,7 @@ func legacyPlainTextProfile() (ProcessingProfileRecord, error) {
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
 			CompletenessFingerprint:     fingerprint("degraded-provenance"),
 			LexicalSegmenterFingerprint: fingerprint("exact-stored-text"),
+			MaxDocumentChars:            256 << 20,
 			MaxSegmentRunes:             legacyPlainTextSegmentRunes, MaxUnitRunes: 256 << 20,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
 			NormalizerFingerprint:      fingerprint("no-normalization"),

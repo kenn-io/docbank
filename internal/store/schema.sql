@@ -88,8 +88,7 @@ BEFORE DELETE ON processing_consent_revocations BEGIN
 END'),
 ('table', 'processing_profiles', 'CREATE TABLE processing_profiles (
     profile_fingerprint               TEXT PRIMARY KEY,
-    canonical_profile                 TEXT NOT NULL
-        CHECK (length(CAST(canonical_profile AS BLOB)) BETWEEN 2 AND 1048576),
+    canonical_profile                 TEXT NOT NULL,
     rendition_request_fingerprint     TEXT NOT NULL,
     evidence_lexical_fingerprint      TEXT NOT NULL,
     retention_disclosure_fingerprint  TEXT NOT NULL,
@@ -97,7 +96,6 @@ END'),
     consent_fingerprint               TEXT NOT NULL,
     rendition_disclosure_fingerprint  TEXT NOT NULL,
     trust_boundary                    TEXT NOT NULL
-        CHECK (length(CAST(trust_boundary AS BLOB)) BETWEEN 1 AND 1024)
 )'),
 ('table', 'rendition_builds', 'CREATE TABLE rendition_builds (
     build_id                             TEXT PRIMARY KEY,
@@ -106,30 +104,24 @@ END'),
     rendition_request_fingerprint        TEXT NOT NULL,
     evidence_lexical_fingerprint         TEXT NOT NULL,
     captured_artifact_policy_fingerprint TEXT NOT NULL,
-    captured_artifact_policy_json        TEXT NOT NULL
-        CHECK (length(CAST(captured_artifact_policy_json AS BLOB)) BETWEEN 2 AND 65536),
+    captured_artifact_policy_json        TEXT NOT NULL,
     authorization_checksum               TEXT NOT NULL,
-    provider_operation_id                TEXT NOT NULL
-        CHECK (length(CAST(provider_operation_id AS BLOB)) BETWEEN 1 AND 4096),
-    provider_receipt_json                 TEXT NOT NULL
-        CHECK (length(CAST(provider_receipt_json AS BLOB)) BETWEEN 2 AND 1048576),
+    provider_operation_id                TEXT NOT NULL,
+    provider_receipt_json                 TEXT NOT NULL,
     evidence_checksum                    TEXT NOT NULL,
     rendition_checksum                   TEXT NOT NULL,
     markdown_checksum                    TEXT NOT NULL,
-    completeness                         TEXT NOT NULL CHECK (completeness IN (
-        ''complete'', ''partial'', ''degraded_provenance''
-    )),
+    completeness                         TEXT NOT NULL,
     partial_success                      INTEGER NOT NULL CHECK (partial_success IN (0, 1)),
     truncated                            INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-    warnings_json                        TEXT NOT NULL
-        CHECK (length(CAST(warnings_json AS BLOB)) BETWEEN 2 AND 2097152),
+    warnings_json                        TEXT NOT NULL,
     completed_at                         TEXT NOT NULL,
     declared_artifact_count              INTEGER NOT NULL
-        CHECK (declared_artifact_count BETWEEN 0 AND 1024),
+        CHECK (declared_artifact_count >= 0),
     unit_count                           INTEGER NOT NULL
-        CHECK (unit_count BETWEEN 0 AND 100000),
+        CHECK (unit_count >= 0),
     lexical_segment_count                INTEGER NOT NULL
-        CHECK (lexical_segment_count BETWEEN 0 AND 1000000),
+        CHECK (lexical_segment_count >= 0),
     UNIQUE (vault_uid, build_id),
     UNIQUE (
         vault_uid, source_sha256, rendition_request_fingerprint,
@@ -140,46 +132,35 @@ END'),
     ON rendition_builds(source_sha256, build_id)'),
 ('table', 'rendition_artifacts', 'CREATE TABLE rendition_artifacts (
     build_id    TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    artifact_id TEXT NOT NULL
-        CHECK (length(CAST(artifact_id AS BLOB)) BETWEEN 1 AND 1024),
-    role        TEXT NOT NULL
-        CHECK (length(CAST(role AS BLOB)) BETWEEN 1 AND 64),
+    artifact_id TEXT NOT NULL,
+    role        TEXT NOT NULL,
     blob_hash   TEXT NOT NULL REFERENCES blobs(hash),
     size        INTEGER NOT NULL CHECK (size >= 0),
     checksum    TEXT NOT NULL,
-    state       TEXT NOT NULL CHECK (state = ''verified''),
-    PRIMARY KEY (build_id, artifact_id),
-    UNIQUE (build_id, role, artifact_id)
+    PRIMARY KEY (build_id, artifact_id)
 )'),
 ('index', 'rendition_artifacts_blob', 'CREATE INDEX rendition_artifacts_blob
     ON rendition_artifacts(blob_hash, build_id)'),
 ('table', 'rendition_units', 'CREATE TABLE rendition_units (
     build_id          TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    unit_id           TEXT NOT NULL
-        CHECK (length(CAST(unit_id AS BLOB)) BETWEEN 1 AND 1024),
-    evidence_unit_id  TEXT NOT NULL
-        CHECK (length(CAST(evidence_unit_id AS BLOB)) BETWEEN 1 AND 1024),
+    unit_id           TEXT NOT NULL,
+    evidence_unit_id  TEXT NOT NULL,
     unit_order        INTEGER NOT NULL CHECK (unit_order >= 0),
     checksum          TEXT NOT NULL,
-    heading_path_json TEXT NOT NULL
-        CHECK (length(CAST(heading_path_json AS BLOB)) BETWEEN 2 AND 1048576),
-    locator_json      TEXT NOT NULL
-        CHECK (length(CAST(locator_json AS BLOB)) BETWEEN 2 AND 8192),
+    heading_path_json TEXT NOT NULL,
+    locator_json      TEXT NOT NULL,
     PRIMARY KEY (build_id, unit_id),
     UNIQUE (build_id, unit_order)
 )'),
 ('table', 'rendition_lexical_segments', 'CREATE TABLE rendition_lexical_segments (
     build_id     TEXT NOT NULL,
-    segment_id   TEXT NOT NULL
-        CHECK (length(CAST(segment_id AS BLOB)) BETWEEN 1 AND 1024),
-    unit_id      TEXT NOT NULL
-        CHECK (length(CAST(unit_id AS BLOB)) BETWEEN 1 AND 1024),
+    segment_id   TEXT NOT NULL,
+    unit_id      TEXT NOT NULL,
     segment_order INTEGER NOT NULL CHECK (segment_order >= 0),
     char_start   INTEGER NOT NULL CHECK (char_start >= 0),
     char_end     INTEGER NOT NULL CHECK (char_end >= char_start),
     checksum     TEXT NOT NULL,
-    text         TEXT NOT NULL
-        CHECK (length(text) <= 1048576 AND length(CAST(text AS BLOB)) <= 4194304),
+    text         TEXT NOT NULL,
     PRIMARY KEY (build_id, segment_id),
     UNIQUE (build_id, segment_order),
     FOREIGN KEY (build_id, unit_id)
@@ -195,8 +176,7 @@ END'),
     attachment_policy_fingerprint     TEXT NOT NULL,
     consent_fingerprint               TEXT NOT NULL,
     rendition_disclosure_fingerprint  TEXT NOT NULL,
-    trust_boundary                    TEXT NOT NULL
-        CHECK (length(CAST(trust_boundary AS BLOB)) BETWEEN 1 AND 1024),
+    trust_boundary                    TEXT NOT NULL,
     attached_at                       TEXT NOT NULL,
     FOREIGN KEY (vault_uid, build_id)
         REFERENCES rendition_builds(vault_uid, build_id),
@@ -214,6 +194,58 @@ END'),
             content_version_id, profile_fingerprint, attachment_id
         ) ON DELETE CASCADE
 )'),
+('table', 'rendition_jobs', 'CREATE TABLE rendition_jobs (
+    job_id                               TEXT PRIMARY KEY,
+    vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    source_sha256                        TEXT NOT NULL REFERENCES blobs(hash),
+    rendition_request_fingerprint        TEXT NOT NULL,
+    evidence_lexical_fingerprint         TEXT NOT NULL,
+    captured_artifact_policy_fingerprint TEXT NOT NULL,
+    execution_identity_fingerprint        TEXT NOT NULL,
+    execution_identity_json               TEXT NOT NULL,
+    execution_snapshot_json               TEXT,
+    captured_artifact_policy_json        TEXT NOT NULL,
+    state                                TEXT NOT NULL,
+    phase                                TEXT NOT NULL,
+    claim_owner                          TEXT,
+    claim_epoch                          INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    lease_expires_at                     TEXT,
+    available_at                         TEXT NOT NULL,
+    provider_started                     INTEGER NOT NULL DEFAULT 0
+        CHECK (provider_started IN (0, 1)),
+    provider_attempts                    INTEGER NOT NULL DEFAULT 0
+        CHECK (provider_attempts >= 0),
+    provider_resume_handle               TEXT,
+    selected_waiter_id                   TEXT,
+    authorization_grant_id               TEXT,
+    authorization_incarnation_id         TEXT,
+    authorization_revocation_fence       INTEGER,
+    lexical_generation_id                TEXT,
+    failure_code                         TEXT,
+    created_at                           TEXT NOT NULL,
+    updated_at                           TEXT NOT NULL,
+    CHECK ((authorization_grant_id IS NULL) =
+           (authorization_incarnation_id IS NULL AND authorization_revocation_fence IS NULL))
+)'),
+('index', 'rendition_jobs_claimable', 'CREATE INDEX rendition_jobs_claimable
+    ON rendition_jobs(state, available_at, lease_expires_at, job_id)'),
+('table', 'rendition_job_waiters', 'CREATE TABLE rendition_job_waiters (
+    waiter_id                TEXT PRIMARY KEY,
+    job_id                   TEXT NOT NULL REFERENCES rendition_jobs(job_id) ON DELETE CASCADE,
+    content_version_id       TEXT NOT NULL REFERENCES content_versions(version_id),
+    profile_fingerprint      TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    principal                TEXT NOT NULL,
+    scope                    TEXT NOT NULL,
+    disclosure_fingerprint   TEXT NOT NULL,
+    input_classes_json       TEXT NOT NULL,
+    retained_classes_json    TEXT NOT NULL,
+    state                    TEXT NOT NULL,
+    attachment_id            TEXT NOT NULL,
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL
+)'),
+('index', 'rendition_job_waiters_job', 'CREATE INDEX rendition_job_waiters_job
+    ON rendition_job_waiters(job_id, state, waiter_id)'),
 ('trigger', 'processing_profiles_immutable_update', 'CREATE TRIGGER processing_profiles_immutable_update
 BEFORE UPDATE ON processing_profiles BEGIN
     SELECT RAISE(ABORT, ''processing profile records are immutable'');
@@ -240,20 +272,14 @@ BEFORE UPDATE ON rendition_attachments BEGIN
 END'),
 ('table', 'current_rendition_roots', 'CREATE TABLE current_rendition_roots (
     root_id       TEXT PRIMARY KEY,
-    root_kind     TEXT NOT NULL CHECK (root_kind IN (
-        ''attachment'', ''head'', ''retention'', ''audit'', ''job'',
-        ''reader_lease'', ''worker_lease'', ''backup_pin''
-    )),
-    target_kind   TEXT NOT NULL CHECK (target_kind IN (
-        ''rendition_build'', ''lexical_generation''
-    )),
+    root_kind     TEXT NOT NULL,
+    target_kind   TEXT NOT NULL,
     target_id     TEXT NOT NULL,
     fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
     recorded_at   TEXT NOT NULL,
     expires_at    TEXT,
     active        INTEGER NOT NULL CHECK (active IN (0, 1)),
     released_at   TEXT,
-    CHECK ((root_kind IN (''reader_lease'', ''worker_lease'')) = (expires_at IS NOT NULL)),
     CHECK ((active = 1) = (released_at IS NULL))
 )'),
 ('index', 'current_rendition_roots_target', 'CREATE INDEX current_rendition_roots_target
@@ -307,14 +333,8 @@ SELECT CASE
         SELECT 1 FROM sqlite_schema
         WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
            OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            'processing_incarnations', 'current_processing_incarnation',
-            'processing_consent_grants', 'processing_consent_revocations',
-            'processing_profiles', 'rendition_builds', 'rendition_artifacts',
-            'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads',
-            'current_rendition_roots', 'derivative_purge_suppressions',
-            'rendition_blob_staging', 'derivative_blob_purge_pending',
-            'derivative_pack_purge_pending'
+            SELECT object_name FROM docbank_processing_schema_v1_expected
+            WHERE object_type='table'
         ))
     ) THEN 1
     WHEN NOT EXISTS (
@@ -324,27 +344,15 @@ SELECT CASE
         SELECT type, name, sql FROM sqlite_schema
         WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
            OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            'processing_incarnations', 'current_processing_incarnation',
-            'processing_consent_grants', 'processing_consent_revocations',
-            'processing_profiles', 'rendition_builds', 'rendition_artifacts',
-            'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads',
-            'current_rendition_roots', 'derivative_purge_suppressions',
-            'rendition_blob_staging', 'derivative_blob_purge_pending',
-            'derivative_pack_purge_pending'
+            SELECT object_name FROM docbank_processing_schema_v1_expected
+            WHERE object_type='table'
         ))
     ) AND NOT EXISTS (
         SELECT type, name, sql FROM sqlite_schema
         WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
            OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            'processing_incarnations', 'current_processing_incarnation',
-            'processing_consent_grants', 'processing_consent_revocations',
-            'processing_profiles', 'rendition_builds', 'rendition_artifacts',
-            'rendition_units', 'rendition_lexical_segments',
-            'rendition_attachments', 'rendition_heads',
-            'current_rendition_roots', 'derivative_purge_suppressions',
-            'rendition_blob_staging', 'derivative_blob_purge_pending',
-            'derivative_pack_purge_pending'
+            SELECT object_name FROM docbank_processing_schema_v1_expected
+            WHERE object_type='table'
         ))
         EXCEPT
         SELECT object_type, object_name, object_sql
@@ -639,7 +647,7 @@ CREATE TABLE IF NOT EXISTS storage_operation_cleanup (
 CREATE TABLE IF NOT EXISTS gc_loose_retirements (
     store_id       TEXT NOT NULL REFERENCES blob_stores(store_id),
     blob_hash      TEXT NOT NULL,
-    loose_encoding INTEGER NOT NULL CHECK (loose_encoding IN (1, 2)),
+    loose_encoding INTEGER NOT NULL,
     PRIMARY KEY (store_id, blob_hash, loose_encoding)
 );
 
@@ -1009,8 +1017,7 @@ END;
 -- embedding-only profile fields never enter build identity.
 CREATE TABLE IF NOT EXISTS processing_profiles (
     profile_fingerprint               TEXT PRIMARY KEY,
-    canonical_profile                 TEXT NOT NULL
-        CHECK (length(CAST(canonical_profile AS BLOB)) BETWEEN 2 AND 1048576),
+    canonical_profile                 TEXT NOT NULL,
     rendition_request_fingerprint     TEXT NOT NULL,
     evidence_lexical_fingerprint      TEXT NOT NULL,
     retention_disclosure_fingerprint  TEXT NOT NULL,
@@ -1018,7 +1025,6 @@ CREATE TABLE IF NOT EXISTS processing_profiles (
     consent_fingerprint               TEXT NOT NULL,
     rendition_disclosure_fingerprint  TEXT NOT NULL,
     trust_boundary                    TEXT NOT NULL
-        CHECK (length(CAST(trust_boundary AS BLOB)) BETWEEN 1 AND 1024)
 );
 
 -- A completed rendition build is vault-local immutable authority. The unique
@@ -1031,30 +1037,24 @@ CREATE TABLE IF NOT EXISTS rendition_builds (
     rendition_request_fingerprint        TEXT NOT NULL,
     evidence_lexical_fingerprint         TEXT NOT NULL,
     captured_artifact_policy_fingerprint TEXT NOT NULL,
-    captured_artifact_policy_json        TEXT NOT NULL
-        CHECK (length(CAST(captured_artifact_policy_json AS BLOB)) BETWEEN 2 AND 65536),
+    captured_artifact_policy_json        TEXT NOT NULL,
     authorization_checksum               TEXT NOT NULL,
-    provider_operation_id                TEXT NOT NULL
-        CHECK (length(CAST(provider_operation_id AS BLOB)) BETWEEN 1 AND 4096),
-    provider_receipt_json                 TEXT NOT NULL
-        CHECK (length(CAST(provider_receipt_json AS BLOB)) BETWEEN 2 AND 1048576),
+    provider_operation_id                TEXT NOT NULL,
+    provider_receipt_json                 TEXT NOT NULL,
     evidence_checksum                    TEXT NOT NULL,
     rendition_checksum                   TEXT NOT NULL,
     markdown_checksum                    TEXT NOT NULL,
-    completeness                         TEXT NOT NULL CHECK (completeness IN (
-        'complete', 'partial', 'degraded_provenance'
-    )),
+    completeness                         TEXT NOT NULL,
     partial_success                      INTEGER NOT NULL CHECK (partial_success IN (0, 1)),
     truncated                            INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-    warnings_json                        TEXT NOT NULL
-        CHECK (length(CAST(warnings_json AS BLOB)) BETWEEN 2 AND 2097152),
+    warnings_json                        TEXT NOT NULL,
     completed_at                         TEXT NOT NULL,
     declared_artifact_count              INTEGER NOT NULL
-        CHECK (declared_artifact_count BETWEEN 0 AND 1024),
+        CHECK (declared_artifact_count >= 0),
     unit_count                           INTEGER NOT NULL
-        CHECK (unit_count BETWEEN 0 AND 100000),
+        CHECK (unit_count >= 0),
     lexical_segment_count                INTEGER NOT NULL
-        CHECK (lexical_segment_count BETWEEN 0 AND 1000000),
+        CHECK (lexical_segment_count >= 0),
     UNIQUE (vault_uid, build_id),
     UNIQUE (
         vault_uid, source_sha256, rendition_request_fingerprint,
@@ -1067,16 +1067,12 @@ CREATE INDEX IF NOT EXISTS rendition_builds_source
 
 CREATE TABLE IF NOT EXISTS rendition_artifacts (
     build_id    TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    artifact_id TEXT NOT NULL
-        CHECK (length(CAST(artifact_id AS BLOB)) BETWEEN 1 AND 1024),
-    role        TEXT NOT NULL
-        CHECK (length(CAST(role AS BLOB)) BETWEEN 1 AND 64),
+    artifact_id TEXT NOT NULL,
+    role        TEXT NOT NULL,
     blob_hash   TEXT NOT NULL REFERENCES blobs(hash),
     size        INTEGER NOT NULL CHECK (size >= 0),
     checksum    TEXT NOT NULL,
-    state       TEXT NOT NULL CHECK (state = 'verified'),
-    PRIMARY KEY (build_id, artifact_id),
-    UNIQUE (build_id, role, artifact_id)
+    PRIMARY KEY (build_id, artifact_id)
 );
 
 CREATE INDEX IF NOT EXISTS rendition_artifacts_blob
@@ -1084,32 +1080,25 @@ CREATE INDEX IF NOT EXISTS rendition_artifacts_blob
 
 CREATE TABLE IF NOT EXISTS rendition_units (
     build_id          TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    unit_id           TEXT NOT NULL
-        CHECK (length(CAST(unit_id AS BLOB)) BETWEEN 1 AND 1024),
-    evidence_unit_id  TEXT NOT NULL
-        CHECK (length(CAST(evidence_unit_id AS BLOB)) BETWEEN 1 AND 1024),
+    unit_id           TEXT NOT NULL,
+    evidence_unit_id  TEXT NOT NULL,
     unit_order        INTEGER NOT NULL CHECK (unit_order >= 0),
     checksum          TEXT NOT NULL,
-    heading_path_json TEXT NOT NULL
-        CHECK (length(CAST(heading_path_json AS BLOB)) BETWEEN 2 AND 1048576),
-    locator_json      TEXT NOT NULL
-        CHECK (length(CAST(locator_json AS BLOB)) BETWEEN 2 AND 8192),
+    heading_path_json TEXT NOT NULL,
+    locator_json      TEXT NOT NULL,
     PRIMARY KEY (build_id, unit_id),
     UNIQUE (build_id, unit_order)
 );
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_segments (
     build_id     TEXT NOT NULL,
-    segment_id   TEXT NOT NULL
-        CHECK (length(CAST(segment_id AS BLOB)) BETWEEN 1 AND 1024),
-    unit_id      TEXT NOT NULL
-        CHECK (length(CAST(unit_id AS BLOB)) BETWEEN 1 AND 1024),
+    segment_id   TEXT NOT NULL,
+    unit_id      TEXT NOT NULL,
     segment_order INTEGER NOT NULL CHECK (segment_order >= 0),
     char_start   INTEGER NOT NULL CHECK (char_start >= 0),
     char_end     INTEGER NOT NULL CHECK (char_end >= char_start),
     checksum     TEXT NOT NULL,
-    text         TEXT NOT NULL
-        CHECK (length(text) <= 1048576 AND length(CAST(text AS BLOB)) <= 4194304),
+    text         TEXT NOT NULL,
     PRIMARY KEY (build_id, segment_id),
     UNIQUE (build_id, segment_order),
     FOREIGN KEY (build_id, unit_id)
@@ -1129,8 +1118,7 @@ CREATE TABLE IF NOT EXISTS rendition_attachments (
     attachment_policy_fingerprint     TEXT NOT NULL,
     consent_fingerprint               TEXT NOT NULL,
     rendition_disclosure_fingerprint  TEXT NOT NULL,
-    trust_boundary                    TEXT NOT NULL
-        CHECK (length(CAST(trust_boundary AS BLOB)) BETWEEN 1 AND 1024),
+    trust_boundary                    TEXT NOT NULL,
     attached_at                       TEXT NOT NULL,
     FOREIGN KEY (vault_uid, build_id)
         REFERENCES rendition_builds(vault_uid, build_id),
@@ -1152,26 +1140,80 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
         ) ON DELETE CASCADE
 );
 
+-- Rendition jobs are restart authority, not immutable artifact authority.
+-- Provider-specific payloads never enter these tables. Continuation authority
+-- is only the provider-neutral sealed execution snapshot plus an optional
+-- opaque provider-issued handle.
+CREATE TABLE IF NOT EXISTS rendition_jobs (
+    job_id                               TEXT PRIMARY KEY,
+    vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    source_sha256                        TEXT NOT NULL REFERENCES blobs(hash),
+    rendition_request_fingerprint        TEXT NOT NULL,
+    evidence_lexical_fingerprint         TEXT NOT NULL,
+    captured_artifact_policy_fingerprint TEXT NOT NULL,
+    execution_identity_fingerprint        TEXT NOT NULL,
+    execution_identity_json               TEXT NOT NULL,
+    execution_snapshot_json               TEXT,
+    captured_artifact_policy_json        TEXT NOT NULL,
+    state                                TEXT NOT NULL,
+    phase                                TEXT NOT NULL,
+    claim_owner                          TEXT,
+    claim_epoch                          INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    lease_expires_at                     TEXT,
+    available_at                         TEXT NOT NULL,
+    provider_started                     INTEGER NOT NULL DEFAULT 0
+        CHECK (provider_started IN (0, 1)),
+    provider_attempts                    INTEGER NOT NULL DEFAULT 0
+        CHECK (provider_attempts >= 0),
+    provider_resume_handle               TEXT,
+    selected_waiter_id                   TEXT,
+    authorization_grant_id               TEXT,
+    authorization_incarnation_id         TEXT,
+    authorization_revocation_fence       INTEGER,
+    lexical_generation_id                TEXT,
+    failure_code                         TEXT,
+    created_at                           TEXT NOT NULL,
+    updated_at                           TEXT NOT NULL,
+    CHECK ((authorization_grant_id IS NULL) =
+           (authorization_incarnation_id IS NULL AND authorization_revocation_fence IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS rendition_jobs_claimable
+    ON rendition_jobs(state, available_at, lease_expires_at, job_id);
+
+CREATE TABLE IF NOT EXISTS rendition_job_waiters (
+    waiter_id                TEXT PRIMARY KEY,
+    job_id                   TEXT NOT NULL REFERENCES rendition_jobs(job_id) ON DELETE CASCADE,
+    content_version_id       TEXT NOT NULL REFERENCES content_versions(version_id),
+    profile_fingerprint      TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    principal                TEXT NOT NULL,
+    scope                    TEXT NOT NULL,
+    disclosure_fingerprint   TEXT NOT NULL,
+    input_classes_json       TEXT NOT NULL,
+    retained_classes_json    TEXT NOT NULL,
+    state                    TEXT NOT NULL,
+    attachment_id            TEXT NOT NULL,
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS rendition_job_waiters_job
+    ON rendition_job_waiters(job_id, state, waiter_id);
+
 -- Root producers outside the immutable rendition catalog retain one exact
 -- build or lexical generation. Lease expiry uses canonical fixed-width UTC
 -- timestamps; monotonic fencing prevents a stale worker from releasing a
 -- renewed root. Attachments and heads remain normalized in their own tables.
 CREATE TABLE IF NOT EXISTS current_rendition_roots (
     root_id       TEXT PRIMARY KEY,
-    root_kind     TEXT NOT NULL CHECK (root_kind IN (
-        'attachment', 'head', 'retention', 'audit', 'job',
-        'reader_lease', 'worker_lease', 'backup_pin'
-    )),
-    target_kind   TEXT NOT NULL CHECK (target_kind IN (
-        'rendition_build', 'lexical_generation'
-    )),
+    root_kind     TEXT NOT NULL,
+    target_kind   TEXT NOT NULL,
     target_id     TEXT NOT NULL,
     fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
     recorded_at   TEXT NOT NULL,
     expires_at    TEXT,
     active        INTEGER NOT NULL CHECK (active IN (0, 1)),
     released_at   TEXT,
-    CHECK ((root_kind IN ('reader_lease', 'worker_lease')) = (expires_at IS NOT NULL)),
     CHECK ((active = 1) = (released_at IS NULL))
 );
 

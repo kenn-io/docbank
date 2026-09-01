@@ -67,6 +67,17 @@ type normalizedCapturedArtifactPolicyV1 struct {
 	cardinalities map[string]capturedArtifactRoleV1
 }
 
+func (policy normalizedCapturedArtifactPolicyV1) retainedRoles() []string {
+	roles := make([]string, 0, len(policy.cardinalities))
+	for role, cardinality := range policy.cardinalities {
+		if cardinality.MaxCount > 0 {
+			roles = append(roles, role)
+		}
+	}
+	sort.Strings(roles)
+	return roles
+}
+
 // RenditionArtifactState records whether retained derivative bytes were
 // validated before their immutable build aggregate was staged.
 type RenditionArtifactState string
@@ -531,11 +542,7 @@ func normalizeRenditionBuildRecord(record RenditionBuildRecord) (RenditionBuildR
 			"provider receipt JSON exceeds %d bytes", maxProviderReceiptJSONBytes,
 		)
 	}
-	if record.Warnings == nil {
-		record.Warnings = make([]string, 0)
-	} else {
-		record.Warnings = append([]string(nil), record.Warnings...)
-	}
+	record.Warnings = append([]string{}, record.Warnings...)
 	if len(record.Warnings) > maxRenditionWarnings {
 		return RenditionBuildRecord{}, fmt.Errorf("rendition build has more than %d warnings", maxRenditionWarnings)
 	}
@@ -627,7 +634,7 @@ func normalizeRenditionBuildRecord(record RenditionBuildRecord) (RenditionBuildR
 	seenUnits := make(map[string]bool, len(record.Units))
 	for index := range record.Units {
 		unit := &record.Units[index]
-		unit.HeadingPath = append([]string(nil), unit.HeadingPath...)
+		unit.HeadingPath = append([]string{}, unit.HeadingPath...)
 		if unit.Order != index {
 			return RenditionBuildRecord{}, fmt.Errorf("rendition unit %d is not in canonical order", index)
 		}
@@ -792,9 +799,9 @@ func ensureProcessingProfileTx(ctx context.Context, tx *sql.Tx, record Processin
 func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record RenditionBuildRecord) error {
 	for _, artifact := range record.Artifacts {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum,state)
-			VALUES(?,?,?,?,?,?,?)`, record.ID, artifact.ID, artifact.Role, artifact.BlobHash,
-			artifact.Size, artifact.Checksum, artifact.State); err != nil {
+			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum)
+			VALUES(?,?,?,?,?,?)`, record.ID, artifact.ID, artifact.Role, artifact.BlobHash,
+			artifact.Size, artifact.Checksum); err != nil {
 			return fmt.Errorf("inserting rendition artifact %s: %w", artifact.ID, err)
 		}
 	}
@@ -850,25 +857,25 @@ func validateRenditionBuildBlobAuthorityTx(
 
 func validateRenditionBuildStateTx(ctx context.Context, tx metadataQuerier, buildID string) error {
 	var declaredArtifacts, declaredUnits, declaredSegments int
-	var artifacts, verifiedArtifacts, units, segments int
+	var artifacts, validArtifacts, units, segments int
 	err := tx.QueryRowContext(ctx, `
 		SELECT b.declared_artifact_count,b.unit_count,b.lexical_segment_count,
 		       (SELECT COUNT(*) FROM rendition_artifacts a WHERE a.build_id=b.build_id),
 		       (SELECT COUNT(*) FROM rendition_artifacts a
 		          JOIN blobs blob ON blob.hash=a.blob_hash AND blob.size=a.size
-		        WHERE a.build_id=b.build_id AND a.state='verified' AND a.checksum=a.blob_hash),
+		        WHERE a.build_id=b.build_id AND a.checksum=a.blob_hash),
 		       (SELECT COUNT(*) FROM rendition_units u WHERE u.build_id=b.build_id),
 		       (SELECT COUNT(*) FROM rendition_lexical_segments l WHERE l.build_id=b.build_id)
 		FROM rendition_builds b WHERE b.build_id=?`, buildID,
 	).Scan(&declaredArtifacts, &declaredUnits, &declaredSegments,
-		&artifacts, &verifiedArtifacts, &units, &segments)
+		&artifacts, &validArtifacts, &units, &segments)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("rendition build %s: %w", buildID, ErrNotFound)
 	}
 	if err != nil {
 		return fmt.Errorf("validating rendition build %s: %w", buildID, err)
 	}
-	if artifacts != declaredArtifacts || verifiedArtifacts != declaredArtifacts {
+	if artifacts != declaredArtifacts || validArtifacts != declaredArtifacts {
 		return fmt.Errorf("rendition build %s artifact membership is incomplete or unverified", buildID)
 	}
 	if units != declaredUnits {
@@ -898,7 +905,12 @@ func loadProcessingProfile(ctx context.Context, tx metadataQuerier, fingerprint 
 		return ProcessingProfileRecord{}, err
 	}
 	record.CanonicalProfile = jsontext.Value(canonical)
-	return record, nil
+	normalized, err := normalizeProcessingProfileRecord(record)
+	if err != nil {
+		return ProcessingProfileRecord{}, fmt.Errorf(
+			"validating stored processing profile %s: %w", fingerprint, err)
+	}
+	return normalized, nil
 }
 
 func loadRenditionAttachment(ctx context.Context, tx metadataQuerier, attachmentID string) (RenditionAttachmentRecord, error) {
@@ -957,7 +969,7 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 	}
 	record.Artifacts = make([]RenditionArtifactRecord, 0, record.DeclaredArtifactCount)
 	rows, err := tx.QueryContext(ctx, `
-		SELECT a.artifact_id,a.role,a.blob_hash,COALESCE(c.md5,''),a.size,a.checksum,a.state
+		SELECT a.artifact_id,a.role,a.blob_hash,COALESCE(c.md5,''),a.size,a.checksum
 		FROM rendition_artifacts a
 		LEFT JOIN blob_checksums c ON c.blob_sha256=a.blob_hash
 		WHERE a.build_id=? ORDER BY a.artifact_id`, buildID)
@@ -971,10 +983,11 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 		}
 		var artifact RenditionArtifactRecord
 		if err := rows.Scan(&artifact.ID, &artifact.Role, &artifact.BlobHash, &artifact.MD5,
-			&artifact.Size, &artifact.Checksum, &artifact.State); err != nil {
+			&artifact.Size, &artifact.Checksum); err != nil {
 			_ = rows.Close()
 			return RenditionBuildRecord{}, err
 		}
+		artifact.State = RenditionArtifactVerified
 		record.Artifacts = append(record.Artifacts, artifact)
 	}
 	if err := rows.Err(); err != nil {
@@ -1042,7 +1055,12 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 	if err := rows.Err(); err != nil {
 		return RenditionBuildRecord{}, err
 	}
-	return record, nil
+	normalized, err := normalizeRenditionBuildRecord(record)
+	if err != nil {
+		return RenditionBuildRecord{}, fmt.Errorf(
+			"validating stored rendition build %s: %w", buildID, err)
+	}
+	return normalized, nil
 }
 
 func normalizeCapturedArtifactPolicyV1(raw jsontext.Value) (normalizedCapturedArtifactPolicyV1, error) {

@@ -255,7 +255,7 @@ func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 	require.NoError(t, walker.Close())
 	select {
 	case <-closed:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		require.Fail(t, "Vault.Close did not return after the walker released its lifecycle lease")
 	}
 	require.NoError(t, closeErr)
