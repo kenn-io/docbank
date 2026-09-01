@@ -43,7 +43,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v10")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v11")
 
 	// errSourceMetadataMP4Malformed marks deterministic MP4 structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -1217,8 +1217,33 @@ func visualContainerSignature(data []byte) bool {
 }
 
 func exifTIFFSignature(data []byte) bool {
-	return len(data) >= 4 && (bytes.Equal(data[:4], []byte{'I', 'I', 42, 0}) ||
-		bytes.Equal(data[:4], []byte{'M', 'M', 0, 42}))
+	_, _, ok := exifTIFFHeader(data)
+	return ok
+}
+
+func exifTIFFHeader(data []byte) (binary.ByteOrder, string, bool) {
+	if len(data) < 4 {
+		return nil, "", false
+	}
+	var order binary.ByteOrder
+	switch string(data[:2]) {
+	case "II":
+		order = binary.LittleEndian
+	case "MM":
+		order = binary.BigEndian
+	default:
+		return nil, "", false
+	}
+	switch order.Uint16(data[2:4]) {
+	case 42:
+		return order, "tiff", true
+	case 0x4f52, 0x5352:
+		return order, "orf", true
+	case 0x0055:
+		return order, "rw2", true
+	default:
+		return nil, "", false
+	}
 }
 
 func (c *metadataCollector) extractVisual(data []byte) {
@@ -1273,9 +1298,9 @@ func (c *metadataCollector) extractJPEGExif(data []byte) {
 }
 
 func (c *metadataCollector) extractTIFFVisual(data []byte) {
-	c.string("media.container.format", "media.container", "Format", "tiff", false)
-	c.string("media.container.kind", "media.container", "Kind", "image", false)
 	if reader, ok := newExifReader(data); ok {
+		c.string("media.container.format", "media.container", "Format", reader.format, false)
+		c.string("media.container.kind", "media.container", "Kind", "image", false)
 		root := reader.entries(reader.u32(4))
 		if width, found := exifUnsigned(reader, root[0x0100]); found && width > 0 {
 			c.integer("media.container.width_px", "media.container", "ImageWidth", width)
@@ -1288,27 +1313,20 @@ func (c *metadataCollector) extractTIFFVisual(data []byte) {
 }
 
 type exifReader struct {
-	data  []byte
-	order binary.ByteOrder
+	data   []byte
+	order  binary.ByteOrder
+	format string
 }
 
 func newExifReader(data []byte) (exifReader, bool) {
 	if len(data) < 8 {
 		return exifReader{}, false
 	}
-	var order binary.ByteOrder
-	switch string(data[:2]) {
-	case "II":
-		order = binary.LittleEndian
-	case "MM":
-		order = binary.BigEndian
-	default:
+	order, format, ok := exifTIFFHeader(data)
+	if !ok {
 		return exifReader{}, false
 	}
-	if order.Uint16(data[2:4]) != 42 {
-		return exifReader{}, false
-	}
-	return exifReader{data: data, order: order}, true
+	return exifReader{data: data, order: order, format: format}, true
 }
 func (r exifReader) u16(offset int) (uint16, bool) {
 	if offset < 0 || offset+2 > len(r.data) {
@@ -1411,6 +1429,7 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 	if stamp := exifASCII(root[0x0132]); stamp != "" {
 		c.timestamp("modified", "image.exif", "DateTime", stamp)
 	}
+	isoFound := false
 	if raw := root[0x8769]; len(raw) >= 4 {
 		offset := reader.order.Uint32(raw)
 		exif := reader.entries(offset)
@@ -1419,6 +1438,7 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 		}
 		if iso, found := exifUnsigned(reader, exif[0x8827]); found && iso > 0 {
 			c.integer("image.exif.iso", "image.exif", "PhotographicSensitivity", iso)
+			isoFound = true
 		}
 		if exposure, found := exifRational(reader, exif[0x829a], false); found && exposure > 0 {
 			c.exifNumber("image.exif.exposure_time_seconds", "ExposureTime", exposure)
@@ -1439,6 +1459,11 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 		}
 		if height, found := exifUnsigned(reader, exif[0xa003]); found && height > 0 {
 			c.integer("image.exif.pixel_height", "image.exif", "PixelYDimension", height)
+		}
+	}
+	if !isoFound && reader.format == "rw2" {
+		if iso, found := exifUnsigned(reader, root[0x0017]); found && iso > 0 {
+			c.integer("image.exif.iso", "image.exif", "ISO", iso)
 		}
 	}
 	if raw := root[0x8825]; len(raw) >= 4 {

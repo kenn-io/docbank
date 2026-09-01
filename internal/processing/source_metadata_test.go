@@ -145,6 +145,47 @@ func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
 	assert.Equal(t, "2024:01:02 03:04:05", created.Raw)
 }
 
+func TestExtractSourceMetadataReadsRawTIFFVariants(t *testing.T) {
+	for _, testCase := range []struct {
+		name, format string
+		magic        uint16
+		standardISO  uint16
+		rw2ISO       uint16
+		wantISO      int64
+	}{
+		{name: "ORF original signature", format: "orf", magic: 0x4f52, standardISO: 640, wantISO: 640},
+		{name: "ORF later signature", format: "orf", magic: 0x5352, standardISO: 640, wantISO: 640},
+		{name: "RW2 fallback ISO", format: "rw2", magic: 0x0055, rw2ISO: 1250, wantISO: 1250},
+		{name: "RW2 standard ISO wins", format: "rw2", magic: 0x0055, standardISO: 800, rw2ISO: 1250, wantISO: 800},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := []syntheticTIFFEntry{
+				tiffLong(0x0100, 6000),
+				tiffLong(0x0101, 4000),
+				tiffASCII(0x010f, "Synthetic Camera Co."),
+				tiffASCII(0x0110, "Model Raw"),
+			}
+			var exif []syntheticTIFFEntry
+			if testCase.standardISO > 0 {
+				exif = append(exif, tiffShort(0x8827, testCase.standardISO))
+			}
+			if testCase.rw2ISO > 0 {
+				root = append(root, tiffShort(0x0017, testCase.rw2ISO))
+			}
+			metadata := ExtractSourceMetadata(syntheticTIFF(testCase.magic, root, exif))
+			format, found := sourceMetadataString(metadata, "media.container.format")
+			require.True(t, found)
+			assert.Equal(t, testCase.format, format)
+			model, found := sourceMetadataString(metadata, "image.exif.camera_model")
+			require.True(t, found)
+			assert.Equal(t, "Model Raw", model)
+			iso, found := sourceMetadataInteger(metadata, "image.exif.iso")
+			require.True(t, found)
+			assert.Equal(t, testCase.wantISO, iso)
+		})
+	}
+}
+
 func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
 	metadata := ExtractSourceMetadata(syntheticOOXML(t))
 	pages, found := sourceMetadataInteger(metadata, "page_count")
@@ -542,7 +583,7 @@ type syntheticTIFFEntry struct {
 }
 
 func syntheticRichExifTIFF() []byte {
-	return syntheticTIFF(
+	return syntheticTIFF(42,
 		[]syntheticTIFFEntry{
 			tiffLong(0x0100, 6000),
 			tiffLong(0x0101, 4000),
@@ -565,7 +606,7 @@ func syntheticRichExifTIFF() []byte {
 	)
 }
 
-func syntheticTIFF(root, exif []syntheticTIFFEntry) []byte {
+func syntheticTIFF(magic uint16, root, exif []syntheticTIFFEntry) []byte {
 	const headerSize = 8
 	rootEntries := append([]syntheticTIFFEntry{}, root...)
 	rootIFDSize := 2 + (len(rootEntries)+1)*12 + 4
@@ -582,7 +623,7 @@ func syntheticTIFF(root, exif []syntheticTIFFEntry) []byte {
 	}
 	tiff := make([]byte, exifOffset+exifIFDSize+externalSize)
 	copy(tiff, "II")
-	binary.LittleEndian.PutUint16(tiff[2:4], 42)
+	binary.LittleEndian.PutUint16(tiff[2:4], magic)
 	binary.LittleEndian.PutUint32(tiff[4:8], headerSize)
 	externalOffset := exifOffset + exifIFDSize
 	writeSyntheticTIFFIFD(tiff, headerSize, rootEntries, &externalOffset)
