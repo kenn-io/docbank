@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -89,6 +90,49 @@ func TestVaultCreateIsImmutableAndIdempotent(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(1), after.Revision)
 	require.Equal(created.Computed.SHA256, after.BlobHash)
+}
+
+func TestVaultSourceMetadataReturnsExactVersionEvidence(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("photo bytes")
+	receipt, err := vault.Create(t.Context(), "/photos/image.jpg", bytes.NewReader(content), CreateOptions{
+		MediaType: "image/jpeg", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	_, err = vault.SourceMetadata(t.Context(), receipt.Version.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	latitude := 41.8781
+	canonical, checksum, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{
+			Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Sensitive: true,
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: &latitude},
+		}},
+	})
+	require.NoError(t, err)
+	fingerprint := contentIdentity([]byte("test extractor")).SHA256
+	_, err = vault.metadata.PublishSourceMetadata(
+		t.Context(), receipt.Version.BlobHash, fingerprint, canonical,
+	)
+	require.NoError(t, err)
+
+	metadata, err := vault.SourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, receipt.Version, metadata.Version)
+	assert.Equal(t, document.SourceMetadataContractV1, metadata.ContractVersion)
+	assert.Equal(t, fingerprint, metadata.ExtractorFingerprint)
+	assert.Equal(t, checksum, metadata.Checksum)
+	require.Len(t, metadata.Fields, 1)
+	assert.True(t, metadata.Fields[0].Sensitive)
+	assert.InDelta(t, latitude, *metadata.Fields[0].Value.Number, 0.0000001)
+	assert.Equal(t, receipt.Node.ID, metadata.Attachment.NodeID)
+	assert.Equal(t, receipt.Version.ID, metadata.Attachment.ContentVersionID)
+	assert.Equal(t, "image.jpg", metadata.Attachment.Filename)
+	assert.Equal(t, "/photos/image.jpg", metadata.Attachment.Path)
 }
 
 func TestLeasedLimitedReaderShortRead(t *testing.T) {
