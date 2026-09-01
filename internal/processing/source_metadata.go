@@ -35,7 +35,8 @@ const (
 	maxSourceMetadataXMLDepth            = 64
 	sourceMetadataRAFHeaderBytes         = 160
 	sourceMetadataRAFJPEGOffset          = 84
-	sourceMetadataRAFCFAOffset           = 92
+	sourceMetadataRAFDirectoryOffset     = 92
+	sourceMetadataRAFDirectoryLength     = 96
 	sourceMetadataRAFImageSizeTag        = 0x0111
 	sourceMetadataRAFSignature           = "FUJIFILMCCD-RAW"
 	rdfNamespace                         = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -269,9 +270,12 @@ func extractRAFSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMe
 
 	jpegOffset := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFJPEGOffset:]))
 	jpegLength := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFJPEGOffset+4:]))
-	cfaOffset := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFCFAOffset:]))
-	if jpegOffset < sourceMetadataRAFHeaderBytes || cfaOffset < sourceMetadataRAFHeaderBytes ||
-		!sourceMetadataRangeWithin(jpegOffset, jpegLength, size) || cfaOffset > size-4 {
+	directoryOffset := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFDirectoryOffset:]))
+	directoryLength := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFDirectoryLength:]))
+	if jpegOffset < sourceMetadataRAFHeaderBytes || directoryOffset < sourceMetadataRAFHeaderBytes ||
+		!sourceMetadataRangeWithin(jpegOffset, jpegLength, size) ||
+		!sourceMetadataRangeWithin(directoryOffset, directoryLength, size) ||
+		sourceMetadataRangesOverlap(jpegOffset, jpegLength, directoryOffset, directoryLength) {
 		collector.warn("unparseable_metadata", "media.container", "RAF", "RAF metadata offsets are invalid")
 		return canonicalSourceMetadataResult(metadata), nil
 	}
@@ -291,7 +295,7 @@ func extractRAFSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMe
 			"only the bounded RAF JPEG metadata window was inspected")
 	}
 
-	limited, err := collector.extractRAFDimensions(reader, cfaOffset, size)
+	limited, err := collector.extractRAFDimensions(reader, directoryOffset, directoryLength)
 	if err != nil {
 		return document.SourceMetadataV1{}, err
 	}
@@ -306,16 +310,25 @@ func sourceMetadataRangeWithin(offset, length, size int64) bool {
 	return offset >= 0 && length > 0 && offset <= size && length <= size-offset
 }
 
-func (c *metadataCollector) extractRAFDimensions(reader io.ReaderAt, offset, sourceSize int64) (bool, error) {
+func sourceMetadataRangesOverlap(leftOffset, leftLength, rightOffset, rightLength int64) bool {
+	return leftOffset < rightOffset+rightLength && rightOffset < leftOffset+leftLength
+}
+
+func (c *metadataCollector) extractRAFDimensions(reader io.ReaderAt, offset, length int64) (bool, error) {
+	if length < 4 {
+		c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata directory is malformed")
+		return false, nil
+	}
 	header, err := readSourceMetadataRange(reader, offset, 4)
 	if err != nil {
 		return false, fmt.Errorf("reading RAF raw-metadata directory: %w", err)
 	}
 	entryCount := int64(binary.BigEndian.Uint32(header))
 	position := offset + 4
-	limit := min(sourceSize, offset+maxSourceMetadataRAFDirectoryBytes)
+	directoryEnd := offset + length
+	limit := min(directoryEnd, offset+maxSourceMetadataRAFDirectoryBytes)
 	for range entryCount {
-		if position > sourceSize-4 {
+		if position > directoryEnd-4 {
 			c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata directory is malformed")
 			return false, nil
 		}
@@ -329,7 +342,7 @@ func (c *metadataCollector) extractRAFDimensions(reader io.ReaderAt, offset, sou
 		tag := binary.BigEndian.Uint16(entryHeader)
 		length := int64(binary.BigEndian.Uint16(entryHeader[2:]))
 		position += 4
-		if length > sourceSize-position {
+		if length > directoryEnd-position {
 			c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata entry is malformed")
 			return false, nil
 		}

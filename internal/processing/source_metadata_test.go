@@ -212,13 +212,38 @@ func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
 
 func TestExtractSourceMetadataWarnsForMalformedRAFOffsets(t *testing.T) {
 	payload := syntheticRAF()
-	binary.BigEndian.PutUint32(payload[sourceMetadataRAFCFAOffset:], uint32(len(payload)+1))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(len(payload)+1))
 
 	metadata := ExtractSourceMetadata(payload)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 	format, found := sourceMetadataString(metadata, "media.container.format")
 	require.True(t, found)
 	assert.Equal(t, "raf", format)
+}
+
+func TestExtractSourceMetadataKeepsRAFDirectoryInsideDeclaredBounds(t *testing.T) {
+	payload := syntheticRAF()
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryLength:], 4)
+
+	metadata := ExtractSourceMetadata(payload)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+	_, found := sourceMetadataInteger(metadata, "media.container.width_px")
+	assert.False(t, found)
+}
+
+func TestExtractSourceMetadataRejectsOverlappingRAFMetadataRegions(t *testing.T) {
+	payload := syntheticRAF()
+	jpegOffset := int(binary.BigEndian.Uint32(payload[sourceMetadataRAFJPEGOffset:]))
+	directoryOffset := jpegOffset + 2
+	directory := append([]byte(nil), payload[len(payload)-12:]...)
+	copy(payload[directoryOffset:], directory)
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(directoryOffset))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryLength:], uint32(len(directory)))
+
+	metadata := ExtractSourceMetadata(payload)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+	_, found := sourceMetadataInteger(metadata, "media.container.width_px")
+	assert.False(t, found)
 }
 
 func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
@@ -635,8 +660,8 @@ func syntheticRAF() []byte {
 	copy(payload, sourceMetadataRAFSignature)
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFJPEGOffset:], uint32(jpegOffset))
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFJPEGOffset+4:], uint32(len(jpeg)))
-	binary.BigEndian.PutUint32(payload[sourceMetadataRAFCFAOffset:], uint32(cfaOffset))
-	binary.BigEndian.PutUint32(payload[sourceMetadataRAFCFAOffset+4:], uint32(len(cfa)))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(cfaOffset))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryLength:], uint32(len(cfa)))
 	copy(payload[jpegOffset:], jpeg)
 	copy(payload[cfaOffset:], cfa)
 	return payload
