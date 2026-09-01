@@ -38,7 +38,9 @@ Container facts are available for JPEG, PNG, WebP, GIF, and MP4 files within
 the 20 MiB general inspection limit. JPEG APP1 EXIF and TIFF-based images
 provide EXIF facts. The TIFF path also covers camera RAW formats that retain
 the standard TIFF header, plus the TIFF-derived Olympus ORF and Panasonic RW2
-headers. Other proprietary container headers need their own bounded parser.
+headers. Fujifilm RAF files provide EXIF facts through their embedded JPEG and
+the original image dimensions through their RAF raw-metadata directory. Other
+proprietary container headers need their own bounded parser.
 
 The source-metadata worker keeps the general in-memory parser for originals
 through 64 MiB. JPEG, TIFF-based, and MP4 originals beyond the general
@@ -51,8 +53,11 @@ For larger MP4 files, the worker verifies the complete content identity, scans
 the top-level box headers, skips media payload boxes, and reads only bounded
 file-type and movie metadata. Malformed or oversized MP4 metadata produces a
 durable warning. Storage and read failures remain retryable errors. Other
-formats larger than 64 MiB still receive `input_too_large` until they have a
-bounded parser.
+large RAF files similarly read only the fixed header, a bounded embedded-JPEG
+metadata window, and a bounded raw-metadata directory after full verification.
+Malformed RAF structure produces a durable warning; storage and read failures
+remain retryable. Other formats larger than 64 MiB still receive
+`input_too_large` until they have a bounded parser.
 
 ## Generations and reads
 

@@ -186,6 +186,41 @@ func TestExtractSourceMetadataReadsRawTIFFVariants(t *testing.T) {
 	}
 }
 
+func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticRAF())
+	for key, want := range map[string]string{
+		"media.container.format":  "raf",
+		"media.container.kind":    "image",
+		"image.exif.camera_make":  "Fiction Camera Co.",
+		"image.exif.camera_model": "Model One",
+	} {
+		value, found := sourceMetadataString(metadata, key)
+		require.True(t, found, key)
+		assert.Equal(t, want, value, key)
+	}
+	for key, want := range map[string]int64{
+		"media.container.width_px":  6240,
+		"media.container.height_px": 4160,
+		"image.exif.iso":            800,
+	} {
+		value, found := sourceMetadataInteger(metadata, key)
+		require.True(t, found, key)
+		assert.Equal(t, want, value, key)
+	}
+	assert.Empty(t, metadata.Warnings)
+}
+
+func TestExtractSourceMetadataWarnsForMalformedRAFOffsets(t *testing.T) {
+	payload := syntheticRAF()
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFCFAOffset:], uint32(len(payload)+1))
+
+	metadata := ExtractSourceMetadata(payload)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+	format, found := sourceMetadataString(metadata, "media.container.format")
+	require.True(t, found)
+	assert.Equal(t, "raf", format)
+}
+
 func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
 	metadata := ExtractSourceMetadata(syntheticOOXML(t))
 	pages, found := sourceMetadataInteger(metadata, "page_count")
@@ -576,6 +611,37 @@ func syntheticExifJPEG() []byte {
 	return append(result, jpeg[2:]...)
 }
 
+func syntheticRAF() []byte {
+	tiff := syntheticRichExifTIFF()
+	segment := append([]byte("Exif\x00\x00"), tiff...)
+	app1 := []byte{0xff, 0xe1, 0, 0}
+	binary.BigEndian.PutUint16(app1[2:4], uint16(len(segment)+2))
+	baseJPEG := mediatest.JPEG(40, 30, color.Black)
+	jpeg := append([]byte{}, baseJPEG[:2]...)
+	jpeg = append(jpeg, app1...)
+	jpeg = append(jpeg, segment...)
+	jpeg = append(jpeg, baseJPEG[2:]...)
+
+	cfa := make([]byte, 12)
+	binary.BigEndian.PutUint32(cfa[:4], 1)
+	binary.BigEndian.PutUint16(cfa[4:6], sourceMetadataRAFImageSizeTag)
+	binary.BigEndian.PutUint16(cfa[6:8], 4)
+	binary.BigEndian.PutUint16(cfa[8:10], 4160)
+	binary.BigEndian.PutUint16(cfa[10:12], 6240)
+
+	jpegOffset := sourceMetadataRAFHeaderBytes
+	cfaOffset := jpegOffset + len(jpeg)
+	payload := make([]byte, cfaOffset+len(cfa))
+	copy(payload, sourceMetadataRAFSignature)
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFJPEGOffset:], uint32(jpegOffset))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFJPEGOffset+4:], uint32(len(jpeg)))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFCFAOffset:], uint32(cfaOffset))
+	binary.BigEndian.PutUint32(payload[sourceMetadataRAFCFAOffset+4:], uint32(len(cfa)))
+	copy(payload[jpegOffset:], jpeg)
+	copy(payload[cfaOffset:], cfa)
+	return payload
+}
+
 type syntheticTIFFEntry struct {
 	tag   uint16
 	kind  uint16
@@ -826,6 +892,31 @@ func TestLargeMP4SourceMetadataMalformedBoxWarnsInsteadOfRetrying(t *testing.T) 
 	assert.Empty(t, metadata.Fields)
 }
 
+func TestLargeRAFSourceMetadataUsesBoundedContainerReads(t *testing.T) {
+	reader := syntheticSparseLargeRAF()
+	hasher := sha256.New()
+	_, err := io.Copy(hasher, reader.clone())
+	require.NoError(t, err)
+	blobs := &largeSourceMetadataReaderStub{reader: reader}
+
+	metadata, err := sourceMetadataForTarget(t.Context(), blobs, store.SourceMetadataTarget{
+		SourceSHA256: hex.EncodeToString(hasher.Sum(nil)), Size: reader.size,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, blobs.streamCalls)
+	assert.Equal(t, 1, blobs.seekCalls)
+	format, found := sourceMetadataString(metadata, "media.container.format")
+	require.True(t, found)
+	assert.Equal(t, "raf", format)
+	width, found := sourceMetadataInteger(metadata, "media.container.width_px")
+	require.True(t, found)
+	assert.Equal(t, int64(6240), width)
+	model, found := sourceMetadataString(metadata, "image.exif.camera_model")
+	require.True(t, found)
+	assert.Equal(t, "Model One", model)
+	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "input_too_large")
+}
+
 type sourceMetadataCatalogStub struct {
 	targets   []store.SourceMetadataTarget
 	published int
@@ -909,6 +1000,16 @@ func syntheticSparseLargeMP4() *sparseSourceMetadataReader {
 			{offset: 0, data: ftyp},
 			{offset: int64(len(ftyp)), data: mdatHeader},
 			{offset: moovOffset, data: moov},
+		},
+	}
+}
+
+func syntheticSparseLargeRAF() *sparseSourceMetadataReader {
+	payload := syntheticRAF()
+	return &sparseSourceMetadataReader{
+		size: maxSourceMetadataOriginalBytes + 1024,
+		segments: []sparseSourceMetadataSegment{
+			{offset: 0, data: payload},
 		},
 	}
 }
