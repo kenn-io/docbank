@@ -44,6 +44,7 @@ Every documentation page is also published as raw Markdown at the same path with
 
 ## How It Works
 - [How Docbank Works](https://docbank.ai/architecture/overview.md): A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
+- [Source Metadata](https://docbank.ai/architecture/source-metadata.md): How Docbank records bounded facts found inside original files.
 - [Storage](https://docbank.ai/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.
 - [Loose & Packed Content](https://docbank.ai/architecture/packed-storage.md): The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
 - [Editing & Versions](https://docbank.ai/architecture/editing-and-versions.md): Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.

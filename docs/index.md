@@ -187,6 +187,7 @@ documents: files you still organize, retrieve, and build workflows around.
 - [Troubleshooting](troubleshooting.md): diagnose failures without risking the vault
 - [CLI Reference](cli-reference.md): every command, flag, and output format
 - [How Docbank Works](architecture/overview.md): the architecture, guided
+- [Source Metadata](architecture/source-metadata.md): typed facts extracted from verified originals
 
 ## License
 

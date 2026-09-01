@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -30,7 +32,7 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
 		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
-		{name: "JPEG EXIF", payload: syntheticExifJPEG(), keys: []string{"creators", "description"}},
+		{name: "JPEG EXIF", payload: syntheticExifJPEG(), keys: []string{"creators", "description", "media.container.animated", "media.container.format", "media.container.frame_count", "media.container.height_px", "media.container.kind", "media.container.width_px"}},
 		{name: "ID3 media tags", payload: syntheticID3Tag(4,
 			syntheticID3Frame{id: "TIT2", encoding: 3, text: []byte("Synthetic song")},
 			syntheticID3Frame{id: "TPE1", encoding: 3, text: []byte("Ada")},
@@ -54,6 +56,91 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 			assert.NotContains(t, string(canonical), "source_path")
 		})
 	}
+}
+
+func TestExtractSourceMetadataReadsVisualContainerFacts(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		payload    []byte
+		kind       string
+		width      int64
+		height     int64
+		frames     int64
+		durationMS int64
+		animated   bool
+	}{
+		{name: "PNG", payload: mediatest.PNG(12, 8, color.Black), kind: "image", width: 12, height: 8, frames: 1},
+		{name: "animated GIF", payload: mediatest.GIF(16, 10, 2), kind: "image", width: 16, height: 10, frames: 2, animated: true},
+		{name: "WebP", payload: mediatest.WebP(20, 14), kind: "image", width: 20, height: 14, frames: 1},
+		{name: "MP4", payload: mediatest.MP4(640, 368, 3500), kind: "video", width: 640, height: 368, durationMS: 3500},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadata := ExtractSourceMetadata(testCase.payload)
+			kind, found := sourceMetadataString(metadata, "media.container.kind")
+			require.True(t, found)
+			assert.Equal(t, testCase.kind, kind)
+			width, found := sourceMetadataInteger(metadata, "media.container.width_px")
+			require.True(t, found)
+			assert.Equal(t, testCase.width, width)
+			height, found := sourceMetadataInteger(metadata, "media.container.height_px")
+			require.True(t, found)
+			assert.Equal(t, testCase.height, height)
+			if testCase.frames > 0 {
+				frames, found := sourceMetadataInteger(metadata, "media.container.frame_count")
+				require.True(t, found)
+				assert.Equal(t, testCase.frames, frames)
+				animated, found := sourceMetadataBoolean(metadata, "media.container.animated")
+				require.True(t, found)
+				assert.Equal(t, testCase.animated, animated)
+			}
+			if testCase.durationMS > 0 {
+				duration, found := sourceMetadataInteger(metadata, "media.container.duration_ms")
+				require.True(t, found)
+				assert.Equal(t, testCase.durationMS, duration)
+			}
+		})
+	}
+}
+
+func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticRichExifTIFF())
+	for key, want := range map[string]string{
+		"media.container.format":  "tiff",
+		"media.container.kind":    "image",
+		"image.exif.camera_make":  "Fiction Camera Co.",
+		"image.exif.camera_model": "Model One",
+		"image.exif.lens_make":    "Fiction Lens Co.",
+		"image.exif.lens_model":   "Prime 50mm",
+	} {
+		value, found := sourceMetadataString(metadata, key)
+		require.True(t, found, key)
+		assert.Equal(t, want, value, key)
+	}
+	for key, want := range map[string]int64{
+		"media.container.width_px":  6000,
+		"media.container.height_px": 4000,
+		"image.exif.orientation":    6,
+		"image.exif.iso":            800,
+		"image.exif.pixel_width":    6000,
+		"image.exif.pixel_height":   4000,
+	} {
+		value, found := sourceMetadataInteger(metadata, key)
+		require.True(t, found, key)
+		assert.Equal(t, want, value, key)
+	}
+	for key, want := range map[string]float64{
+		"image.exif.exposure_time_seconds": 0.004,
+		"image.exif.f_number":              2.8,
+		"image.exif.exposure_bias_ev":      -1.0 / 3.0,
+		"image.exif.focal_length_mm":       50,
+	} {
+		value, found := sourceMetadataNumber(metadata, key)
+		require.True(t, found, key)
+		assert.InDelta(t, want, value, 0.0000001, key)
+	}
+	created, found := sourceMetadataTimestamp(metadata, "created")
+	require.True(t, found)
+	assert.Equal(t, "2024:01:02 03:04:05", created.Raw)
 }
 
 func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
@@ -308,6 +395,24 @@ func sourceMetadataInteger(metadata document.SourceMetadataV1, key string) (int6
 	return 0, false
 }
 
+func sourceMetadataNumber(metadata document.SourceMetadataV1, key string) (float64, bool) {
+	for _, field := range metadata.Fields {
+		if field.Key == key && field.Value.Number != nil {
+			return *field.Value.Number, true
+		}
+	}
+	return 0, false
+}
+
+func sourceMetadataBoolean(metadata document.SourceMetadataV1, key string) (bool, bool) {
+	for _, field := range metadata.Fields {
+		if field.Key == key && field.Value.Boolean != nil {
+			return *field.Value.Boolean, true
+		}
+	}
+	return false, false
+}
+
 func sourceMetadataString(metadata document.SourceMetadataV1, key string) (string, bool) {
 	for _, field := range metadata.Fields {
 		if field.Key == key && field.Value.Kind == document.SourceMetadataString {
@@ -419,10 +524,113 @@ func syntheticExifJPEG() []byte {
 		copy(tiff[entry.start:], entry.value)
 	}
 	segment := append([]byte("Exif\x00\x00"), tiff...)
-	jpeg := []byte{0xff, 0xd8, 0xff, 0xe1, 0, 0}
-	binary.BigEndian.PutUint16(jpeg[4:6], uint16(len(segment)+2))
-	jpeg = append(jpeg, segment...)
-	return append(jpeg, 0xff, 0xd9)
+	app1 := []byte{0xff, 0xe1, 0, 0}
+	binary.BigEndian.PutUint16(app1[2:4], uint16(len(segment)+2))
+	jpeg := mediatest.JPEG(40, 30, color.Black)
+	result := append([]byte{}, jpeg[:2]...)
+	result = append(result, app1...)
+	result = append(result, segment...)
+	return append(result, jpeg[2:]...)
+}
+
+type syntheticTIFFEntry struct {
+	tag   uint16
+	kind  uint16
+	value []byte
+}
+
+func syntheticRichExifTIFF() []byte {
+	return syntheticTIFF(
+		[]syntheticTIFFEntry{
+			tiffLong(0x0100, 6000),
+			tiffLong(0x0101, 4000),
+			tiffASCII(0x010f, "Fiction Camera Co."),
+			tiffASCII(0x0110, "Model One"),
+			tiffShort(0x0112, 6),
+		},
+		[]syntheticTIFFEntry{
+			tiffRational(0x829a, 1, 250, false),
+			tiffRational(0x829d, 28, 10, false),
+			tiffShort(0x8827, 800),
+			tiffASCII(0x9003, "2024:01:02 03:04:05"),
+			tiffRational(0x9204, -1, 3, true),
+			tiffRational(0x920a, 50, 1, false),
+			tiffLong(0xa002, 6000),
+			tiffLong(0xa003, 4000),
+			tiffASCII(0xa433, "Fiction Lens Co."),
+			tiffASCII(0xa434, "Prime 50mm"),
+		},
+	)
+}
+
+func syntheticTIFF(root, exif []syntheticTIFFEntry) []byte {
+	const headerSize = 8
+	rootEntries := append([]syntheticTIFFEntry{}, root...)
+	rootIFDSize := 2 + (len(rootEntries)+1)*12 + 4
+	exifOffset := headerSize + rootIFDSize
+	pointer := make([]byte, 4)
+	binary.LittleEndian.PutUint32(pointer, uint32(exifOffset))
+	rootEntries = append(rootEntries, syntheticTIFFEntry{tag: 0x8769, kind: 4, value: pointer})
+	exifIFDSize := 2 + len(exif)*12 + 4
+	externalSize := 0
+	for _, entry := range append(append([]syntheticTIFFEntry{}, rootEntries...), exif...) {
+		if len(entry.value) > 4 {
+			externalSize += len(entry.value)
+		}
+	}
+	tiff := make([]byte, exifOffset+exifIFDSize+externalSize)
+	copy(tiff, "II")
+	binary.LittleEndian.PutUint16(tiff[2:4], 42)
+	binary.LittleEndian.PutUint32(tiff[4:8], headerSize)
+	externalOffset := exifOffset + exifIFDSize
+	writeSyntheticTIFFIFD(tiff, headerSize, rootEntries, &externalOffset)
+	writeSyntheticTIFFIFD(tiff, exifOffset, exif, &externalOffset)
+	return tiff
+}
+
+func writeSyntheticTIFFIFD(data []byte, offset int, entries []syntheticTIFFEntry, externalOffset *int) {
+	binary.LittleEndian.PutUint16(data[offset:], uint16(len(entries)))
+	for index, entry := range entries {
+		base := offset + 2 + index*12
+		binary.LittleEndian.PutUint16(data[base:], entry.tag)
+		binary.LittleEndian.PutUint16(data[base+2:], entry.kind)
+		width := map[uint16]int{2: 1, 3: 2, 4: 4, 5: 8, 10: 8}[entry.kind]
+		binary.LittleEndian.PutUint32(data[base+4:], uint32(len(entry.value)/width))
+		if len(entry.value) <= 4 {
+			copy(data[base+8:base+12], entry.value)
+			continue
+		}
+		binary.LittleEndian.PutUint32(data[base+8:], uint32(*externalOffset))
+		copy(data[*externalOffset:], entry.value)
+		*externalOffset += len(entry.value)
+	}
+}
+
+func tiffASCII(tag uint16, value string) syntheticTIFFEntry {
+	return syntheticTIFFEntry{tag: tag, kind: 2, value: append([]byte(value), 0)}
+}
+
+func tiffShort(tag, value uint16) syntheticTIFFEntry {
+	encoded := make([]byte, 2)
+	binary.LittleEndian.PutUint16(encoded, value)
+	return syntheticTIFFEntry{tag: tag, kind: 3, value: encoded}
+}
+
+func tiffLong(tag uint16, value uint32) syntheticTIFFEntry {
+	encoded := make([]byte, 4)
+	binary.LittleEndian.PutUint32(encoded, value)
+	return syntheticTIFFEntry{tag: tag, kind: 4, value: encoded}
+}
+
+func tiffRational(tag uint16, numerator, denominator int32, signed bool) syntheticTIFFEntry {
+	encoded := make([]byte, 8)
+	binary.LittleEndian.PutUint32(encoded, uint32(numerator))
+	binary.LittleEndian.PutUint32(encoded[4:], uint32(denominator))
+	kind := uint16(5)
+	if signed {
+		kind = 10
+	}
+	return syntheticTIFFEntry{tag: tag, kind: kind, value: encoded}
 }
 
 type syntheticID3Frame struct {

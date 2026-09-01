@@ -147,6 +147,11 @@ repacking is worthwhile. [Editing & Versions](editing-and-versions.md) and
 [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) give the command-level
 contracts.
 
+Metadata extracted from original file formats is separate from this authority
+chain. It is immutable evidence tied to a content digest and exact version, not
+a replacement for the original. [Source Metadata](source-metadata.md) explains
+the typed field contract, supported media formats, and current size limit.
+
 ## One logical content store can use several physical locations
 
 New content is published as a loose, digest-named file. Packing later combines
