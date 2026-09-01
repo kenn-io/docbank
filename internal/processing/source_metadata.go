@@ -30,6 +30,7 @@ const (
 	maxSourceMetadataOriginalBytes       = 64 << 20
 	maxSourceMetadataWindowBytes         = documentmedia.MaxBytes
 	maxSourceMetadataFTYPBytes           = 1 << 20
+	maxSourceMetadataCR3DirectoryBytes   = 20 << 20
 	maxSourceMetadataRAFDirectoryBytes   = 1 << 20
 	maxSourceMetadataAggregateValueBytes = 1 << 20
 	maxSourceMetadataXMLDepth            = 64
@@ -39,6 +40,7 @@ const (
 	sourceMetadataRAFDirectoryLength     = 96
 	sourceMetadataRAFImageSizeTag        = 0x0111
 	sourceMetadataRAFSignature           = "FUJIFILMCCD-RAW"
+	sourceMetadataCR3Brand               = "crx "
 	rdfNamespace                         = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 	xmlNamespace                         = "http://www.w3.org/XML/1998/namespace"
 	xmpBasicNamespace                    = "http://ns.adobe.com/xap/1.0/"
@@ -50,12 +52,17 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-exif,media-id3:v12")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif,media-id3:v13")
 
-	// errSourceMetadataMP4Malformed marks deterministic MP4 structure defects
+	// errSourceMetadataBMFFMalformed marks deterministic box structure defects
 	// in verified bytes, which become durable warnings rather than retryable
 	// storage errors.
-	errSourceMetadataMP4Malformed = errors.New("malformed MP4 box structure")
+	errSourceMetadataBMFFMalformed = errors.New("malformed ISO base media file structure")
+
+	sourceMetadataCanonUUID = [16]byte{
+		0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0,
+		0x81, 0x11, 0xf4, 0xce, 0x46, 0x2b, 0x6a, 0x48,
+	}
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -214,6 +221,8 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 	switch {
 	case isSourceMetadataRAF(header):
 		return extractRAFSourceMetadata(reader, size)
+	case isSourceMetadataCR3(header):
+		return extractCR3SourceMetadata(reader, size)
 	case bytes.HasPrefix(header, []byte{0xff, 0xd8}), exifTIFFSignature(header):
 		window, readErr := readSourceMetadataRange(reader, 0, min(size, maxSourceMetadataWindowBytes))
 		if readErr != nil {
@@ -245,12 +254,16 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 }
 
 func boundedLargeMediaSignature(data []byte) bool {
-	return isSourceMetadataRAF(data) || bytes.HasPrefix(data, []byte{0xff, 0xd8}) || exifTIFFSignature(data) ||
+	return isSourceMetadataRAF(data) || isSourceMetadataCR3(data) || bytes.HasPrefix(data, []byte{0xff, 0xd8}) || exifTIFFSignature(data) ||
 		len(data) >= 12 && string(data[4:8]) == "ftyp"
 }
 
 func isSourceMetadataRAF(data []byte) bool {
 	return bytes.HasPrefix(data, []byte(sourceMetadataRAFSignature))
+}
+
+func isSourceMetadataCR3(data []byte) bool {
+	return len(data) >= 12 && string(data[4:8]) == "ftyp" && string(data[8:12]) == sourceMetadataCR3Brand
 }
 
 func extractRAFSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMetadataV1, error) {
@@ -375,6 +388,201 @@ func (c *metadataCollector) extractRAFDimensions(reader io.ReaderAt, offset, len
 	return false, nil
 }
 
+func extractCR3SourceMetadata(reader io.ReaderAt, size int64) (document.SourceMetadataV1, error) {
+	metadata := emptySourceMetadata()
+	collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+	collector.string("media.container.format", "media.container", "Format", "cr3", false)
+	collector.string("media.container.kind", "media.container", "Kind", "image", false)
+
+	directories, warning, err := readCR3MetadataDirectories(reader, size)
+	if err != nil {
+		return document.SourceMetadataV1{}, err
+	}
+	if warning != nil {
+		metadata.Warnings = append(metadata.Warnings, *warning)
+		return canonicalSourceMetadataResult(metadata), nil
+	}
+
+	cmt1, found := directories["CMT1"]
+	if !found {
+		collector.warn("unparseable_metadata", "media.container", "CMT1", "CR3 is missing its primary image metadata")
+		return canonicalSourceMetadataResult(metadata), nil
+	}
+	rootReader, root, ok := sourceMetadataTIFFRoot(cmt1)
+	if !ok || len(root) == 0 {
+		collector.warn("unparseable_metadata", "media.container", "CMT1", "CR3 primary image metadata is malformed")
+		return canonicalSourceMetadataResult(metadata), nil
+	}
+	collector.extractExifRoot(rootReader, root)
+	width, widthFound := exifUnsigned(rootReader, root[0x0100])
+	height, heightFound := exifUnsigned(rootReader, root[0x0101])
+	widthSource, heightSource := "ImageWidth", "ImageLength"
+
+	if cmt2, found := directories["CMT2"]; found {
+		exifReader, exif, valid := sourceMetadataTIFFRoot(cmt2)
+		if !valid || len(exif) == 0 {
+			collector.warn("unparseable_metadata", "image.exif", "CMT2", "CR3 EXIF metadata is malformed")
+		} else {
+			collector.extractExifDetails(exifReader, exif)
+			if exifWidth, found := exifUnsigned(exifReader, exif[0xa002]); found && exifWidth > 0 {
+				width, widthFound = exifWidth, true
+				widthSource = "PixelXDimension"
+			}
+			if exifHeight, found := exifUnsigned(exifReader, exif[0xa003]); found && exifHeight > 0 {
+				height, heightFound = exifHeight, true
+				heightSource = "PixelYDimension"
+			}
+		}
+	}
+	if widthFound && width > 0 {
+		collector.integer("media.container.width_px", "media.container", widthSource, width)
+	}
+	if heightFound && height > 0 {
+		collector.integer("media.container.height_px", "media.container", heightSource, height)
+	}
+	if cmt4, found := directories["CMT4"]; found {
+		gpsReader, gps, valid := sourceMetadataTIFFRoot(cmt4)
+		if !valid || len(gps) == 0 {
+			collector.warn("unparseable_metadata", "image.exif", "CMT4", "CR3 GPS metadata is malformed")
+		} else {
+			collector.exifGPS(gpsReader, gps)
+		}
+	}
+	return canonicalSourceMetadataResult(metadata), nil
+}
+
+func sourceMetadataTIFFRoot(data []byte) (exifReader, map[uint16][]byte, bool) {
+	reader, ok := newExifReader(data)
+	if !ok {
+		return exifReader{}, nil, false
+	}
+	rootOffset := reader.u32(4)
+	if rootOffset < 8 {
+		return exifReader{}, nil, false
+	}
+	return reader, reader.entries(rootOffset), true
+}
+
+func readCR3MetadataDirectories(
+	reader io.ReaderAt, sourceSize int64,
+) (map[string][]byte, *document.SourceMetadataWarningV1, error) {
+	moovOffset, moovSize, warning, err := findCR3Moov(reader, sourceSize)
+	if err != nil || warning != nil {
+		return nil, warning, err
+	}
+
+	for offset, remaining := moovOffset, moovSize; remaining > 0; {
+		box, boxErr := readSourceMetadataMP4Box(reader, offset, remaining)
+		if errors.Is(boxErr, errSourceMetadataBMFFMalformed) {
+			warning := sourceWarning("unparseable_metadata", "media.container", "moov",
+				"CR3 movie metadata box structure is malformed")
+			return nil, &warning, nil
+		}
+		if boxErr != nil {
+			return nil, nil, fmt.Errorf("reading CR3 movie metadata box at %d: %w", offset, boxErr)
+		}
+		if box.kind == "uuid" {
+			payloadOffset := offset + box.headerSize
+			payloadSize := box.size - box.headerSize
+			if payloadSize < int64(len(sourceMetadataCanonUUID)) {
+				warning := sourceWarning("unparseable_metadata", "media.container", "uuid",
+					"CR3 Canon metadata container is malformed")
+				return nil, &warning, nil
+			}
+			uuid, readErr := readSourceMetadataRange(reader, payloadOffset, int64(len(sourceMetadataCanonUUID)))
+			if readErr != nil {
+				return nil, nil, fmt.Errorf("reading CR3 metadata identifier: %w", readErr)
+			}
+			if bytes.Equal(uuid, sourceMetadataCanonUUID[:]) {
+				return readCR3CanonDirectories(reader, payloadOffset+int64(len(uuid)), payloadSize-int64(len(uuid)))
+			}
+		}
+		offset += box.size
+		remaining -= box.size
+	}
+	missingWarning := sourceWarning("unparseable_metadata", "media.container", "uuid",
+		"CR3 is missing its Canon metadata container")
+	return nil, &missingWarning, nil
+}
+
+func findCR3Moov(
+	reader io.ReaderAt, sourceSize int64,
+) (int64, int64, *document.SourceMetadataWarningV1, error) {
+	var moovOffset, moovSize int64
+	for offset := int64(0); offset < sourceSize; {
+		box, err := readSourceMetadataMP4Box(reader, offset, sourceSize-offset)
+		if errors.Is(err, errSourceMetadataBMFFMalformed) {
+			warning := sourceWarning("unparseable_metadata", "media.container", "CR3",
+				"CR3 top-level box structure is malformed")
+			return 0, 0, &warning, nil
+		}
+		if err != nil {
+			return 0, 0, nil, fmt.Errorf("reading CR3 box at %d: %w", offset, err)
+		}
+		if offset == 0 && box.kind != "ftyp" {
+			warning := sourceWarning("unparseable_metadata", "media.container", "CR3",
+				"CR3 is missing its file-type box")
+			return 0, 0, &warning, nil
+		}
+		if box.kind == "moov" {
+			if moovSize != 0 {
+				warning := sourceWarning("unparseable_metadata", "media.container", "moov",
+					"CR3 contains more than one movie metadata box")
+				return 0, 0, &warning, nil
+			}
+			moovOffset = offset + box.headerSize
+			moovSize = box.size - box.headerSize
+		}
+		offset += box.size
+	}
+	if moovSize == 0 {
+		warning := sourceWarning("unparseable_metadata", "media.container", "moov",
+			"CR3 is missing its movie metadata box")
+		return 0, 0, &warning, nil
+	}
+	return moovOffset, moovSize, nil, nil
+}
+
+func readCR3CanonDirectories(
+	reader io.ReaderAt, offset, size int64,
+) (map[string][]byte, *document.SourceMetadataWarningV1, error) {
+	directories := map[string][]byte{}
+	var aggregate int64
+	for remaining := size; remaining > 0; {
+		box, err := readSourceMetadataMP4Box(reader, offset, remaining)
+		if errors.Is(err, errSourceMetadataBMFFMalformed) {
+			warning := sourceWarning("unparseable_metadata", "media.container", "uuid",
+				"CR3 Canon metadata box structure is malformed")
+			return nil, &warning, nil
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading CR3 Canon metadata box at %d: %w", offset, err)
+		}
+		if box.kind == "CMT1" || box.kind == "CMT2" || box.kind == "CMT4" {
+			if _, exists := directories[box.kind]; exists {
+				warning := sourceWarning("unparseable_metadata", "media.container", box.kind,
+					"CR3 contains duplicate metadata directories")
+				return nil, &warning, nil
+			}
+			payloadSize := box.size - box.headerSize
+			if payloadSize <= 0 || payloadSize > maxSourceMetadataCR3DirectoryBytes-aggregate {
+				warning := sourceWarning("metadata_too_large", "media.container", box.kind,
+					"CR3 metadata exceeds the bounded inspection limit")
+				return nil, &warning, nil
+			}
+			payload, readErr := readSourceMetadataRange(reader, offset+box.headerSize, payloadSize)
+			if readErr != nil {
+				return nil, nil, fmt.Errorf("reading CR3 %s metadata: %w", box.kind, readErr)
+			}
+			directories[box.kind] = payload
+			aggregate += payloadSize
+		}
+		offset += box.size
+		remaining -= box.size
+	}
+	return directories, nil, nil
+}
+
 func readSourceMetadataRange(reader io.ReaderAt, offset, length int64) ([]byte, error) {
 	if offset < 0 || length < 0 || length > maxSourceMetadataWindowBytes || offset > math.MaxInt64-length {
 		return nil, errors.New("source metadata range is invalid")
@@ -404,7 +612,7 @@ func compactMP4SourceMetadata(
 	fragmented := false
 	for offset := int64(0); offset < sourceSize; {
 		box, err := readSourceMetadataMP4Box(reader, offset, sourceSize-offset)
-		if errors.Is(err, errSourceMetadataMP4Malformed) {
+		if errors.Is(err, errSourceMetadataBMFFMalformed) {
 			warning := sourceWarning("unparseable_metadata", "media.container", "MP4",
 				"MP4 top-level box structure is malformed")
 			return nil, &warning, nil
@@ -474,7 +682,7 @@ func readSourceMetadataMP4Box(
 	reader io.ReaderAt, offset, remaining int64,
 ) (sourceMetadataMP4Box, error) {
 	if remaining < 8 {
-		return sourceMetadataMP4Box{}, fmt.Errorf("truncated MP4 box header: %w", errSourceMetadataMP4Malformed)
+		return sourceMetadataMP4Box{}, fmt.Errorf("truncated MP4 box header: %w", errSourceMetadataBMFFMalformed)
 	}
 	header, err := readSourceMetadataRange(reader, offset, min(remaining, 16))
 	if err != nil {
@@ -487,11 +695,11 @@ func readSourceMetadataMP4Box(
 		box.size = remaining
 	case 1:
 		if len(header) < 16 {
-			return sourceMetadataMP4Box{}, fmt.Errorf("truncated MP4 large-size header: %w", errSourceMetadataMP4Malformed)
+			return sourceMetadataMP4Box{}, fmt.Errorf("truncated MP4 large-size header: %w", errSourceMetadataBMFFMalformed)
 		}
 		large := binary.BigEndian.Uint64(header[8:16])
 		if large < 16 || large > math.MaxInt64 {
-			return sourceMetadataMP4Box{}, fmt.Errorf("invalid MP4 large-size box: %w", errSourceMetadataMP4Malformed)
+			return sourceMetadataMP4Box{}, fmt.Errorf("invalid MP4 large-size box: %w", errSourceMetadataBMFFMalformed)
 		}
 		box.headerSize = 16
 		box.size = int64(large)
@@ -499,7 +707,7 @@ func readSourceMetadataMP4Box(
 		box.size = int64(size32)
 	}
 	if box.size < box.headerSize || box.size > remaining {
-		return sourceMetadataMP4Box{}, fmt.Errorf("MP4 box size exceeds its parent: %w", errSourceMetadataMP4Malformed)
+		return sourceMetadataMP4Box{}, fmt.Errorf("MP4 box size exceeds its parent: %w", errSourceMetadataBMFFMalformed)
 	}
 	return box, nil
 }
@@ -534,6 +742,14 @@ func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
 		if err != nil {
 			result.Warnings = append(result.Warnings, sourceWarning(
 				"unparseable_metadata", "media.container", "RAF", "RAF metadata could not be read"))
+			return canonicalSourceMetadataResult(result)
+		}
+		return metadata
+	case isSourceMetadataCR3(data):
+		metadata, err := extractCR3SourceMetadata(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			result.Warnings = append(result.Warnings, sourceWarning(
+				"unparseable_metadata", "media.container", "CR3", "CR3 metadata could not be read"))
 			return canonicalSourceMetadataResult(result)
 		}
 		return metadata
@@ -1553,13 +1769,29 @@ func exifRational(reader exifReader, value []byte, signed bool) (float64, bool) 
 }
 
 func (c *metadataCollector) extractExifTIFF(data []byte) {
-	reader, ok := newExifReader(data)
+	reader, root, ok := sourceMetadataTIFFRoot(data)
 	if !ok {
 		c.warn("unparseable_metadata", "image.exif", "TIFF", "EXIF TIFF header is malformed")
 		return
 	}
-	rootOffset := reader.u32(4)
-	root := reader.entries(rootOffset)
+	c.extractExifRoot(reader, root)
+	isoFound := false
+	if raw := root[0x8769]; len(raw) >= 4 {
+		offset := reader.order.Uint32(raw)
+		isoFound = c.extractExifDetails(reader, reader.entries(offset))
+	}
+	if !isoFound && reader.format == "rw2" {
+		if iso, found := exifUnsigned(reader, root[0x0017]); found && iso > 0 {
+			c.integer("image.exif.iso", "image.exif", "ISO", iso)
+		}
+	}
+	if raw := root[0x8825]; len(raw) >= 4 {
+		offset := reader.order.Uint32(raw)
+		c.exifGPS(reader, reader.entries(offset))
+	}
+}
+
+func (c *metadataCollector) extractExifRoot(reader exifReader, root map[uint16][]byte) {
 	c.string("image.exif.camera_make", "image.exif", "Make", exifASCII(root[0x010f]), false)
 	c.string("image.exif.camera_model", "image.exif", "Model", exifASCII(root[0x0110]), false)
 	c.string("description", "image.exif", "ImageDescription", exifASCII(root[0x010e]), false)
@@ -1572,48 +1804,38 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 	if stamp := exifASCII(root[0x0132]); stamp != "" {
 		c.timestamp("modified", "image.exif", "DateTime", stamp)
 	}
+}
+
+func (c *metadataCollector) extractExifDetails(reader exifReader, exif map[uint16][]byte) bool {
+	if stamp := exifASCII(exif[0x9003]); stamp != "" {
+		c.timestamp("created", "image.exif", "DateTimeOriginal", stamp)
+	}
 	isoFound := false
-	if raw := root[0x8769]; len(raw) >= 4 {
-		offset := reader.order.Uint32(raw)
-		exif := reader.entries(offset)
-		if stamp := exifASCII(exif[0x9003]); stamp != "" {
-			c.timestamp("created", "image.exif", "DateTimeOriginal", stamp)
-		}
-		if iso, found := exifUnsigned(reader, exif[0x8827]); found && iso > 0 {
-			c.integer("image.exif.iso", "image.exif", "PhotographicSensitivity", iso)
-			isoFound = true
-		}
-		if exposure, found := exifRational(reader, exif[0x829a], false); found && exposure > 0 {
-			c.exifNumber("image.exif.exposure_time_seconds", "ExposureTime", exposure)
-		}
-		if aperture, found := exifRational(reader, exif[0x829d], false); found && aperture > 0 {
-			c.exifNumber("image.exif.f_number", "FNumber", aperture)
-		}
-		if bias, found := exifRational(reader, exif[0x9204], true); found {
-			c.exifNumber("image.exif.exposure_bias_ev", "ExposureBiasValue", bias)
-		}
-		if focalLength, found := exifRational(reader, exif[0x920a], false); found && focalLength > 0 {
-			c.exifNumber("image.exif.focal_length_mm", "FocalLength", focalLength)
-		}
-		c.string("image.exif.lens_make", "image.exif", "LensMake", exifASCII(exif[0xa433]), false)
-		c.string("image.exif.lens_model", "image.exif", "LensModel", exifASCII(exif[0xa434]), false)
-		if width, found := exifUnsigned(reader, exif[0xa002]); found && width > 0 {
-			c.integer("image.exif.pixel_width", "image.exif", "PixelXDimension", width)
-		}
-		if height, found := exifUnsigned(reader, exif[0xa003]); found && height > 0 {
-			c.integer("image.exif.pixel_height", "image.exif", "PixelYDimension", height)
-		}
+	if iso, found := exifUnsigned(reader, exif[0x8827]); found && iso > 0 {
+		c.integer("image.exif.iso", "image.exif", "PhotographicSensitivity", iso)
+		isoFound = true
 	}
-	if !isoFound && reader.format == "rw2" {
-		if iso, found := exifUnsigned(reader, root[0x0017]); found && iso > 0 {
-			c.integer("image.exif.iso", "image.exif", "ISO", iso)
-		}
+	if exposure, found := exifRational(reader, exif[0x829a], false); found && exposure > 0 {
+		c.exifNumber("image.exif.exposure_time_seconds", "ExposureTime", exposure)
 	}
-	if raw := root[0x8825]; len(raw) >= 4 {
-		offset := reader.order.Uint32(raw)
-		gps := reader.entries(offset)
-		c.exifGPS(reader, gps)
+	if aperture, found := exifRational(reader, exif[0x829d], false); found && aperture > 0 {
+		c.exifNumber("image.exif.f_number", "FNumber", aperture)
 	}
+	if bias, found := exifRational(reader, exif[0x9204], true); found {
+		c.exifNumber("image.exif.exposure_bias_ev", "ExposureBiasValue", bias)
+	}
+	if focalLength, found := exifRational(reader, exif[0x920a], false); found && focalLength > 0 {
+		c.exifNumber("image.exif.focal_length_mm", "FocalLength", focalLength)
+	}
+	c.string("image.exif.lens_make", "image.exif", "LensMake", exifASCII(exif[0xa433]), false)
+	c.string("image.exif.lens_model", "image.exif", "LensModel", exifASCII(exif[0xa434]), false)
+	if width, found := exifUnsigned(reader, exif[0xa002]); found && width > 0 {
+		c.integer("image.exif.pixel_width", "image.exif", "PixelXDimension", width)
+	}
+	if height, found := exifUnsigned(reader, exif[0xa003]); found && height > 0 {
+		c.integer("image.exif.pixel_height", "image.exif", "PixelYDimension", height)
+	}
+	return isoFound
 }
 func (c *metadataCollector) exifGPS(reader exifReader, gps map[uint16][]byte) {
 	for _, item := range []struct {
