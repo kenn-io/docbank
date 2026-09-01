@@ -28,6 +28,8 @@ import (
 
 const (
 	maxSourceMetadataOriginalBytes       = 64 << 20
+	maxSourceMetadataWindowBytes         = documentmedia.MaxBytes
+	maxSourceMetadataFTYPBytes           = 1 << 20
 	maxSourceMetadataAggregateValueBytes = 1 << 20
 	maxSourceMetadataXMLDepth            = 64
 	rdfNamespace                         = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -41,7 +43,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v9")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v10")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -54,9 +56,14 @@ type sourceMetadataCatalog interface {
 	PublishSourceMetadata(ctx context.Context, sourceSHA256, fingerprint string, canonical []byte) (store.SourceMetadataGeneration, error)
 }
 
+type sourceMetadataBlobReader interface {
+	verifiedBlobReader
+	OpenSeekableContext(ctx context.Context, hash string) (io.ReadSeekCloser, int64, error)
+}
+
 // BackfillSourceMetadata extracts a deterministic resumable batch from exact,
 // locally verified original bytes. No provider or network boundary is used.
-func BackfillSourceMetadata(ctx context.Context, catalog sourceMetadataCatalog, blobs verifiedBlobReader, limit int) (int, error) {
+func BackfillSourceMetadata(ctx context.Context, catalog sourceMetadataCatalog, blobs sourceMetadataBlobReader, limit int) (int, error) {
 	if catalog == nil || blobs == nil {
 		return 0, errors.New("source metadata backfill requires catalog and blob stores")
 	}
@@ -69,46 +76,17 @@ func BackfillSourceMetadata(ctx context.Context, catalog sourceMetadataCatalog, 
 
 // BackfillSourceMetadataTargets processes a selected batch while allowing
 // later originals to progress past a corrupt or temporarily unavailable one.
-func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCatalog, blobs verifiedBlobReader, targets []store.SourceMetadataTarget) (int, error) {
+func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCatalog, blobs sourceMetadataBlobReader, targets []store.SourceMetadataTarget) (int, error) {
 	completed := 0
 	var targetErrors error
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
 			return completed, errors.Join(targetErrors, err)
 		}
-		stream, size, err := blobs.OpenStreamContext(ctx, target.SourceSHA256)
+		metadata, err := sourceMetadataForTarget(ctx, blobs, target)
 		if err != nil {
-			targetErrors = errors.Join(targetErrors, fmt.Errorf("opening source metadata target %s: %w", target.SourceSHA256, err))
+			targetErrors = errors.Join(targetErrors, fmt.Errorf("extracting source metadata target %s: %w", target.SourceSHA256, err))
 			continue
-		}
-		if size != target.Size {
-			closeErr := stream.Close()
-			targetErrors = errors.Join(targetErrors, fmt.Errorf("source metadata target %s size changed", target.SourceSHA256), closeErr)
-			continue
-		}
-		var data []byte
-		var read int64
-		if size <= maxSourceMetadataOriginalBytes {
-			data, err = io.ReadAll(io.LimitReader(stream, size+1))
-			read = int64(len(data))
-		} else {
-			read, err = io.Copy(io.Discard, stream)
-		}
-		err = errors.Join(err, stream.Close())
-		if err != nil {
-			targetErrors = errors.Join(targetErrors, fmt.Errorf("verifying source metadata target %s: %w", target.SourceSHA256, err))
-			continue
-		}
-		if read != size {
-			targetErrors = errors.Join(targetErrors, fmt.Errorf("source metadata target %s length changed: catalog=%d read=%d", target.SourceSHA256, size, read))
-			continue
-		}
-		var metadata document.SourceMetadataV1
-		if size > maxSourceMetadataOriginalBytes {
-			metadata = emptySourceMetadata()
-			metadata.Warnings = append(metadata.Warnings, sourceWarning("input_too_large", "container", "bytes", "verified original exceeds the local extraction limit"))
-		} else {
-			metadata = ExtractSourceMetadata(data)
 		}
 		canonical, _, err := document.MarshalSourceMetadataV1(metadata)
 		if err != nil {
@@ -124,9 +102,271 @@ func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCa
 	return completed, targetErrors
 }
 
+func sourceMetadataForTarget(
+	ctx context.Context, blobs sourceMetadataBlobReader, target store.SourceMetadataTarget,
+) (document.SourceMetadataV1, error) {
+	if target.Size <= maxSourceMetadataOriginalBytes {
+		stream, size, err := blobs.OpenStreamContext(ctx, target.SourceSHA256)
+		if err != nil {
+			return document.SourceMetadataV1{}, fmt.Errorf("opening verified stream: %w", err)
+		}
+		if size != target.Size {
+			return document.SourceMetadataV1{}, errors.Join(
+				fmt.Errorf("size changed: catalog=%d opened=%d", target.Size, size), stream.Close())
+		}
+		data, readErr := io.ReadAll(io.LimitReader(stream, size+1))
+		if err := errors.Join(readErr, stream.Close()); err != nil {
+			return document.SourceMetadataV1{}, fmt.Errorf("verifying stream: %w", err)
+		}
+		if int64(len(data)) != size {
+			return document.SourceMetadataV1{}, fmt.Errorf(
+				"length changed: catalog=%d read=%d", size, len(data))
+		}
+		if size > maxSourceMetadataWindowBytes && boundedLargeMediaSignature(data) {
+			return extractLargeSourceMetadata(bytes.NewReader(data), size)
+		}
+		return ExtractSourceMetadata(data), nil
+	}
+
+	reader, size, err := blobs.OpenSeekableContext(ctx, target.SourceSHA256)
+	if err != nil {
+		return document.SourceMetadataV1{}, fmt.Errorf("opening seekable content: %w", err)
+	}
+	if size != target.Size {
+		return document.SourceMetadataV1{}, errors.Join(
+			fmt.Errorf("size changed: catalog=%d opened=%d", target.Size, size), reader.Close())
+	}
+	if err := verifySeekableSource(ctx, reader, target.SourceSHA256, size); err != nil {
+		return document.SourceMetadataV1{}, errors.Join(fmt.Errorf("verifying seekable content: %w", err), reader.Close())
+	}
+	metadata, extractErr := extractLargeSourceMetadata(&seekReaderAt{seeker: reader}, size)
+	return metadata, errors.Join(extractErr, reader.Close())
+}
+
 func emptySourceMetadata() document.SourceMetadataV1 {
 	return document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{}, Warnings: []document.SourceMetadataWarningV1{}}
+}
+
+func verifySeekableSource(ctx context.Context, reader io.ReadSeeker, expectedSHA256 string, expectedSize int64) error {
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seeking to start: %w", err)
+	}
+	hasher := sha256.New()
+	buffer := make([]byte, 128<<10)
+	var read int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			read += int64(n)
+			_, _ = hasher.Write(buffer[:n])
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrNoProgress
+		}
+	}
+	if read != expectedSize {
+		return fmt.Errorf("length changed: catalog=%d read=%d", expectedSize, read)
+	}
+	if actual := hex.EncodeToString(hasher.Sum(nil)); actual != expectedSHA256 {
+		return fmt.Errorf("SHA-256 changed: expected=%s actual=%s", expectedSHA256, actual)
+	}
+	return nil
+}
+
+type seekReaderAt struct {
+	seeker io.ReadSeeker
+}
+
+func (r *seekReaderAt) ReadAt(target []byte, offset int64) (int, error) {
+	if _, err := r.seeker.Seek(offset, io.SeekStart); err != nil {
+		return 0, err
+	}
+	return io.ReadFull(r.seeker, target)
+}
+
+func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMetadataV1, error) {
+	header, err := readSourceMetadataRange(reader, 0, min(size, 12))
+	if err != nil {
+		return document.SourceMetadataV1{}, fmt.Errorf("reading media signature: %w", err)
+	}
+	switch {
+	case bytes.HasPrefix(header, []byte{0xff, 0xd8}), exifTIFFSignature(header):
+		window, readErr := readSourceMetadataRange(reader, 0, min(size, maxSourceMetadataWindowBytes))
+		if readErr != nil {
+			return document.SourceMetadataV1{}, fmt.Errorf("reading metadata window: %w", readErr)
+		}
+		metadata := ExtractSourceMetadata(window)
+		metadata.Warnings = append(metadata.Warnings, sourceWarning(
+			"metadata_window_limited", "container", "bytes",
+			"only the bounded leading metadata window was inspected"))
+		return metadata, nil
+	case len(header) >= 12 && string(header[4:8]) == "ftyp":
+		compact, warning, compactErr := compactMP4SourceMetadata(reader, size)
+		if compactErr != nil {
+			return document.SourceMetadataV1{}, compactErr
+		}
+		if warning != nil {
+			metadata := emptySourceMetadata()
+			metadata.Warnings = append(metadata.Warnings, *warning)
+			return metadata, nil
+		}
+		return ExtractSourceMetadata(compact), nil
+	default:
+		metadata := emptySourceMetadata()
+		metadata.Warnings = append(metadata.Warnings, sourceWarning(
+			"input_too_large", "container", "bytes",
+			"verified original exceeds the bounded parser for this format"))
+		return metadata, nil
+	}
+}
+
+func boundedLargeMediaSignature(data []byte) bool {
+	return bytes.HasPrefix(data, []byte{0xff, 0xd8}) || exifTIFFSignature(data) ||
+		len(data) >= 12 && string(data[4:8]) == "ftyp"
+}
+
+func readSourceMetadataRange(reader io.ReaderAt, offset, length int64) ([]byte, error) {
+	if offset < 0 || length < 0 || length > maxSourceMetadataWindowBytes || offset > math.MaxInt64-length {
+		return nil, errors.New("source metadata range is invalid")
+	}
+	result := make([]byte, int(length))
+	if length == 0 {
+		return result, nil
+	}
+	if _, err := reader.ReadAt(result, offset); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+type sourceMetadataMP4Box struct {
+	kind       string
+	headerSize int64
+	size       int64
+}
+
+func compactMP4SourceMetadata(
+	reader io.ReaderAt, sourceSize int64,
+) ([]byte, *document.SourceMetadataWarningV1, error) {
+	var ftyp []byte
+	var moov []byte
+	moovCount := 0
+	fragmented := false
+	for offset := int64(0); offset < sourceSize; {
+		box, err := readSourceMetadataMP4Box(reader, offset, sourceSize-offset)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading MP4 box at %d: %w", offset, err)
+		}
+		if (offset == 0 && box.kind != "ftyp") || sourceMetadataMP4StructuralBox(box.kind) {
+			warning := sourceWarning("unparseable_metadata", "media.container", "MP4",
+				"MP4 top-level box structure is malformed")
+			return nil, &warning, nil
+		}
+		switch box.kind {
+		case "ftyp":
+			if offset == 0 {
+				if box.size > maxSourceMetadataFTYPBytes {
+					warning := sourceWarning("metadata_too_large", "media.container", "ftyp",
+						"MP4 file-type metadata exceeds the bounded inspection limit")
+					return nil, &warning, nil
+				}
+				ftyp, err = readSourceMetadataRange(reader, offset, box.size)
+				if err != nil {
+					return nil, nil, fmt.Errorf("reading MP4 file type: %w", err)
+				}
+			}
+		case "moov":
+			moovCount++
+			if moovCount > 1 {
+				warning := sourceWarning("unparseable_metadata", "media.container", "moov",
+					"MP4 contains more than one movie metadata box")
+				return nil, &warning, nil
+			}
+			if box.size > maxSourceMetadataWindowBytes-int64(len(ftyp)) {
+				warning := sourceWarning("metadata_too_large", "media.container", "moov",
+					"MP4 movie metadata exceeds the bounded inspection limit")
+				return nil, &warning, nil
+			}
+			moov, err = readSourceMetadataRange(reader, offset, box.size)
+			if err != nil {
+				return nil, nil, fmt.Errorf("reading MP4 movie metadata: %w", err)
+			}
+		case "moof":
+			fragmented = true
+		}
+		if box.size <= 0 || offset > math.MaxInt64-box.size {
+			warning := sourceWarning("unparseable_metadata", "media.container", "MP4",
+				"MP4 box offsets overflow the source length")
+			return nil, &warning, nil
+		}
+		offset += box.size
+	}
+	if len(ftyp) == 0 || len(moov) == 0 {
+		warning := sourceWarning("unparseable_metadata", "media.container", "MP4",
+			"MP4 is missing required file-type or movie metadata")
+		return nil, &warning, nil
+	}
+	compact := make([]byte, 0, len(ftyp)+len(moov)+8)
+	compact = append(compact, ftyp...)
+	compact = append(compact, moov...)
+	if fragmented {
+		compact = append(compact, 0, 0, 0, 8, 'm', 'o', 'o', 'f')
+	}
+	return compact, nil, nil
+}
+
+func readSourceMetadataMP4Box(
+	reader io.ReaderAt, offset, remaining int64,
+) (sourceMetadataMP4Box, error) {
+	if remaining < 8 {
+		return sourceMetadataMP4Box{}, errors.New("truncated MP4 box header")
+	}
+	header, err := readSourceMetadataRange(reader, offset, min(remaining, 16))
+	if err != nil {
+		return sourceMetadataMP4Box{}, err
+	}
+	box := sourceMetadataMP4Box{kind: string(header[4:8]), headerSize: 8}
+	size32 := binary.BigEndian.Uint32(header[:4])
+	switch size32 {
+	case 0:
+		box.size = remaining
+	case 1:
+		if len(header) < 16 {
+			return sourceMetadataMP4Box{}, errors.New("truncated MP4 large-size header")
+		}
+		large := binary.BigEndian.Uint64(header[8:16])
+		if large < 16 || large > math.MaxInt64 {
+			return sourceMetadataMP4Box{}, errors.New("invalid MP4 large-size box")
+		}
+		box.headerSize = 16
+		box.size = int64(large)
+	default:
+		box.size = int64(size32)
+	}
+	if box.size < box.headerSize || box.size > remaining {
+		return sourceMetadataMP4Box{}, errors.New("MP4 box size exceeds its parent")
+	}
+	return box, nil
+}
+
+func sourceMetadataMP4StructuralBox(kind string) bool {
+	switch kind {
+	case "trak", "edts", "elst", "mdia", "minf", "stbl", "stsd", "stts", "ctts", "stsz", "stz2",
+		"mvhd", "tkhd", "hdlr", "mdhd":
+		return true
+	default:
+		return false
+	}
 }
 
 // ExtractSourceMetadata performs bounded, format-signature-based local

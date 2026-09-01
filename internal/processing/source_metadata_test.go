@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image/color"
@@ -744,6 +746,29 @@ func TestBackfillSourceMetadataContinuesPastUnreadableTarget(t *testing.T) {
 	assert.Equal(t, 1, catalog.published)
 }
 
+func TestLargeMP4SourceMetadataSkipsPayloadWithoutBufferingIt(t *testing.T) {
+	reader := syntheticSparseLargeMP4()
+	hasher := sha256.New()
+	_, err := io.Copy(hasher, reader.clone())
+	require.NoError(t, err)
+	expected := hex.EncodeToString(hasher.Sum(nil))
+	blobs := &largeSourceMetadataReaderStub{reader: reader}
+
+	metadata, err := sourceMetadataForTarget(t.Context(), blobs, store.SourceMetadataTarget{
+		SourceSHA256: expected, Size: reader.size,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, blobs.streamCalls)
+	assert.Equal(t, 1, blobs.seekCalls)
+	width, found := sourceMetadataInteger(metadata, "media.container.width_px")
+	require.True(t, found)
+	assert.Equal(t, int64(640), width)
+	duration, found := sourceMetadataInteger(metadata, "media.container.duration_ms")
+	require.True(t, found)
+	assert.Equal(t, int64(3500), duration)
+	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "input_too_large")
+}
+
 type sourceMetadataCatalogStub struct {
 	targets   []store.SourceMetadataTarget
 	published int
@@ -772,6 +797,115 @@ func (s *sourceMetadataReaderStub) OpenStreamContext(context.Context, string) (p
 	s.calls++
 	return &verifiedSourceMetadataReader{Reader: bytes.NewReader(s.payload), closeErr: closeErr}, int64(len(s.payload)), nil
 }
+
+func (s *sourceMetadataReaderStub) OpenSeekableContext(context.Context, string) (io.ReadSeekCloser, int64, error) {
+	return &sourceMetadataSeekableReader{Reader: bytes.NewReader(s.payload)}, int64(len(s.payload)), nil
+}
+
+type sourceMetadataSeekableReader struct {
+	*bytes.Reader
+}
+
+func (r *sourceMetadataSeekableReader) Close() error { return nil }
+
+type largeSourceMetadataReaderStub struct {
+	reader      *sparseSourceMetadataReader
+	streamCalls int
+	seekCalls   int
+}
+
+func (s *largeSourceMetadataReaderStub) OpenStreamContext(context.Context, string) (packstore.VerifiedReadCloser, int64, error) {
+	s.streamCalls++
+	return nil, 0, errors.New("large metadata must not open a buffered stream")
+}
+
+func (s *largeSourceMetadataReaderStub) OpenSeekableContext(context.Context, string) (io.ReadSeekCloser, int64, error) {
+	s.seekCalls++
+	return s.reader.clone(), s.reader.size, nil
+}
+
+type sparseSourceMetadataSegment struct {
+	offset int64
+	data   []byte
+}
+
+type sparseSourceMetadataReader struct {
+	size     int64
+	position int64
+	segments []sparseSourceMetadataSegment
+}
+
+func syntheticSparseLargeMP4() *sparseSourceMetadataReader {
+	metadata := mediatest.MP4(640, 368, 3500)
+	ftypSize := int(binary.BigEndian.Uint32(metadata[:4]))
+	ftyp := append([]byte(nil), metadata[:ftypSize]...)
+	moov := append([]byte(nil), metadata[ftypSize:]...)
+	mdatSize := int64(maxSourceMetadataOriginalBytes + 1024)
+	mdatHeader := make([]byte, 16)
+	binary.BigEndian.PutUint32(mdatHeader[:4], 1)
+	copy(mdatHeader[4:8], "mdat")
+	binary.BigEndian.PutUint64(mdatHeader[8:16], uint64(mdatSize))
+	moovOffset := int64(len(ftyp)) + mdatSize
+	return &sparseSourceMetadataReader{
+		size: moovOffset + int64(len(moov)),
+		segments: []sparseSourceMetadataSegment{
+			{offset: 0, data: ftyp},
+			{offset: int64(len(ftyp)), data: mdatHeader},
+			{offset: moovOffset, data: moov},
+		},
+	}
+}
+
+func (r *sparseSourceMetadataReader) clone() *sparseSourceMetadataReader {
+	return &sparseSourceMetadataReader{size: r.size, segments: r.segments}
+}
+
+func (r *sparseSourceMetadataReader) Read(target []byte) (int, error) {
+	n, err := r.ReadAt(target, r.position)
+	r.position += int64(n)
+	return n, err
+}
+
+func (r *sparseSourceMetadataReader) ReadAt(target []byte, offset int64) (int, error) {
+	if offset < 0 || offset >= r.size {
+		return 0, io.EOF
+	}
+	count := min(int64(len(target)), r.size-offset)
+	clear(target[:count])
+	end := offset + count
+	for _, segment := range r.segments {
+		segmentEnd := segment.offset + int64(len(segment.data))
+		start := max(offset, segment.offset)
+		stop := min(end, segmentEnd)
+		if start < stop {
+			copy(target[start-offset:stop-offset], segment.data[start-segment.offset:stop-segment.offset])
+		}
+	}
+	if count < int64(len(target)) {
+		return int(count), io.EOF
+	}
+	return int(count), nil
+}
+
+func (r *sparseSourceMetadataReader) Seek(offset int64, whence int) (int64, error) {
+	position := offset
+	switch whence {
+	case io.SeekCurrent:
+		position = r.position + offset
+	case io.SeekEnd:
+		position = r.size + offset
+	case io.SeekStart:
+	default:
+		return 0, errors.New("invalid seek origin")
+	}
+	if position < 0 {
+		return 0, errors.New("negative seek position")
+	}
+	r.position = position
+	return position, nil
+}
+
+func (r *sparseSourceMetadataReader) Close() error { return nil }
 
 type verifiedSourceMetadataReader struct {
 	*bytes.Reader
