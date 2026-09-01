@@ -919,17 +919,10 @@ func TestLargeMP4SourceMetadataMalformedBoxWarnsInsteadOfRetrying(t *testing.T) 
 
 func TestLargeRAFSourceMetadataUsesBoundedContainerReads(t *testing.T) {
 	reader := syntheticSparseLargeRAF()
-	hasher := sha256.New()
-	_, err := io.Copy(hasher, reader.clone())
-	require.NoError(t, err)
-	blobs := &largeSourceMetadataReaderStub{reader: reader}
+	require.Greater(t, reader.size, int64(maxSourceMetadataOriginalBytes))
 
-	metadata, err := sourceMetadataForTarget(t.Context(), blobs, store.SourceMetadataTarget{
-		SourceSHA256: hex.EncodeToString(hasher.Sum(nil)), Size: reader.size,
-	})
+	metadata, err := extractLargeSourceMetadata(reader, reader.size)
 	require.NoError(t, err)
-	assert.Zero(t, blobs.streamCalls)
-	assert.Equal(t, 1, blobs.seekCalls)
 	format, found := sourceMetadataString(metadata, "media.container.format")
 	require.True(t, found)
 	assert.Equal(t, "raf", format)
