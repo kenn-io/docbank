@@ -1803,6 +1803,16 @@ func validateVisualPreviewMetadataState(
 	if mismatch {
 		return errors.New("visual preview generation does not match its vault or content version")
 	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM visual_preview_generations g
+		LEFT JOIN blobs b ON b.hash=g.output_blob_hash
+		WHERE g.state='ready' AND (b.hash IS NULL OR b.size<>g.output_size)
+	)`).Scan(&mismatch); err != nil {
+		return fmt.Errorf("validating visual preview output blob: %w", err)
+	}
+	if mismatch {
+		return errors.New("visual preview output size does not match its cataloged blob")
+	}
 	if err := exportVisualPreviews(ctx, tx, func(any) error { return nil }); err != nil {
 		return fmt.Errorf("validating visual preview metadata: %w", err)
 	}

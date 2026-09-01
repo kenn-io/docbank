@@ -1195,9 +1195,9 @@ type RenditionBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-// VerifyRenditionBlobBytes verifies every retained rendition source and
-// artifact through the restored mixed-storage catalog, including builds that
-// are staged but not attached to an active head.
+// VerifyRenditionBlobBytes verifies every retained rendition source, artifact,
+// and ready visual preview through the restored mixed-storage catalog,
+// including builds that are staged but not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
@@ -1206,6 +1206,10 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 		UNION
 		SELECT artifact.blob_hash, artifact.size
 		FROM rendition_artifacts artifact
+		UNION
+		SELECT preview.output_blob_hash, preview.output_size
+		FROM visual_preview_generations preview
+		WHERE preview.state='ready'
 		ORDER BY 1, 2`)
 	if err != nil {
 		return fmt.Errorf("listing retained rendition bytes: %w", err)

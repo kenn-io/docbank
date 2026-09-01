@@ -2,11 +2,14 @@ package store
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
@@ -101,6 +104,61 @@ func TestVisualPreviewLifecycleFollowsExactContentVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, unreachable, BlobInfo{Hash: fakeHash("62"), Size: 8})
 }
+
+func TestRestoreByteVerificationIncludesReadyVisualPreview(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateFile(t.Context(), s.RootID(), "image.jpg", fakeHash("71"), 6, "image/jpeg")
+	require.NoError(t, err)
+	canonical := readyVisualPreview(t, created.BlobHash, fakeHash("72"), 8)
+	_, err = s.PublishVisualPreview(t.Context(), created.CurrentVersionID, canonical,
+		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 8})
+	require.NoError(t, err)
+
+	corrupt := errors.New("corrupt preview bytes")
+	reader := &visualPreviewRestoreReader{payload: bytes.Repeat([]byte{'p'}, 8), verifyErr: corrupt}
+	err = s.VerifyRenditionBlobBytes(t.Context(), reader)
+	require.ErrorIs(t, err, corrupt)
+	assert.Equal(t, []string{fakeHash("72")}, reader.opened)
+}
+
+func TestVisualPreviewMetadataRejectsOutputBlobSizeMismatch(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateFile(t.Context(), s.RootID(), "image.jpg", fakeHash("81"), 6, "image/jpeg")
+	require.NoError(t, err)
+	canonical := readyVisualPreview(t, created.BlobHash, fakeHash("82"), 8)
+	_, err = s.PublishVisualPreview(t.Context(), created.CurrentVersionID, canonical,
+		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 8})
+	require.NoError(t, err)
+	_, err = s.db.Exec(`UPDATE blobs SET size=9 WHERE hash=?`, fakeHash("82"))
+	require.NoError(t, err)
+
+	err = s.ValidateMetadata(t.Context())
+	require.ErrorContains(t, err, "visual preview output size does not match its cataloged blob")
+}
+
+type visualPreviewRestoreReader struct {
+	payload   []byte
+	verifyErr error
+	opened    []string
+}
+
+func (r *visualPreviewRestoreReader) OpenStreamContext(
+	_ context.Context, hash string,
+) (packstore.VerifiedReadCloser, int64, error) {
+	r.opened = append(r.opened, hash)
+	return &visualPreviewVerifiedReader{Reader: bytes.NewReader(r.payload), verifyErr: r.verifyErr},
+		int64(len(r.payload)), nil
+}
+
+type visualPreviewVerifiedReader struct {
+	*bytes.Reader
+
+	verifyErr error
+}
+
+func (r *visualPreviewVerifiedReader) Close() error   { return nil }
+func (r *visualPreviewVerifiedReader) Verified() bool { return r.verifyErr == nil }
+func (r *visualPreviewVerifiedReader) Verify() error  { return r.verifyErr }
 
 func readyVisualPreview(t *testing.T, source, output string, size int64) []byte {
 	t.Helper()
