@@ -354,6 +354,21 @@ func (v *Vault) Versions(
 	return page, nil
 }
 
+// SourceMetadata returns durable metadata extracted from the original bytes
+// of one exact immutable content version. The result includes sensitive local
+// fields; the embedding application is responsible for disclosure policy.
+func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
+	if err := v.begin(); err != nil {
+		return SourceMetadata{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	view, err := v.metadata.ContentVersionSourceMetadata(ctx, versionID)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	return fromStoreSourceMetadata(view), nil
+}
+
 // PutOptions controls one embedded content write. Expected is optional; when
 // present, no node or version authority is granted unless both fields match
 // the independently computed durable bytes. A positive IfRevision requires an

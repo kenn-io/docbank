@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -45,6 +46,33 @@ type ContentVersion struct {
 	IntroducedOperationID string  `json:"introduced_operation_id"`
 	TransitionKind        string  `json:"transition_kind"`
 	SourceVersionID       *string `json:"source_version_id,omitempty"`
+}
+
+// SourceMetadataAttachment contains path and ingest facts joined to source
+// metadata for one exact content version. Path-derived fields are present only
+// when the requested version is the live node head.
+type SourceMetadataAttachment struct {
+	NodeID           int64  `json:"node_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Filename         string `json:"filename,omitempty"`
+	Extension        string `json:"extension,omitempty"`
+	Path             string `json:"path,omitempty"`
+	SourcePath       string `json:"source_path,omitempty"`
+	IngestedAt       string `json:"ingested_at,omitempty"`
+	FilesystemMTime  string `json:"filesystem_mtime,omitempty"`
+}
+
+// SourceMetadata is immutable evidence extracted from one exact content
+// version, plus attachment facts joined for that version. Fields include
+// sensitive local evidence; the embedding application owns disclosure policy.
+type SourceMetadata struct {
+	Version              ContentVersion                     `json:"version"`
+	ContractVersion      string                             `json:"contract_version"`
+	ExtractorFingerprint string                             `json:"extractor_fingerprint"`
+	Checksum             string                             `json:"checksum"`
+	Fields               []document.SourceMetadataFieldV1   `json:"fields"`
+	Warnings             []document.SourceMetadataWarningV1 `json:"warnings"`
+	Attachment           SourceMetadataAttachment           `json:"attachment"`
 }
 
 // ProvenanceSource describes an application-neutral origin for one immutable
@@ -295,6 +323,24 @@ func fromStoreVersion(version store.ContentVersion) ContentVersion {
 		NodeRevision:          version.NodeRevision,
 		IntroducedOperationID: version.IntroducedOperationID,
 		TransitionKind:        version.TransitionKind, SourceVersionID: version.SourceVersionID,
+	}
+}
+
+func fromStoreSourceMetadata(view store.SourceMetadataView) SourceMetadata {
+	attachment := view.Attachment
+	return SourceMetadata{
+		Version:              fromStoreVersion(view.Version),
+		ContractVersion:      view.Metadata.ContractVersion,
+		ExtractorFingerprint: view.Generation.ExtractorFingerprint,
+		Checksum:             view.Generation.Checksum,
+		Fields:               view.Metadata.Fields,
+		Warnings:             view.Metadata.Warnings,
+		Attachment: SourceMetadataAttachment{
+			NodeID: attachment.NodeID, ContentVersionID: attachment.ContentVersionID,
+			Filename: attachment.Filename, Extension: attachment.Extension,
+			Path: attachment.Path, SourcePath: attachment.SourcePath,
+			IngestedAt: attachment.IngestedAt, FilesystemMTime: attachment.FilesystemMTime,
+		},
 	}
 }
 

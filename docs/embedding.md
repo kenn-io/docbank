@@ -126,6 +126,29 @@ until the external-reference contract is implemented.
 whether those bytes are stored raw, zstd-compressed, or in a pack. SHA-256 is
 the canonical logical identity, not a digest of a physical storage file.
 
+## Read extracted source metadata
+
+`SourceMetadata` returns Docbank's typed metadata for one immutable content
+version. The result carries the complete `ContentVersion`, so callers can bind
+the facts to the exact SHA-256 and node version they describe:
+
+```go
+metadata, err := vault.SourceMetadata(ctx, receipt.Version.ID)
+if err != nil {
+    return err
+}
+for _, field := range metadata.Fields {
+    // Interpret fields by namespace, key, and typed value.
+    _ = field
+}
+```
+
+If Docbank has not published metadata for the version's bytes, the method
+returns `ErrNotFound`. Opening an embedded vault does not start processing
+workers. The embedded API returns all local fields, including fields marked
+sensitive. The embedding application must decide what it may disclose to its
+own users and transports.
+
 Both write receipts include `Physical`, which distinguishes logical bytes from
 their current raw, zstd, or packed representation. Most applications should
 treat that field as operational evidence rather than document identity.

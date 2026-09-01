@@ -50,6 +50,7 @@ type SourceMetadataAttachmentFacts struct {
 // SourceMetadataView combines immutable byte-derived evidence with the
 // attachment facts appropriate to the requested content version.
 type SourceMetadataView struct {
+	Version    ContentVersion
 	Generation SourceMetadataGeneration
 	Metadata   document.SourceMetadataV1
 	Attachment SourceMetadataAttachmentFacts
@@ -249,7 +250,9 @@ func sourceMetadataViewForVersion(
 			return SourceMetadataView{}, fmt.Errorf("reading source-metadata provenance: %w", err)
 		}
 	}
-	return SourceMetadataView{Generation: generation, Metadata: metadata, Attachment: facts}, nil
+	return SourceMetadataView{
+		Version: version, Generation: generation, Metadata: metadata, Attachment: facts,
+	}, nil
 }
 
 // NodeSourceMetadataViewByID returns one node detail from a single read snapshot.
