@@ -154,7 +154,8 @@ type VersionPruneRequest struct {
 }
 
 // VersionPruneReport distinguishes released logical history from physical
-// bytes that only a later GC/repack can reclaim.
+// bytes that only a later GC/repack can reclaim. Blob counts include visual
+// preview outputs owned by the selected content versions.
 type VersionPruneReport struct {
 	Node                         Node             `json:"node"`
 	Candidates                   []ContentVersion `json:"candidates"`

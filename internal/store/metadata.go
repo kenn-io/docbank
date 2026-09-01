@@ -128,6 +128,26 @@ type metadataSourceMetadataHead struct {
 	PublishedAt  string `json:"published_at"`
 }
 
+type metadataVisualPreviewGeneration struct {
+	Type              string `json:"type"`
+	GenerationID      string `json:"generation_id"`
+	VaultID           string `json:"vault_id"`
+	ContentVersionID  string `json:"content_version_id"`
+	SourceSHA256      string `json:"source_sha256"`
+	ContractVersion   string `json:"contract_version"`
+	RecipeFingerprint string `json:"recipe_fingerprint"`
+	CanonicalResult   []byte `json:"canonical_result" format:"byte"`
+	Checksum          string `json:"checksum"`
+	CreatedAt         string `json:"created_at"`
+}
+
+type metadataVisualPreviewHead struct {
+	Type             string `json:"type"`
+	ContentVersionID string `json:"content_version_id"`
+	GenerationID     string `json:"generation_id"`
+	PublishedAt      string `json:"published_at"`
+}
+
 type metadataNode struct {
 	Type             string  `json:"type"`
 	ID               int64   `json:"id"`
@@ -241,13 +261,16 @@ type metadataAuditMembership struct {
 }
 
 // BackupBlobAuthorityCTE is the complete blob closure for portable backup:
-// retained document versions, rendition artifacts, staged rendition sources,
-// and no operational cursor or provider-staging rows.
+// retained document versions, rendition artifacts, visual previews, staged
+// rendition sources, and no operational cursor or provider-staging rows.
 const BackupBlobAuthorityCTE = `
 WITH backup_authorized_blobs(hash) AS (
 	SELECT blob_hash FROM content_versions
 	UNION
 	SELECT blob_hash FROM rendition_artifacts
+	UNION
+	SELECT output_blob_hash FROM visual_preview_generations
+	WHERE output_blob_hash IS NOT NULL
 	UNION
 	SELECT source_sha256 FROM rendition_builds
 )
@@ -346,6 +369,9 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return err
 	}
 	if err := exportContentVersions(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportVisualPreviews(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportProvenance(ctx, tx, write); err != nil {
@@ -532,6 +558,103 @@ func validateSourceMetadataGenerationRecord(record metadataSourceMetadataGenerat
 	if metadata.ContractVersion != record.ContractVersion || checksum != record.Checksum ||
 		sourceMetadataGenerationID(record.SourceSHA256, record.ContractVersion, record.ExtractorFingerprint, record.Checksum) != record.GenerationID {
 		return errors.New("source metadata generation identity or checksum does not match canonical evidence")
+	}
+	return nil
+}
+
+func exportVisualPreviews(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	var present bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
+		WHERE type='table' AND name='visual_preview_generations')`).Scan(&present); err != nil {
+		return fmt.Errorf("detecting visual preview schema: %w", err)
+	}
+	if !present {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT generation_id,vault_uid,content_version_id,
+		source_sha256,contract_version,recipe_fingerprint,canonical_result,checksum,created_at,
+		state,output_blob_hash,output_size,output_media_type,output_width,output_height,
+		failure_code,failure_detail
+		FROM visual_preview_generations ORDER BY generation_id`)
+	if err != nil {
+		return fmt.Errorf("exporting visual preview generations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataVisualPreviewGeneration{Type: metadataVisualPreviewGenerationType}
+		var state string
+		var outputHash, outputMediaType, failureCode, failureDetail sql.NullString
+		var outputSize, outputWidth, outputHeight sql.NullInt64
+		if err := rows.Scan(&record.GenerationID, &record.VaultID, &record.ContentVersionID,
+			&record.SourceSHA256, &record.ContractVersion, &record.RecipeFingerprint,
+			&record.CanonicalResult, &record.Checksum, &record.CreatedAt, &state,
+			&outputHash, &outputSize, &outputMediaType, &outputWidth, &outputHeight,
+			&failureCode, &failureDetail); err != nil {
+			return fmt.Errorf("scanning visual preview generation: %w", err)
+		}
+		if err := validateVisualPreviewGenerationRecord(record); err != nil {
+			return fmt.Errorf("validating visual preview generation for export: %w", err)
+		}
+		preview, _, err := document.DecodeVisualPreviewV1(record.CanonicalResult)
+		if err != nil {
+			return fmt.Errorf("validating visual preview generation for export: %w", err)
+		}
+		if err := validateVisualPreviewStorage(preview, record.SourceSHA256,
+			record.ContractVersion, state, outputHash, outputSize, outputMediaType,
+			outputWidth, outputHeight, failureCode, failureDetail); err != nil {
+			return fmt.Errorf("validating visual preview generation for export: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("exporting visual preview generations: %w", err)
+	}
+	heads, err := tx.QueryContext(ctx, `SELECT content_version_id,generation_id,published_at
+		FROM visual_preview_heads ORDER BY content_version_id`)
+	if err != nil {
+		return fmt.Errorf("exporting visual preview heads: %w", err)
+	}
+	defer func() { _ = heads.Close() }()
+	for heads.Next() {
+		record := metadataVisualPreviewHead{Type: metadataVisualPreviewHeadType}
+		if err := heads.Scan(&record.ContentVersionID, &record.GenerationID, &record.PublishedAt); err != nil {
+			return fmt.Errorf("scanning visual preview head: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("visual preview head", heads)
+}
+
+func validateVisualPreviewGenerationRecord(record metadataVisualPreviewGeneration) error {
+	if record.Type != metadataVisualPreviewGenerationType ||
+		record.ContractVersion != document.VisualPreviewContractV1 {
+		return errors.New("invalid visual preview generation record")
+	}
+	if err := validateUUIDv4(record.VaultID); err != nil {
+		return fmt.Errorf("invalid visual preview vault identity: %w", err)
+	}
+	if err := validateUUIDv4(record.ContentVersionID); err != nil {
+		return fmt.Errorf("invalid visual preview content version: %w", err)
+	}
+	if err := validateMetadataTime("visual preview created_at", record.CreatedAt); err != nil {
+		return err
+	}
+	preview, checksum, err := document.DecodeVisualPreviewV1(record.CanonicalResult)
+	if err != nil {
+		return err
+	}
+	_, recipeFingerprint, err := document.MarshalVisualPreviewRecipeV1(preview.Recipe)
+	if err != nil {
+		return err
+	}
+	if preview.SourceSHA256 != record.SourceSHA256 || checksum != record.Checksum ||
+		recipeFingerprint != record.RecipeFingerprint ||
+		visualPreviewGenerationID(record.ContentVersionID, recipeFingerprint, checksum) != record.GenerationID {
+		return errors.New("visual preview generation identity does not match canonical result")
 	}
 	return nil
 }
@@ -833,6 +956,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM blob_checksums)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
+		    + (SELECT COUNT(*) FROM visual_preview_generations)
+		    + (SELECT COUNT(*) FROM visual_preview_heads)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
@@ -1018,6 +1143,47 @@ func (s *Store) importMetadataRecord(
 		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
 			VALUES(?,?,?)`, v.SourceSHA256, v.GenerationID, v.PublishedAt)
 		return err
+	case metadataVisualPreviewGenerationType:
+		var v metadataVisualPreviewGeneration
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validateVisualPreviewGenerationRecord(v); err != nil {
+			return err
+		}
+		preview, _, err := document.DecodeVisualPreviewV1(v.CanonicalResult)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO visual_preview_generations(
+			generation_id,vault_uid,content_version_id,source_sha256,contract_version,
+			recipe_fingerprint,canonical_result,checksum,state,output_blob_hash,output_size,
+			output_media_type,output_width,output_height,failure_code,failure_detail,created_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.GenerationID, v.VaultID,
+			v.ContentVersionID, v.SourceSHA256, v.ContractVersion, v.RecipeFingerprint,
+			v.CanonicalResult, v.Checksum, preview.State, previewOutputHash(preview),
+			previewOutputSize(preview), previewOutputMediaType(preview), previewOutputWidth(preview),
+			previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
+			v.CreatedAt)
+		return err
+	case metadataVisualPreviewHeadType:
+		var v metadataVisualPreviewHead
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validateUUIDv4(v.ContentVersionID); err != nil {
+			return fmt.Errorf("invalid visual preview head content version: %w", err)
+		}
+		if err := validateCatalogSHA256(v.GenerationID, "visual preview head generation ID"); err != nil {
+			return err
+		}
+		if err := validateMetadataTime("visual preview head published_at", v.PublishedAt); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO visual_preview_heads(
+			content_version_id,generation_id,published_at) VALUES(?,?,?)`,
+			v.ContentVersionID, v.GenerationID, v.PublishedAt)
+		return err
 	case "node":
 		var v metadataNode
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1176,6 +1342,8 @@ const (
 	metadataBlobChecksumType              = "blob_checksum"
 	metadataSourceMetadataGenerationType  = "source_metadata_generation"
 	metadataSourceMetadataHeadType        = "source_metadata_head"
+	metadataVisualPreviewGenerationType   = "visual_preview_generation"
+	metadataVisualPreviewHeadType         = "visual_preview_head"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
@@ -1185,6 +1353,8 @@ var metadataRequiredFields = map[string][]string{
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, "generation_id", "source_sha256", "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
 	metadataSourceMetadataHeadType:         {metadataTypeField, "source_sha256", "generation_id", "published_at"},
+	metadataVisualPreviewGenerationType:    {metadataTypeField, "generation_id", auditVaultIDField, "content_version_id", "source_sha256", "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
+	metadataVisualPreviewHeadType:          {metadataTypeField, "content_version_id", "generation_id", "published_at"},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
@@ -1574,6 +1744,9 @@ func validateMetadataStateWithVaultIdentity(
 	if err := validateProcessingMetadataState(ctx, tx); err != nil {
 		return err
 	}
+	if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
+		return err
+	}
 	topology, err := loadAuditTopologyRows(ctx, tx)
 	if err != nil {
 		return err
@@ -1606,6 +1779,44 @@ func validateMetadataStateWithVaultIdentity(
 		return fmt.Errorf("metadata violates foreign key %s[%v] constraint %d", table, rowID, fk)
 	}
 	return rows.Err()
+}
+
+func validateVisualPreviewMetadataState(
+	ctx context.Context, tx metadataQuerier, vaultID string,
+) error {
+	var present bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
+		WHERE type='table' AND name='visual_preview_generations')`).Scan(&present); err != nil {
+		return fmt.Errorf("detecting visual preview metadata: %w", err)
+	}
+	if !present {
+		return nil
+	}
+	var mismatch bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM visual_preview_generations g
+		JOIN content_versions v ON v.version_id=g.content_version_id
+		WHERE g.vault_uid<>? OR g.source_sha256<>v.blob_hash
+	)`, vaultID).Scan(&mismatch); err != nil {
+		return fmt.Errorf("validating visual preview attachment: %w", err)
+	}
+	if mismatch {
+		return errors.New("visual preview generation does not match its vault or content version")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM visual_preview_generations g
+		LEFT JOIN blobs b ON b.hash=g.output_blob_hash
+		WHERE g.state='ready' AND (b.hash IS NULL OR b.size<>g.output_size)
+	)`).Scan(&mismatch); err != nil {
+		return fmt.Errorf("validating visual preview output blob: %w", err)
+	}
+	if mismatch {
+		return errors.New("visual preview output size does not match its cataloged blob")
+	}
+	if err := exportVisualPreviews(ctx, tx, func(any) error { return nil }); err != nil {
+		return fmt.Errorf("validating visual preview metadata: %w", err)
+	}
+	return nil
 }
 
 func readVaultIdentity(ctx context.Context, tx metadataQuerier, legacyV090 bool) (string, error) {

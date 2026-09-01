@@ -28,10 +28,12 @@ type VersionPruneSelector struct {
 
 // VersionPruneResult is the complete dry-run inventory or execution receipt.
 // LogicalBytes counts version references and may count a deduplicated blob
-// more than once. ReleasableBytes counts unique blobs that become eligible for
-// a later GC; pruning itself never reports physical bytes as reclaimed. Loose
-// and packed maintenance counts may overlap when one blob has both location
-// kinds across stores; MixedBlobsPendingMaintenance names that intersection.
+// more than once. UniqueBlobs includes both selected content blobs and visual
+// preview outputs owned by the selected versions. ReleasableBytes counts
+// unique blobs that become eligible for a later GC; pruning itself never
+// reports physical bytes as reclaimed. Loose and packed maintenance counts may
+// overlap when one blob has both location kinds across stores;
+// MixedBlobsPendingMaintenance names that intersection.
 type VersionPruneResult struct {
 	Node                         Node
 	Candidates                   []ContentVersion
@@ -347,8 +349,13 @@ func populateVersionPruneBlobStats(
 	tx *sql.Tx, result *VersionPruneResult, checkpointRequired bool,
 ) error {
 	selectedByHash := make(map[string]int)
+	versionIDs := make([]string, 0, len(result.Candidates))
 	for _, version := range result.Candidates {
 		selectedByHash[version.BlobHash]++
+		versionIDs = append(versionIDs, version.ID)
+	}
+	if err := addVersionPruneVisualPreviewRefsTx(tx, versionIDs, selectedByHash); err != nil {
+		return err
 	}
 	result.UniqueBlobs = len(selectedByHash)
 	if len(selectedByHash) == 0 {
@@ -366,7 +373,7 @@ func populateVersionPruneBlobStats(
 	for hash, selected := range selectedByHash {
 		item, ok := stats[hash]
 		if !ok {
-			return fmt.Errorf("candidate content blob %s lacks catalog authority", hash)
+			return fmt.Errorf("candidate blob %s lacks catalog authority", hash)
 		}
 		retained := item.refs - selected
 		if checkpointRequired && hash == result.Node.BlobHash {
@@ -384,7 +391,7 @@ func populateVersionPruneBlobStats(
 		hasLoose := item.looseLocations > 0
 		hasPacked := item.packedLocations > 0
 		if !hasLoose && !hasPacked {
-			return fmt.Errorf("candidate content blob %s lacks physical authority", hash)
+			return fmt.Errorf("candidate blob %s lacks physical authority", hash)
 		}
 		if hasLoose {
 			result.LooseBlobsPendingGC++
@@ -403,6 +410,57 @@ func populateVersionPruneBlobStats(
 		if hasLoose && hasPacked {
 			result.MixedBlobsPendingMaintenance++
 		}
+	}
+	return nil
+}
+
+func addVersionPruneVisualPreviewRefsTx(
+	tx *sql.Tx, versionIDs []string, selectedByHash map[string]int,
+) error {
+	const batchSize = 500
+	for start := 0; start < len(versionIDs); start += batchSize {
+		end := min(start+batchSize, len(versionIDs))
+		if err := addVersionPruneVisualPreviewRefsBatchTx(
+			tx, versionIDs[start:end], selectedByHash,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addVersionPruneVisualPreviewRefsBatchTx(
+	tx *sql.Tx, versionIDs []string, selectedByHash map[string]int,
+) (retErr error) {
+	args := make([]any, len(versionIDs))
+	for index, id := range versionIDs {
+		args[index] = id
+	}
+	rows, err := tx.Query(`
+		SELECT output_blob_hash, COUNT(*)
+		FROM visual_preview_generations
+		WHERE content_version_id IN (`+placeholders(len(args))+`)
+		  AND output_blob_hash IS NOT NULL
+		GROUP BY output_blob_hash`, args...)
+	if err != nil {
+		return fmt.Errorf("inventorying version-prune visual previews: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr,
+				fmt.Errorf("closing version-prune visual preview inventory: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var hash string
+		var refs int
+		if err := rows.Scan(&hash, &refs); err != nil {
+			return fmt.Errorf("inventorying version-prune visual previews: %w", err)
+		}
+		selectedByHash[hash] += refs
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inventorying version-prune visual previews: %w", err)
 	}
 	return nil
 }
@@ -427,11 +485,17 @@ func versionPruneBlobStatsBatchTx(
 		args[index] = hash
 	}
 	rows, err := tx.Query(`
-			SELECT v.blob_hash, COUNT(*), b.size
-			FROM content_versions v
-			JOIN blobs b ON b.hash = v.blob_hash
-			WHERE v.blob_hash IN (`+placeholders(len(hashes))+`)
-			GROUP BY v.blob_hash, b.size`, args...)
+			SELECT refs.blob_hash, COUNT(*), b.size
+			FROM (
+				SELECT blob_hash FROM content_versions
+				UNION ALL
+				SELECT output_blob_hash AS blob_hash
+				FROM visual_preview_generations
+				WHERE output_blob_hash IS NOT NULL
+			) refs
+			JOIN blobs b ON b.hash = refs.blob_hash
+			WHERE refs.blob_hash IN (`+placeholders(len(hashes))+`)
+			GROUP BY refs.blob_hash, b.size`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune blobs: %w", err)
 	}

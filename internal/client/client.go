@@ -620,7 +620,7 @@ func validateVersionPruneVersions(report api.VersionPruneReport, nodeID int64, r
 			return err
 		}
 	}
-	if report.LogicalBytes != logicalBytes || report.UniqueBlobs != len(uniqueBlobs) {
+	if report.LogicalBytes != logicalBytes || report.UniqueBlobs < len(uniqueBlobs) {
 		return errors.New("version-prune receipt has inconsistent logical inventory")
 	}
 	if !run && report.CheckpointRequired && !checkpointPreviewIncludesCurrent {

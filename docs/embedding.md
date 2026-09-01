@@ -149,6 +149,34 @@ workers. The embedded API returns all local fields, including fields marked
 sensitive. The embedding application must decide what it may disclose to its
 own users and transports.
 
+## Read canonical visual previews
+
+`VisualPreview` returns the active result for one immutable content version.
+Ready results identify exact preview bytes and dimensions; unsupported and
+failed results carry a stable failure code without pretending that content is
+available.
+
+```go
+preview, err := vault.VisualPreview(ctx, versionID)
+if err != nil {
+    return err
+}
+if preview.State == document.VisualPreviewReady {
+    content, err := vault.OpenVisualPreview(ctx, versionID)
+    if err != nil {
+        return err
+    }
+    defer content.Reader.Close()
+    // Reach EOF or call Verify before trusting the bytes.
+}
+```
+
+`OpenVisualPreview` uses the same verified-reader contract as original
+content. It returns `ErrVisualPreviewUnavailable` for a cataloged unsupported
+or failed result and `ErrNotFound` when no preview result exists. Opening an
+embedded vault does not start a preview producer; applications can read results
+after a processing owner has published them.
+
 Both write receipts include `Physical`, which distinguishes logical bytes from
 their current raw, zstd, or packed representation. Most applications should
 treat that field as operational evidence rather than document identity.

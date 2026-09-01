@@ -201,7 +201,7 @@ var versionsPruneCmd = &cobra.Command{
 
 func writeVersionPruneReport(cmd *cobra.Command, report api.VersionPruneReport) {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%d version(s) selected, %d logical byte(s), %d unique blob(s)\n",
+		"%d version(s) selected, %d logical byte(s), %d unique affected blob(s)\n",
 		len(report.Candidates), report.LogicalBytes, report.UniqueBlobs)
 	if report.Cutoff != "" {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "age cutoff: %s\n", report.Cutoff)

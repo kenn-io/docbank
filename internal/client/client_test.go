@@ -1159,7 +1159,7 @@ func TestContentVersionPruneAllPriorCheckpointsCurrentRevert(t *testing.T) {
 	assert.Equal(t, receipt.Checkpoint.ID, versions.Items[0].ID)
 }
 
-func TestContentVersionPruneRejectsUnprovenReceipt(t *testing.T) {
+func TestContentVersionPruneValidatesReceipt(t *testing.T) {
 	const (
 		currentID = "11111111-1111-4111-8111-111111111111"
 		oldID     = "22222222-2222-4222-8222-222222222222"
@@ -1175,6 +1175,23 @@ func TestContentVersionPruneRejectsUnprovenReceipt(t *testing.T) {
 		LogicalBytes:       12, UniqueBlobs: 1, ReleasableBlobs: 1,
 		ReleasableBytes: 12, LooseBlobsPendingGC: 1, LooseBytesPendingGC: 12,
 	}
+	t.Run("visual preview outputs", func(t *testing.T) {
+		report := base
+		report.UniqueBlobs = 2
+		report.ReleasableBlobs = 2
+		report.ReleasableBytes = 20
+		report.LooseBlobsPendingGC = 2
+		report.LooseBytesPendingGC = 20
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("ETag", `"4"`)
+			_ = json.MarshalWrite(w, report)
+		}))
+		t.Cleanup(ts.Close)
+		_, err := client.New(ts.URL, "key").PruneContentVersions(
+			t.Context(), 7, 4, api.VersionPruneRequest{AllPrior: true},
+		)
+		require.NoError(t, err)
+	})
 	tests := map[string]func(*api.VersionPruneReport){
 		"node":     func(r *api.VersionPruneReport) { r.Node.ID++ },
 		"revision": func(r *api.VersionPruneReport) { r.Node.Revision++ },

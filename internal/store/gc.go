@@ -600,8 +600,9 @@ func (s *Store) PurgeDerivatives(
 			if err := tx.QueryRowContext(ctx, `SELECT
 				EXISTS(SELECT 1 FROM content_versions WHERE blob_hash=?) OR
 				EXISTS(SELECT 1 FROM rendition_artifacts WHERE blob_hash=?) OR
-				EXISTS(SELECT 1 FROM rendition_builds WHERE source_sha256=?)`,
-				hash, hash, hash).Scan(&reachable); err != nil {
+				EXISTS(SELECT 1 FROM rendition_builds WHERE source_sha256=?) OR
+				EXISTS(SELECT 1 FROM visual_preview_generations WHERE output_blob_hash=?)`,
+				hash, hash, hash, hash).Scan(&reachable); err != nil {
 				return fmt.Errorf("checking purged derivative blob %s reachability: %w", hash, err)
 			}
 			if !reachable {
@@ -614,7 +615,9 @@ func (s *Store) PurgeDerivatives(
 		if _, err := tx.ExecContext(ctx, `DELETE FROM derivative_blob_purge_pending
 			WHERE EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash=derivative_blob_purge_pending.blob_hash)
 			   OR EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash=derivative_blob_purge_pending.blob_hash)
-			   OR EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256=derivative_blob_purge_pending.blob_hash)`); err != nil {
+			   OR EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256=derivative_blob_purge_pending.blob_hash)
+			   OR EXISTS (SELECT 1 FROM visual_preview_generations p
+			             WHERE p.output_blob_hash=derivative_blob_purge_pending.blob_hash)`); err != nil {
 			return fmt.Errorf("reconciling derivative blob purge targets: %w", err)
 		}
 		if err := func() (retErr error) {
@@ -1212,19 +1215,21 @@ func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 	return out, nil
 }
 
-// UnreachableBlobs lists blobs referenced by no original content version or
-// retained rendition artifact. Every current file head is itself a content
-// version, as are retained prior versions. These are the gc candidates. Callers that go
-// on to delete blob files must serialize against concurrent writers (the
-// daemon's maintenance gate does this): with writers running, a concurrent
-// ingest can dedup against a candidate's file between this query and the
-// deletion, leaving a live node pointing at a removed blob.
+// UnreachableBlobs lists blobs referenced by no original content version,
+// retained rendition artifact, or visual preview. Every current file head is
+// itself a content version, as are retained prior versions. These are the GC
+// candidates. Callers that go on to delete blob files must serialize against
+// concurrent writers (the daemon's maintenance gate does this). With writers
+// running, a concurrent ingest can dedup against a candidate's file between
+// this query and deletion, leaving a live node pointing at a removed blob.
 func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
 		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM visual_preview_generations p
+		                  WHERE p.output_blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending p
 		                  WHERE p.blob_hash = b.hash)
 		ORDER BY b.hash`)
@@ -1245,6 +1250,8 @@ func (s *Store) UnreachableDerivativePurgeBlobs(ctx context.Context) ([]BlobInfo
 		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM visual_preview_generations p
+		                  WHERE p.output_blob_hash = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding pending derivative purge blobs: %w", err)
@@ -1317,6 +1324,8 @@ const unreachableBlobsStartPageSQL = `
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM visual_preview_generations v
+	                       WHERE v.output_blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
 	                       WHERE d.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
@@ -1335,6 +1344,8 @@ const unreachableBlobsResumePageSQL = `
 	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM visual_preview_generations v
+	                       WHERE v.output_blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
 	                       WHERE d.blob_hash = p.hash)
 	FROM raw_page p ORDER BY p.hash`
