@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/mail"
@@ -40,7 +41,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v8")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v9")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -143,8 +144,10 @@ func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
 		collector.extractCalendar(data)
 	case bytes.HasPrefix(data, []byte("ID3")):
 		collector.extractID3(data)
-	case bytes.HasPrefix(data, []byte{0xff, 0xd8}):
-		collector.extractImage(data)
+	case visualContainerSignature(data):
+		collector.extractVisual(data)
+	case exifTIFFSignature(data):
+		collector.extractTIFFVisual(data)
 	default:
 		if message, err := mail.ReadMessage(bytes.NewReader(data)); err == nil {
 			collector.extractEmail(message)
@@ -282,6 +285,37 @@ func (c *metadataCollector) integer(key, namespace, source string, value int64) 
 	c.seen[key] = true
 	c.record.Fields = append(c.record.Fields, document.SourceMetadataFieldV1{Key: key, Namespace: namespace, SourceField: source,
 		Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: &value}})
+}
+func (c *metadataCollector) exifNumber(key, source string, value float64) {
+	const namespace = "image.exif"
+	if c.seen[key] || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+	if !c.fieldLabelsAllowed(key, namespace, source) {
+		return
+	}
+	if len(c.record.Fields) >= document.MaxSourceMetadataFields {
+		c.warn("field_limit", namespace, source, "additional embedded fields were omitted")
+		return
+	}
+	c.seen[key] = true
+	c.record.Fields = append(c.record.Fields, document.SourceMetadataFieldV1{Key: key, Namespace: namespace, SourceField: source,
+		Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: &value}})
+}
+func (c *metadataCollector) boolean(key, namespace, source string, value bool) {
+	if c.seen[key] {
+		return
+	}
+	if !c.fieldLabelsAllowed(key, namespace, source) {
+		return
+	}
+	if len(c.record.Fields) >= document.MaxSourceMetadataFields {
+		c.warn("field_limit", namespace, source, "additional embedded fields were omitted")
+		return
+	}
+	c.seen[key] = true
+	c.record.Fields = append(c.record.Fields, document.SourceMetadataFieldV1{Key: key, Namespace: namespace, SourceField: source,
+		Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: &value}})
 }
 func (c *metadataCollector) timestamp(key, namespace, source, raw string) {
 	raw = strings.TrimSpace(raw)
@@ -924,7 +958,42 @@ func (c *metadataCollector) addID3Frame(frame, value string) {
 	}
 }
 
-func (c *metadataCollector) extractImage(data []byte) {
+func visualContainerSignature(data []byte) bool {
+	return bytes.HasPrefix(data, []byte{0xff, 0xd8}) ||
+		bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) ||
+		len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" ||
+		bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")) ||
+		len(data) >= 12 && string(data[4:8]) == "ftyp"
+}
+
+func exifTIFFSignature(data []byte) bool {
+	return len(data) >= 4 && (bytes.Equal(data[:4], []byte{'I', 'I', 42, 0}) ||
+		bytes.Equal(data[:4], []byte{'M', 'M', 0, 42}))
+}
+
+func (c *metadataCollector) extractVisual(data []byte) {
+	metadata, err := documentmedia.DetectBytes(data, "")
+	if err != nil {
+		c.warn("unparseable_metadata", "media.container", "header", "visual container metadata is malformed or unsupported")
+	} else {
+		c.string("media.container.format", "media.container", "Format", string(metadata.Format), false)
+		c.string("media.container.kind", "media.container", "Kind", string(metadata.Kind), false)
+		c.integer("media.container.width_px", "media.container", "Width", metadata.Width)
+		c.integer("media.container.height_px", "media.container", "Height", metadata.Height)
+		if metadata.FrameCount > 0 {
+			c.integer("media.container.frame_count", "media.container", "FrameCount", int64(metadata.FrameCount))
+			c.boolean("media.container.animated", "media.container", "Animated", metadata.Animated)
+		}
+		if metadata.DurationKnown {
+			c.integer("media.container.duration_ms", "media.container", "DurationMS", metadata.DurationMS)
+		}
+	}
+	if bytes.HasPrefix(data, []byte{0xff, 0xd8}) {
+		c.extractJPEGExif(data)
+	}
+}
+
+func (c *metadataCollector) extractJPEGExif(data []byte) {
 	for offset := 2; offset+4 <= len(data); {
 		if data[offset] != 0xff {
 			offset++
@@ -951,6 +1020,21 @@ func (c *metadataCollector) extractImage(data []byte) {
 	if len(c.record.Fields) == 0 {
 		c.warn("unparseable_metadata", "image.exif", "APP1", "image contained no supported metadata values")
 	}
+}
+
+func (c *metadataCollector) extractTIFFVisual(data []byte) {
+	c.string("media.container.format", "media.container", "Format", "tiff", false)
+	c.string("media.container.kind", "media.container", "Kind", "image", false)
+	if reader, ok := newExifReader(data); ok {
+		root := reader.entries(reader.u32(4))
+		if width, found := exifUnsigned(reader, root[0x0100]); found && width > 0 {
+			c.integer("media.container.width_px", "media.container", "ImageWidth", width)
+		}
+		if height, found := exifUnsigned(reader, root[0x0101]); found && height > 0 {
+			c.integer("media.container.height_px", "media.container", "ImageLength", height)
+		}
+	}
+	c.extractExifTIFF(data)
 }
 
 type exifReader struct {
@@ -1002,8 +1086,8 @@ func (r exifReader) entries(offset uint32) map[uint16][]byte {
 		}
 		kind, _ := r.u16(base + 2)
 		items := r.u32(base + 4)
-		width := map[uint16]uint32{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}[kind]
-		size := items * width
+		width := map[uint16]uint64{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}[kind]
+		size := uint64(items) * width
 		if width == 0 || size > 1<<20 {
 			continue
 		}
@@ -1012,16 +1096,51 @@ func (r exifReader) entries(offset uint32) map[uint16][]byte {
 			pointer := r.u32(base + 8)
 			start = int(pointer)
 		}
-		if start < 0 || start+int(size) > len(r.data) {
+		sizeInt := int(size)
+		if start < 0 || start > len(r.data) || sizeInt > len(r.data)-start {
 			continue
 		}
-		result[tag] = r.data[start : start+int(size)]
+		result[tag] = r.data[start : start+sizeInt]
 	}
 	return result
 }
 func exifASCII(value []byte) string {
 	return strings.TrimSpace(strings.TrimRight(string(value), "\x00"))
 }
+
+func exifUnsigned(reader exifReader, value []byte) (int64, bool) {
+	switch len(value) {
+	case 1:
+		return int64(value[0]), true
+	case 2:
+		return int64(reader.order.Uint16(value)), true
+	case 4:
+		return int64(reader.order.Uint32(value)), true
+	default:
+		return 0, false
+	}
+}
+
+func exifRational(reader exifReader, value []byte, signed bool) (float64, bool) {
+	if len(value) != 8 {
+		return 0, false
+	}
+	if signed {
+		numerator := int64(int32(reader.order.Uint32(value[:4])))   //nolint:gosec // EXIF SRATIONAL stores signed bits in an unsigned read buffer.
+		denominator := int64(int32(reader.order.Uint32(value[4:]))) //nolint:gosec // EXIF SRATIONAL stores signed bits in an unsigned read buffer.
+		if denominator == 0 {
+			return 0, false
+		}
+		return float64(numerator) / float64(denominator), true
+	}
+	numerator := reader.order.Uint32(value[:4])
+	denominator := reader.order.Uint32(value[4:])
+	if denominator == 0 {
+		return 0, false
+	}
+	return float64(numerator) / float64(denominator), true
+}
+
 func (c *metadataCollector) extractExifTIFF(data []byte) {
 	reader, ok := newExifReader(data)
 	if !ok {
@@ -1030,7 +1149,12 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 	}
 	rootOffset := reader.u32(4)
 	root := reader.entries(rootOffset)
+	c.string("image.exif.camera_make", "image.exif", "Make", exifASCII(root[0x010f]), false)
+	c.string("image.exif.camera_model", "image.exif", "Model", exifASCII(root[0x0110]), false)
 	c.string("description", "image.exif", "ImageDescription", exifASCII(root[0x010e]), false)
+	if orientation, found := exifUnsigned(reader, root[0x0112]); found && orientation >= 1 && orientation <= 8 {
+		c.integer("image.exif.orientation", "image.exif", "Orientation", orientation)
+	}
 	if artist := exifASCII(root[0x013b]); artist != "" {
 		c.strings("creators", "image.exif", "Artist", splitValues(artist))
 	}
@@ -1042,6 +1166,29 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 		exif := reader.entries(offset)
 		if stamp := exifASCII(exif[0x9003]); stamp != "" {
 			c.timestamp("created", "image.exif", "DateTimeOriginal", stamp)
+		}
+		if iso, found := exifUnsigned(reader, exif[0x8827]); found && iso > 0 {
+			c.integer("image.exif.iso", "image.exif", "PhotographicSensitivity", iso)
+		}
+		if exposure, found := exifRational(reader, exif[0x829a], false); found && exposure > 0 {
+			c.exifNumber("image.exif.exposure_time_seconds", "ExposureTime", exposure)
+		}
+		if aperture, found := exifRational(reader, exif[0x829d], false); found && aperture > 0 {
+			c.exifNumber("image.exif.f_number", "FNumber", aperture)
+		}
+		if bias, found := exifRational(reader, exif[0x9204], true); found {
+			c.exifNumber("image.exif.exposure_bias_ev", "ExposureBiasValue", bias)
+		}
+		if focalLength, found := exifRational(reader, exif[0x920a], false); found && focalLength > 0 {
+			c.exifNumber("image.exif.focal_length_mm", "FocalLength", focalLength)
+		}
+		c.string("image.exif.lens_make", "image.exif", "LensMake", exifASCII(exif[0xa433]), false)
+		c.string("image.exif.lens_model", "image.exif", "LensModel", exifASCII(exif[0xa434]), false)
+		if width, found := exifUnsigned(reader, exif[0xa002]); found && width > 0 {
+			c.integer("image.exif.pixel_width", "image.exif", "PixelXDimension", width)
+		}
+		if height, found := exifUnsigned(reader, exif[0xa003]); found && height > 0 {
+			c.integer("image.exif.pixel_height", "image.exif", "PixelYDimension", height)
 		}
 	}
 	if raw := root[0x8825]; len(raw) >= 4 {
