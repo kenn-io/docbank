@@ -36,9 +36,9 @@ fields; other callers must enforce their own disclosure boundary.
 
 Container facts are available for JPEG, PNG, WebP, GIF, and MP4 files within
 the 20 MiB general inspection limit. JPEG APP1 EXIF and TIFF-based images
-provide EXIF facts. The TIFF path also covers camera RAW formats that retain a
-standard TIFF header and EXIF directories; formats with proprietary container
-headers need their own bounded parser.
+provide EXIF facts. The TIFF path also covers camera RAW formats that retain
+the standard TIFF header, plus the TIFF-derived Olympus ORF and Panasonic RW2
+headers. Other proprietary container headers need their own bounded parser.
 
 The source-metadata worker keeps the general in-memory parser for originals
 through 64 MiB. JPEG, TIFF-based, and MP4 originals beyond the general
