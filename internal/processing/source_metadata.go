@@ -44,6 +44,11 @@ var (
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
 		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v10")
+
+	// errSourceMetadataMP4Malformed marks deterministic MP4 structure defects
+	// in verified bytes, which become durable warnings rather than retryable
+	// storage errors.
+	errSourceMetadataMP4Malformed = errors.New("malformed MP4 box structure")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -264,6 +269,11 @@ func compactMP4SourceMetadata(
 	fragmented := false
 	for offset := int64(0); offset < sourceSize; {
 		box, err := readSourceMetadataMP4Box(reader, offset, sourceSize-offset)
+		if errors.Is(err, errSourceMetadataMP4Malformed) {
+			warning := sourceWarning("unparseable_metadata", "media.container", "MP4",
+				"MP4 top-level box structure is malformed")
+			return nil, &warning, nil
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading MP4 box at %d: %w", offset, err)
 		}
@@ -329,7 +339,7 @@ func readSourceMetadataMP4Box(
 	reader io.ReaderAt, offset, remaining int64,
 ) (sourceMetadataMP4Box, error) {
 	if remaining < 8 {
-		return sourceMetadataMP4Box{}, errors.New("truncated MP4 box header")
+		return sourceMetadataMP4Box{}, fmt.Errorf("truncated MP4 box header: %w", errSourceMetadataMP4Malformed)
 	}
 	header, err := readSourceMetadataRange(reader, offset, min(remaining, 16))
 	if err != nil {
@@ -342,11 +352,11 @@ func readSourceMetadataMP4Box(
 		box.size = remaining
 	case 1:
 		if len(header) < 16 {
-			return sourceMetadataMP4Box{}, errors.New("truncated MP4 large-size header")
+			return sourceMetadataMP4Box{}, fmt.Errorf("truncated MP4 large-size header: %w", errSourceMetadataMP4Malformed)
 		}
 		large := binary.BigEndian.Uint64(header[8:16])
 		if large < 16 || large > math.MaxInt64 {
-			return sourceMetadataMP4Box{}, errors.New("invalid MP4 large-size box")
+			return sourceMetadataMP4Box{}, fmt.Errorf("invalid MP4 large-size box: %w", errSourceMetadataMP4Malformed)
 		}
 		box.headerSize = 16
 		box.size = int64(large)
@@ -354,7 +364,7 @@ func readSourceMetadataMP4Box(
 		box.size = int64(size32)
 	}
 	if box.size < box.headerSize || box.size > remaining {
-		return sourceMetadataMP4Box{}, errors.New("MP4 box size exceeds its parent")
+		return sourceMetadataMP4Box{}, fmt.Errorf("MP4 box size exceeds its parent: %w", errSourceMetadataMP4Malformed)
 	}
 	return box, nil
 }

@@ -769,6 +769,22 @@ func TestLargeMP4SourceMetadataSkipsPayloadWithoutBufferingIt(t *testing.T) {
 	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "input_too_large")
 }
 
+func TestLargeMP4SourceMetadataMalformedBoxWarnsInsteadOfRetrying(t *testing.T) {
+	reader := syntheticSparseLargeMP4()
+	binary.BigEndian.PutUint64(reader.segments[1].data[8:16], 8)
+	hasher := sha256.New()
+	_, err := io.Copy(hasher, reader.clone())
+	require.NoError(t, err)
+	blobs := &largeSourceMetadataReaderStub{reader: reader}
+
+	metadata, err := sourceMetadataForTarget(t.Context(), blobs, store.SourceMetadataTarget{
+		SourceSHA256: hex.EncodeToString(hasher.Sum(nil)), Size: reader.size,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+	assert.Empty(t, metadata.Fields)
+}
+
 type sourceMetadataCatalogStub struct {
 	targets   []store.SourceMetadataTarget
 	published int
