@@ -30,8 +30,15 @@ const (
 	maxSourceMetadataOriginalBytes       = 64 << 20
 	maxSourceMetadataWindowBytes         = documentmedia.MaxBytes
 	maxSourceMetadataFTYPBytes           = 1 << 20
+	maxSourceMetadataRAFDirectoryBytes   = 1 << 20
 	maxSourceMetadataAggregateValueBytes = 1 << 20
 	maxSourceMetadataXMLDepth            = 64
+	sourceMetadataRAFHeaderBytes         = 160
+	sourceMetadataRAFJPEGOffset          = 84
+	sourceMetadataRAFDirectoryOffset     = 92
+	sourceMetadataRAFDirectoryLength     = 96
+	sourceMetadataRAFImageSizeTag        = 0x0111
+	sourceMetadataRAFSignature           = "FUJIFILMCCD-RAW"
 	rdfNamespace                         = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 	xmlNamespace                         = "http://www.w3.org/XML/1998/namespace"
 	xmpBasicNamespace                    = "http://ns.adobe.com/xap/1.0/"
@@ -43,7 +50,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-exif,media-id3:v11")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-exif,media-id3:v12")
 
 	// errSourceMetadataMP4Malformed marks deterministic MP4 structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -200,11 +207,13 @@ func (r *seekReaderAt) ReadAt(target []byte, offset int64) (int, error) {
 }
 
 func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMetadataV1, error) {
-	header, err := readSourceMetadataRange(reader, 0, min(size, 12))
+	header, err := readSourceMetadataRange(reader, 0, min(size, sourceMetadataRAFHeaderBytes))
 	if err != nil {
 		return document.SourceMetadataV1{}, fmt.Errorf("reading media signature: %w", err)
 	}
 	switch {
+	case isSourceMetadataRAF(header):
+		return extractRAFSourceMetadata(reader, size)
 	case bytes.HasPrefix(header, []byte{0xff, 0xd8}), exifTIFFSignature(header):
 		window, readErr := readSourceMetadataRange(reader, 0, min(size, maxSourceMetadataWindowBytes))
 		if readErr != nil {
@@ -236,8 +245,134 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 }
 
 func boundedLargeMediaSignature(data []byte) bool {
-	return bytes.HasPrefix(data, []byte{0xff, 0xd8}) || exifTIFFSignature(data) ||
+	return isSourceMetadataRAF(data) || bytes.HasPrefix(data, []byte{0xff, 0xd8}) || exifTIFFSignature(data) ||
 		len(data) >= 12 && string(data[4:8]) == "ftyp"
+}
+
+func isSourceMetadataRAF(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(sourceMetadataRAFSignature))
+}
+
+func extractRAFSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMetadataV1, error) {
+	metadata := emptySourceMetadata()
+	collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+	collector.string("media.container.format", "media.container", "Format", "raf", false)
+	collector.string("media.container.kind", "media.container", "Kind", "image", false)
+
+	header, err := readSourceMetadataRange(reader, 0, min(size, sourceMetadataRAFHeaderBytes))
+	if err != nil {
+		return document.SourceMetadataV1{}, fmt.Errorf("reading RAF header: %w", err)
+	}
+	if len(header) < sourceMetadataRAFHeaderBytes || !isSourceMetadataRAF(header) {
+		collector.warn("unparseable_metadata", "media.container", "RAF", "RAF header is malformed")
+		return canonicalSourceMetadataResult(metadata), nil
+	}
+
+	jpegOffset := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFJPEGOffset:]))
+	jpegLength := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFJPEGOffset+4:]))
+	directoryOffset := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFDirectoryOffset:]))
+	directoryLength := int64(binary.BigEndian.Uint32(header[sourceMetadataRAFDirectoryLength:]))
+	if jpegOffset < sourceMetadataRAFHeaderBytes || directoryOffset < sourceMetadataRAFHeaderBytes ||
+		!sourceMetadataRangeWithin(jpegOffset, jpegLength, size) ||
+		!sourceMetadataRangeWithin(directoryOffset, directoryLength, size) ||
+		sourceMetadataRangesOverlap(jpegOffset, jpegLength, directoryOffset, directoryLength) {
+		collector.warn("unparseable_metadata", "media.container", "RAF", "RAF metadata offsets are invalid")
+		return canonicalSourceMetadataResult(metadata), nil
+	}
+
+	jpegReadLength := min(jpegLength, maxSourceMetadataWindowBytes)
+	jpeg, err := readSourceMetadataRange(reader, jpegOffset, jpegReadLength)
+	if err != nil {
+		return document.SourceMetadataV1{}, fmt.Errorf("reading RAF embedded JPEG: %w", err)
+	}
+	if !bytes.HasPrefix(jpeg, []byte{0xff, 0xd8}) {
+		collector.warn("unparseable_metadata", "media.container", "RAF", "RAF embedded JPEG is malformed")
+	} else {
+		collector.extractJPEGExif(jpeg)
+	}
+	if jpegReadLength < jpegLength {
+		collector.warn("metadata_window_limited", "media.container", "JPEG",
+			"only the bounded RAF JPEG metadata window was inspected")
+	}
+
+	limited, err := collector.extractRAFDimensions(reader, directoryOffset, directoryLength)
+	if err != nil {
+		return document.SourceMetadataV1{}, err
+	}
+	if limited {
+		collector.warn("metadata_window_limited", "media.container", "CFA",
+			"only the bounded RAF raw-metadata directory was inspected")
+	}
+	return canonicalSourceMetadataResult(metadata), nil
+}
+
+func sourceMetadataRangeWithin(offset, length, size int64) bool {
+	return offset >= 0 && length > 0 && offset <= size && length <= size-offset
+}
+
+func sourceMetadataRangesOverlap(leftOffset, leftLength, rightOffset, rightLength int64) bool {
+	return leftOffset < rightOffset+rightLength && rightOffset < leftOffset+leftLength
+}
+
+func (c *metadataCollector) extractRAFDimensions(reader io.ReaderAt, offset, length int64) (bool, error) {
+	if length < 4 {
+		c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata directory is malformed")
+		return false, nil
+	}
+	header, err := readSourceMetadataRange(reader, offset, 4)
+	if err != nil {
+		return false, fmt.Errorf("reading RAF raw-metadata directory: %w", err)
+	}
+	entryCount := int64(binary.BigEndian.Uint32(header))
+	position := offset + 4
+	directoryEnd := offset + length
+	limit := min(directoryEnd, offset+maxSourceMetadataRAFDirectoryBytes)
+	for range entryCount {
+		if position > directoryEnd-4 {
+			c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata directory is malformed")
+			return false, nil
+		}
+		if position > limit-4 {
+			return true, nil
+		}
+		entryHeader, readErr := readSourceMetadataRange(reader, position, 4)
+		if readErr != nil {
+			return false, fmt.Errorf("reading RAF raw-metadata entry: %w", readErr)
+		}
+		tag := binary.BigEndian.Uint16(entryHeader)
+		length := int64(binary.BigEndian.Uint16(entryHeader[2:]))
+		position += 4
+		if length > directoryEnd-position {
+			c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata entry is malformed")
+			return false, nil
+		}
+		if tag == sourceMetadataRAFImageSizeTag {
+			if length < 4 {
+				c.warn("unparseable_metadata", "media.container", "CFA", "RAF image-size entry is malformed")
+				return false, nil
+			}
+			if position > limit-4 {
+				return true, nil
+			}
+			dimensions, readErr := readSourceMetadataRange(reader, position, 4)
+			if readErr != nil {
+				return false, fmt.Errorf("reading RAF image dimensions: %w", readErr)
+			}
+			height := int64(binary.BigEndian.Uint16(dimensions))
+			width := int64(binary.BigEndian.Uint16(dimensions[2:]))
+			if width > 0 && height > 0 {
+				c.integer("media.container.width_px", "media.container", "RAFImageWidth", width)
+				c.integer("media.container.height_px", "media.container", "RAFImageLength", height)
+			}
+			return false, nil
+		}
+		if position > math.MaxInt64-length {
+			c.warn("unparseable_metadata", "media.container", "CFA", "RAF raw-metadata offsets overflow")
+			return false, nil
+		}
+		position += length
+	}
+	return false, nil
 }
 
 func readSourceMetadataRange(reader io.ReaderAt, offset, length int64) ([]byte, error) {
@@ -394,6 +529,14 @@ func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
 		collector.extractCalendar(data)
 	case bytes.HasPrefix(data, []byte("ID3")):
 		collector.extractID3(data)
+	case isSourceMetadataRAF(data):
+		metadata, err := extractRAFSourceMetadata(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			result.Warnings = append(result.Warnings, sourceWarning(
+				"unparseable_metadata", "media.container", "RAF", "RAF metadata could not be read"))
+			return canonicalSourceMetadataResult(result)
+		}
+		return metadata
 	case visualContainerSignature(data):
 		collector.extractVisual(data)
 	case exifTIFFSignature(data):
