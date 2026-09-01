@@ -279,7 +279,7 @@ func (s *Store) EnqueueRenditionJob(
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 			state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=?,
-			provider_started=0,selected_waiter_id=NULL,authorization_grant_id=NULL,
+			selected_waiter_id=NULL,authorization_grant_id=NULL,
 			authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
 			failure_code=NULL,updated_at=?
 			WHERE job_id=? AND state='failed' AND phase='provider'

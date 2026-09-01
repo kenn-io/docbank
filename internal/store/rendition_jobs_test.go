@@ -868,6 +868,7 @@ func TestRenditionJobMetadataRoundTripPreservesSealedDurableResumeAuthority(t *t
 	restoredJob, _, err := restored.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
 	assert.Equal(t, RenditionJobQueued, restoredJob.State)
+	require.NoError(t, restored.ValidateMetadata(t.Context()))
 	restoredClaim, err = restored.ClaimRenditionJob(
 		t.Context(), job.ID, "worker:restored-resume", now.Add(7*time.Second), time.Minute)
 	require.NoError(t, err)
