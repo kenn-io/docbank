@@ -176,6 +176,58 @@ func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("91"), 10, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.PublishVisualPreview(ctx, created.CurrentVersionID,
+		readyVisualPreview(t, created.BlobHash, fakeHash("92"), 8),
+		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 8})
+	require.NoError(t, err)
+
+	replaced, historical, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("93"), 20, "image/jpeg",
+	)
+	require.NoError(t, err)
+	_, err = s.PublishVisualPreview(ctx, historical.ID,
+		readyVisualPreview(t, historical.BlobHash, fakeHash("94"), 9),
+		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+
+	current, currentVersion, err := s.ReplaceContent(
+		ctx, created.ID, replaced.Revision, fakeHash("95"), 30, "image/jpeg",
+	)
+	require.NoError(t, err)
+	_, err = s.PublishVisualPreview(ctx, currentVersion.ID,
+		readyVisualPreview(t, currentVersion.BlobHash, fakeHash("94"), 9),
+		&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+
+	preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
+		VersionPruneSelector{KeepNewest: 1}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 4, preview.UniqueBlobs)
+	assert.Equal(t, 1, preview.SharedBlobs)
+	assert.Equal(t, 3, preview.ReleasableBlobs)
+	assert.Equal(t, int64(38), preview.ReleasableBytes)
+	assert.Equal(t, 3, preview.LooseBlobsPendingGC)
+	assert.Equal(t, int64(38), preview.LooseBytesPendingGC)
+
+	receipt, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
+		VersionPruneSelector{KeepNewest: 1}, true)
+	require.NoError(t, err)
+	assert.Equal(t, preview.UniqueBlobs, receipt.UniqueBlobs)
+	assert.Equal(t, preview.SharedBlobs, receipt.SharedBlobs)
+	assert.Equal(t, preview.ReleasableBlobs, receipt.ReleasableBlobs)
+	assert.Equal(t, preview.ReleasableBytes, receipt.ReleasableBytes)
+
+	unreachable, err := s.UnreachableBlobs(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, unreachable, BlobInfo{Hash: fakeHash("92"), Size: 8})
+	assert.NotContains(t, unreachable, BlobInfo{Hash: fakeHash("94"), Size: 9})
+}
+
 func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
