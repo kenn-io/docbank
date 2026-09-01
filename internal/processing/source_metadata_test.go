@@ -210,6 +210,56 @@ func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
 	assert.Empty(t, metadata.Warnings)
 }
 
+func TestExtractSourceMetadataReadsCR3PhotoFacts(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticCR3())
+	for key, want := range map[string]string{
+		"media.container.format":  "cr3",
+		"media.container.kind":    "image",
+		"image.exif.camera_make":  "Fiction Camera Co.",
+		"image.exif.camera_model": "Model One",
+		"image.exif.lens_model":   "Prime 50mm",
+	} {
+		value, found := sourceMetadataString(metadata, key)
+		require.True(t, found, key)
+		assert.Equal(t, want, value, key)
+	}
+	for key, want := range map[string]int64{
+		"media.container.width_px":  6000,
+		"media.container.height_px": 4000,
+		"image.exif.orientation":    6,
+		"image.exif.iso":            800,
+		"image.exif.pixel_width":    6000,
+		"image.exif.pixel_height":   4000,
+	} {
+		value, found := sourceMetadataInteger(metadata, key)
+		require.True(t, found, key)
+		assert.Equal(t, want, value, key)
+	}
+	exposure, found := sourceMetadataNumber(metadata, "image.exif.exposure_time_seconds")
+	require.True(t, found)
+	assert.InDelta(t, 0.004, exposure, 0.0000001)
+	latitude, found := sourceMetadataString(metadata, "image.exif.gps_latitude")
+	require.True(t, found)
+	assert.Equal(t, "41.8750000", latitude)
+	longitude, found := sourceMetadataString(metadata, "image.exif.gps_longitude")
+	require.True(t, found)
+	assert.Equal(t, "-87.6250000", longitude)
+	assert.Empty(t, metadata.Warnings)
+}
+
+func TestExtractSourceMetadataWarnsForDuplicateCR3Directory(t *testing.T) {
+	cmt1 := syntheticCR3CMT1()
+	metadata := ExtractSourceMetadata(syntheticCR3WithDirectories(
+		syntheticBMFFBox("CMT1", cmt1),
+		syntheticBMFFBox("CMT1", cmt1),
+	))
+
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+	format, found := sourceMetadataString(metadata, "media.container.format")
+	require.True(t, found)
+	assert.Equal(t, "cr3", format)
+}
+
 func TestExtractSourceMetadataWarnsForMalformedRAFOffsets(t *testing.T) {
 	payload := syntheticRAF()
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(len(payload)+1))
@@ -697,6 +747,74 @@ func syntheticRichExifTIFF() []byte {
 	)
 }
 
+func syntheticCR3() []byte {
+	return syntheticCR3WithDirectories(
+		syntheticBMFFBox("CMT1", syntheticCR3CMT1()),
+		syntheticBMFFBox("CMT2", syntheticTIFFRoot([]syntheticTIFFEntry{
+			tiffRational(0x829a, 1, 250, false),
+			tiffRational(0x829d, 28, 10, false),
+			tiffShort(0x8827, 800),
+			tiffASCII(0x9003, "2024:01:02 03:04:05"),
+			tiffRational(0x920a, 50, 1, false),
+			tiffLong(0xa002, 6000),
+			tiffLong(0xa003, 4000),
+			tiffASCII(0xa434, "Prime 50mm"),
+		})),
+		syntheticBMFFBox("CMT4", syntheticTIFFRoot([]syntheticTIFFEntry{
+			tiffASCII(0x0001, "N"),
+			tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
+			tiffASCII(0x0003, "W"),
+			tiffRationals(0x0004, [][2]uint32{{87, 1}, {37, 1}, {30, 1}}),
+		})),
+	)
+}
+
+func syntheticCR3CMT1() []byte {
+	return syntheticTIFFRoot([]syntheticTIFFEntry{
+		tiffLong(0x0100, 1600),
+		tiffLong(0x0101, 1066),
+		tiffASCII(0x010f, "Fiction Camera Co."),
+		tiffASCII(0x0110, "Model One"),
+		tiffShort(0x0112, 6),
+	})
+}
+
+func syntheticCR3WithDirectories(directories ...[]byte) []byte {
+	ftyp := syntheticBMFFBox("ftyp", []byte("crx \x00\x00\x00\x00crx "))
+	uuidPayload := append([]byte(nil), sourceMetadataCanonUUID[:]...)
+	for _, directory := range directories {
+		uuidPayload = append(uuidPayload, directory...)
+	}
+	moov := syntheticBMFFBox("moov", syntheticBMFFBox("uuid", uuidPayload))
+	return append(ftyp, moov...)
+}
+
+func syntheticBMFFBox(kind string, payload []byte) []byte {
+	box := make([]byte, 8+len(payload))
+	binary.BigEndian.PutUint32(box[:4], uint32(len(box)))
+	copy(box[4:8], kind)
+	copy(box[8:], payload)
+	return box
+}
+
+func syntheticTIFFRoot(entries []syntheticTIFFEntry) []byte {
+	const headerSize = 8
+	ifdSize := 2 + len(entries)*12 + 4
+	externalSize := 0
+	for _, entry := range entries {
+		if len(entry.value) > 4 {
+			externalSize += len(entry.value)
+		}
+	}
+	tiff := make([]byte, headerSize+ifdSize+externalSize)
+	copy(tiff, "II")
+	binary.LittleEndian.PutUint16(tiff[2:4], 42)
+	binary.LittleEndian.PutUint32(tiff[4:8], headerSize)
+	externalOffset := headerSize + ifdSize
+	writeSyntheticTIFFIFD(tiff, headerSize, entries, &externalOffset)
+	return tiff
+}
+
 func syntheticTIFF(magic uint16, root, exif []syntheticTIFFEntry) []byte {
 	const headerSize = 8
 	rootEntries := append([]syntheticTIFFEntry{}, root...)
@@ -765,6 +883,15 @@ func tiffRational(tag uint16, numerator, denominator int32, signed bool) synthet
 		kind = 10
 	}
 	return syntheticTIFFEntry{tag: tag, kind: kind, value: encoded}
+}
+
+func tiffRationals(tag uint16, values [][2]uint32) syntheticTIFFEntry {
+	encoded := make([]byte, len(values)*8)
+	for index, value := range values {
+		binary.LittleEndian.PutUint32(encoded[index*8:], value[0])
+		binary.LittleEndian.PutUint32(encoded[index*8+4:], value[1])
+	}
+	return syntheticTIFFEntry{tag: tag, kind: 5, value: encoded}
 }
 
 type syntheticID3Frame struct {
@@ -929,6 +1056,26 @@ func TestLargeRAFSourceMetadataUsesBoundedContainerReads(t *testing.T) {
 	width, found := sourceMetadataInteger(metadata, "media.container.width_px")
 	require.True(t, found)
 	assert.Equal(t, int64(6240), width)
+	model, found := sourceMetadataString(metadata, "image.exif.camera_model")
+	require.True(t, found)
+	assert.Equal(t, "Model One", model)
+	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "input_too_large")
+}
+
+func TestLargeCR3SourceMetadataUsesBoundedContainerReads(t *testing.T) {
+	payload := syntheticCR3()
+	reader := &sparseSourceMetadataReader{
+		size: maxSourceMetadataOriginalBytes + 1024,
+		segments: []sparseSourceMetadataSegment{
+			{offset: 0, data: payload},
+		},
+	}
+
+	metadata, err := extractLargeSourceMetadata(reader, reader.size)
+	require.NoError(t, err)
+	format, found := sourceMetadataString(metadata, "media.container.format")
+	require.True(t, found)
+	assert.Equal(t, "cr3", format)
 	model, found := sourceMetadataString(metadata, "image.exif.camera_model")
 	require.True(t, found)
 	assert.Equal(t, "Model One", model)

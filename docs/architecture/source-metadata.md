@@ -39,7 +39,9 @@ the 20 MiB general inspection limit. JPEG APP1 EXIF and TIFF-based images
 provide EXIF facts. The TIFF path also covers camera RAW formats that retain
 the standard TIFF header, plus the TIFF-derived Olympus ORF and Panasonic RW2
 headers. Fujifilm RAF files provide EXIF facts through their embedded JPEG and
-the original image dimensions through their RAF raw-metadata directory. Other
+the original image dimensions through their RAF raw-metadata directory. Canon
+CR3 files provide camera, lens, exposure, orientation, capture-time, GPS, and
+image-dimension facts through their Canon TIFF/EXIF metadata boxes. Other
 proprietary container headers need their own bounded parser.
 
 The source-metadata worker keeps the general in-memory parser for originals
@@ -56,8 +58,12 @@ durable warning. Storage and read failures remain retryable errors. Other
 large RAF files similarly read only the fixed header, a bounded embedded-JPEG
 metadata window, and a bounded raw-metadata directory after full verification.
 Malformed RAF structure produces a durable warning; storage and read failures
-remain retryable. Other formats larger than 64 MiB still receive
-`input_too_large` until they have a bounded parser.
+remain retryable. Large CR3 files are also verified in full, but the extractor
+walks only the ISO base media file headers and bounded Canon metadata boxes; it
+does not buffer or decode the RAW image payload. Malformed CR3 structure
+produces a durable warning, while storage and read failures remain retryable.
+Other formats larger than 64 MiB still receive `input_too_large` until they
+have a bounded parser.
 
 ## Generations and reads
 
