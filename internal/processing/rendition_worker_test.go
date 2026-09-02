@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -616,8 +617,19 @@ func TestRenditionWorkerQuarantinesSealTimePolicyMismatch(t *testing.T) {
 	assert.Zero(t, provider.calls)
 	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
-	assert.Equal(t, store.RenditionJobOperatorRequired, current.State)
-	assert.Equal(t, store.RenditionFailureAmbiguous, current.FailureCode)
+	assert.Equal(t, store.RenditionJobFailed, current.State)
+	assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
+	var exported bytes.Buffer
+	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &exported))
+	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadataForBackupRestore(
+		t.Context(), bytes.NewReader(exported.Bytes())))
+	restoredJob, err := restored.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RenditionJobFailed, restoredJob.State)
+	assert.Equal(t, store.RenditionFailureTerminal, restoredJob.FailureCode)
 }
 
 func TestRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t *testing.T) {

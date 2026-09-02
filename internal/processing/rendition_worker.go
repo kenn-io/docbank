@@ -462,8 +462,8 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 			execution.EvidencePolicy, execution.RenditionPolicy)
 		if sealErr != nil {
 			if document.IsRenditionAuthorizationPolicyMismatch(sealErr) {
-				return true, worker.markOperatorRequired(
-					ctx, claim, worker.clock().UTC())
+				return true, worker.markFailed(
+					ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
 			}
 			return true, worker.markSafeTransient(ctx, claim)
 		}
