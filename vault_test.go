@@ -135,6 +135,82 @@ func TestVaultSourceMetadataReturnsExactVersionEvidence(t *testing.T) {
 	assert.Equal(t, "/photos/image.jpg", metadata.Attachment.Path)
 }
 
+func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	firstContent := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:First event\r\nDTSTART:20240102T030405Z\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	first, err := vault.Create(t.Context(), "/calendar.ics", bytes.NewReader(firstContent), CreateOptions{
+		MediaType: "text/calendar", Expected: contentIdentity(firstContent),
+	})
+	require.NoError(t, err)
+	secondContent := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Second event\r\nDTSTART:20240203T040506Z\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	_, err = vault.Put(t.Context(), "/calendar.ics", bytes.NewReader(secondContent), PutOptions{
+		MediaType: "text/calendar", Expected: new(contentIdentity(secondContent)),
+	})
+	require.NoError(t, err)
+
+	metadata, err := vault.EnsureSourceMetadata(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Version.ID, metadata.Version.ID)
+	assert.Empty(t, metadata.Attachment.Path)
+	var title string
+	for _, field := range metadata.Fields {
+		if field.Key == "title" {
+			title = field.Value.String
+		}
+	}
+	assert.Equal(t, "First event", title)
+
+	retry, err := vault.EnsureSourceMetadata(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, metadata, retry)
+}
+
+func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Current event\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	receipt, err := vault.Create(t.Context(), "/calendar.ics", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/calendar", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	staleCanonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{
+			Key: "title", Namespace: "calendar", SourceField: "SUMMARY",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Stale event"},
+		}},
+	})
+	require.NoError(t, err)
+	staleFingerprint := contentIdentity([]byte("old extractor")).SHA256
+	_, err = vault.metadata.PublishSourceMetadata(t.Context(), receipt.Version.BlobHash, staleFingerprint, staleCanonical)
+	require.NoError(t, err)
+
+	metadata, err := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, staleFingerprint, metadata.ExtractorFingerprint)
+	var title string
+	for _, field := range metadata.Fields {
+		if field.Key == "title" {
+			title = field.Value.String
+		}
+	}
+	assert.Equal(t, "Current event", title)
+}
+
+func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	_, err = vault.EnsureSourceMetadata(t.Context(), "00000000-0000-4000-8000-000000000000")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
