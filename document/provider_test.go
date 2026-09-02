@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 type syntheticRenditionProvider struct {
@@ -277,7 +278,7 @@ func TestRenditionProviderContractCountsArtifactMetadataAgainstTotal(t *testing.
 	metadata := validAuthorizedUploadMetadata()
 	authorization := validRenditionAuthorization(descriptor, metadata)
 	result := validRenditionResult(descriptor, authorization)
-	encodedEvidence, err := canonicalJSON(result.Evidence)
+	encodedEvidence, err := canonical.Marshal(result.Evidence)
 	require.NoError(t, err)
 	authorization.MaxTotalResultBytes = len(encodedEvidence) +
 		len(result.ProviderMarkdown) + len(result.Artifacts[0].Payload)
@@ -293,7 +294,7 @@ func TestRenditionProviderContractCountsReceiptAgainstTotal(t *testing.T) {
 	metadata := validAuthorizedUploadMetadata()
 	authorization := validRenditionAuthorization(descriptor, metadata)
 	result := validRenditionResult(descriptor, authorization)
-	encodedEvidence, err := canonicalJSON(result.Evidence)
+	encodedEvidence, err := canonical.Marshal(result.Evidence)
 	require.NoError(t, err)
 	artifact := result.Artifacts[0]
 	authorization.MaxTotalResultBytes = len(encodedEvidence) + len(result.ProviderMarkdown) +
@@ -595,7 +596,7 @@ func TestRenderRenditionOwnsValidatedResult(t *testing.T) {
 	metadata := validAuthorizedUploadMetadata()
 	authorization := validRenditionAuthorization(descriptor, metadata)
 	provided := validRenditionResult(descriptor, authorization)
-	expected, err := canonicalJSON(provided)
+	expected, err := canonical.Marshal(provided)
 	require.NoError(t, err)
 	provider := &mutatingRenditionProvider{descriptor: descriptor}
 	provider.render = func(_ AuthorizedUpload, _ RenditionAuthorization) RenditionResult {
@@ -613,7 +614,7 @@ func TestRenderRenditionOwnsValidatedResult(t *testing.T) {
 	provided.ProviderMarkdown[0] = 'X'
 	provided.Artifacts[0].Payload[0] = 'X'
 	provided.Receipt.Warnings[0] = "changed"
-	actual, err := canonicalJSON(result)
+	actual, err := canonical.Marshal(result)
 	require.NoError(t, err)
 	assert.Equal(t, expected, actual)
 }

@@ -1,437 +1,5 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
--- Processing authority is one atomic schema surface. Before any idempotent
--- processing DDL can repair state, compare the complete V1 structural identity
--- (tables, constraints, foreign keys, explicit index, and immutable triggers).
--- Exact set comparison is the fingerprint; it does not trust a writable marker.
-CREATE TEMP TABLE IF NOT EXISTS docbank_processing_schema_v1_expected (
-    object_type TEXT NOT NULL,
-    object_name TEXT NOT NULL,
-    object_sql  TEXT NOT NULL,
-    PRIMARY KEY (object_type, object_name)
-);
-DELETE FROM docbank_processing_schema_v1_expected;
-INSERT INTO docbank_processing_schema_v1_expected(object_type, object_name, object_sql) VALUES
-('table', 'processing_incarnations', 'CREATE TABLE processing_incarnations (
-    incarnation_id TEXT PRIMARY KEY,
-    created_at     TEXT NOT NULL
-)'),
-('table', 'current_processing_incarnation', 'CREATE TABLE current_processing_incarnation (
-    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-    incarnation_id TEXT NOT NULL UNIQUE REFERENCES processing_incarnations(incarnation_id)
-)'),
-('trigger', 'current_processing_incarnation_immutable_update', 'CREATE TRIGGER current_processing_incarnation_immutable_update
-BEFORE UPDATE ON current_processing_incarnation BEGIN
-    SELECT RAISE(ABORT, ''current processing incarnation is immutable'');
-END'),
-('trigger', 'current_processing_incarnation_immutable_delete', 'CREATE TRIGGER current_processing_incarnation_immutable_delete
-BEFORE DELETE ON current_processing_incarnation BEGIN
-    SELECT RAISE(ABORT, ''current processing incarnation is immutable'');
-END'),
-('table', 'processing_consent_grants', 'CREATE TABLE processing_consent_grants (
-    grant_id                  TEXT PRIMARY KEY,
-    vault_uid                 TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
-    incarnation_id            TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
-    principal                 TEXT NOT NULL,
-    scope                     TEXT NOT NULL,
-    profile_fingerprint       TEXT NOT NULL,
-    disclosure_fingerprint    TEXT NOT NULL,
-    input_classes_json        TEXT NOT NULL,
-    retained_classes_json     TEXT NOT NULL,
-    revocation_fence          INTEGER NOT NULL CHECK (revocation_fence >= 0),
-    issued_at                 TEXT NOT NULL,
-    expires_at                TEXT
-)'),
-('index', 'processing_consent_grants_authority', 'CREATE INDEX processing_consent_grants_authority
-    ON processing_consent_grants(
-        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
-        disclosure_fingerprint, input_classes_json, retained_classes_json,
-        issued_at, grant_id
-    )'),
-('table', 'processing_consent_revocations', 'CREATE TABLE processing_consent_revocations (
-    revocation_id  TEXT PRIMARY KEY,
-    vault_uid      TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
-    incarnation_id TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
-    principal      TEXT NOT NULL,
-    scope          TEXT NOT NULL,
-    fence          INTEGER NOT NULL CHECK (fence > 0),
-    revoked_at     TEXT NOT NULL,
-    UNIQUE (vault_uid, incarnation_id, principal, scope, fence)
-)'),
-('index', 'processing_consent_revocations_scope', 'CREATE INDEX processing_consent_revocations_scope
-    ON processing_consent_revocations(
-        vault_uid, incarnation_id, principal, scope, fence
-    )'),
-('trigger', 'processing_incarnations_immutable_update', 'CREATE TRIGGER processing_incarnations_immutable_update
-BEFORE UPDATE ON processing_incarnations BEGIN
-    SELECT RAISE(ABORT, ''processing incarnation records are immutable'');
-END'),
-('trigger', 'processing_incarnations_immutable_delete', 'CREATE TRIGGER processing_incarnations_immutable_delete
-BEFORE DELETE ON processing_incarnations BEGIN
-    SELECT RAISE(ABORT, ''processing incarnation records are immutable'');
-END'),
-('trigger', 'processing_consent_grants_immutable_update', 'CREATE TRIGGER processing_consent_grants_immutable_update
-BEFORE UPDATE ON processing_consent_grants BEGIN
-    SELECT RAISE(ABORT, ''processing consent grant records are immutable'');
-END'),
-('trigger', 'processing_consent_grants_immutable_delete', 'CREATE TRIGGER processing_consent_grants_immutable_delete
-BEFORE DELETE ON processing_consent_grants BEGIN
-    SELECT RAISE(ABORT, ''processing consent grant records are immutable'');
-END'),
-('trigger', 'processing_consent_revocations_immutable_update', 'CREATE TRIGGER processing_consent_revocations_immutable_update
-BEFORE UPDATE ON processing_consent_revocations BEGIN
-    SELECT RAISE(ABORT, ''processing consent revocation records are immutable'');
-END'),
-('trigger', 'processing_consent_revocations_immutable_delete', 'CREATE TRIGGER processing_consent_revocations_immutable_delete
-BEFORE DELETE ON processing_consent_revocations BEGIN
-    SELECT RAISE(ABORT, ''processing consent revocation records are immutable'');
-END'),
-('table', 'processing_profiles', 'CREATE TABLE processing_profiles (
-    profile_fingerprint               TEXT PRIMARY KEY,
-    canonical_profile                 TEXT NOT NULL,
-    rendition_request_fingerprint     TEXT NOT NULL,
-    evidence_lexical_fingerprint      TEXT NOT NULL,
-    retention_disclosure_fingerprint  TEXT NOT NULL,
-    attachment_policy_fingerprint     TEXT NOT NULL,
-    consent_fingerprint               TEXT NOT NULL,
-    rendition_disclosure_fingerprint  TEXT NOT NULL,
-    trust_boundary                    TEXT NOT NULL
-)'),
-('table', 'rendition_builds', 'CREATE TABLE rendition_builds (
-    build_id                             TEXT PRIMARY KEY,
-    vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
-    source_sha256                        TEXT NOT NULL REFERENCES blobs(hash),
-    rendition_request_fingerprint        TEXT NOT NULL,
-    evidence_lexical_fingerprint         TEXT NOT NULL,
-    captured_artifact_policy_fingerprint TEXT NOT NULL,
-    captured_artifact_policy_json        TEXT NOT NULL,
-    authorization_checksum               TEXT NOT NULL,
-    provider_operation_id                TEXT NOT NULL,
-    provider_receipt_json                 TEXT NOT NULL,
-    evidence_checksum                    TEXT NOT NULL,
-    rendition_checksum                   TEXT NOT NULL,
-    markdown_checksum                    TEXT NOT NULL,
-    completeness                         TEXT NOT NULL,
-    partial_success                      INTEGER NOT NULL CHECK (partial_success IN (0, 1)),
-    truncated                            INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-    warnings_json                        TEXT NOT NULL,
-    completed_at                         TEXT NOT NULL,
-    declared_artifact_count              INTEGER NOT NULL
-        CHECK (declared_artifact_count >= 0),
-    unit_count                           INTEGER NOT NULL
-        CHECK (unit_count >= 0),
-    lexical_segment_count                INTEGER NOT NULL
-        CHECK (lexical_segment_count >= 0),
-    UNIQUE (vault_uid, build_id),
-    UNIQUE (
-        vault_uid, source_sha256, rendition_request_fingerprint,
-        evidence_lexical_fingerprint, captured_artifact_policy_fingerprint
-    )
-)'),
-('index', 'rendition_builds_source', 'CREATE INDEX rendition_builds_source
-    ON rendition_builds(source_sha256, build_id)'),
-('table', 'rendition_artifacts', 'CREATE TABLE rendition_artifacts (
-    build_id    TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    artifact_id TEXT NOT NULL,
-    role        TEXT NOT NULL,
-    blob_hash   TEXT NOT NULL REFERENCES blobs(hash),
-    size        INTEGER NOT NULL CHECK (size >= 0),
-    checksum    TEXT NOT NULL,
-    PRIMARY KEY (build_id, artifact_id)
-)'),
-('index', 'rendition_artifacts_blob', 'CREATE INDEX rendition_artifacts_blob
-    ON rendition_artifacts(blob_hash, build_id)'),
-('table', 'rendition_units', 'CREATE TABLE rendition_units (
-    build_id          TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    unit_id           TEXT NOT NULL,
-    evidence_unit_id  TEXT NOT NULL,
-    unit_order        INTEGER NOT NULL CHECK (unit_order >= 0),
-    checksum          TEXT NOT NULL,
-    heading_path_json TEXT NOT NULL,
-    locator_json      TEXT NOT NULL,
-    PRIMARY KEY (build_id, unit_id),
-    UNIQUE (build_id, unit_order)
-)'),
-('table', 'rendition_lexical_segments', 'CREATE TABLE rendition_lexical_segments (
-    build_id     TEXT NOT NULL,
-    segment_id   TEXT NOT NULL,
-    unit_id      TEXT NOT NULL,
-    segment_order INTEGER NOT NULL CHECK (segment_order >= 0),
-    char_start   INTEGER NOT NULL CHECK (char_start >= 0),
-    char_end     INTEGER NOT NULL CHECK (char_end >= char_start),
-    checksum     TEXT NOT NULL,
-    text         TEXT NOT NULL,
-    PRIMARY KEY (build_id, segment_id),
-    UNIQUE (build_id, segment_order),
-    FOREIGN KEY (build_id, unit_id)
-        REFERENCES rendition_units(build_id, unit_id)
-)'),
-('table', 'rendition_attachments', 'CREATE TABLE rendition_attachments (
-    attachment_id                    TEXT PRIMARY KEY,
-    vault_uid                        TEXT NOT NULL,
-    content_version_id               TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
-    build_id                          TEXT NOT NULL,
-    profile_fingerprint               TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
-    retention_disclosure_fingerprint  TEXT NOT NULL,
-    attachment_policy_fingerprint     TEXT NOT NULL,
-    consent_fingerprint               TEXT NOT NULL,
-    rendition_disclosure_fingerprint  TEXT NOT NULL,
-    trust_boundary                    TEXT NOT NULL,
-    attached_at                       TEXT NOT NULL,
-    FOREIGN KEY (vault_uid, build_id)
-        REFERENCES rendition_builds(vault_uid, build_id),
-    UNIQUE (content_version_id, profile_fingerprint, attachment_id),
-    UNIQUE (content_version_id, profile_fingerprint, build_id)
-)'),
-('table', 'rendition_heads', 'CREATE TABLE rendition_heads (
-    content_version_id          TEXT NOT NULL,
-    profile_fingerprint         TEXT NOT NULL,
-    attachment_id               TEXT NOT NULL,
-    published_at                TEXT NOT NULL,
-    PRIMARY KEY (content_version_id, profile_fingerprint),
-    FOREIGN KEY (content_version_id, profile_fingerprint, attachment_id)
-        REFERENCES rendition_attachments(
-            content_version_id, profile_fingerprint, attachment_id
-        ) ON DELETE CASCADE
-)'),
-('table', 'rendition_jobs', 'CREATE TABLE rendition_jobs (
-    job_id                               TEXT PRIMARY KEY,
-    vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
-    source_sha256                        TEXT NOT NULL REFERENCES blobs(hash),
-    rendition_request_fingerprint        TEXT NOT NULL,
-    evidence_lexical_fingerprint         TEXT NOT NULL,
-    captured_artifact_policy_fingerprint TEXT NOT NULL,
-    execution_identity_fingerprint        TEXT NOT NULL,
-    execution_identity_json               TEXT NOT NULL,
-    execution_snapshot_json               TEXT,
-    captured_artifact_policy_json        TEXT NOT NULL,
-    state                                TEXT NOT NULL,
-    phase                                TEXT NOT NULL,
-    claim_owner                          TEXT,
-    claim_epoch                          INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
-    lease_expires_at                     TEXT,
-    available_at                         TEXT NOT NULL,
-    provider_started                     INTEGER NOT NULL DEFAULT 0
-        CHECK (provider_started IN (0, 1)),
-    provider_attempts                    INTEGER NOT NULL DEFAULT 0
-        CHECK (provider_attempts >= 0),
-    provider_resume_handle               TEXT,
-    selected_waiter_id                   TEXT,
-    authorization_grant_id               TEXT,
-    authorization_incarnation_id         TEXT,
-    authorization_revocation_fence       INTEGER,
-    lexical_generation_id                TEXT,
-    failure_code                         TEXT,
-    created_at                           TEXT NOT NULL,
-    updated_at                           TEXT NOT NULL,
-    CHECK ((authorization_grant_id IS NULL) =
-           (authorization_incarnation_id IS NULL AND authorization_revocation_fence IS NULL))
-)'),
-('index', 'rendition_jobs_claimable', 'CREATE INDEX rendition_jobs_claimable
-    ON rendition_jobs(state, available_at, lease_expires_at, job_id)'),
-('table', 'rendition_job_waiters', 'CREATE TABLE rendition_job_waiters (
-    waiter_id                TEXT PRIMARY KEY,
-    job_id                   TEXT NOT NULL REFERENCES rendition_jobs(job_id) ON DELETE CASCADE,
-    content_version_id       TEXT NOT NULL REFERENCES content_versions(version_id),
-    profile_fingerprint      TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
-    principal                TEXT NOT NULL,
-    scope                    TEXT NOT NULL,
-    disclosure_fingerprint   TEXT NOT NULL,
-    input_classes_json       TEXT NOT NULL,
-    retained_classes_json    TEXT NOT NULL,
-    state                    TEXT NOT NULL,
-    attachment_id            TEXT NOT NULL,
-    created_at               TEXT NOT NULL,
-    updated_at               TEXT NOT NULL
-)'),
-('index', 'rendition_job_waiters_job', 'CREATE INDEX rendition_job_waiters_job
-    ON rendition_job_waiters(job_id, state, waiter_id)'),
-('trigger', 'processing_profiles_immutable_update', 'CREATE TRIGGER processing_profiles_immutable_update
-BEFORE UPDATE ON processing_profiles BEGIN
-    SELECT RAISE(ABORT, ''processing profile records are immutable'');
-END'),
-('trigger', 'rendition_builds_immutable_update', 'CREATE TRIGGER rendition_builds_immutable_update
-BEFORE UPDATE ON rendition_builds BEGIN
-    SELECT RAISE(ABORT, ''rendition build records are immutable'');
-END'),
-('trigger', 'rendition_artifacts_immutable_update', 'CREATE TRIGGER rendition_artifacts_immutable_update
-BEFORE UPDATE ON rendition_artifacts BEGIN
-    SELECT RAISE(ABORT, ''rendition artifact records are immutable'');
-END'),
-('trigger', 'rendition_units_immutable_update', 'CREATE TRIGGER rendition_units_immutable_update
-BEFORE UPDATE ON rendition_units BEGIN
-    SELECT RAISE(ABORT, ''rendition unit records are immutable'');
-END'),
-('trigger', 'rendition_lexical_segments_immutable_update', 'CREATE TRIGGER rendition_lexical_segments_immutable_update
-BEFORE UPDATE ON rendition_lexical_segments BEGIN
-    SELECT RAISE(ABORT, ''rendition lexical segment records are immutable'');
-END'),
-('trigger', 'rendition_attachments_immutable_update', 'CREATE TRIGGER rendition_attachments_immutable_update
-BEFORE UPDATE ON rendition_attachments BEGIN
-    SELECT RAISE(ABORT, ''rendition attachment records are immutable'');
-END'),
-('table', 'current_rendition_roots', 'CREATE TABLE current_rendition_roots (
-    root_id       TEXT PRIMARY KEY,
-    root_kind     TEXT NOT NULL,
-    target_kind   TEXT NOT NULL,
-    target_id     TEXT NOT NULL,
-    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
-    recorded_at   TEXT NOT NULL,
-    expires_at    TEXT,
-    active        INTEGER NOT NULL CHECK (active IN (0, 1)),
-    released_at   TEXT,
-    CHECK ((active = 1) = (released_at IS NULL))
-)'),
-('index', 'current_rendition_roots_target', 'CREATE INDEX current_rendition_roots_target
-    ON current_rendition_roots(target_kind, target_id, root_kind)'),
-('index', 'current_rendition_roots_expiry', 'CREATE INDEX current_rendition_roots_expiry
-    ON current_rendition_roots(expires_at)
-    WHERE expires_at IS NOT NULL'),
-('table', 'derivative_purge_suppressions', 'CREATE TABLE derivative_purge_suppressions (
-    source_sha256        TEXT NOT NULL,
-    profile_fingerprint  TEXT NOT NULL,
-    build_id             TEXT NOT NULL,
-    purged_at            TEXT NOT NULL,
-    active               INTEGER NOT NULL CHECK (active IN (0, 1)),
-    superseded_at        TEXT,
-    superseding_build_id TEXT,
-    PRIMARY KEY (source_sha256, profile_fingerprint, build_id),
-    CHECK ((active = 1) = (superseded_at IS NULL AND superseding_build_id IS NULL))
-)'),
-('index', 'derivative_purge_suppressions_active_source', 'CREATE INDEX derivative_purge_suppressions_active_source
-    ON derivative_purge_suppressions(source_sha256, profile_fingerprint)
-    WHERE active = 1'),
-('table', 'rendition_blob_staging', 'CREATE TABLE rendition_blob_staging (
-    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
-)'),
-('table', 'derivative_blob_purge_pending', 'CREATE TABLE derivative_blob_purge_pending (
-    blob_hash TEXT PRIMARY KEY REFERENCES blobs(hash) ON DELETE CASCADE
-)'),
-('table', 'derivative_pack_purge_pending', 'CREATE TABLE derivative_pack_purge_pending (
-    store_id TEXT NOT NULL,
-    pack_id  TEXT NOT NULL,
-    PRIMARY KEY (store_id, pack_id),
-    FOREIGN KEY (store_id, pack_id) REFERENCES blob_packs(store_id, pack_id) ON DELETE CASCADE
-)'),
-('trigger', 'content_versions_promote_rendition_staging', 'CREATE TRIGGER content_versions_promote_rendition_staging
-AFTER INSERT ON content_versions BEGIN
-    DELETE FROM rendition_blob_staging WHERE blob_hash=NEW.blob_hash;
-END'),
-('trigger', 'content_versions_revoke_derivative_purge', 'CREATE TRIGGER content_versions_revoke_derivative_purge
-AFTER INSERT ON content_versions BEGIN
-    DELETE FROM derivative_blob_purge_pending WHERE blob_hash=NEW.blob_hash;
-END');
-
-CREATE TEMP TABLE IF NOT EXISTS docbank_processing_schema_preflight (
-    identity_matches INTEGER NOT NULL,
-    CONSTRAINT processing_metadata_schema_identity CHECK (identity_matches = 1)
-);
-DELETE FROM docbank_processing_schema_preflight;
-INSERT INTO docbank_processing_schema_preflight(identity_matches)
-SELECT CASE
-    WHEN NOT EXISTS (
-        SELECT 1 FROM sqlite_schema
-        WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
-           OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            SELECT object_name FROM docbank_processing_schema_v1_expected
-            WHERE object_type='table'
-        ))
-    ) THEN 1
-    WHEN NOT EXISTS (
-        SELECT object_type, object_name, object_sql
-        FROM docbank_processing_schema_v1_expected
-        EXCEPT
-        SELECT type, name, sql FROM sqlite_schema
-        WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
-           OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            SELECT object_name FROM docbank_processing_schema_v1_expected
-            WHERE object_type='table'
-        ))
-    ) AND NOT EXISTS (
-        SELECT type, name, sql FROM sqlite_schema
-        WHERE name IN (SELECT object_name FROM docbank_processing_schema_v1_expected)
-           OR (type IN ('index', 'trigger') AND sql IS NOT NULL AND tbl_name IN (
-            SELECT object_name FROM docbank_processing_schema_v1_expected
-            WHERE object_type='table'
-        ))
-        EXCEPT
-        SELECT object_type, object_name, object_sql
-        FROM docbank_processing_schema_v1_expected
-    ) THEN 1
-    ELSE 0
-END;
-DROP TABLE docbank_processing_schema_preflight;
-DROP TABLE docbank_processing_schema_v1_expected;
-
--- The lexical projection is created lazily, but once any part exists it must
--- be the complete current layout. This rejects partial unshipped schema-v4
--- states instead of silently layering new columns or membership tables onto
--- an older projection.
-CREATE TEMP TABLE IF NOT EXISTS docbank_lexical_schema_expected (
-    object_type TEXT NOT NULL,
-    object_name TEXT NOT NULL,
-    object_sql  TEXT NOT NULL,
-    PRIMARY KEY (object_type, object_name)
-);
-DELETE FROM docbank_lexical_schema_expected;
-INSERT INTO docbank_lexical_schema_expected(object_type, object_name, object_sql) VALUES
-('table', 'rendition_lexical_generations', 'CREATE TABLE rendition_lexical_generations (
-    generation_id TEXT PRIMARY KEY,
-    segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
-    build_count   INTEGER NOT NULL CHECK (build_count >= 0),
-    built_at      TEXT NOT NULL
-)'),
-('table', 'rendition_lexical_generation_manifests', 'CREATE TABLE rendition_lexical_generation_manifests (
-    generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
-    manifest_digest TEXT NOT NULL CHECK (length(manifest_digest) = 64),
-    build_digest    TEXT NOT NULL CHECK (length(build_digest) = 64)
-)'),
-('table', 'rendition_lexical_generation_builds', 'CREATE TABLE rendition_lexical_generation_builds (
-    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE,
-    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    PRIMARY KEY (generation_id, build_id)
-)'),
-('table', 'rendition_lexical_fts', 'CREATE VIRTUAL TABLE rendition_lexical_fts USING fts5(
-    generation_id UNINDEXED,
-    build_id      UNINDEXED,
-    segment_id    UNINDEXED,
-    text
-)'),
-('table', 'rendition_lexical_heads', 'CREATE TABLE rendition_lexical_heads (
-    singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
-    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
-)');
-
-CREATE TEMP TABLE IF NOT EXISTS docbank_lexical_schema_preflight (
-    identity_matches INTEGER NOT NULL,
-    CONSTRAINT lexical_projection_schema_identity CHECK (identity_matches = 1)
-);
-DELETE FROM docbank_lexical_schema_preflight;
-INSERT INTO docbank_lexical_schema_preflight(identity_matches)
-SELECT CASE
-    WHEN NOT EXISTS (
-        SELECT 1 FROM sqlite_schema
-        WHERE name IN (SELECT object_name FROM docbank_lexical_schema_expected)
-    ) THEN 1
-    WHEN NOT EXISTS (
-        SELECT object_type, object_name, object_sql
-        FROM docbank_lexical_schema_expected
-        EXCEPT
-        SELECT type, name, sql FROM sqlite_schema
-        WHERE name IN (SELECT object_name FROM docbank_lexical_schema_expected)
-    ) AND NOT EXISTS (
-        SELECT type, name, sql FROM sqlite_schema
-        WHERE name IN (SELECT object_name FROM docbank_lexical_schema_expected)
-        EXCEPT
-        SELECT object_type, object_name, object_sql
-        FROM docbank_lexical_schema_expected
-    ) THEN 1
-    ELSE 0
-END;
-DROP TABLE docbank_lexical_schema_preflight;
-DROP TABLE docbank_lexical_schema_expected;
-
 -- One stable logical identity follows the vault through JSONL backup and
 -- restore. Filesystem location is deliberately not identity.
 CREATE TABLE IF NOT EXISTS vault_metadata (
@@ -816,7 +384,7 @@ CREATE TABLE IF NOT EXISTS visual_preview_generations (
     canonical_result      BLOB NOT NULL
         CHECK (length(canonical_result) BETWEEN 2 AND 65536),
     checksum              TEXT NOT NULL,
-    state                 TEXT NOT NULL CHECK (state IN ('ready', 'unsupported', 'failed')),
+    state                 TEXT NOT NULL,
     output_blob_hash      TEXT REFERENCES blobs(hash),
     output_size           INTEGER,
     output_media_type     TEXT,
@@ -826,26 +394,7 @@ CREATE TABLE IF NOT EXISTS visual_preview_generations (
     failure_detail        TEXT,
     created_at            TEXT NOT NULL,
     UNIQUE (content_version_id, recipe_fingerprint),
-    UNIQUE (content_version_id, generation_id),
-    CHECK (
-        (state = 'ready'
-         AND output_blob_hash IS NOT NULL
-         AND output_size > 0
-         AND output_media_type IS NOT NULL
-         AND output_width > 0
-         AND output_height > 0
-         AND failure_code IS NULL
-         AND failure_detail IS NULL)
-        OR
-        (state IN ('unsupported', 'failed')
-         AND output_blob_hash IS NULL
-         AND output_size IS NULL
-         AND output_media_type IS NULL
-         AND output_width IS NULL
-         AND output_height IS NULL
-         AND failure_code IS NOT NULL
-         AND failure_detail IS NOT NULL)
-    )
+    UNIQUE (content_version_id, generation_id)
 );
 
 CREATE INDEX IF NOT EXISTS visual_preview_generations_output
@@ -1138,6 +687,75 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
         REFERENCES rendition_attachments(
             content_version_id, profile_fingerprint, attachment_id
         ) ON DELETE CASCADE
+);
+
+-- The lexical projection is rebuildable search state over immutable rendition
+-- builds. Segment text is indexed once per build in rendition_lexical_index;
+-- the FTS table is an external-content index over it. A generation names one
+-- exact set of builds, and the head selects the generation that search reads,
+-- so publishing a new generation never copies text an earlier one indexed.
+CREATE TABLE IF NOT EXISTS rendition_lexical_index (
+    row_id     INTEGER PRIMARY KEY,
+    build_id   TEXT NOT NULL REFERENCES rendition_builds(build_id),
+    segment_id TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    UNIQUE (build_id, segment_id)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS rendition_lexical_fts USING fts5(
+    build_id      UNINDEXED,
+    segment_id    UNINDEXED,
+    text,
+    content='rendition_lexical_index',
+    content_rowid='row_id'
+);
+
+CREATE TRIGGER IF NOT EXISTS rendition_lexical_index_insert
+AFTER INSERT ON rendition_lexical_index BEGIN
+    INSERT INTO rendition_lexical_fts(rowid, build_id, segment_id, text)
+    VALUES (NEW.row_id, NEW.build_id, NEW.segment_id, NEW.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS rendition_lexical_index_delete
+AFTER DELETE ON rendition_lexical_index BEGIN
+    INSERT INTO rendition_lexical_fts(rendition_lexical_fts, rowid, build_id, segment_id, text)
+    VALUES ('delete', OLD.row_id, OLD.build_id, OLD.segment_id, OLD.text);
+END;
+
+CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
+    generation_id TEXT PRIMARY KEY,
+    segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
+    build_count   INTEGER NOT NULL CHECK (build_count >= 0),
+    built_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rendition_lexical_generation_manifests (
+    generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
+    manifest_digest TEXT NOT NULL,
+    build_digest    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rendition_lexical_generation_builds (
+    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
+        ON DELETE CASCADE,
+    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
+    PRIMARY KEY (generation_id, build_id)
+);
+
+CREATE INDEX IF NOT EXISTS rendition_lexical_generation_builds_build
+    ON rendition_lexical_generation_builds(build_id);
+
+CREATE TABLE IF NOT EXISTS rendition_lexical_heads (
+    singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
+    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
+);
+
+-- Generations the head has moved away from. A superseded generation is
+-- collected by the next head flip once no root, reader lease, or job still
+-- names it; generations staged for a future publication are never touched.
+CREATE TABLE IF NOT EXISTS rendition_lexical_superseded (
+    generation_id TEXT PRIMARY KEY
+        REFERENCES rendition_lexical_generations(generation_id) ON DELETE CASCADE
 );
 
 -- Rendition jobs are restart authority, not immutable artifact authority.

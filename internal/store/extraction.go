@@ -540,17 +540,6 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 }
 
 func hasPublishedLexicalHeadTx(ctx context.Context, tx *sql.Tx) (bool, error) {
-	var schemaExists bool
-	if err := tx.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM sqlite_schema
-			WHERE type='table' AND name='rendition_lexical_heads'
-		)`).Scan(&schemaExists); err != nil {
-		return false, fmt.Errorf("checking lexical projection schema: %w", err)
-	}
-	if !schemaExists {
-		return false, nil
-	}
 	var published bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM rendition_lexical_heads WHERE singleton=1)

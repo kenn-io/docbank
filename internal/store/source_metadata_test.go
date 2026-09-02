@@ -25,7 +25,7 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 
 	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
-			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Report"}}}}
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Report")}}}}
 	canonical, _, err := document.MarshalSourceMetadataV1(metadata)
 	require.NoError(t, err)
 	generation, err := s.PublishSourceMetadata(ctx, version.BlobHash, fakeHash("f1"), canonical)
@@ -34,14 +34,14 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 
 	view, err := s.ContentVersionSourceMetadata(ctx, version.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "Report", view.Metadata.Fields[0].Value.String)
+	assert.Equal(t, "Report", *view.Metadata.Fields[0].Value.String)
 	assert.Equal(t, "report.PDF", view.Attachment.Filename)
 	assert.Equal(t, ".pdf", view.Attachment.Extension)
 	assert.Equal(t, "/synthetic/report.PDF", view.Attachment.SourcePath)
 	assert.NotContains(t, string(view.Generation.CanonicalJSON), "report.PDF")
 
 	changed := metadata
-	changed.Fields[0].Value.String = "Changed"
+	changed.Fields[0].Value.String = new("Changed")
 	changedCanonical, _, err := document.MarshalSourceMetadataV1(changed)
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, version.BlobHash, fakeHash("f1"), changedCanonical)
@@ -143,6 +143,34 @@ func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) 
 	assert.Equal(t, viewByPath.Path, viewByPath.SourceMetadata.Attachment.Path)
 }
 
+// Derived evidence must never take the primary node read down with it: a
+// corrupt generation is omitted from stat and reported by the dedicated
+// metadata read and by verification instead.
+func TestNodeSourceMetadataViewOmitsCorruptEvidence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "evidence.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `DROP TRIGGER source_metadata_generations_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE source_metadata_generations SET checksum=?`, fakeHash("bad"))
+	require.NoError(t, err)
+
+	view, err := s.NodeSourceMetadataViewByID(ctx, node.ID)
+	require.NoError(t, err, "stat survives corrupt derived evidence")
+	assert.Nil(t, view.SourceMetadata)
+	assert.Equal(t, "/evidence.pdf", view.Path)
+
+	_, err = s.ContentVersionSourceMetadata(ctx, node.CurrentVersionID)
+	require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
+	require.ErrorContains(t, s.ValidateMetadata(ctx), "source metadata")
+}
+
 func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
@@ -155,7 +183,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 			node, err := source.CreateFile(t.Context(), source.RootID(), "report.pdf", fakeHash("a1"), 4, "application/pdf")
 			require.NoError(t, err)
 			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
-				Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Round\u2028trip"}}}})
+				Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Round\u2028trip")}}}})
 			require.NoError(t, err)
 			generation, err := source.PublishSourceMetadata(t.Context(), node.BlobHash, fakeHash("f1"), canonical)
 			require.NoError(t, err)
@@ -169,7 +197,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 			restored, metadata, err := target.ActiveSourceMetadata(t.Context(), node.BlobHash)
 			require.NoError(t, err)
 			assert.Equal(t, generation.GenerationID, restored.GenerationID)
-			assert.Equal(t, "Round\u2028trip", metadata.Fields[0].Value.String)
+			assert.Equal(t, "Round\u2028trip", *metadata.Fields[0].Value.String)
 		})
 	}
 }
@@ -183,7 +211,7 @@ func TestMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing
 		"application/pdf", "/synthetic/one.pdf", "")
 	require.NoError(t, err)
 
-	targets, err := s.MissingSourceMetadataTargets(ctx, fakeHash("f1"), 10)
+	targets, err := s.MissingSourceMetadataTargetsAfter(ctx, fakeHash("f1"), "", 10)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
@@ -191,10 +219,10 @@ func TestMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, targets[0].SourceSHA256, fakeHash("f1"), canonical)
 	require.NoError(t, err)
-	targets, err = s.MissingSourceMetadataTargets(ctx, fakeHash("f1"), 10)
+	targets, err = s.MissingSourceMetadataTargetsAfter(ctx, fakeHash("f1"), "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, targets)
-	targets, err = s.MissingSourceMetadataTargets(ctx, fakeHash("f2"), 10)
+	targets, err = s.MissingSourceMetadataTargetsAfter(ctx, fakeHash("f2"), "", 10)
 	require.NoError(t, err)
 	assert.Len(t, targets, 1)
 }

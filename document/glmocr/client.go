@@ -109,15 +109,15 @@ func NewClient(policy Policy, config ClientConfig) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("create GLM-OCR egress transport: %w", err)
 		}
-		httpClient = &http.Client{Timeout: config.Timeout, Transport: transport}
+		httpClient = &http.Client{
+			Timeout: config.Timeout, Transport: transport, CheckRedirect: providerhttp.RefuseRedirects,
+		}
 	} else {
-		clone := *httpClient
-		httpClient = &clone
+		httpClient = providerhttp.IsolateClient(httpClient)
 		if httpClient.Timeout <= 0 || httpClient.Timeout > config.Timeout {
 			httpClient.Timeout = config.Timeout
 		}
 	}
-	httpClient.CheckRedirect = providerhttp.RefuseRedirects
 	return &Client{policy: policy, http: httpClient, maxRetries: config.MaxRetries, maxRetryDelay: config.MaxRetryDelay}, nil
 }
 
@@ -155,7 +155,7 @@ func (c *Client) Process(ctx context.Context, source ocr.Source) (ocr.Result, er
 
 	requests := 0
 	var latency time.Duration
-	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+	for attempt := 0; ; attempt++ {
 		wire, retryAfter, requested, requestLatency, err := c.processOnce(ctx, payload)
 		if requested {
 			requests++
@@ -185,7 +185,6 @@ func (c *Client) Process(ctx context.Context, source ocr.Source) (ocr.Result, er
 			return ocr.Result{}, &ocr.ProviderError{Metrics: metrics, Cause: err}
 		}
 	}
-	panic("unreachable")
 }
 
 func (c *Client) readSource(ctx context.Context, source ocr.Source) (_ []byte, err error) {

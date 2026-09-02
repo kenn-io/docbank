@@ -97,9 +97,13 @@ func writeNodeStat(cmd *cobra.Command, node api.Node) error {
 func sourceMetadataDisplayValue(value document.SourceMetadataValueV1) string {
 	switch value.Kind {
 	case document.SourceMetadataString:
-		return strconv.Quote(value.String)
+		if value.String != nil {
+			return strconv.Quote(*value.String)
+		}
 	case document.SourceMetadataStringList:
-		return strconv.Quote(strings.Join(value.Strings, "; "))
+		if value.Strings != nil {
+			return strconv.Quote(strings.Join(value.Strings, "; "))
+		}
 	case document.SourceMetadataInteger:
 		if value.Integer != nil {
 			return strconv.FormatInt(*value.Integer, 10)

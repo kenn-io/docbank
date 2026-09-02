@@ -2,12 +2,11 @@
 package bridge
 
 import (
-	"context"
 	"encoding/json/jsontext"
-	"net/http"
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 )
 
 const (
@@ -33,9 +32,7 @@ const (
 
 // SecretResolver resolves only a configured named binding. Secret values are
 // used for the fixed Authorization header and never enter manifests or receipts.
-type SecretResolver interface {
-	ResolveSecret(ctx context.Context, name string) (string, error)
-}
+type SecretResolver = providerutil.SecretResolver
 
 // Profile fixes one bridge origin, provider identity, and execution bounds.
 type Profile struct {
@@ -51,16 +48,11 @@ type Profile struct {
 
 // Client implements document.RenditionProvider through docbank-rendition/v1.
 type Client struct {
-	origin           string
-	descriptor       document.RenditionDescriptor
-	secretBinding    string
-	secrets          SecretResolver
-	http             *http.Client
-	requestTimeout   time.Duration
-	totalTimeout     time.Duration
-	pollInterval     time.Duration
-	maxPollAttempts  int
-	maxResponseBytes int64
+	executor        providerutil.Executor
+	descriptor      document.RenditionDescriptor
+	totalTimeout    time.Duration
+	pollInterval    time.Duration
+	maxPollAttempts int
 }
 
 // AuthorizationManifest is the canonical multipart policy part sent beside

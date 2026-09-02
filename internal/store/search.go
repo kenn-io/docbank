@@ -76,40 +76,17 @@ type LexicalGenerationLease struct {
 	released   bool
 }
 
+// lexicalGenerationReaders tracks live reader leases per store. The mutex
+// guards only the map and is held briefly, never while waiting on SQLite.
+// Ordering against collection comes from SQLite itself: a standalone lease
+// is pinned inside a write transaction, so it serializes with the
+// publication or purge that snapshots pins and deletes generations, and a
+// read-bound lease is pinned inside the read snapshot it serves.
 var lexicalGenerationReaders = struct {
 	sync.Mutex
 
 	stores map[*Store]map[string]int
 }{stores: make(map[*Store]map[string]int)}
-
-const lexicalProjectionSchema = `
-CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
-    generation_id TEXT PRIMARY KEY,
-    segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
-    build_count   INTEGER NOT NULL CHECK (build_count >= 0),
-    built_at      TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS rendition_lexical_generation_manifests (
-    generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
-    manifest_digest TEXT NOT NULL CHECK (length(manifest_digest) = 64),
-    build_digest    TEXT NOT NULL CHECK (length(build_digest) = 64)
-);
-CREATE TABLE IF NOT EXISTS rendition_lexical_generation_builds (
-    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE,
-    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    PRIMARY KEY (generation_id, build_id)
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS rendition_lexical_fts USING fts5(
-    generation_id UNINDEXED,
-    build_id      UNINDEXED,
-    segment_id    UNINDEXED,
-    text
-);
-CREATE TABLE IF NOT EXISTS rendition_lexical_heads (
-    singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
-    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
-);`
 
 // RecordRenditionBlob grants catalog authority to one verified Docbank blob
 // receipt without creating a document version or conferring visibility.
@@ -183,9 +160,6 @@ func (s *Store) StageLexicalGenerationWithRoot(
 func stageLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 ) (LexicalGeneration, error) {
-	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("initializing lexical projection: %w", err)
-	}
 	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
 		return LexicalGeneration{}, err
@@ -238,11 +212,6 @@ func stageLexicalGenerationRowsTx(
 		ID: generationID, SegmentCount: len(segments), ManifestDigest: lexicalManifestDigest(segments),
 		BuildCount: len(buildIDs), BuildDigest: lexicalBuildDigest(buildIDs),
 	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM rendition_lexical_fts WHERE generation_id=?`, generationID,
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("clearing interrupted lexical generation %s: %w", generationID, err)
-	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO rendition_lexical_generations(generation_id,segment_count,build_count,built_at)
 		VALUES(?,?,?,?)`, generation.ID, generation.SegmentCount, generation.BuildCount, nowRFC3339(),
@@ -257,13 +226,8 @@ func stageLexicalGenerationRowsTx(
 				"recording lexical generation %s build %s: %w", generationID, buildID, err)
 		}
 	}
-	for _, segment := range segments {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_fts(generation_id,build_id,segment_id,text)
-			VALUES(?,?,?,?)`, generationID, segment.buildID, segment.segmentID, segment.text,
-		); err != nil {
-			return LexicalGeneration{}, fmt.Errorf("building lexical generation %s: %w", generationID, err)
-		}
+	if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("building lexical generation %s: %w", generationID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO rendition_lexical_generation_manifests(
@@ -340,6 +304,123 @@ func readCatalogLexicalManifestRowsTx(
 	return result, nil
 }
 
+// indexLexicalSegmentsTx adds segment text for builds that no generation has
+// indexed yet. Builds are immutable, so rows already present are exact.
+func indexLexicalSegmentsTx(
+	ctx context.Context, tx *sql.Tx, segments []lexicalManifestRow,
+) error {
+	indexed := make(map[string]bool)
+	for _, segment := range segments {
+		done, known := indexed[segment.buildID]
+		if !known {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM rendition_lexical_index WHERE build_id=?)`, segment.buildID,
+			).Scan(&done); err != nil {
+				return fmt.Errorf("checking lexical index for build %s: %w", segment.buildID, err)
+			}
+			indexed[segment.buildID] = done
+		}
+		if done {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO rendition_lexical_index(build_id,segment_id,text) VALUES(?,?,?)`,
+			segment.buildID, segment.segmentID, segment.text,
+		); err != nil {
+			return fmt.Errorf("indexing lexical segment %s of build %s: %w",
+				segment.segmentID, segment.buildID, err)
+		}
+	}
+	return nil
+}
+
+// publishLexicalHeadTx moves the lexical head to generationID, records the
+// generation it replaced as superseded, and collects every superseded
+// generation nothing can read any more. Running collection inside the flip
+// keeps the projection proportional to the catalog instead of to the number
+// of publications.
+func (s *Store) publishLexicalHeadTx(ctx context.Context, tx *sql.Tx, generationID string) error {
+	var previous string
+	err := tx.QueryRowContext(ctx,
+		`SELECT generation_id FROM rendition_lexical_heads WHERE singleton=1`).Scan(&previous)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reading current lexical head: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
+		ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
+		generationID); err != nil {
+		return fmt.Errorf("publishing lexical head: %w", err)
+	}
+	if previous != "" && previous != generationID {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_superseded(generation_id)
+			VALUES(?) ON CONFLICT(generation_id) DO NOTHING`, previous); err != nil {
+			return fmt.Errorf("recording superseded lexical generation %s: %w", previous, err)
+		}
+	}
+	_, err = s.collectSupersededLexicalGenerationsTx(ctx, tx)
+	return err
+}
+
+// collectSupersededLexicalGenerationsTx removes every superseded generation
+// nothing can read any more: not the head, not held by an active root, not
+// pinned by a live reader lease, and not the staged generation of a rendition
+// job. Index rows for builds that no remaining generation names go with them.
+func (s *Store) collectSupersededLexicalGenerationsTx(
+	ctx context.Context, tx *sql.Tx,
+) (int, error) {
+	candidates, err := stringColumnTx(ctx, tx, "superseded lexical generations", `
+		SELECT g.generation_id FROM rendition_lexical_superseded g
+		WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_heads h
+		                  WHERE h.generation_id=g.generation_id)
+		  AND NOT EXISTS (SELECT 1 FROM current_rendition_roots r
+		                  WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
+		                    AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?))
+		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j
+		                  WHERE j.lexical_generation_id=g.generation_id)
+		ORDER BY g.generation_id`, nowRFC3339())
+	if err != nil {
+		return 0, err
+	}
+	pinned := s.pinnedLexicalGenerationIDs()
+	removed := 0
+	for _, generationID := range candidates {
+		if _, live := pinned[generationID]; live {
+			continue
+		}
+		for _, statement := range []string{
+			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`,
+			`DELETE FROM rendition_lexical_generations WHERE generation_id=?`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
+				return removed, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
+			}
+		}
+		removed++
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
+		WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
+		                  WHERE gb.build_id=rendition_lexical_index.build_id)`); err != nil {
+		return removed, fmt.Errorf("collecting unreferenced lexical index rows: %w", err)
+	}
+	return removed, nil
+}
+
+func (s *Store) pinnedLexicalGenerationIDs() map[string]struct{} {
+	lexicalGenerationReaders.Lock()
+	defer lexicalGenerationReaders.Unlock()
+	pinned := make(map[string]struct{})
+	for generationID, readers := range lexicalGenerationReaders.stores[s] {
+		if readers > 0 {
+			pinned[generationID] = struct{}{}
+		}
+	}
+	return pinned
+}
+
 func readLexicalManifestRowsTx(
 	ctx context.Context, tx metadataQuerier, generationID, buildID string,
 ) ([]lexicalManifestRow, error) {
@@ -349,14 +430,16 @@ func readLexicalManifestRowsTx(
 	)
 	if buildID == "" {
 		rows, err = tx.QueryContext(ctx, `
-			SELECT build_id,segment_id,text
-			FROM rendition_lexical_fts
-			WHERE generation_id=?`, generationID)
+			SELECT i.build_id,i.segment_id,i.text
+			FROM rendition_lexical_generation_builds gb
+			JOIN rendition_lexical_index i ON i.build_id=gb.build_id
+			WHERE gb.generation_id=?`, generationID)
 	} else {
 		rows, err = tx.QueryContext(ctx, `
-			SELECT build_id,segment_id,text
-			FROM rendition_lexical_fts
-			WHERE generation_id=? AND build_id=?`, generationID, buildID)
+			SELECT i.build_id,i.segment_id,i.text
+			FROM rendition_lexical_generation_builds gb
+			JOIN rendition_lexical_index i ON i.build_id=gb.build_id
+			WHERE gb.generation_id=? AND gb.build_id=?`, generationID, buildID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading lexical generation %s manifest: %w", generationID, err)
@@ -519,7 +602,7 @@ func readActiveLexicalGeneration(
 		&generation.ID, &generation.SegmentCount, &generation.ManifestDigest,
 		&generation.BuildCount, &generation.BuildDigest,
 	)
-	if errors.Is(err, sql.ErrNoRows) || isMissingLexicalSchema(err) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return LexicalGeneration{}, ErrNotFound
 	}
 	if err != nil {
@@ -529,21 +612,31 @@ func readActiveLexicalGeneration(
 }
 
 // AcquireLexicalGeneration pins the exact generation selected by the current
-// lexical head. The caller must release the returned lease.
+// lexical head. The caller must release the returned lease. The pin is taken
+// inside a write transaction so it cannot interleave with a publication or
+// purge that is deciding which generations nothing reads any more.
 func (s *Store) AcquireLexicalGeneration(ctx context.Context) (*LexicalGenerationLease, error) {
-	return s.acquireLexicalGeneration(ctx, s.db)
+	var lease *LexicalGenerationLease
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		lease, err = s.acquireLexicalGeneration(ctx, tx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return lease, nil
 }
 
 func (s *Store) acquireLexicalGeneration(
 	ctx context.Context, queryer rowQuerier,
 ) (*LexicalGenerationLease, error) {
-	lexicalGenerationReaders.Lock()
-	defer lexicalGenerationReaders.Unlock()
-
 	generation, err := readActiveLexicalGeneration(ctx, queryer)
 	if err != nil {
 		return nil, err
 	}
+	lexicalGenerationReaders.Lock()
+	defer lexicalGenerationReaders.Unlock()
 	readers := lexicalGenerationReaders.stores[s]
 	if readers == nil {
 		readers = make(map[string]int)
@@ -706,157 +799,8 @@ func (s *Store) publishRenditionAndLexicalHeads(
 	}
 
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-			return fmt.Errorf("initializing lexical projection: %w", err)
-		}
-		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
-			return err
-		}
-		build, err := loadRenditionBuild(ctx, tx, normalized.BuildID)
-		if err != nil {
-			return fmt.Errorf("reading rendition build %s: %w", normalized.BuildID, err)
-		}
-		if build.VaultID != normalized.VaultID {
-			return errors.New("rendition attachment and build belong to different vaults")
-		}
-		if build.RenditionRequestFingerprint != normalized.Profile.RenditionRequestFingerprint ||
-			build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
-			return errors.New("rendition attachment profile does not match build component identity")
-		}
-		if authorization != nil &&
-			(authorization.operationChecksum != build.AuthorizationChecksum ||
-				authorization.sourceSHA256 != build.SourceSHA256 ||
-				authorization.renditionRequestFingerprint != build.RenditionRequestFingerprint) {
-			return errors.New("provider authorization does not match rendition build operation")
-		}
-		if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
-			return err
-		}
-		var sourceSHA256 string
-		if err := tx.QueryRowContext(ctx,
-			`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
-		).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("content version %s: %w", normalized.ContentVersionID, ErrNotFound)
-		} else if err != nil {
-			return fmt.Errorf("reading content version %s: %w", normalized.ContentVersionID, err)
-		}
-		if sourceSHA256 != build.SourceSHA256 {
-			return errors.New("rendition attachment source does not match content version")
-		}
-		suppressed, err := derivativeAttachmentSuppressedTx(
-			ctx, tx, build.SourceSHA256, normalized.ContentVersionID,
-			normalized.Profile.Fingerprint, build.ID)
-		if err != nil {
-			return fmt.Errorf("checking rendition attachment purge suppression: %w", err)
-		}
-		if suppressed {
-			return fmt.Errorf("rendition attachment for build %s has an active purge suppression", build.ID)
-		}
-		if err := validateRenditionBuildStateTx(ctx, tx, build.ID); err != nil {
-			return err
-		}
-		if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID); errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
-		} else if err != nil {
-			return err
-		}
-		var containsBuild bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_lexical_generation_builds
-			WHERE generation_id=? AND build_id=?
-		)`, generationID, build.ID).Scan(&containsBuild); err != nil {
-			return fmt.Errorf("checking lexical generation %s build membership: %w", generationID, err)
-		}
-		if !containsBuild {
-			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
-				generationID, build.ID)
-		}
-		expectedBuildRows, err := readCatalogLexicalManifestRowsTx(ctx, tx, build.ID)
-		if err != nil {
-			return err
-		}
-		indexedBuildRows, err := readLexicalManifestRowsTx(ctx, tx, generationID, build.ID)
-		if err != nil {
-			return err
-		}
-		if len(indexedBuildRows) != len(expectedBuildRows) ||
-			lexicalManifestDigest(indexedBuildRows) != lexicalManifestDigest(expectedBuildRows) {
-			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
-				generationID, build.ID)
-		}
-		if authorization != nil {
-			authority, err := normalizeConsentAuthority(authorization.consent)
-			if err != nil {
-				return err
-			}
-			if !slices.Equal(authority.inputs, []string{authorization.inputClass}) {
-				return errors.New("processing consent input classes do not match rendition build input")
-			}
-			retained := make([]string, len(build.Artifacts))
-			for index, artifact := range build.Artifacts {
-				retained[index] = artifact.Role
-			}
-			slices.Sort(retained)
-			retained = slices.Compact(retained)
-			if !slices.Equal(authority.retained, retained) {
-				return errors.New("processing consent retained artifact classes do not match rendition build artifacts")
-			}
-			if _, err := s.authorizeProviderOperationTx(
-				ctx, tx, authorization.consent, time.Now().UTC(),
-			); err != nil {
-				return fmt.Errorf("authorizing rendition publication: %w", err)
-			}
-		}
-
-		result, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO rendition_attachments(
-				attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
-				retention_disclosure_fingerprint,attachment_policy_fingerprint,
-				consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
-			normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
-			normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-			normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
-			normalized.AttachedAt,
-		)
-		if err != nil {
-			return fmt.Errorf("inserting rendition attachment %s: %w", normalized.ID, err)
-		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking rendition attachment %s insertion: %w", normalized.ID, err)
-		}
-		if inserted == 0 {
-			stored, err := loadRenditionAttachment(ctx, tx, normalized.ID)
-			if err != nil {
-				return fmt.Errorf("reading rendition attachment %s: %w", normalized.ID, err)
-			}
-			if !reflect.DeepEqual(stored, normalized) {
-				return fmt.Errorf("rendition attachment %s names different immutable metadata", normalized.ID)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-			VALUES(?,?,?,?)
-			ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-				attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
-			head.ContentVersionID, head.ProcessingProfileFingerprint,
-			head.AttachmentID, head.PublishedAt,
-		); err != nil {
-			return fmt.Errorf("publishing rendition head: %w", err)
-		}
-		if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
-			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
-			generationID,
-		); err != nil {
-			return fmt.Errorf("publishing lexical head: %w", err)
-		}
-		return nil
+		return s.publishRenditionAttachmentsAndLexicalHeadsTx(ctx, tx,
+			[]renditionPublicationPair{{attachment: normalized, head: head}}, generationID, authorization)
 	})
 }
 
@@ -868,21 +812,14 @@ type renditionPublicationPair struct {
 // publishRenditionAttachmentsAndLexicalHeadsTx is the multi-waiter form used
 // by durable rendition jobs. Every attachment/head pair and the lexical head
 // become visible in this caller-owned transaction or none of them do.
-func publishRenditionAttachmentsAndLexicalHeadsTx(
+func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 	ctx context.Context, tx *sql.Tx, pairs []renditionPublicationPair, generationID string,
+	authorization *providerPublicationAuthorization,
 ) error {
 	if len(pairs) == 0 {
 		return errors.New("rendition publication requires at least one attachment")
 	}
 	if err := validateCatalogSHA256(generationID, "lexical generation ID"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-		return fmt.Errorf("initializing lexical projection: %w", err)
-	}
-	if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID); errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
-	} else if err != nil {
 		return err
 	}
 	for _, pair := range pairs {
@@ -901,115 +838,180 @@ func publishRenditionAttachmentsAndLexicalHeadsTx(
 		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
 			return err
 		}
-		build, err := loadRenditionBuild(ctx, tx, normalized.BuildID)
-		if err != nil {
-			return fmt.Errorf("reading rendition build %s: %w", normalized.BuildID, err)
-		}
-		if build.VaultID != normalized.VaultID {
-			return errors.New("rendition attachment and build belong to different vaults")
-		}
-		if build.RenditionRequestFingerprint != normalized.Profile.RenditionRequestFingerprint ||
-			build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
-			return errors.New("rendition attachment profile does not match build component identity")
-		}
-		if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
-			return err
-		}
-		var sourceSHA256 string
-		if err := tx.QueryRowContext(ctx,
-			`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
-		).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("content version %s: %w", normalized.ContentVersionID, ErrNotFound)
-		} else if err != nil {
-			return fmt.Errorf("reading content version %s: %w", normalized.ContentVersionID, err)
-		}
-		if sourceSHA256 != build.SourceSHA256 {
-			return errors.New("rendition attachment source does not match content version")
-		}
-		suppressed, err := derivativeAttachmentSuppressedTx(
-			ctx, tx, build.SourceSHA256, normalized.ContentVersionID,
-			normalized.Profile.Fingerprint, build.ID)
-		if err != nil {
-			return fmt.Errorf("checking rendition attachment purge suppression: %w", err)
-		}
-		if suppressed {
-			return fmt.Errorf("rendition attachment for build %s has an active purge suppression", build.ID)
-		}
-		if err := validateRenditionBuildStateTx(ctx, tx, build.ID); err != nil {
-			return err
-		}
-		var containsBuild bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_lexical_generation_builds
-			WHERE generation_id=? AND build_id=?
-		)`, generationID, build.ID).Scan(&containsBuild); err != nil {
-			return fmt.Errorf("checking lexical generation %s build membership: %w", generationID, err)
-		}
-		if !containsBuild {
-			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
-				generationID, build.ID)
-		}
-		expectedBuildRows, err := readCatalogLexicalManifestRowsTx(ctx, tx, build.ID)
+		build, err := validateRenditionPublicationTx(ctx, tx, normalized, generationID, authorization)
 		if err != nil {
 			return err
 		}
-		indexedBuildRows, err := readLexicalManifestRowsTx(ctx, tx, generationID, build.ID)
-		if err != nil {
+		if authorization != nil {
+			if err := s.authorizeRenditionPublicationTx(ctx, tx, build, authorization); err != nil {
+				return err
+			}
+		}
+		if err := insertRenditionAttachmentAndHeadTx(ctx, tx, normalized, pair.head); err != nil {
 			return err
 		}
-		if len(indexedBuildRows) != len(expectedBuildRows) ||
-			lexicalManifestDigest(indexedBuildRows) != lexicalManifestDigest(expectedBuildRows) {
-			return fmt.Errorf("lexical generation %s does not exactly contain build %s",
-				generationID, build.ID)
-		}
-		result, err := tx.ExecContext(ctx, `
+	}
+	if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID); errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
+	} else if err != nil {
+		return err
+	}
+	if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
+		return err
+	}
+	return s.publishLexicalHeadTx(ctx, tx, generationID)
+}
+
+// validateRenditionPublicationTx proves that one attachment names an exact
+// build whose source, profile, artifacts, and lexical rows all agree with the
+// catalog and the generation about to become the head.
+func validateRenditionPublicationTx(
+	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, generationID string,
+	authorization *providerPublicationAuthorization,
+) (RenditionBuildRecord, error) {
+	build, err := loadRenditionBuild(ctx, tx, normalized.BuildID)
+	if err != nil {
+		return build, fmt.Errorf("reading rendition build %s: %w", normalized.BuildID, err)
+	}
+	if build.VaultID != normalized.VaultID {
+		return build, errors.New("rendition attachment and build belong to different vaults")
+	}
+	if build.RenditionRequestFingerprint != normalized.Profile.RenditionRequestFingerprint ||
+		build.EvidenceLexicalFingerprint != normalized.Profile.EvidenceLexicalFingerprint {
+		return build, errors.New("rendition attachment profile does not match build component identity")
+	}
+	if authorization != nil &&
+		(authorization.operationChecksum != build.AuthorizationChecksum ||
+			authorization.sourceSHA256 != build.SourceSHA256 ||
+			authorization.renditionRequestFingerprint != build.RenditionRequestFingerprint) {
+		return build, errors.New("provider authorization does not match rendition build operation")
+	}
+	if err := validateRenditionArtifactRolesForProfile(normalized.Profile, build); err != nil {
+		return build, err
+	}
+	var sourceSHA256 string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
+	).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
+		return build, fmt.Errorf("content version %s: %w", normalized.ContentVersionID, ErrNotFound)
+	} else if err != nil {
+		return build, fmt.Errorf("reading content version %s: %w", normalized.ContentVersionID, err)
+	}
+	if sourceSHA256 != build.SourceSHA256 {
+		return build, errors.New("rendition attachment source does not match content version")
+	}
+	suppressed, err := derivativeAttachmentSuppressedTx(
+		ctx, tx, build.SourceSHA256, normalized.ContentVersionID,
+		normalized.Profile.Fingerprint, build.ID)
+	if err != nil {
+		return build, fmt.Errorf("checking rendition attachment purge suppression: %w", err)
+	}
+	if suppressed {
+		return build, fmt.Errorf("rendition attachment for build %s has an active purge suppression", build.ID)
+	}
+	if err := validateRenditionBuildStateTx(ctx, tx, build.ID); err != nil {
+		return build, err
+	}
+	var containsBuild bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM rendition_lexical_generation_builds
+		WHERE generation_id=? AND build_id=?
+	)`, generationID, build.ID).Scan(&containsBuild); err != nil {
+		return build, fmt.Errorf("checking lexical generation %s build membership: %w", generationID, err)
+	}
+	if !containsBuild {
+		return build, fmt.Errorf("lexical generation %s does not exactly contain build %s",
+			generationID, build.ID)
+	}
+	expectedBuildRows, err := readCatalogLexicalManifestRowsTx(ctx, tx, build.ID)
+	if err != nil {
+		return build, err
+	}
+	indexedBuildRows, err := readLexicalManifestRowsTx(ctx, tx, generationID, build.ID)
+	if err != nil {
+		return build, err
+	}
+	if len(indexedBuildRows) != len(expectedBuildRows) ||
+		lexicalManifestDigest(indexedBuildRows) != lexicalManifestDigest(expectedBuildRows) {
+		return build, fmt.Errorf("lexical generation %s does not exactly contain build %s",
+			generationID, build.ID)
+	}
+	return build, nil
+}
+
+// authorizeRenditionPublicationTx binds a provider-authorized publication to
+// the consent that admitted the provider call and records the operation.
+func (s *Store) authorizeRenditionPublicationTx(
+	ctx context.Context, tx *sql.Tx, build RenditionBuildRecord,
+	authorization *providerPublicationAuthorization,
+) error {
+	authority, err := normalizeConsentAuthority(authorization.consent)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(authority.inputs, []string{authorization.inputClass}) {
+		return errors.New("processing consent input classes do not match rendition build input")
+	}
+	retained := make([]string, len(build.Artifacts))
+	for index, artifact := range build.Artifacts {
+		retained[index] = artifact.Role
+	}
+	slices.Sort(retained)
+	retained = slices.Compact(retained)
+	if !slices.Equal(authority.retained, retained) {
+		return errors.New("processing consent retained artifact classes do not match rendition build artifacts")
+	}
+	if _, err := s.authorizeProviderOperationTx(
+		ctx, tx, authorization.consent, time.Now().UTC(),
+	); err != nil {
+		return fmt.Errorf("authorizing rendition publication: %w", err)
+	}
+	return nil
+}
+
+// insertRenditionAttachmentAndHeadTx records the immutable attachment, or
+// proves an existing one names the same metadata, then moves the head.
+func insertRenditionAttachmentAndHeadTx(
+	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord,
+) error {
+	result, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO rendition_attachments(
 				attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
 				retention_disclosure_fingerprint,attachment_policy_fingerprint,
 				consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
 			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
-			normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
-			normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-			normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
-			normalized.AttachedAt)
-		if err != nil {
-			return fmt.Errorf("inserting rendition attachment %s: %w", normalized.ID, err)
-		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking rendition attachment %s insertion: %w", normalized.ID, err)
-		}
-		if inserted == 0 {
-			stored, err := loadRenditionAttachment(ctx, tx, normalized.ID)
-			if err != nil {
-				return fmt.Errorf("reading rendition attachment %s: %w", normalized.ID, err)
-			}
-			// A completed job can republish its deterministic attachment after a
-			// later head supersedes it. Preserve the attachment's first timestamp.
-			normalized.AttachedAt = stored.AttachedAt
-			if !reflect.DeepEqual(stored, normalized) {
-				return fmt.Errorf("rendition attachment %s names different immutable metadata", normalized.ID)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-			VALUES(?,?,?,?)
-			ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-				attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
-			pair.head.ContentVersionID, pair.head.ProcessingProfileFingerprint,
-			pair.head.AttachmentID, pair.head.PublishedAt); err != nil {
-			return fmt.Errorf("publishing rendition head: %w", err)
-		}
+		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
+		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
+		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
+		normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
+		normalized.AttachedAt)
+	if err != nil {
+		return fmt.Errorf("inserting rendition attachment %s: %w", normalized.ID, err)
 	}
-	if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
-		return err
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rendition attachment %s insertion: %w", normalized.ID, err)
+	}
+	if inserted == 0 {
+		stored, err := loadRenditionAttachment(ctx, tx, normalized.ID)
+		if err != nil {
+			return fmt.Errorf("reading rendition attachment %s: %w", normalized.ID, err)
+		}
+		// A deterministic attachment may be republished after a later head
+		// superseded it. The first observation keeps its timestamp.
+		normalized.AttachedAt = stored.AttachedAt
+		if !reflect.DeepEqual(stored, normalized) {
+			return fmt.Errorf("rendition attachment %s names different immutable metadata", normalized.ID)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
-		ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
-		generationID); err != nil {
-		return fmt.Errorf("publishing lexical head: %w", err)
+		INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
+		VALUES(?,?,?,?)
+		ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
+			attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
+		head.ContentVersionID, head.ProcessingProfileFingerprint,
+		head.AttachmentID, head.PublishedAt); err != nil {
+		return fmt.Errorf("publishing rendition head: %w", err)
 	}
 	return nil
 }
@@ -1169,10 +1171,6 @@ func (s *Store) SearchPageWithOptions(
 	// Content may also match a node already returned by name. Over-fetch by
 	// the complete name set so duplicate filtering cannot conceal truncation.
 	remaining := limit - len(nameHits)
-	lexical, err := s.hasLexicalProjection(ctx)
-	if err != nil {
-		return nil, false, err
-	}
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
 		contentArgs := []any{fq}
@@ -1204,7 +1202,8 @@ func (s *Store) SearchPageWithOptions(
 				   AND rh.profile_fingerprint=a.profile_fingerprint
 				   AND rh.attachment_id=a.attachment_id
 				  WHERE rendition_lexical_fts MATCH ?
-				    AND rendition_lexical_fts.generation_id=?
+				    AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
+				                WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)
 				  GROUP BY a.content_version_id
 				)
 				SELECT ` + nodeCols + `
@@ -1225,22 +1224,16 @@ func (s *Store) SearchPageWithOptions(
 		contentHits, err = scanSearchRows(rows, SearchMatchContent, query)
 		return err
 	}
-	if lexical {
-		err = s.withLexicalGenerationRead(ctx, func(
-			queryer metadataQuerier, generation LexicalGeneration,
-		) error {
-			return queryContent(queryer, generation.ID)
-		})
-		if errors.Is(err, ErrNotFound) {
-			lexical = false
-		} else if err != nil {
-			return nil, false, err
-		}
+	err = s.withLexicalGenerationRead(ctx, func(
+		queryer metadataQuerier, generation LexicalGeneration,
+	) error {
+		return queryContent(queryer, generation.ID)
+	})
+	if errors.Is(err, ErrNotFound) {
+		err = queryContent(s.db, "")
 	}
-	if !lexical {
-		if err := queryContent(s.db, ""); err != nil {
-			return nil, false, err
-		}
+	if err != nil {
+		return nil, false, err
 	}
 	seen := make(map[int64]struct{}, len(nameHits))
 	for _, hit := range nameHits {
@@ -1264,22 +1257,6 @@ func (s *Store) SearchPageWithOptions(
 		return nil, false, err
 	}
 	return hits, truncated, nil
-}
-
-func (s *Store) hasLexicalProjection(ctx context.Context) (bool, error) {
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT EXISTS(
-		  SELECT 1 FROM sqlite_schema
-		  WHERE type='table' AND name='rendition_lexical_heads'
-		)`).Scan(&exists); err != nil {
-		return false, fmt.Errorf("checking lexical projection: %w", err)
-	}
-	return exists, nil
-}
-
-func isMissingLexicalSchema(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no such table: rendition_lexical_heads")
 }
 
 func searchFilterSQL(opts SearchOptions) (string, []any) {

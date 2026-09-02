@@ -67,6 +67,10 @@ func (s *Store) MigrateLegacyPlainText(
 	}
 	report := LegacyMigrationReport{ProfileFingerprint: profile.Fingerprint}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		pending, err := legacyPlainTextWorkPendingTx(ctx, tx, profile.Fingerprint)
+		if err != nil || !pending {
+			return err
+		}
 		rows, err := readLegacyPlainTextRows(ctx, tx)
 		if err != nil {
 			return err
@@ -241,11 +245,7 @@ func (s *Store) MigrateLegacyPlainText(
 		if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts`); err != nil {
 			return fmt.Errorf("fencing legacy plain-text search authority: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
-			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
-			generation.ID,
-		); err != nil {
+		if err := s.publishLexicalHeadTx(ctx, tx, generation.ID); err != nil {
 			return fmt.Errorf("publishing migrated legacy lexical head: %w", err)
 		}
 		return nil
@@ -322,6 +322,102 @@ func revokeStaleLegacyPlainTextHeadsTx(
 		}
 	}
 	return nil
+}
+
+// legacyPlainTextWorkPendingTx reports whether the migration has anything to
+// publish, revoke, queue, or fence. Open and every post-extraction publication
+// call the migration, so the common "catalog already agrees with the cache"
+// case must cost index lookups rather than a read of every cached text.
+func legacyPlainTextWorkPendingTx(
+	ctx context.Context, tx *sql.Tx, profileFingerprint string,
+) (bool, error) {
+	const usableText = `e.extractor=? AND e.extractor_version=? AND e.status=? AND e.text IS NOT NULL`
+	var pending bool
+	if err := tx.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM text_searchable_versions sv
+		       JOIN content_versions v ON v.version_id=sv.version_id
+		       JOIN extracted_text e ON e.blob_hash=v.blob_hash
+		       WHERE e.extractor=? AND e.extractor_version>?)
+		OR EXISTS(SELECT 1 FROM rendition_heads h
+		          JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		          JOIN rendition_builds b ON b.build_id=a.build_id
+		          WHERE h.profile_fingerprint=? AND b.provider_operation_id=?
+		            AND NOT EXISTS (SELECT 1 FROM text_searchable_versions sv
+		                            WHERE sv.version_id=h.content_version_id))
+		OR EXISTS(SELECT 1 FROM text_searchable_versions sv
+		          JOIN content_versions v ON v.version_id=sv.version_id
+		          WHERE NOT EXISTS (SELECT 1 FROM extracted_text e
+		                            WHERE e.blob_hash=v.blob_hash AND `+usableText+`)
+		            AND NOT EXISTS (SELECT 1 FROM text_extraction_queue q
+		                            WHERE q.blob_hash=v.blob_hash))
+		OR (EXISTS(SELECT 1 FROM content_fts) AND EXISTS(SELECT 1 FROM rendition_lexical_heads))
+		OR (NOT EXISTS(SELECT 1 FROM rendition_lexical_heads)
+		    AND (EXISTS(SELECT 1 FROM text_searchable_versions)
+		         OR EXISTS(SELECT 1 FROM extracted_text)))`,
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion,
+		profileFingerprint, legacyPlainTextProvider,
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK,
+	).Scan(&pending); err != nil {
+		return false, fmt.Errorf("checking pending legacy plain-text work: %w", err)
+	}
+	if pending {
+		return true, nil
+	}
+	// Cached text without a legacy build, and selected versions with usable
+	// text but no head, are new work unless a purge suppression keeps them
+	// out. The suppression scope is a digest only Go can compute, so check
+	// those few candidates here.
+	unheaded, err := tx.QueryContext(ctx, `
+		SELECT '' AS version_id,e.blob_hash FROM extracted_text e
+		WHERE `+usableText+`
+		  AND NOT EXISTS (SELECT 1 FROM rendition_builds b
+		                  WHERE b.source_sha256=e.blob_hash AND b.provider_operation_id=?)
+		UNION ALL
+		SELECT v.version_id,v.blob_hash FROM text_searchable_versions sv
+		JOIN content_versions v ON v.version_id=sv.version_id
+		JOIN extracted_text e ON e.blob_hash=v.blob_hash
+		WHERE `+usableText+`
+		  AND NOT EXISTS (SELECT 1 FROM rendition_heads h
+		                  WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=?)
+		ORDER BY version_id,blob_hash`,
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, legacyPlainTextProvider,
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, profileFingerprint)
+	if err != nil {
+		return false, fmt.Errorf("checking unpublished legacy plain-text versions: %w", err)
+	}
+	defer func() { _ = unheaded.Close() }()
+	type candidate struct{ versionID, blobHash string }
+	var candidates []candidate
+	for unheaded.Next() {
+		var item candidate
+		if err := unheaded.Scan(&item.versionID, &item.blobHash); err != nil {
+			return false, fmt.Errorf("scanning unpublished legacy plain-text version: %w", err)
+		}
+		candidates = append(candidates, item)
+	}
+	if err := unheaded.Err(); err != nil {
+		return false, fmt.Errorf("checking unpublished legacy plain-text versions: %w", err)
+	}
+	for _, item := range candidates {
+		if item.versionID != "" {
+			suppressed, err := legacyDerivativeSuppressedTx(
+				ctx, tx, item.blobHash, item.versionID, profileFingerprint)
+			if err != nil {
+				return false, fmt.Errorf("checking legacy attachment purge suppression: %w", err)
+			}
+			if suppressed {
+				continue
+			}
+		}
+		buildSuppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, item.blobHash)
+		if err != nil {
+			return false, fmt.Errorf("checking legacy derivative purge suppression: %w", err)
+		}
+		if !buildSuppressed {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func readLegacyPlainTextRows(
@@ -677,10 +773,11 @@ func compareLegacyServingCompatibilityTx(
 		SELECT h.content_version_id,n.name,f.text
 		FROM rendition_heads h
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-		JOIN rendition_lexical_fts f ON f.build_id=a.build_id
+		JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
+		JOIN rendition_lexical_index f ON f.build_id=a.build_id
 		JOIN content_versions v ON v.version_id=h.content_version_id
 		JOIN nodes n ON n.current_version_id=v.version_id
-		WHERE h.profile_fingerprint=? AND f.generation_id=? AND n.trashed_at IS NULL
+		WHERE h.profile_fingerprint=? AND gb.generation_id=? AND n.trashed_at IS NULL
 		ORDER BY h.content_version_id,f.segment_id`, profileFingerprint, generationID)
 	if err != nil {
 		return fmt.Errorf("comparing migrated search compatibility: %w", err)

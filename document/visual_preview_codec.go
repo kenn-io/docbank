@@ -1,16 +1,14 @@
 package document
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json/v2"
+	"bytes"
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -18,29 +16,28 @@ var visualPreviewFailureCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // MarshalVisualPreviewRecipeV1 validates and fingerprints one recipe.
 func MarshalVisualPreviewRecipeV1(value VisualPreviewRecipeV1) ([]byte, string, error) {
-	canonical, err := canonicalVisualPreviewRecipeV1(value)
+	recipe, err := canonicalVisualPreviewRecipeV1(value)
 	if err != nil {
 		return nil, "", err
 	}
-	encoded, err := json.Marshal(canonical, json.Deterministic(true))
+	encoded, err := canonical.Marshal(recipe)
 	if err != nil {
 		return nil, "", fmt.Errorf("encoding visual preview recipe: %w", err)
 	}
-	digest := sha256.Sum256(encoded)
-	return encoded, hex.EncodeToString(digest[:]), nil
+	return encoded, sha256Hex(encoded), nil
 }
 
 // DecodeVisualPreviewRecipeV1 accepts only the exact canonical v1 encoding.
 func DecodeVisualPreviewRecipeV1(encoded []byte) (VisualPreviewRecipeV1, string, error) {
-	var value VisualPreviewRecipeV1
-	if err := json.Unmarshal(encoded, &value, json.RejectUnknownMembers(true)); err != nil {
+	value, err := canonical.Decode[VisualPreviewRecipeV1](encoded)
+	if err != nil {
 		return VisualPreviewRecipeV1{}, "", fmt.Errorf("decoding visual preview recipe: %w", err)
 	}
-	canonical, fingerprint, err := MarshalVisualPreviewRecipeV1(value)
+	recipe, fingerprint, err := MarshalVisualPreviewRecipeV1(value)
 	if err != nil {
 		return VisualPreviewRecipeV1{}, "", err
 	}
-	if !slices.Equal(encoded, canonical) {
+	if !bytes.Equal(encoded, recipe) {
 		return VisualPreviewRecipeV1{}, "", errors.New("visual preview recipe bytes are not canonical")
 	}
 	return value, fingerprint, nil
@@ -48,34 +45,32 @@ func DecodeVisualPreviewRecipeV1(encoded []byte) (VisualPreviewRecipeV1, string,
 
 // MarshalVisualPreviewV1 validates, canonicalizes, and hashes one result.
 func MarshalVisualPreviewV1(value VisualPreviewV1) ([]byte, string, error) {
-	canonical, err := canonicalVisualPreviewV1(value)
+	preview, err := canonicalVisualPreviewV1(value)
 	if err != nil {
 		return nil, "", err
 	}
-	encoded, err := json.Marshal(canonical, json.Deterministic(true))
+	encoded, err := canonical.Marshal(preview)
 	if err != nil {
 		return nil, "", fmt.Errorf("encoding visual preview: %w", err)
 	}
-	digest := sha256.Sum256(encoded)
-	return encoded, hex.EncodeToString(digest[:]), nil
+	return encoded, sha256Hex(encoded), nil
 }
 
 // DecodeVisualPreviewV1 accepts only the exact canonical v1 encoding.
 func DecodeVisualPreviewV1(encoded []byte) (VisualPreviewV1, string, error) {
-	var value VisualPreviewV1
-	if err := json.Unmarshal(encoded, &value, json.RejectUnknownMembers(true)); err != nil {
+	value, err := canonical.Decode[VisualPreviewV1](encoded)
+	if err != nil {
 		return VisualPreviewV1{}, "", fmt.Errorf("decoding visual preview: %w", err)
 	}
-	canonical, checksum, err := MarshalVisualPreviewV1(value)
+	preview, checksum, err := MarshalVisualPreviewV1(value)
 	if err != nil {
 		return VisualPreviewV1{}, "", err
 	}
-	if !slices.Equal(encoded, canonical) {
+	if !bytes.Equal(encoded, preview) {
 		return VisualPreviewV1{}, "", errors.New("visual preview bytes are not canonical")
 	}
 	return value, checksum, nil
 }
-
 func canonicalVisualPreviewRecipeV1(value VisualPreviewRecipeV1) (VisualPreviewRecipeV1, error) {
 	if value.ContractVersion != VisualPreviewContractV1 {
 		return VisualPreviewRecipeV1{}, fmt.Errorf(
@@ -100,7 +95,7 @@ func canonicalVisualPreviewRecipeV1(value VisualPreviewRecipeV1) (VisualPreviewR
 	default:
 		return VisualPreviewRecipeV1{}, errors.New("visual preview output media type is unsupported")
 	}
-	if !canonicalSHA256(value.ProcessorFingerprint) {
+	if !canonical.IsSHA256Hex(value.ProcessorFingerprint) {
 		return VisualPreviewRecipeV1{}, errors.New("visual preview processor fingerprint is invalid")
 	}
 	return value, nil
@@ -116,7 +111,7 @@ func canonicalVisualPreviewV1(value VisualPreviewV1) (VisualPreviewV1, error) {
 		return VisualPreviewV1{}, err
 	}
 	value.Recipe = recipe
-	if !canonicalSHA256(value.SourceSHA256) {
+	if !canonical.IsSHA256Hex(value.SourceSHA256) {
 		return VisualPreviewV1{}, errors.New("visual preview source SHA-256 is invalid")
 	}
 	switch value.State {
@@ -126,7 +121,7 @@ func canonicalVisualPreviewV1(value VisualPreviewV1) (VisualPreviewV1, error) {
 		}
 		output := *value.Output
 		value.Output = &output
-		if !canonicalSHA256(value.Output.BlobSHA256) {
+		if !canonical.IsSHA256Hex(value.Output.BlobSHA256) {
 			return VisualPreviewV1{}, errors.New("visual preview output SHA-256 is invalid")
 		}
 		if value.Output.Size < 1 {
@@ -159,12 +154,4 @@ func canonicalVisualPreviewV1(value VisualPreviewV1) (VisualPreviewV1, error) {
 		return VisualPreviewV1{}, errors.New("visual preview state is invalid")
 	}
 	return value, nil
-}
-
-func canonicalSHA256(value string) bool {
-	if len(value) != sha256.Size*2 || strings.ToLower(value) != value {
-		return false
-	}
-	decoded, err := hex.DecodeString(value)
-	return err == nil && len(decoded) == sha256.Size
 }

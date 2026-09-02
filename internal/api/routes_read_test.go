@@ -63,9 +63,9 @@ func TestStatAndContentVersionDetailExposeActiveSourceMetadata(t *testing.T) {
 		ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{
 			{Key: "email.bcc", Namespace: "email", Sensitive: true, SourceField: "Bcc",
-				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Hidden recipient"}},
+				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Hidden recipient")}},
 			{Key: "title", Namespace: "pdf.info", SourceField: "Title",
-				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Synthetic report"}},
+				Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic report")}},
 		}})
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("extractor"), canonical)

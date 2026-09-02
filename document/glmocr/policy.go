@@ -31,14 +31,14 @@ const (
 	DefaultPyMuPDFVersion       = "1.27.2.3"
 	DefaultMuPDFVersion         = "1.27.2"
 	DefaultVLLMVersion          = "0.19.0"
-	DefaultEngineAdapterSHA256  = "68afc40384a9c078f07408d2b497b3249c2907d925fc9991f8a3035ccde42359"
-	DefaultAdapterSHA256        = "bd40361231e8ed19bcdd563752c8dab6e75a86fe2bb58ba16432dda9ce05e65f"
+	DefaultEngineAdapterSHA256  = "a2d7233c75ba1d1e73d8a60702afb3b26ecfc3ff0c05e508794fcf6ad77277c6"
+	DefaultAdapterSHA256        = "8d9f2beb16235df29395842ce585db477af11884a4681365cfb49fa5b19a258a"
 	DefaultImageRecipeSHA256    = "64e1c5f821484d1ed68e2d4d421710ac70366ea29df496b284f68144c5557cb9"
 	DefaultDependencyLockSHA256 = "b8327b09b922791b91f6151d2e348cab19fac8da5c025ffec7166c393d0197ed"
 
 	// DefaultDeploymentFingerprint identifies the complete validated local
 	// inference deployment described by DefaultDeploymentIdentity.
-	DefaultDeploymentFingerprint = "3b88906dfbfae5158bd297018a8b5a4776a9185a6fd4efc302cacdc35c8432c3"
+	DefaultDeploymentFingerprint = "322c711c06d3818bbe9dac37e7042c9367f5de84ff660b0f5ae50f60e6317670"
 
 	MaxDocumentBytes = int64(64 << 20)
 	MaxResponseBytes = int64(512 << 20)
@@ -78,26 +78,26 @@ type EngineEnvironment struct {
 // DeploymentIdentity contains every pinned artifact and configuration input
 // included in local OCR output attribution.
 type DeploymentIdentity struct {
-	Version              int                   `json:"version"`
-	Model                string                `json:"model"`
-	ModelRevision        string                `json:"model_revision"`
-	ModelFiles           [11]ArtifactDigest    `json:"model_files"`
-	SDKRevision          string                `json:"sdk_revision"`
-	LayoutModel          string                `json:"layout_model"`
-	LayoutRevision       string                `json:"layout_revision"`
-	LayoutFiles          [6]ArtifactDigest     `json:"layout_files"`
-	EngineImage          string                `json:"engine_image"`
-	VLLMVersion          string                `json:"vllm_version"`
-	EngineAdapterSHA256  string                `json:"engine_adapter_sha256"`
-	EngineCommand        [21]string            `json:"engine_command"`
-	EngineEnvironment    EngineEnvironment     `json:"engine_environment"`
-	AdapterSHA256        string                `json:"adapter_sha256"`
-	ImageRecipeSHA256    string                `json:"image_recipe_sha256"`
-	DependencyLockSHA256 string                `json:"dependency_lock_sha256"`
-	PipelineConfigSHA256 string                `json:"pipeline_config_sha256"`
-	RuntimeDependencies  [13]RuntimeDependency `json:"runtime_dependencies"`
-	PyMuPDFVersion       string                `json:"pymupdf_version"`
-	MuPDFVersion         string                `json:"mupdf_version"`
+	Version              int                 `json:"version"`
+	Model                string              `json:"model"`
+	ModelRevision        string              `json:"model_revision"`
+	ModelFiles           []ArtifactDigest    `json:"model_files"`
+	SDKRevision          string              `json:"sdk_revision"`
+	LayoutModel          string              `json:"layout_model"`
+	LayoutRevision       string              `json:"layout_revision"`
+	LayoutFiles          []ArtifactDigest    `json:"layout_files"`
+	EngineImage          string              `json:"engine_image"`
+	VLLMVersion          string              `json:"vllm_version"`
+	EngineAdapterSHA256  string              `json:"engine_adapter_sha256"`
+	EngineCommand        []string            `json:"engine_command"`
+	EngineEnvironment    EngineEnvironment   `json:"engine_environment"`
+	AdapterSHA256        string              `json:"adapter_sha256"`
+	ImageRecipeSHA256    string              `json:"image_recipe_sha256"`
+	DependencyLockSHA256 string              `json:"dependency_lock_sha256"`
+	PipelineConfigSHA256 string              `json:"pipeline_config_sha256"`
+	RuntimeDependencies  []RuntimeDependency `json:"runtime_dependencies"`
+	PyMuPDFVersion       string              `json:"pymupdf_version"`
+	MuPDFVersion         string              `json:"mupdf_version"`
 }
 
 // DefaultDeploymentIdentity returns the deployment required by the package
@@ -105,7 +105,7 @@ type DeploymentIdentity struct {
 func DefaultDeploymentIdentity() DeploymentIdentity {
 	return DeploymentIdentity{
 		Version: deploymentIdentityVersion, Model: DefaultModel, ModelRevision: DefaultModelRevision,
-		ModelFiles: [11]ArtifactDigest{
+		ModelFiles: []ArtifactDigest{
 			{Path: ".eval_results/mdpbench.yaml", Algorithm: artifactDigestGitSHA1, Digest: "ff3401de97f415491b0fd674059823e3f8510a5e"},
 			{Path: ".eval_results/olmocrbench.yaml", Algorithm: artifactDigestGitSHA1, Digest: "7186fb2de9bf6b20f8fcb23bfcb31e1f7826c692"},
 			{Path: ".gitattributes", Algorithm: artifactDigestGitSHA1, Digest: "a6344aac8c09253b3b630fb776ae94478aa0275b"},
@@ -120,7 +120,7 @@ func DefaultDeploymentIdentity() DeploymentIdentity {
 		},
 		SDKRevision: DefaultSDKRevision,
 		LayoutModel: DefaultLayoutModel, LayoutRevision: DefaultLayoutRevision,
-		LayoutFiles: [6]ArtifactDigest{
+		LayoutFiles: []ArtifactDigest{
 			{Path: ".gitattributes", Algorithm: artifactDigestGitSHA1, Digest: "a6344aac8c09253b3b630fb776ae94478aa0275b"},
 			{Path: "README.md", Algorithm: artifactDigestGitSHA1, Digest: "48fc6ecdb0cec7cc38d759cdea3caaccba39ae4a"},
 			{Path: "config.json", Algorithm: artifactDigestGitSHA1, Digest: "5a22928c191950850cbc0e56e43f722073e7c8da"},
@@ -130,7 +130,7 @@ func DefaultDeploymentIdentity() DeploymentIdentity {
 		},
 		EngineImage: DefaultEngineImage, VLLMVersion: DefaultVLLMVersion,
 		EngineAdapterSHA256: DefaultEngineAdapterSHA256,
-		EngineCommand: [21]string{
+		EngineCommand: []string{
 			"python3", "-m", "vllm.entrypoints.cli.main", "serve", "/models/glm-ocr",
 			"--host", "0.0.0.0", "--port", "30005", "--served-model-name", "glm-ocr",
 			"--max-model-len", "8192", "--max-num-seqs", "4", "--gpu-memory-utilization", "0.12",
@@ -145,7 +145,7 @@ func DefaultDeploymentIdentity() DeploymentIdentity {
 		AdapterSHA256:     DefaultAdapterSHA256,
 		ImageRecipeSHA256: DefaultImageRecipeSHA256, DependencyLockSHA256: DefaultDependencyLockSHA256,
 		PipelineConfigSHA256: DefaultPipelineSHA256,
-		RuntimeDependencies: [13]RuntimeDependency{
+		RuntimeDependencies: []RuntimeDependency{
 			{Name: "transformers", Version: "5.15.1"}, {Name: "huggingface-hub", Version: "1.28.0"},
 			{Name: "hf-xet", Version: "1.6.0"}, {Name: "safetensors", Version: "0.8.0"},
 			{Name: "portalocker", Version: "3.2.0"}, {Name: "PyMuPDF", Version: "1.27.2.3"},

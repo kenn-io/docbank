@@ -9,16 +9,11 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
-	"net/url"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	xhtml "golang.org/x/net/html"
 
@@ -30,6 +25,7 @@ import (
 const (
 	providerID  = "datalab.convert-v1"
 	convertPath = "/api/v1/convert"
+	provider    = providerutil.Provider("Datalab")
 
 	defaultRequestTimeout   = 30 * time.Second
 	defaultTotalTimeout     = 10 * time.Minute
@@ -41,20 +37,12 @@ const (
 	maxPollAttempts         = 10_000
 	maxResponseBytes        = int64(512 << 20)
 	maxDocumentBytes        = int64(200 << 20)
-	maxSecretBytes          = 64 << 10
-	maxRequestIDBytes       = 120
-	timestampForm           = "2006-01-02T15:04:05.000000000Z"
 )
 
-var (
-	_                      document.RenditionProvider = (*Client)(nil)
-	errDatalabTotalTimeout                            = errors.New("datalab total timeout")
-)
+var _ document.RenditionProvider = (*Client)(nil)
 
 // SecretResolver resolves the one profile-bound Datalab API-key binding.
-type SecretResolver interface {
-	ResolveSecret(ctx context.Context, name string) (string, error)
-}
+type SecretResolver = providerutil.SecretResolver
 
 // Profile fixes one Datalab origin, descriptor, credential, conversion mode,
 // optional provider-version snapshot, and every network/result bound.
@@ -74,25 +62,14 @@ type Profile struct {
 
 // Client renders exact authorized uploads through fixed Datalab Convert routes.
 type Client struct {
-	origin                      string
+	executor                    providerutil.Executor
 	descriptor                  document.RenditionDescriptor
-	secretBinding               string
-	secrets                     SecretResolver
-	http                        *http.Client
 	mode                        string
 	expectedVersionsFingerprint string
-	requestTimeout              time.Duration
 	totalTimeout                time.Duration
 	pollInterval                time.Duration
 	maxPollAttempts             int
-	maxResponseBytes            int64
 	maxDocumentBytes            int64
-}
-
-type requestUsage struct {
-	requests    int64
-	retries     int64
-	outputBytes int64
 }
 
 type versionState struct {
@@ -100,27 +77,40 @@ type versionState struct {
 	observed string
 }
 
+// rendering carries the state of one Render call between its stages.
+type rendering struct {
+	operation       *providerutil.Operation
+	usage           providerutil.Usage
+	versions        versionState
+	metadata        document.AuthorizedUploadMetadata
+	authorization   document.RenditionAuthorization
+	source          []byte
+	includeMarkdown bool
+	started         time.Time
+}
+
 // New validates a fixed hosted profile and isolates the supplied HTTP client
 // from ambient cookies and redirect behavior.
 func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Client, error) {
-	origin, err := validateOrigin(profile.Origin, profile.Descriptor.TrustBoundary)
+	origin, err := provider.ValidateOrigin(profile.Origin, profile.Descriptor.TrustBoundary)
 	if err != nil {
 		return nil, err
 	}
-	descriptor, err := document.NewRenditionDescriptor(profile.Descriptor)
-	if err != nil || !reflect.DeepEqual(descriptor, profile.Descriptor) {
-		if err == nil {
-			err = errors.New("descriptor is not canonical")
-		}
-		return nil, fmt.Errorf("datalab: invalid descriptor: %w", err)
+	if profile.Descriptor.TrustBoundary != document.RenditionTrustHostedProvider {
+		return nil, errors.New("datalab: descriptor trust boundary must be hosted_provider")
+	}
+	descriptor, err := provider.CanonicalDescriptor(profile.Descriptor)
+	if err != nil {
+		return nil, err
 	}
 	if descriptor.ID != providerID {
 		return nil, errors.New("datalab: descriptor ID must be datalab.convert-v1")
 	}
-	if profile.SecretBinding == "" || secrets == nil {
+	if profile.SecretBinding == "" || providerutil.IsNil(secrets) {
 		return nil, errors.New("datalab: a named secret binding and resolver are required")
 	}
-	if err := validateToken(profile.SecretBinding, "secret binding"); err != nil {
+	credential := providerutil.APIKeyCredential("X-Api-Key", profile.SecretBinding, secrets)
+	if err := credential.Validate(provider); err != nil {
 		return nil, err
 	}
 	if httpClient == nil {
@@ -139,39 +129,23 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 			return nil, errors.New("datalab: expected versions must be a non-null JSON object or string")
 		}
 	}
-	if profile.RequestTimeout == 0 {
-		profile.RequestTimeout = defaultRequestTimeout
-	}
-	if profile.TotalTimeout == 0 {
-		profile.TotalTimeout = defaultTotalTimeout
-	}
-	if profile.PollInterval == 0 {
-		profile.PollInterval = defaultPollInterval
-	}
-	if profile.MaxPollAttempts == 0 {
-		profile.MaxPollAttempts = defaultMaxPollAttempts
-	}
-	if profile.MaxResponseBytes == 0 {
-		profile.MaxResponseBytes = defaultMaxResponseBytes
-	}
-	if profile.MaxDocumentBytes == 0 {
-		profile.MaxDocumentBytes = defaultMaxDocumentBytes
-	}
-	if profile.RequestTimeout <= 0 || profile.RequestTimeout > maxTimeout ||
-		profile.TotalTimeout <= 0 || profile.TotalTimeout > maxTimeout ||
-		profile.PollInterval <= 0 || profile.PollInterval > profile.TotalTimeout ||
-		profile.MaxPollAttempts < 1 || profile.MaxPollAttempts > maxPollAttempts ||
-		profile.MaxResponseBytes < 1 || profile.MaxResponseBytes > maxResponseBytes ||
-		profile.MaxDocumentBytes < 1 || profile.MaxDocumentBytes > maxDocumentBytes {
+	if !providerutil.Bounded(&profile.RequestTimeout, defaultRequestTimeout, maxTimeout) ||
+		!providerutil.Bounded(&profile.TotalTimeout, defaultTotalTimeout, maxTimeout) ||
+		!providerutil.Bounded(&profile.PollInterval, defaultPollInterval, profile.TotalTimeout) ||
+		!providerutil.Bounded(&profile.MaxPollAttempts, defaultMaxPollAttempts, maxPollAttempts) ||
+		!providerutil.Bounded(&profile.MaxResponseBytes, defaultMaxResponseBytes, maxResponseBytes) ||
+		!providerutil.Bounded(&profile.MaxDocumentBytes, defaultMaxDocumentBytes, maxDocumentBytes) {
 		return nil, errors.New("datalab: execution bounds are invalid")
 	}
 	return &Client{
-		origin: origin, descriptor: providerutil.CloneDescriptor(descriptor), secretBinding: profile.SecretBinding,
-		secrets: secrets, http: providerhttp.IsolateClient(httpClient), mode: profile.Mode,
-		expectedVersionsFingerprint: expectedVersionsFingerprint,
-		requestTimeout:              profile.RequestTimeout, totalTimeout: profile.TotalTimeout,
-		pollInterval: profile.PollInterval, maxPollAttempts: profile.MaxPollAttempts,
-		maxResponseBytes: profile.MaxResponseBytes, maxDocumentBytes: profile.MaxDocumentBytes,
+		executor: providerutil.Executor{
+			Provider: provider, HTTP: providerhttp.IsolateClient(httpClient), Origin: origin,
+			RequestTimeout: profile.RequestTimeout, MaxResponseBytes: profile.MaxResponseBytes,
+			Credential: credential,
+		},
+		descriptor: descriptor, mode: profile.Mode, expectedVersionsFingerprint: expectedVersionsFingerprint,
+		totalTimeout: profile.TotalTimeout, pollInterval: profile.PollInterval,
+		maxPollAttempts: profile.MaxPollAttempts, maxDocumentBytes: profile.MaxDocumentBytes,
 	}, nil
 }
 
@@ -193,74 +167,33 @@ func (client *Client) Render(
 	}
 	metadata := upload.Metadata()
 	if metadata.ByteLength > client.maxDocumentBytes {
-		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"input exceeds the Datalab byte limit", nil)
 	}
-	expiresAt, err := time.Parse(timestampForm, authorization.ExpiresAt)
-	if err != nil {
-		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
-			"Datalab authorization expiry is invalid", nil)
-	}
-	totalCtx, cancel := client.operationContext(ctx, expiresAt)
-	defer cancel()
-	if err := checkOperation(totalCtx, expiresAt); err != nil {
-		return document.RenditionResult{}, err
-	}
-	stopInterrupt := context.AfterFunc(totalCtx, func() { _ = document.InterruptAuthorizedUpload(upload) })
-	source, err := providerutil.ReadAuthorizedUpload(totalCtx, upload, metadata, "Datalab")
-	stopInterrupt()
-	if err != nil {
-		if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
-			return document.RenditionResult{}, operationErr
-		}
-		return document.RenditionResult{}, err
-	}
-	started := time.Now().UTC()
-	usage := &requestUsage{}
-	versions := &versionState{expected: client.expectedVersionsFingerprint}
-	includeMarkdown := client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0
-	requestID, err := client.submit(totalCtx, expiresAt, usage, versions, metadata, source, includeMarkdown)
+	operation, err := providerutil.NewOperation(ctx, provider, authorization.ExpiresAt, client.totalTimeout)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-
-	var result finalResponse
-	for range client.maxPollAttempts {
-		result, err = client.poll(totalCtx, expiresAt, usage, versions, requestID, includeMarkdown,
-			min(client.maxResponseBytes, int64(authorization.MaxTotalResultBytes)))
-		if err != nil {
-			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
-				return document.RenditionResult{}, knownJobOperationError(operationErr)
-			}
-			if !document.IsRenditionProviderErrorRetryable(err) {
-				return document.RenditionResult{}, err
-			}
-			usage.retries++
-			if waitErr := providerutil.Wait(totalCtx, client.pollInterval); waitErr != nil {
-				if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
-					return document.RenditionResult{}, knownJobOperationError(operationErr)
-				}
-				return document.RenditionResult{}, classifiedError(document.RenditionErrorCanceled,
-					"Datalab rendering canceled", waitErr)
-			}
-			continue
-		}
-		if result.status == "complete" {
-			return client.buildResult(result, requestID, metadata, authorization, source, started, usage, includeMarkdown)
-		}
-		if result.status != "processing" {
-			return document.RenditionResult{}, malformedError("Datalab result status is unsupported", nil)
-		}
-		if waitErr := providerutil.Wait(totalCtx, client.pollInterval); waitErr != nil {
-			if operationErr := checkOperation(totalCtx, expiresAt); operationErr != nil {
-				return document.RenditionResult{}, knownJobOperationError(operationErr)
-			}
-			return document.RenditionResult{}, classifiedError(document.RenditionErrorCanceled,
-				"Datalab rendering canceled", waitErr)
-		}
+	defer operation.Cancel()
+	source, err := operation.ReadUpload(upload)
+	if err != nil {
+		return document.RenditionResult{}, err
 	}
-	return document.RenditionResult{}, ambiguousJobError(classifiedError(
-		document.RenditionErrorCapacity, "Datalab polling limit reached", nil))
+	run := &rendering{
+		operation: operation, metadata: metadata, authorization: authorization, source: source,
+		versions:        versionState{expected: client.expectedVersionsFingerprint},
+		includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0,
+		started:         time.Now().UTC(),
+	}
+	requestID, err := client.submit(run)
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	result, err := client.awaitResult(run, requestID)
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	return client.buildResult(run, requestID, result)
 }
 
 type initialResponse struct {
@@ -278,226 +211,149 @@ type finalResponse struct {
 	versions   json.RawMessage
 }
 
-func (client *Client) submit(
-	ctx context.Context, expiresAt time.Time, usage *requestUsage, versions *versionState,
-	metadata document.AuthorizedUploadMetadata, source []byte, includeMarkdown bool,
-) (string, error) {
-	filename := metadata.Filename
+func (client *Client) submit(run *rendering) (string, error) {
+	filename := run.metadata.Filename
 	if filename == "" {
 		filename = "document"
-		if extensions, _ := mime.ExtensionsByType(metadata.MediaType); len(extensions) != 0 {
+		if extensions, _ := mime.ExtensionsByType(run.metadata.MediaType); len(extensions) != 0 {
 			filename += extensions[0]
 		}
 	}
 	if strings.ContainsAny(filename, "\r\n") {
-		return "", classifiedError(document.RenditionErrorPolicyRejected,
+		return "", provider.Classified(document.RenditionErrorPolicyRejected,
 			"Datalab upload filename contains a newline", nil)
 	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", multipart.FileContentDisposition("file", filename))
-	header.Set("Content-Type", metadata.MediaType)
-	part, err := writer.CreatePart(header)
-	if err != nil {
-		return "", classifiedError(document.RenditionErrorTransient, "could not prepare Datalab upload", err)
-	}
-	if _, err := part.Write(source); err != nil {
-		return "", classifiedError(document.RenditionErrorTransient, "could not prepare Datalab upload", err)
-	}
 	outputFormat := "json"
-	if includeMarkdown {
+	if run.includeMarkdown {
 		outputFormat = "markdown,json"
 	}
-	for name, value := range map[string]string{
-		"output_format": outputFormat, "mode": client.mode, "paginate": "true", "disable_image_extraction": "true",
-	} {
-		if err := writer.WriteField(name, value); err != nil {
-			return "", classifiedError(document.RenditionErrorTransient, "could not prepare Datalab upload", err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return "", classifiedError(document.RenditionErrorTransient, "could not prepare Datalab upload", err)
-	}
-	responseBody, status, err := client.request(ctx, expiresAt, usage, http.MethodPost, convertPath,
-		writer.FormDataContentType(), body.Bytes(), client.maxResponseBytes)
+	response, err := client.executor.Do(run.operation, &run.usage, providerutil.Request{
+		Stage: providerutil.StageSubmission, Method: http.MethodPost, Path: convertPath,
+		Upload: &providerutil.MultipartUpload{
+			FieldName: "file", Filename: filename, MediaType: run.metadata.MediaType,
+			Source: bytes.NewReader(run.source), Length: int64(len(run.source)),
+			Fields: [][2]string{
+				{"output_format", outputFormat}, {"mode", client.mode},
+				{"paginate", "true"}, {"disable_image_extraction", "true"},
+			},
+		},
+	})
 	if err != nil {
-		if status == http.StatusOK || status == http.StatusAccepted {
-			return "", ambiguousSubmissionError(err)
-		}
 		return "", err
 	}
-	if status != http.StatusOK && status != http.StatusAccepted {
-		err = statusError("submission", status)
-		if status == http.StatusRequestTimeout || status >= http.StatusInternalServerError && status < 600 ||
-			status == http.StatusTooManyRequests {
-			return "", ambiguousSubmissionError(err)
-		}
-		return "", err
+	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
+		return "", provider.StatusError(providerutil.StageSubmission, response.Status, response.RetryAfter, nil)
 	}
-	initial, err := parseInitial(responseBody)
+	initial, err := parseInitial(response.Body)
 	if err != nil {
-		return "", ambiguousSubmissionError(err)
+		return "", provider.AmbiguousSubmission(err)
 	}
-	if err := versions.observe(initial.versions); err != nil {
-		return "", ambiguousSubmissionError(err)
+	if err := run.versions.observe(initial.versions); err != nil {
+		return "", provider.AmbiguousSubmission(err)
 	}
 	return initial.id, nil
 }
 
-func (client *Client) poll(
-	ctx context.Context, expiresAt time.Time, usage *requestUsage, versions *versionState, requestID string,
-	requireMarkdown bool, maxResponseBytes int64,
-) (finalResponse, error) {
-	body, status, err := client.request(ctx, expiresAt, usage, http.MethodGet, convertPath+"/"+requestID,
-		"", nil, maxResponseBytes)
+func (client *Client) awaitResult(run *rendering, requestID string) (finalResponse, error) {
+	for range client.maxPollAttempts {
+		result, err := client.poll(run, requestID)
+		delay := client.pollInterval
+		switch {
+		case err != nil:
+			if operationErr := run.operation.Check(); operationErr != nil {
+				return finalResponse{}, provider.KnownJobError(operationErr)
+			}
+			if !document.IsRenditionProviderErrorRetryable(err) {
+				return finalResponse{}, err
+			}
+			run.usage.Retries++
+			delay = providerutil.RetryDelay(err, client.pollInterval)
+		case result.status == "complete":
+			return result, nil
+		case result.status != "processing":
+			return finalResponse{}, provider.Malformed("Datalab result status is unsupported", nil)
+		}
+		if err := run.operation.Wait(delay); err != nil {
+			return finalResponse{}, provider.KnownJobError(err)
+		}
+	}
+	return finalResponse{}, provider.AmbiguousJob(provider.Classified(
+		document.RenditionErrorCapacity, "Datalab polling limit reached", nil))
+}
+
+func (client *Client) poll(run *rendering, requestID string) (finalResponse, error) {
+	response, err := client.executor.Do(run.operation, &run.usage, providerutil.Request{
+		Stage: providerutil.StageJob, Method: http.MethodGet, Path: convertPath + "/" + requestID,
+		MaxResponseBytes: int64(run.authorization.MaxTotalResultBytes),
+	})
 	if err != nil {
 		return finalResponse{}, err
 	}
-	if status != http.StatusOK && status != http.StatusAccepted {
-		return finalResponse{}, statusError("poll", status)
+	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
+		return finalResponse{}, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
 	}
-	result, err := parseFinal(body, requireMarkdown)
+	result, err := parseFinal(response.Body, run.includeMarkdown)
 	if err != nil {
 		return finalResponse{}, err
 	}
-	if err := versions.observe(result.versions); err != nil {
+	if err := run.versions.observe(result.versions); err != nil {
 		return finalResponse{}, err
 	}
 	return result, nil
 }
 
 func (client *Client) buildResult(
-	result finalResponse, requestID string, metadata document.AuthorizedUploadMetadata,
-	authorization document.RenditionAuthorization, source []byte, started time.Time, usage *requestUsage,
-	includeMarkdown bool,
+	run *rendering, requestID string, result finalResponse,
 ) (document.RenditionResult, error) {
 	if result.success == nil || !*result.success {
-		return document.RenditionResult{}, malformedError("Datalab completed without a successful result", nil)
+		return document.RenditionResult{}, provider.Malformed("Datalab completed without a successful result", nil)
 	}
 	providerMarkdown := result.markdown
-	if !includeMarkdown {
+	if !run.includeMarkdown {
 		providerMarkdown = nil
 	}
 	if providerutil.InjectsDocbankFrontmatter(providerMarkdown) {
-		return document.RenditionResult{}, malformedError(
+		return document.RenditionResult{}, provider.Malformed(
 			"Datalab provider Markdown attempts Docbank frontmatter injection", nil)
 	}
-	if len(providerMarkdown) > authorization.MaxProviderMarkdownBytes {
-		return document.RenditionResult{}, malformedError("Datalab Markdown exceeds authorization", nil)
+	if len(providerMarkdown) > run.authorization.MaxProviderMarkdownBytes {
+		return document.RenditionResult{}, provider.Malformed("Datalab Markdown exceeds authorization", nil)
 	}
-	evidence, structured, usable := mapEvidence(result.structured, authorization.MediaFamily, result.pageCount)
+	evidence, structured, usable := mapEvidence(result.structured, run.authorization.MediaFamily, result.pageCount)
 	if !usable {
 		if len(providerMarkdown) == 0 {
-			return document.RenditionResult{}, malformedError("Datalab result has no usable bounded evidence", nil)
+			return document.RenditionResult{}, provider.Malformed("Datalab result has no usable bounded evidence", nil)
 		}
-		evidence = providerutil.DegradedEvidence(authorization.MediaFamily, string(providerMarkdown),
+		evidence = providerutil.DegradedEvidence(run.authorization.MediaFamily, string(providerMarkdown),
 			"Datalab structured evidence is unavailable")
 		structured = nil
 	}
 	artifacts := make([]document.RenditionArtifact, 0, 1)
-	if len(structured) != 0 && providerutil.AllowsStructured(authorization) {
-		if len(structured) > authorization.MaxArtifactBytes {
-			return document.RenditionResult{}, malformedError("Datalab structured output exceeds authorization", nil)
+	if len(structured) != 0 && providerutil.AllowsStructured(run.authorization) {
+		if len(structured) > run.authorization.MaxArtifactBytes {
+			return document.RenditionResult{}, provider.Malformed("Datalab structured output exceeds authorization", nil)
 		}
 		digest := providerutil.SHA256Hex(structured)
 		artifacts = append(artifacts, document.RenditionArtifact{
-			Role: document.EvidenceArtifactStructured, MediaType: "application/json", Payload: append([]byte(nil), structured...), SHA256: digest,
+			Role: document.EvidenceArtifactStructured, MediaType: "application/json",
+			Payload: append([]byte(nil), structured...), SHA256: digest,
 		})
 		evidence.Artifacts = []document.SourceEvidenceArtifactV1{{
 			ProviderID: "datalab-document", Pointer: "json", Role: document.EvidenceArtifactStructured, SHA256: digest,
 		}}
 	}
-	completed := time.Now().UTC()
-	authorizationFingerprint, err := authorization.Fingerprint()
+	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
+		Descriptor: client.descriptor, Authorization: run.authorization, SourceSHA256: run.metadata.SHA256,
+		OperationID: "datalab-" + requestID, StartedAt: run.started, CompletedAt: time.Now().UTC(),
+		Usage: run.usage.Rendition(int64(len(run.source)), int64(len(evidence.Units))),
+	})
 	if err != nil {
-		return document.RenditionResult{}, classifiedError(document.RenditionErrorPolicyRejected,
-			"authorization fingerprint is invalid", err)
+		return document.RenditionResult{}, err
 	}
 	return document.RenditionResult{
 		Evidence: evidence, ProviderMarkdown: append([]byte(nil), providerMarkdown...), Artifacts: artifacts,
-		Receipt: document.RenditionReceipt{
-			ProviderID: client.descriptor.ID, DescriptorFingerprint: client.descriptor.Fingerprint,
-			PolicyFingerprint:           authorization.PolicyFingerprint,
-			RenditionRequestFingerprint: authorization.RenditionRequestFingerprint,
-			AuthorizationFingerprint:    authorizationFingerprint,
-			SourceSHA256:                metadata.SHA256,
-			OperationID:                 "datalab-" + requestID, StartedAt: started.Format(timestampForm), CompletedAt: completed.Format(timestampForm),
-			Usage: document.RenditionUsage{
-				Requests: usage.requests, Retries: usage.retries, InputBytes: int64(len(source)),
-				OutputBytes: usage.outputBytes, Units: int64(len(evidence.Units)),
-			},
-		},
+		Receipt: receipt,
 	}, nil
-}
-
-func (client *Client) request(
-	ctx context.Context, expiresAt time.Time, usage *requestUsage, method, path, contentType string,
-	body []byte, maxResponseBytes int64,
-) ([]byte, int, error) {
-	if err := checkOperation(ctx, expiresAt); err != nil {
-		return nil, 0, err
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, client.requestTimeout)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, method, client.origin+path, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, classifiedError(document.RenditionErrorTransient, "could not create Datalab request", err)
-	}
-	request.Header.Set("Accept", "application/json")
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
-	}
-	if err := client.authorize(request); err != nil {
-		return nil, 0, err
-	}
-	if err := checkOperation(ctx, expiresAt); err != nil {
-		return nil, 0, err
-	}
-	usage.requests++
-	response, err := client.http.Do(request)
-	if err != nil {
-		requestErr := checkOperation(ctx, expiresAt)
-		if requestErr == nil {
-			requestErr = classifiedError(document.RenditionErrorTransient, "Datalab request failed", err)
-		}
-		if method == http.MethodPost {
-			requestErr = ambiguousSubmissionError(requestErr)
-		}
-		return nil, 0, requestErr
-	}
-	defer func() { _ = response.Body.Close() }()
-	responseBody, err := readBounded(response.Body, min(maxResponseBytes, client.maxResponseBytes))
-	usage.outputBytes += int64(len(responseBody))
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return responseBody, response.StatusCode, nil
-	}
-	if err != nil {
-		if operationErr := checkOperation(ctx, expiresAt); operationErr != nil {
-			return nil, response.StatusCode, operationErr
-		}
-		return nil, response.StatusCode, err
-	}
-	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if mediaErr != nil || mediaType != "application/json" {
-		return nil, response.StatusCode, malformedError("Datalab response content type is invalid", mediaErr)
-	}
-	if !utf8.Valid(responseBody) {
-		return nil, response.StatusCode, malformedError("Datalab response JSON is not valid UTF-8", nil)
-	}
-	return responseBody, response.StatusCode, nil
-}
-
-func (client *Client) authorize(request *http.Request) error {
-	secret, err := client.secrets.ResolveSecret(request.Context(), client.secretBinding)
-	if err != nil {
-		return classifiedError(document.RenditionErrorAuthentication, "Datalab credential is unavailable", err)
-	}
-	if secret == "" || len(secret) > maxSecretBytes || strings.ContainsAny(secret, "\r\n\x00") {
-		return classifiedError(document.RenditionErrorAuthentication, "Datalab credential is invalid", nil)
-	}
-	request.Header.Set("X-Api-Key", secret)
-	return nil
 }
 
 func parseInitial(body []byte) (initialResponse, error) {
@@ -508,16 +364,16 @@ func parseInitial(body []byte) (initialResponse, error) {
 		Versions        json.RawMessage `json:"versions"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return initialResponse{}, malformedError("Datalab submission JSON is invalid", err)
+		return initialResponse{}, provider.Malformed("Datalab submission JSON is invalid", err)
 	}
 	if wire.Success == nil || !*wire.Success {
-		return initialResponse{}, malformedError("Datalab rejected the conversion request", nil)
+		return initialResponse{}, provider.Malformed("Datalab rejected the conversion request", nil)
 	}
-	if err := validateRequestID(wire.RequestID); err != nil {
-		return initialResponse{}, malformedError("Datalab request ID is invalid", err)
+	if err := providerutil.ValidateJobID(wire.RequestID); err != nil {
+		return initialResponse{}, provider.Malformed("Datalab request ID is invalid", err)
 	}
-	if wire.RequestCheckURL == "" || !utf8.ValidString(wire.RequestCheckURL) {
-		return initialResponse{}, malformedError("Datalab request check URL is missing", nil)
+	if wire.RequestCheckURL == "" {
+		return initialResponse{}, provider.Malformed("Datalab request check URL is missing", nil)
 	}
 	return initialResponse{success: true, id: wire.RequestID, versions: cloneRaw(wire.Versions)}, nil
 }
@@ -533,23 +389,23 @@ func parseFinal(body []byte, requireMarkdown bool) (finalResponse, error) {
 		Versions     json.RawMessage `json:"versions"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return finalResponse{}, malformedError("Datalab result JSON is invalid", err)
+		return finalResponse{}, provider.Malformed("Datalab result JSON is invalid", err)
 	}
 	if wire.Status != "processing" && wire.Status != "complete" && wire.Status != "failed" {
-		return finalResponse{}, malformedError("Datalab result status is unsupported", nil)
+		return finalResponse{}, provider.Malformed("Datalab result status is unsupported", nil)
 	}
 	if wire.Status == "failed" {
-		return finalResponse{}, malformedError("Datalab conversion failed", nil)
+		return finalResponse{}, provider.Malformed("Datalab conversion failed", nil)
 	}
 	if wire.PageCount != nil && *wire.PageCount < 0 {
-		return finalResponse{}, malformedError("Datalab page count is invalid", nil)
+		return finalResponse{}, provider.Malformed("Datalab page count is invalid", nil)
 	}
 	if requireMarkdown && wire.OutputFormat != "" && !containsOutputFormat(wire.OutputFormat, "markdown") {
-		return finalResponse{}, malformedError("Datalab result omitted requested Markdown format", nil)
+		return finalResponse{}, provider.Malformed("Datalab result omitted requested Markdown format", nil)
 	}
 	structured, err := decodeStructured(wire.JSON)
 	if err != nil {
-		return finalResponse{}, malformedError("Datalab structured result is invalid", err)
+		return finalResponse{}, provider.Malformed("Datalab structured result is invalid", err)
 	}
 	result := finalResponse{status: wire.Status, success: wire.Success, structured: structured, versions: cloneRaw(wire.Versions)}
 	if wire.Markdown != nil {
@@ -569,7 +425,7 @@ func mapEvidence(raw json.RawMessage, family string, pageCount int) (document.So
 	if json.Unmarshal(raw, &root) != nil || root.BlockType != "Document" || len(root.Children) == 0 {
 		return document.SourceEvidenceV1{}, nil, false
 	}
-	kind, locatorKind, natural := familyUnit(family)
+	kind, locatorKind, natural := providerutil.NaturalUnit(family)
 	if !natural {
 		return document.SourceEvidenceV1{}, nil, false
 	}
@@ -704,30 +560,20 @@ func htmlText(value string) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-func familyUnit(family string) (document.EvidenceUnitKind, document.EvidenceLocatorKind, bool) {
-	switch family {
-	case "pdf", "image", "word":
-		return document.EvidenceUnitPage, document.EvidenceLocatorPage, true
-	case "presentation":
-		return document.EvidenceUnitSlide, document.EvidenceLocatorSlide, true
-	default:
-		return "", "", false
-	}
-}
-
 func (state *versionState) observe(raw json.RawMessage) error {
 	fingerprint, err := versionsFingerprint(raw)
 	if err != nil {
-		return classifiedError(document.RenditionErrorPolicyRejected, "Datalab provider versions are malformed", err)
+		return provider.Classified(document.RenditionErrorPolicyRejected, "Datalab provider versions are malformed", err)
 	}
 	if state.expected != "" && fingerprint != state.expected {
-		return classifiedError(document.RenditionErrorPolicyRejected, "Datalab provider version drift detected", nil)
+		return provider.Classified(document.RenditionErrorPolicyRejected, "Datalab provider version drift detected", nil)
 	}
 	if fingerprint == "" {
 		return nil
 	}
 	if state.observed != "" && fingerprint != state.observed {
-		return classifiedError(document.RenditionErrorPolicyRejected, "Datalab provider version changed during conversion", nil)
+		return provider.Classified(document.RenditionErrorPolicyRejected,
+			"Datalab provider version changed during conversion", nil)
 	}
 	state.observed = fingerprint
 	return nil
@@ -801,139 +647,4 @@ func pageIndex(value string) (int, bool) {
 	return index, err == nil && index >= 0
 }
 
-func (client *Client) operationContext(ctx context.Context, expiresAt time.Time) (context.Context, context.CancelFunc) {
-	totalCtx, cancelTotal := context.WithTimeoutCause(ctx, client.totalTimeout, errDatalabTotalTimeout)
-	operationCtx, cancelExpiry := context.WithDeadline(totalCtx, expiresAt)
-	return operationCtx, func() {
-		cancelExpiry()
-		cancelTotal()
-	}
-}
-
-func checkOperation(ctx context.Context, expiresAt time.Time) error {
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return classifiedError(document.RenditionErrorCanceled, "Datalab rendering canceled", ctx.Err())
-	}
-	if !time.Now().Before(expiresAt) {
-		return classifiedError(document.RenditionErrorPolicyRejected, "Datalab authorization expired", nil)
-	}
-	if errors.Is(context.Cause(ctx), errDatalabTotalTimeout) {
-		return classifiedError(document.RenditionErrorCapacity, "Datalab total timeout reached", errDatalabTotalTimeout)
-	}
-	if err := ctx.Err(); err != nil {
-		return classifiedError(document.RenditionErrorCanceled, "Datalab rendering canceled", err)
-	}
-	return nil
-}
-
-func knownJobOperationError(err error) error {
-	if document.IsRenditionProviderErrorRetryable(err) {
-		return ambiguousJobError(err)
-	}
-	return err
-}
-
-func validateOrigin(raw string, trust document.RenditionTrustBoundary) (string, error) {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Opaque != "" ||
-		parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return "", errors.New("datalab: origin must be one absolute origin without path, credentials, query, or fragment")
-	}
-	if parsed.Scheme != "https" {
-		return "", errors.New("datalab: hosted origins require HTTPS")
-	}
-	if trust != document.RenditionTrustHostedProvider {
-		return "", errors.New("datalab: descriptor trust boundary must be hosted_provider")
-	}
-	return parsed.Scheme + "://" + parsed.Host, nil
-}
-
-func validateToken(value, subject string) error {
-	if value == "" || len(value) > maxRequestIDBytes || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
-		return fmt.Errorf("datalab: %s is invalid", subject)
-	}
-	for _, character := range value {
-		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
-			(character < '0' || character > '9') && character != '.' && character != '_' && character != '-' {
-			return fmt.Errorf("datalab: %s is invalid", subject)
-		}
-	}
-	return nil
-}
-
-func validateRequestID(value string) error {
-	if value == "" || len(value) > maxRequestIDBytes || value == "." || value == ".." {
-		return errors.New("invalid request ID")
-	}
-	for _, character := range value {
-		if (character < 'a' || character > 'z') && (character < '0' || character > '9') &&
-			character != '_' && character != '-' {
-			return errors.New("invalid request ID")
-		}
-	}
-	return nil
-}
-
 func cloneRaw(value json.RawMessage) json.RawMessage { return append(json.RawMessage(nil), value...) }
-
-func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
-	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil {
-		return value, classifiedError(document.RenditionErrorTransient, "could not read Datalab response", err)
-	}
-	if int64(len(value)) > maximum {
-		return value, malformedError("Datalab response exceeds byte limit", nil)
-	}
-	return value, nil
-}
-
-func statusError(operation string, status int) error {
-	switch status {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return classifiedError(document.RenditionErrorAuthentication, "Datalab authentication failed", nil)
-	case http.StatusNotFound, http.StatusGone:
-		if operation == "poll" {
-			return classifiedError(document.RenditionErrorUnknownJob, "Datalab request is unknown or expired", nil)
-		}
-		return malformedError("Datalab returned an unexpected HTTP status", nil)
-	case http.StatusUnsupportedMediaType:
-		if operation == "submission" {
-			return classifiedError(document.RenditionErrorUnsupportedInput, "Datalab does not support the submitted input", nil)
-		}
-		return malformedError("Datalab returned an unexpected HTTP status", nil)
-	case http.StatusRequestEntityTooLarge:
-		if operation == "submission" {
-			return classifiedError(document.RenditionErrorPolicyRejected, "Datalab rejected the input size", nil)
-		}
-		return malformedError("Datalab returned an unexpected HTTP status", nil)
-	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		if operation == "submission" {
-			return classifiedError(document.RenditionErrorPolicyRejected, "Datalab rejected the submitted input", nil)
-		}
-		return malformedError("Datalab returned an unexpected HTTP status", nil)
-	case http.StatusTooManyRequests:
-		return classifiedError(document.RenditionErrorRateLimited, "Datalab rate limit", nil)
-	case http.StatusServiceUnavailable:
-		return classifiedError(document.RenditionErrorCapacity, "Datalab capacity is temporarily unavailable", nil)
-	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout:
-		return classifiedError(document.RenditionErrorTransient, "Datalab is temporarily unavailable", nil)
-	default:
-		return malformedError("Datalab returned an unexpected HTTP status", nil)
-	}
-}
-
-func ambiguousSubmissionError(cause error) error {
-	return classifiedError(document.RenditionErrorAmbiguousSubmission, "Datalab submission outcome is unknown", cause)
-}
-
-func ambiguousJobError(cause error) error {
-	return classifiedError(document.RenditionErrorAmbiguousSubmission, "Datalab job outcome is unknown", cause)
-}
-
-func malformedError(message string, cause error) error {
-	return classifiedError(document.RenditionErrorMalformedEvidence, message, cause)
-}
-
-func classifiedError(code document.RenditionErrorCode, message string, cause error) error {
-	return providerutil.ClassifiedError("Datalab", code, message, cause)
-}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -522,7 +523,7 @@ func TestLexicalGenerationBuildFailureLeavesNoReadablePartialGeneration(t *testi
 	require.ErrorContains(t, err, "injected failure after FTS build")
 	var partialRows int
 	require.NoError(t, s.db.QueryRow(
-		`SELECT COUNT(*) FROM rendition_lexical_fts WHERE generation_id=?`, secondGenerationID,
+		`SELECT COUNT(*) FROM rendition_lexical_index WHERE build_id=?`, secondBuild.ID,
 	).Scan(&partialRows))
 	assert.Zero(t, partialRows)
 	active, err := s.ActiveLexicalGeneration(ctx)
@@ -828,7 +829,8 @@ func TestLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T) {
 			 AND rh.profile_fingerprint=a.profile_fingerprint
 			 AND rh.attachment_id=a.attachment_id
 			WHERE rendition_lexical_fts MATCH 'epoch'
-			  AND f.generation_id=?`, generation.ID)
+			  AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
+			              WHERE gb.generation_id=? AND gb.build_id=f.build_id)`, generation.ID)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -868,8 +870,8 @@ func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T)
 	_, err := s.StageLexicalGeneration(ctx, generationID)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE rendition_lexical_fts SET text='substituted venus phrase'
-		WHERE generation_id=? AND build_id=?`, generationID, build.ID)
+		UPDATE rendition_lexical_index SET text='substituted venus phrase'
+		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 
 	_, err = s.StageLexicalGeneration(ctx, generationID)
@@ -888,8 +890,8 @@ func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *test
 	_, err := s.StageLexicalGeneration(ctx, generationID)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE rendition_lexical_fts SET text='substituted venus phrase'
-		WHERE generation_id=? AND build_id=?`, generationID, build.ID)
+		UPDATE rendition_lexical_index SET text='substituted venus phrase'
+		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 	attachment := RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
@@ -900,7 +902,8 @@ func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *test
 		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
 		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
 	}, generationID)
-	require.ErrorContains(t, err, "immutable manifest")
+	require.ErrorContains(t, err, generationID,
+		"substituted index text must be rejected before the head can move")
 	_, err = s.ActiveLexicalGeneration(ctx)
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -927,6 +930,180 @@ func TestLexicalGenerationPublicationRejectsMissingZeroSegmentBuildMembership(t 
 	require.ErrorContains(t, err, "does not exactly contain build")
 	_, err = s.ActiveLexicalGeneration(ctx)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+// Publishing a new lexical generation must not copy text an earlier one
+// indexed, and the generation it replaces must go away once no reader pins
+// it. Before this, every publication copied every segment of every build into
+// a new generation and nothing ever collected the old ones.
+func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	publish := func(build RenditionBuildRecord, version, attachmentID, generationID string) {
+		t.Helper()
+		require.NoError(t, s.StageRenditionBuild(ctx, build))
+		generation, err := s.StageLexicalGeneration(ctx, generationID)
+		require.NoError(t, err)
+		attachment := RenditionAttachmentRecord{
+			ID: attachmentID, VaultID: s.VaultID(), ContentVersionID: version,
+			BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}
+		require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+			ContentVersionID: version, ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+		}, generation.ID))
+	}
+	counts := func() (generations, indexRows, ftsRows int) {
+		t.Helper()
+		require.NoError(t, s.db.QueryRow(`SELECT
+			(SELECT COUNT(*) FROM rendition_lexical_generations),
+			(SELECT COUNT(*) FROM rendition_lexical_index),
+			(SELECT COUNT(*) FROM rendition_lexical_fts)`).Scan(&generations, &indexRows, &ftsRows))
+		return generations, indexRows, ftsRows
+	}
+
+	publish(lexicalSearchBuild(s, profile, fakeHash("c1"), "first mercury phrase"),
+		versions[0], catalogAttachmentFirst, fakeHash("d1"))
+	replacement := func(seed, text string) (RenditionBuildRecord, string) {
+		t.Helper()
+		sourceHash := fakeHash(seed + "e")
+		node, err := s.CreateFile(ctx, s.RootID(), "replacement-"+seed+".pdf",
+			sourceHash, 7, "application/pdf")
+		require.NoError(t, err)
+		build := lexicalSearchBuild(s, profile, fakeHash(seed), text)
+		build.SourceSHA256 = sourceHash
+		return build, node.CurrentVersionID
+	}
+	secondBuild, secondVersion := replacement("c2", "second venus phrase")
+	publish(secondBuild, secondVersion, catalogAttachmentSecond, fakeHash("d2"))
+
+	generations, indexRows, ftsRows := counts()
+	assert.Equal(t, []int{1, 2, 2}, []int{generations, indexRows, ftsRows},
+		"one live generation, one indexed row per build, no per-generation copies")
+	for _, query := range []string{"mercury", "venus"} {
+		hits, _, err := s.SearchPage(ctx, query, 10)
+		require.NoError(t, err)
+		assert.Len(t, hits, 1, query)
+	}
+
+	lease, err := s.AcquireLexicalGeneration(ctx)
+	require.NoError(t, err)
+	thirdBuild, thirdVersion := replacement("c3", "third mars phrase")
+	publish(thirdBuild, thirdVersion, fakeHash("a3"), fakeHash("d3"))
+	generations, _, _ = counts()
+	assert.Equal(t, 2, generations, "a generation a reader still pins is retained")
+
+	require.NoError(t, lease.Release())
+	fourthBuild, fourthVersion := replacement("c4", "fourth jupiter phrase")
+	publish(fourthBuild, fourthVersion, fakeHash("a4"), fakeHash("d4"))
+	generations, indexRows, ftsRows = counts()
+	assert.Equal(t, []int{1, 4, 4}, []int{generations, indexRows, ftsRows},
+		"the released generation is collected by the next head flip")
+}
+
+// Derivative purge holds its reader gate across a whole write transaction,
+// and publication takes the pin map while it already holds the write lock.
+// Those must be different locks: with one mutex, a publication in flight and
+// a concurrent purge each wait for the other until SQLite's busy timeout
+// fails the purge.
+func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("e1"))
+	require.NoError(t, err)
+
+	inTransaction := make(chan struct{})
+	release := make(chan struct{})
+	published := make(chan error, 1)
+	go func() {
+		published <- s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			close(inTransaction)
+			<-release
+			return s.publishLexicalHeadTx(ctx, tx, generation.ID)
+		})
+	}()
+	<-inTransaction
+	purged := make(chan error, 1)
+	go func() {
+		_, err := s.PurgeDerivatives(ctx, PurgeRequest{})
+		purged <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	for name, done := range map[string]chan error{"publication": published, "purge": purged} {
+		select {
+		case err := <-done:
+			require.NoError(t, err, name)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s did not finish; lock ordering deadlock", name)
+		}
+	}
+}
+
+// A standalone lease must not pin a generation that an in-flight publication
+// is about to collect. Acquisition waits for the publication to commit and
+// then pins the new head.
+func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	first := lexicalSearchBuild(s, profile, fakeHash("e2"), "first mercury phrase")
+	require.NoError(t, s.StageRenditionBuild(ctx, first))
+	firstGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("e3"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: first.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+	}, firstGeneration.ID))
+	secondSource := fakeHash("e4e")
+	_, err = s.CreateFile(ctx, s.RootID(), "replacement-e4.pdf", secondSource, 7, "application/pdf")
+	require.NoError(t, err)
+	second := lexicalSearchBuild(s, profile, fakeHash("e4"), "second venus phrase")
+	second.SourceSHA256 = secondSource
+	require.NoError(t, s.StageRenditionBuild(ctx, second))
+	secondGeneration, err := s.StageLexicalGeneration(ctx, fakeHash("e5"))
+	require.NoError(t, err)
+
+	inTransaction := make(chan struct{})
+	release := make(chan struct{})
+	published := make(chan error, 1)
+	go func() {
+		published <- s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			close(inTransaction)
+			<-release
+			return s.publishLexicalHeadTx(ctx, tx, secondGeneration.ID)
+		})
+	}()
+	<-inTransaction
+	type acquired struct {
+		lease *LexicalGenerationLease
+		err   error
+	}
+	leases := make(chan acquired, 1)
+	go func() {
+		lease, err := s.AcquireLexicalGeneration(ctx)
+		leases <- acquired{lease: lease, err: err}
+	}()
+	select {
+	case got := <-leases:
+		t.Fatalf("lease acquired %v while a publication was in flight", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-published)
+	got := <-leases
+	require.NoError(t, got.err)
+	assert.Equal(t, secondGeneration.ID, got.lease.Generation.ID,
+		"the lease pins the head the publication installed, not the one it collected")
+	require.NoError(t, got.lease.Release())
 }
 
 func lexicalSearchBuild(

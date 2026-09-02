@@ -4,15 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/document/internal/manifestjson"
+	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -230,35 +228,35 @@ type retentionDisclosureIdentity struct {
 // CanonicalProfile validates and canonicalizes profile without mutating it,
 // emits lexicographically canonical JSON, and derives layered SHA-256 values.
 func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, error) {
-	canonical, err := CanonicalizeProfile(profile)
+	canonicalProfile, err := CanonicalizeProfile(profile)
 	if err != nil {
 		return nil, FingerprintSet{}, err
 	}
 
-	evidenceFingerprint, err := componentFingerprint("evidence_lexical", canonical.EvidenceLexical)
+	evidenceFingerprint, err := componentFingerprint("evidence_lexical", canonicalProfile.EvidenceLexical)
 	if err != nil {
 		return nil, FingerprintSet{}, err
 	}
 	result := FingerprintSet{
-		EmbeddingInput: make(map[string]string, len(canonical.Embeddings)), VectorSpace: make(map[string]string, len(canonical.Embeddings)),
+		EmbeddingInput: make(map[string]string, len(canonicalProfile.Embeddings)), VectorSpace: make(map[string]string, len(canonicalProfile.Embeddings)),
 		EvidenceLexical: evidenceFingerprint,
 	}
 	var renditionIdentity *renditionRequestIdentity
-	if canonical.Rendition != nil {
+	if canonicalProfile.Rendition != nil {
 		renditionIdentity = &renditionRequestIdentity{
-			AdapterContract:       canonical.Rendition.AdapterContract,
-			DeploymentFingerprint: canonical.Rendition.DeploymentFingerprint, Descriptor: canonical.Rendition.Descriptor,
-			DiscloseFilename: canonical.Rendition.DiscloseFilename, DisclosureFingerprint: canonical.Rendition.DisclosureFingerprint,
-			MaxDocumentBytes: canonical.Rendition.MaxDocumentBytes,
-			MaxResponseBytes: canonical.Rendition.MaxResponseBytes, MaxUnits: canonical.Rendition.MaxUnits,
-			RequestedArtifacts: canonical.Rendition.RequestedArtifacts, UploadOptionsFingerprint: canonical.Rendition.UploadOptionsFingerprint,
+			AdapterContract:       canonicalProfile.Rendition.AdapterContract,
+			DeploymentFingerprint: canonicalProfile.Rendition.DeploymentFingerprint, Descriptor: canonicalProfile.Rendition.Descriptor,
+			DiscloseFilename: canonicalProfile.Rendition.DiscloseFilename, DisclosureFingerprint: canonicalProfile.Rendition.DisclosureFingerprint,
+			MaxDocumentBytes: canonicalProfile.Rendition.MaxDocumentBytes,
+			MaxResponseBytes: canonicalProfile.Rendition.MaxResponseBytes, MaxUnits: canonicalProfile.Rendition.MaxUnits,
+			RequestedArtifacts: canonicalProfile.Rendition.RequestedArtifacts, UploadOptionsFingerprint: canonicalProfile.Rendition.UploadOptionsFingerprint,
 		}
 	}
 	result.RenditionRequest, err = componentFingerprint("rendition_request", renditionIdentity)
 	if err != nil {
 		return nil, FingerprintSet{}, err
 	}
-	for _, binding := range canonical.Embeddings {
+	for _, binding := range canonicalProfile.Embeddings {
 		input := embeddingInputIdentity{InputKind: binding.InputKind, Chunk: binding.Chunk}
 		if binding.InputKind == EmbeddingInputRenditionChunk {
 			input.EvidenceLexical = evidenceFingerprint
@@ -276,11 +274,11 @@ func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, erro
 			return nil, FingerprintSet{}, err
 		}
 	}
-	result.RetentionDisclosure, err = retentionFingerprint(canonical)
+	result.RetentionDisclosure, err = retentionFingerprint(canonicalProfile)
 	if err != nil {
 		return nil, FingerprintSet{}, err
 	}
-	encoded, err := canonicalJSON(canonical)
+	encoded, err := canonical.Marshal(canonicalProfile)
 	if err != nil {
 		return nil, FingerprintSet{}, fmt.Errorf("encode canonical processing profile: %w", err)
 	}
@@ -291,41 +289,41 @@ func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, erro
 // CanonicalizeProfile validates profile and returns a detached canonical copy
 // suitable for provider execution and durable policy identity.
 func CanonicalizeProfile(profile ProcessingProfileV1) (ProcessingProfileV1, error) {
-	canonical, err := canonicalProcessingProfile(profile)
+	canonicalProfile, err := canonicalProcessingProfile(profile)
 	if err != nil {
 		return ProcessingProfileV1{}, fmt.Errorf("invalid processing profile: %w", err)
 	}
-	if err := validateProcessingProfile(canonical); err != nil {
+	if err := validateProcessingProfile(canonicalProfile); err != nil {
 		return ProcessingProfileV1{}, fmt.Errorf("invalid processing profile: %w", err)
 	}
-	return canonical, nil
+	return canonicalProfile, nil
 }
 
 func canonicalProcessingProfile(profile ProcessingProfileV1) (ProcessingProfileV1, error) {
-	canonical := profile
-	canonical.Embeddings = slices.Clone(profile.Embeddings)
-	if canonical.Embeddings == nil {
-		canonical.Embeddings = make([]EmbeddingBindingV1, 0)
+	canonicalProfile := profile
+	canonicalProfile.Embeddings = slices.Clone(profile.Embeddings)
+	if canonicalProfile.Embeddings == nil {
+		canonicalProfile.Embeddings = make([]EmbeddingBindingV1, 0)
 	}
 	if profile.Rendition != nil {
 		rendition := *profile.Rendition
 		rendition.RequestedArtifacts = slices.Clone(profile.Rendition.RequestedArtifacts)
-		canonical.Rendition = &rendition
+		canonicalProfile.Rendition = &rendition
 	}
-	for index := range canonical.Embeddings {
+	for index := range canonicalProfile.Embeddings {
 		if profile.Embeddings[index].Chunk != nil {
 			chunk := *profile.Embeddings[index].Chunk
-			canonical.Embeddings[index].Chunk = &chunk
+			canonicalProfile.Embeddings[index].Chunk = &chunk
 		}
 	}
-	if err := normalizeProfileStrings(&canonical); err != nil {
+	if err := normalizeProfileStrings(&canonicalProfile); err != nil {
 		return ProcessingProfileV1{}, err
 	}
-	if canonical.Rendition != nil {
-		slices.Sort(canonical.Rendition.RequestedArtifacts)
+	if canonicalProfile.Rendition != nil {
+		slices.Sort(canonicalProfile.Rendition.RequestedArtifacts)
 	}
-	slices.SortFunc(canonical.Embeddings, func(left, right EmbeddingBindingV1) int { return strings.Compare(left.Name, right.Name) })
-	return canonical, nil
+	slices.SortFunc(canonicalProfile.Embeddings, func(left, right EmbeddingBindingV1) int { return strings.Compare(left.Name, right.Name) })
+	return canonicalProfile, nil
 }
 
 func normalizeProfileStrings(profile *ProcessingProfileV1) error {
@@ -602,7 +600,7 @@ func validateProviderDescriptor(descriptor ProviderDescriptorV1) error {
 }
 
 func validateFingerprint(value, subject string) error {
-	if len(value) != sha256.Size*2 || !manifestjson.LowerHex(value) {
+	if !canonical.IsSHA256Hex(value) {
 		return fmt.Errorf("%s must be a lowercase SHA-256 value", subject)
 	}
 	return nil
@@ -642,8 +640,8 @@ func retentionFingerprint(profile ProcessingProfileV1) (string, error) {
 			Kind: "embedding", TrustBoundary: binding.TrustBoundary})
 	}
 	slices.SortFunc(providers, func(left, right providerDisclosureIdentity) int {
-		leftJSON, _ := canonicalJSON(left)
-		rightJSON, _ := canonicalJSON(right)
+		leftJSON, _ := canonical.Marshal(left)
+		rightJSON, _ := canonical.Marshal(right)
 		return bytes.Compare(leftJSON, rightJSON)
 	})
 	policy := profile.RetentionDisclosure
@@ -665,23 +663,11 @@ func validProfileArtifactRole(role EvidenceArtifactRole) bool {
 }
 
 func componentFingerprint[T any](kind string, value T) (string, error) {
-	encoded, err := canonicalJSON(fingerprintEnvelope[T]{Kind: kind, Value: value, Version: 1})
+	encoded, err := canonical.Marshal(fingerprintEnvelope[T]{Kind: kind, Value: value, Version: 1})
 	if err != nil {
 		return "", fmt.Errorf("encode %s fingerprint: %w", kind, err)
 	}
 	return sha256Hex(encoded), nil
-}
-
-func canonicalJSON(value any) ([]byte, error) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	canonical := jsontext.Value(encoded)
-	if err := canonical.Canonicalize(jsontext.CanonicalizeRawInts(false)); err != nil {
-		return nil, err
-	}
-	return []byte(canonical), nil
 }
 
 func sha256Hex(value []byte) string {

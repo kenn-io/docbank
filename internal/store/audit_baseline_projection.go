@@ -296,7 +296,7 @@ func contentVersionAuditRecord(
 	return audit.Record{Kind: "content_version", Fields: []audit.Field{
 		{Name: "version_id", Value: versionValue},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
-		{Name: "blob_hash", Value: blobValue},
+		{Name: columnBlobHash, Value: blobValue},
 		{Name: metadataSizeField, Value: audit.Unsigned(size)},
 		{Name: "media_type", Value: mediaValue},
 		{Name: auditRecordedAtField, Value: recordedValue},

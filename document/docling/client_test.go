@@ -300,7 +300,7 @@ func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(timestampForm)
+	fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
 	upload := &testUpload{Reader: delayedReader{Reader: bytes.NewReader(fixture.source), delay: 30 * time.Millisecond}, metadata: fixture.metadata}
 	_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
 	require.ErrorContains(t, err, "authorization is not current")
@@ -398,7 +398,7 @@ func TestClientStopsAtAuthorizationExpiryBeforeFollowupEgress(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(timestampForm)
+	fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
 	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.ErrorContains(t, err, "authorization is not current")
 	assert.Equal(t, int64(1), submits.Load())
@@ -421,7 +421,7 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 		{name: "submit 404", operation: "submit", status: http.StatusNotFound, want: document.RenditionErrorMalformedEvidence},
 		{name: "submit 400", operation: "submit", status: http.StatusBadRequest, want: document.RenditionErrorPolicyRejected},
 		{name: "submit 413", operation: "submit", status: http.StatusRequestEntityTooLarge, want: document.RenditionErrorPolicyRejected},
-		{name: "submit 415", operation: "submit", status: http.StatusUnsupportedMediaType, want: document.RenditionErrorPolicyRejected},
+		{name: "submit 415", operation: "submit", status: http.StatusUnsupportedMediaType, want: document.RenditionErrorUnsupportedInput},
 		{name: "submit 422", operation: "submit", status: http.StatusUnprocessableEntity, want: document.RenditionErrorPolicyRejected},
 		{name: "poll 404", operation: "poll", status: http.StatusNotFound, want: document.RenditionErrorUnknownJob},
 		{name: "poll 410", operation: "poll", status: http.StatusGone, want: document.RenditionErrorUnknownJob},
@@ -502,7 +502,7 @@ func TestClientTreatsInFlightSubmissionDeadlinesAsAmbiguous(t *testing.T) {
 				return nil, request.Context().Err()
 			})})
 			if testCase.authorizationLimit {
-				fixture.authorization.ExpiresAt = time.Now().UTC().Add(25 * time.Millisecond).Format(timestampForm)
+				fixture.authorization.ExpiresAt = time.Now().UTC().Add(25 * time.Millisecond).Format(providerutil.TimestampForm)
 			} else {
 				client.totalTimeout = 25 * time.Millisecond
 			}
@@ -725,28 +725,6 @@ func TestClientReceiptCountsEveryResponseBodyAndRequest(t *testing.T) {
 	assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
 	assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
 	assert.Equal(t, outputBytes.Load(), result.Receipt.Usage.OutputBytes)
-}
-
-func TestClientRequestCountsPartialResponseBytesBeforeReadFailure(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "usage.pdf", []byte("synthetic PDF bytes"))
-	payload := []byte("partial provider response")
-	client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, &http.Client{
-		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body: io.NopCloser(readerFunc(func(buffer []byte) (int, error) {
-					return copy(buffer, payload), errors.New("synthetic response read failure")
-				})),
-			}, nil
-		}),
-	})
-	usage := &requestUsage{}
-	_, _, err := client.request(t.Context(), time.Now().Add(time.Minute), usage, http.MethodGet,
-		resultPath+"usage", "", nil, client.maxResponseBytes)
-	require.Error(t, err)
-	assert.Equal(t, int64(1), usage.requests)
-	assert.Equal(t, int64(len(payload)), usage.outputBytes)
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -1144,7 +1122,7 @@ func TestClientClonesHTTPClientAndRefusesRedirects(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newClient(t, server.URL, fixture.descriptor, nil, base)
-	assert.Nil(t, client.http.Jar)
+	assert.Nil(t, client.executor.HTTP.Jar)
 	_, err = client.Render(t.Context(), fixture.upload(), fixture.authorization)
 	require.Error(t, err)
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)

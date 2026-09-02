@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 )
 
 //go:embed testdata/convert-complete.json
@@ -263,10 +264,11 @@ func TestMapEvidenceMarksUnsupportedMarkerBlocksPartial(t *testing.T) {
 
 func TestRequestIDsFitDocbankReceiptTokens(t *testing.T) {
 	for _, requestID := range []string{"UPPER", ".", "..", strings.Repeat("a", 121), "with/slash"} {
-		err := validateRequestID(requestID)
+		_, err := parseInitial([]byte(`{"success":true,"request_id":"` + requestID + `","request_check_url":"https://ignored.invalid"}`))
 		require.Error(t, err, requestID)
 	}
-	require.NoError(t, validateRequestID(strings.Repeat("a", 120)))
+	_, err := parseInitial([]byte(`{"success":true,"request_id":"` + strings.Repeat("a", 120) + `","request_check_url":"https://ignored.invalid"}`))
+	require.NoError(t, err)
 }
 
 func TestClientRejectsPartialAndFailedResults(t *testing.T) {
@@ -331,7 +333,7 @@ func TestClientClassifiesHTTPStatusAndDoesNotResubmit(t *testing.T) {
 	}{
 		{name: "authentication", status: http.StatusUnauthorized, want: document.RenditionErrorAuthentication},
 		{name: "capacity", status: http.StatusServiceUnavailable, want: document.RenditionErrorAmbiguousSubmission},
-		{name: "rate limit", status: http.StatusTooManyRequests, want: document.RenditionErrorAmbiguousSubmission},
+		{name: "rate limit", status: http.StatusTooManyRequests, want: document.RenditionErrorRateLimited},
 		{name: "unsupported", status: http.StatusUnsupportedMediaType, want: document.RenditionErrorUnsupportedInput},
 		{name: "too large", status: http.StatusRequestEntityTooLarge, want: document.RenditionErrorPolicyRejected},
 	} {
@@ -417,7 +419,7 @@ func TestClientRejectsIdentityBoundsRedirectsAndAmbientCookies(t *testing.T) {
 	base.Jar = jar
 	base.CheckRedirect = func(*http.Request, []*http.Request) error { return nil }
 	client := newClientWithBounds(t, server.URL, fixture.descriptor, base, nil, 4096)
-	assert.Nil(t, client.http.Jar)
+	assert.Nil(t, client.executor.HTTP.Jar)
 
 	_, err = client.Render(t.Context(), badUpload, fixture.authorization)
 	require.Error(t, err)
@@ -495,7 +497,7 @@ func newFixture(t *testing.T, family, mediaType, filename string, source []byte)
 		MediaFamily: family, MediaType: mediaType, InputKind: document.RenditionInputOriginalFile,
 		AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxProviderMarkdownBytes: 4096,
 		MaxArtifactBytes: 8192, MaxArtifacts: 1, MaxTotalResultBytes: 32768,
-		AuthorizedAt: started.Format(timestampForm), ExpiresAt: started.Add(10 * time.Minute).Format(timestampForm),
+		AuthorizedAt: started.Format(providerutil.TimestampForm), ExpiresAt: started.Add(10 * time.Minute).Format(providerutil.TimestampForm),
 	}}
 }
 

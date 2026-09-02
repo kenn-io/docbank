@@ -375,12 +375,15 @@ func hevcSPSDimensions(nal []byte) (int64, int64, bool) {
 	return int64(width), int64(height), true
 }
 
+// removeEmulationPrevention strips the 0x03 that H.264 and HEVC insert after
+// two zero bytes. The byte following a stripped 0x03 starts a new run, so a
+// literal 0x03 there is payload and must survive.
 func removeEmulationPrevention(data []byte) []byte {
 	out := make([]byte, 0, len(data))
 	zeros := 0
 	for _, value := range data {
 		if zeros >= 2 && value == 3 {
-			zeros = 2
+			zeros = 0
 			continue
 		}
 		out = append(out, value)

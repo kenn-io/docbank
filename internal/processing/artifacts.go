@@ -12,10 +12,10 @@ import (
 	"io"
 	"reflect"
 	"slices"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -76,7 +76,6 @@ type renditionPublicationCatalog interface {
 }
 
 type auxiliaryChecksumCatalog interface {
-	MissingBlobChecksumTargets(ctx context.Context, limit int) ([]store.BlobChecksumTarget, error)
 	RecordVerifiedBlobChecksum(ctx context.Context, record store.BlobChecksumRecord) error
 }
 
@@ -84,23 +83,6 @@ type verifiedBlobReader interface {
 	OpenStreamContext(
 		ctx context.Context, hash string,
 	) (packstore.VerifiedReadCloser, int64, error)
-}
-
-// BackfillAuxiliaryChecksums computes one resumable batch over exact retained
-// originals and sanitized Markdown. Progress is committed only after the
-// mixed-store stream reaches verified EOF with its cataloged size.
-func BackfillAuxiliaryChecksums(
-	ctx context.Context, catalog auxiliaryChecksumCatalog,
-	blobs verifiedBlobReader, limit int,
-) (int, error) {
-	if catalog == nil || blobs == nil {
-		return 0, errors.New("auxiliary checksum backfill requires catalog and blob stores")
-	}
-	targets, err := catalog.MissingBlobChecksumTargets(ctx, limit)
-	if err != nil {
-		return 0, err
-	}
-	return BackfillAuxiliaryChecksumTargets(ctx, catalog, blobs, targets)
 }
 
 // BackfillAuxiliaryChecksumTargets processes a previously selected batch. A
@@ -307,10 +289,14 @@ func validateStagedRendition(staged StagedRendition) error {
 		staged.Build.EvidenceLexicalFingerprint != staged.Attachment.Profile.EvidenceLexicalFingerprint {
 		return errors.New("staged rendition build does not match canonical profile components")
 	}
-	if staged.RenditionPolicy.MaxSegmentRunes() != profile.EvidenceLexical.MaxSegmentRunes {
+	_, expectedRenditionPolicy, err := document.RenditionExecutionPoliciesForProfileV1(profile)
+	if err != nil {
+		return fmt.Errorf("staged rendition canonical profile policies: %w", err)
+	}
+	if staged.RenditionPolicy.Identity() != expectedRenditionPolicy.Identity() {
 		return fmt.Errorf(
-			"staged rendition policy max segment runes %d does not match canonical profile max segment runes %d",
-			staged.RenditionPolicy.MaxSegmentRunes(), profile.EvidenceLexical.MaxSegmentRunes,
+			"staged rendition policy %+v does not match canonical profile rendition limits %+v",
+			staged.RenditionPolicy.Limits(), expectedRenditionPolicy.Limits(),
 		)
 	}
 	if len(staged.Rendition.Units) > profile.Rendition.MaxUnits {
@@ -326,18 +312,6 @@ func validateStagedRendition(staged StagedRendition) error {
 			)
 		}
 		declaredResponseBytes += artifact.Size
-	}
-	for index, unit := range staged.Rendition.Units {
-		if runes := utf8.RuneCountInString(unit.Text); runes > profile.EvidenceLexical.MaxUnitRunes {
-			return fmt.Errorf("staged rendition unit %d has %d runes, exceeding canonical profile max unit runes %d",
-				index, runes, profile.EvidenceLexical.MaxUnitRunes)
-		}
-	}
-	for index, segment := range staged.Rendition.LexicalSegments {
-		if runes := utf8.RuneCountInString(segment.Text); runes > profile.EvidenceLexical.MaxSegmentRunes {
-			return fmt.Errorf("staged rendition segment %d has %d runes, exceeding canonical profile max segment runes %d",
-				index, runes, profile.EvidenceLexical.MaxSegmentRunes)
-		}
 	}
 	if err := validateRetainedArtifactPolicy(profile, staged.Build.Artifacts); err != nil {
 		return err
@@ -449,18 +423,16 @@ func validateRetainedArtifactPolicy(
 }
 
 func validateStagedRenditionGraph(staged StagedRendition, normalizedEvidence []byte) error {
-	var evidence document.NormalizedEvidenceV1
-	if err := json.Unmarshal(normalizedEvidence, &evidence, json.RejectUnknownMembers(true)); err != nil {
-		return fmt.Errorf("staged normalized evidence is invalid: %w", err)
-	}
-	canonicalEvidence, evidenceChecksum, err := document.MarshalNormalizedEvidenceV1(evidence)
+	evidence, err := canonical.DecodeWith(normalizedEvidence,
+		func(value document.NormalizedEvidenceV1) ([]byte, error) {
+			encoded, _, err := document.MarshalNormalizedEvidenceV1(value)
+			return encoded, err
+		})
 	if err != nil {
 		return fmt.Errorf("staged normalized evidence is invalid: %w", err)
 	}
-	if !bytes.Equal(canonicalEvidence, normalizedEvidence) {
-		return errors.New("staged normalized evidence is not exact canonical bytes")
-	}
-	if evidenceChecksum != staged.Rendition.EvidenceChecksum {
+	evidenceDigest := sha256.Sum256(normalizedEvidence)
+	if hex.EncodeToString(evidenceDigest[:]) != staged.Rendition.EvidenceChecksum {
 		return errors.New("staged normalized evidence checksum does not match the rendition")
 	}
 	expected, err := document.BuildRenditionV1(evidence, staged.RenditionPolicy)

@@ -141,7 +141,7 @@ func TestBackupLiveReferenceOverridesProviderStagingHashCollision(t *testing.T) 
 	assert.Contains(t, exported.String(), shared,
 		"provider deduplication must not erase a live content blob")
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadata(
 		t.Context(), bytes.NewReader(exported.Bytes())))
 	has, err := restored.HasBlob(t.Context(), shared)
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *t
 	assert.NotContains(t, exported.String(), pending)
 
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadata(
 		t.Context(), bytes.NewReader(exported.Bytes())))
 	has, err := restored.HasBlob(t.Context(), pending)
 	require.NoError(t, err)
@@ -1115,7 +1115,7 @@ func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, conn.Close())
 
-			err = target.ImportMetadataForBackupRestore(t.Context(), strings.NewReader(test.input))
+			err = target.ImportMetadata(t.Context(), strings.NewReader(test.input))
 			require.ErrorContains(t, err, "not pristine")
 			var rows int
 			require.NoError(t, target.db.QueryRow(test.countQuery).Scan(&rows))
@@ -1498,52 +1498,6 @@ func TestProcessingMetadataRoundTripsHeadedEmptyLexicalGeneration(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, generation.ID, restored.ID)
 	assert.Zero(t, restored.BuildCount)
-}
-
-func TestProcessingMetadataImportRequiresVerifiedPhysicalBytes(t *testing.T) {
-	source := newTestStore(t)
-	seedProcessingMetadataCatalog(t, source)
-	var exported bytes.Buffer
-	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
-
-	for name, setup := range map[string]func(*testing.T, string){
-		"metadata only": func(t *testing.T, _ string) {
-			t.Helper()
-		},
-		"missing derivative": func(t *testing.T, targetPath string) {
-			t.Helper()
-			materializeCatalogBlobs(t, targetPath, catalogEvidenceBlobHash, "")
-		},
-		"corrupt derivative": func(t *testing.T, targetPath string) {
-			t.Helper()
-			materializeCatalogBlobs(t, targetPath, "", catalogMarkdownBlobHash)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			targetPath := filepath.Join(t.TempDir(), "target.db")
-			setup(t, targetPath)
-			target, err := Open(targetPath)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, target.Close()) })
-
-			err = target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes()))
-			require.ErrorContains(t, err, "physical")
-
-			var processingRows, heads int
-			require.NoError(t, target.db.QueryRow(`
-				SELECT
-				  (SELECT COUNT(*) FROM processing_profiles)
-				    + (SELECT COUNT(*) FROM rendition_builds)
-				    + (SELECT COUNT(*) FROM rendition_artifacts)
-				    + (SELECT COUNT(*) FROM rendition_units)
-				    + (SELECT COUNT(*) FROM rendition_lexical_segments)
-				    + (SELECT COUNT(*) FROM rendition_attachments),
-				  (SELECT COUNT(*) FROM rendition_heads)
-			`).Scan(&processingRows, &heads))
-			assert.Zero(t, processingRows)
-			assert.Zero(t, heads)
-		})
-	}
 }
 
 func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {

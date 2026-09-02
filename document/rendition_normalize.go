@@ -12,7 +12,7 @@ import (
 // BuildRenditionV1 derives sanitized Markdown, normalized units, and lexical
 // spans from exactly one validated normalized-evidence/v1 authority.
 func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (RenditionV1, error) {
-	if err := validateRenditionPolicy(policy); err != nil {
+	if err := policy.validate(); err != nil {
 		return RenditionV1{}, err
 	}
 	_, evidenceChecksum, err := MarshalNormalizedEvidenceV1(evidence)
@@ -31,19 +31,16 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	}
 
 	markdownUnits := make([]string, 0, len(evidence.Units))
-	remaining := policy.normalization.maxDocumentChars
+	remaining := policy.maxDocumentChars
 	truncated := false
 	for _, evidenceUnit := range evidence.Units {
 		separatorBudget := 0
 		if len(markdownUnits) > 0 {
 			separatorBudget = utf8.RuneCountInString("\n\n---\n\n")
 		}
-		unitBudget := min(policy.normalization.maxUnitChars, max(remaining-separatorBudget, 0))
+		unitBudget := min(policy.maxUnitRunes, max(remaining-separatorBudget, 0))
 		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionMarkdown(
-			evidenceUnit.Text,
-			policy.normalization.maxLinkChars,
-			policy.normalization.maxSourceUnitBytes,
-			unitBudget,
+			evidenceUnit.Text, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)

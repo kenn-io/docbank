@@ -43,7 +43,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		version: 1, release: "v0.9.0", backupSuffix: v090BackupSuffix,
 		validate: validateV090Schema,
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
-			return exportV090MetadataSnapshot(ctx, source, dst)
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 1)
 		},
 		restorePhysical: restoreV090PhysicalCatalog,
 	},
@@ -51,7 +51,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		version: 2, release: "schema v2 (v0.10.0–v0.11.0)", backupSuffix: v2BackupSuffix,
 		validate: validateV2Schema,
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
-			return exportMetadataSnapshot(ctx, source, dst)
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 2)
 		},
 		restorePhysical: restoreV2PhysicalCatalog,
 	},
@@ -59,7 +59,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		version: 3, release: "schema v3 (v0.12.0–v0.14.0)", backupSuffix: v3BackupSuffix,
 		validate: validateV3Schema,
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
-			return exportMetadataSnapshot(ctx, source, dst)
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 3)
 		},
 		restorePhysical: restoreV3PhysicalCatalog,
 	},
@@ -239,11 +239,11 @@ func validateCurrentSchemaColumns(
 			"ownership_epoch", "role", "store_id",
 		},
 		"blob_locations": {
-			"blob_hash", "encoding", "generation", "kind", "pack_eligible",
+			columnBlobHash, "encoding", "generation", "kind", "pack_eligible",
 			"store_id", "stored_size",
 		},
 		"blob_pack_entries": {
-			"blob_hash", "crc32c", "flags", "pack_id", "pack_offset",
+			columnBlobHash, "crc32c", "flags", "pack_id", "pack_offset",
 			"raw_len", "store_id", "stored_len",
 		},
 	}
@@ -280,7 +280,7 @@ func validateV2Schema(db *sql.DB, blobs, packs []string) error {
 		return err
 	}
 	wantIndex := []string{
-		"blob_hash", "crc32c", "flags", "pack_id", "pack_offset", "raw_len", "stored_len",
+		columnBlobHash, "crc32c", "flags", "pack_id", "pack_offset", "raw_len", "stored_len",
 	}
 	if !slices.Equal(index, wantIndex) {
 		return errors.New("not a released schema-v2 database")

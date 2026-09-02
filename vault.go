@@ -381,7 +381,9 @@ func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMet
 // EnsureSourceMetadata returns current local metadata for one exact immutable
 // content version. When the current extractor has not processed those bytes,
 // it verifies and processes them synchronously before returning. Retrying the
-// same version and extractor generation is idempotent.
+// same version and extractor generation is idempotent. The call holds the
+// vault mutation lock for the whole extraction, so writes and maintenance
+// wait behind it.
 func (v *Vault) EnsureSourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
 	if err := v.begin(); err != nil {
 		return SourceMetadata{}, err
@@ -1283,9 +1285,11 @@ func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*Vers
 
 // OpenVersionContentRange opens a bounded decoded logical byte range from one
 // exact immutable content version. Raw loose content uses native offsets;
-// compressed loose and packed content may decode or materialize from the
-// beginning. A partial range proves catalog authorization and slice bounds,
-// not whole-object integrity.
+// compressed loose content decodes to a temporary file and packed content
+// decodes into memory in full before the range is served. A range outside the
+// version returns ErrInvalidContentRange; a stream that ends early returns
+// io.ErrUnexpectedEOF. A partial range proves catalog authorization and slice
+// bounds, not whole-object integrity.
 func (v *Vault) OpenVersionContentRange(
 	ctx context.Context, versionID string, opts ContentRangeOptions,
 ) (*VersionContentRange, error) {

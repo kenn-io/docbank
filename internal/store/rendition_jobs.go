@@ -499,8 +499,11 @@ func (s *Store) ClaimRenditionJob(
 			return fmt.Errorf("claiming rendition job: %w", err)
 		}
 		changed, err := result.RowsAffected()
-		if err != nil || changed != 1 {
-			return errors.Join(ErrRenditionJobFenced, err)
+		if err != nil {
+			return fmt.Errorf("reading rendition job transition result: %w", err)
+		}
+		if changed != 1 {
+			return ErrRenditionJobFenced
 		}
 		if err := refreshRenditionJobRootsTx(
 			ctx, tx, jobID, phase, generationID, epoch, at.Format(timestampLayout)); err != nil {
@@ -704,8 +707,11 @@ func (s *Store) RenewRenditionJobClaim(
 			return fmt.Errorf("renewing rendition job claim: %w", err)
 		}
 		changed, err := result.RowsAffected()
-		if err != nil || changed != 1 {
-			return errors.Join(ErrRenditionJobFenced, err)
+		if err != nil {
+			return fmt.Errorf("reading rendition job transition result: %w", err)
+		}
+		if changed != 1 {
+			return ErrRenditionJobFenced
 		}
 		claim.LeaseExpires = expires
 		claim.Phase = job.Phase
@@ -826,8 +832,11 @@ func (s *Store) BeginRenditionProvider(
 				return fmt.Errorf("requeueing rendition job with fresh waiter authority: %w", requeueErr)
 			}
 			changed, requeueErr := result.RowsAffected()
-			if requeueErr != nil || changed != 1 {
-				return errors.Join(ErrRenditionJobFenced, requeueErr)
+			if requeueErr != nil {
+				return fmt.Errorf("reading rendition job transition result: %w", requeueErr)
+			}
+			if changed != 1 {
+				return ErrRenditionJobFenced
 			}
 			waiterReselected = true
 			return nil
@@ -918,8 +927,11 @@ func (s *Store) CheckpointRenditionProvider(
 			return fmt.Errorf("checkpointing rendition provider: %w", err)
 		}
 		changed, err := result.RowsAffected()
-		if err != nil || changed != 1 {
-			return errors.Join(ErrRenditionJobFenced, err)
+		if err != nil {
+			return fmt.Errorf("reading rendition job transition result: %w", err)
+		}
+		if changed != 1 {
+			return ErrRenditionJobFenced
 		}
 		return nil
 	})
@@ -979,8 +991,11 @@ func (s *Store) MarkRenditionJobRetry(
 			return fmt.Errorf("recording rendition retry: %w", err)
 		}
 		changed, err := result.RowsAffected()
-		if err != nil || changed != 1 {
-			return errors.Join(ErrRenditionJobFenced, err)
+		if err != nil {
+			return fmt.Errorf("reading rendition job transition result: %w", err)
+		}
+		if changed != 1 {
+			return ErrRenditionJobFenced
 		}
 		return nil
 	})
@@ -1088,8 +1103,11 @@ func (s *Store) finishRenditionJobClaim(
 			return fmt.Errorf("finishing rendition job: %w", err)
 		}
 		changed, err := result.RowsAffected()
-		if err != nil || changed != 1 {
-			return errors.Join(ErrRenditionJobFenced, err)
+		if err != nil {
+			return fmt.Errorf("reading rendition job transition result: %w", err)
+		}
+		if changed != 1 {
+			return ErrRenditionJobFenced
 		}
 		if reopenableStaged && hasWaiting {
 			return nil
@@ -1205,8 +1223,11 @@ func (s *Store) StageRenditionJobGeneration(
 				return fmt.Errorf("refreshing rendition job generation root: %w", err)
 			}
 			changed, err := result.RowsAffected()
-			if err != nil || changed != 1 {
-				return errors.Join(ErrRenditionJobFenced, err)
+			if err != nil {
+				return fmt.Errorf("reading rendition job transition result: %w", err)
+			}
+			if changed != 1 {
+				return ErrRenditionJobFenced
 			}
 		} else if err := putRenditionJobRootTx(ctx, tx, root); err != nil {
 			return err
@@ -1328,8 +1349,8 @@ func (s *Store) PublishRenditionJob(
 			}
 			pairs = append(pairs, renditionPublicationPair{attachment: attachment, head: head})
 		}
-		if err := publishRenditionAttachmentsAndLexicalHeadsTx(
-			ctx, tx, pairs, generationID); err != nil {
+		if err := s.publishRenditionAttachmentsAndLexicalHeadsTx(
+			ctx, tx, pairs, generationID, nil); err != nil {
 			return err
 		}
 		for _, authority := range authorized {
@@ -1507,17 +1528,25 @@ func requireRenditionClaimTx(
 	if claim.JobID == "" || claim.Owner == "" || claim.Epoch <= 0 {
 		return RenditionJob{}, ErrRenditionJobFenced
 	}
-	var owner, leaseRaw string
+	var owner, leaseRaw sql.NullString
 	var state RenditionJobState
 	var epoch int64
 	err := tx.QueryRowContext(ctx, `
 		SELECT state,claim_owner,claim_epoch,lease_expires_at
 		FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(&state, &owner, &epoch, &leaseRaw)
-	if err != nil {
-		return RenditionJob{}, errors.Join(ErrRenditionJobFenced, err)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RenditionJob{}, ErrRenditionJobFenced
 	}
-	leaseExpiry, err := time.Parse(timestampLayout, leaseRaw)
-	if err != nil || state != RenditionJobRunning || owner != claim.Owner ||
+	if err != nil {
+		return RenditionJob{}, fmt.Errorf("reading rendition job claim: %w", err)
+	}
+	// An unclaimed job has no owner or lease; that is a lost claim, not a
+	// storage failure.
+	if !owner.Valid || !leaseRaw.Valid {
+		return RenditionJob{}, ErrRenditionJobFenced
+	}
+	leaseExpiry, err := time.Parse(timestampLayout, leaseRaw.String)
+	if err != nil || state != RenditionJobRunning || owner.String != claim.Owner ||
 		epoch != claim.Epoch || !leaseExpiry.After(at.UTC()) {
 		return RenditionJob{}, ErrRenditionJobFenced
 	}

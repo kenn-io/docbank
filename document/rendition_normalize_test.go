@@ -43,7 +43,7 @@ func TestBuildRenditionV1(t *testing.T) {
 			},
 		},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -129,10 +129,9 @@ func TestBuildRenditionV1BoundsLexicalSegmentsByRune(t *testing.T) {
 				Kind: EvidenceLocatorPage, IndexOrigin: EvidenceIndexOriginOne, Start: 1, End: 1,
 			}}},
 	})
-	normalization := testNormalizePolicy(t, 100)
-	normalization.maxChunkRunes = 4_000
-	normalization.chunkOverlap = 0
-	policy, err := NewRenditionPolicy(normalization, 4)
+	limits := testRenditionLimits(100)
+	limits.MaxSegmentRunes = 4
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -171,7 +170,7 @@ func TestBuildRenditionV1DegradesGenericUnitsWithoutInventingProvenance(t *testi
 			Text:    "plain **synthetic** text",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -197,7 +196,7 @@ func TestBuildRenditionV1RejectsInvalidEvidenceAndPolicy(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "rendition") || strings.Contains(err.Error(), "evidence"))
 
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 	_, err = BuildRenditionV1(NormalizedEvidenceV1{}, policy)
 	require.ErrorContains(t, err, "validate rendition evidence")
@@ -215,7 +214,7 @@ func TestBuildRenditionV1DropsSelfClosingActiveHTMLWithoutDroppingFollowingText(
 			Text:    "before <input type=\"text\" value=\"provider control\"> after",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -320,7 +319,7 @@ func TestBuildRenditionV1PreservesParserGeneratedTaskCheckboxes(t *testing.T) {
 			Text:    "- [x] shipped\n- [ ] pending",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -340,7 +339,7 @@ func TestBuildRenditionV1DropsProviderSuppliedCheckboxControls(t *testing.T) {
 			Text:    "alpha <input type=\"checkbox\" checked> beta",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -360,9 +359,9 @@ func TestBuildRenditionV1AppliesDocumentCharacterLimit(t *testing.T) {
 			Text:    "é日🙂abcdef",
 		}},
 	})
-	normalization := testNormalizePolicy(t, 6)
-	normalization.maxUnitChars = 100
-	policy, err := NewRenditionPolicy(normalization)
+	limits := testRenditionLimits(6)
+	limits.MaxUnitRunes = 100
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -386,7 +385,7 @@ func TestBuildRenditionV1SerializesDecodedTextAsInertMarkdown(t *testing.T) {
 				"~~~go\nfirst\n```\n[escaped_code_fence](javascript:alert(1))\n~~~",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -413,10 +412,9 @@ func TestBuildRenditionV1WarnsWhenSourceByteLimitTruncates(t *testing.T) {
 			Text:    "abcdef",
 		}},
 	})
-	normalization := testNormalizePolicy(t, 100_000)
-	normalization.maxSourceUnitBytes = 4
-	policy, err := NewRenditionPolicy(normalization)
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
+	policy.maxSourceUnitBytes = 4
 
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
@@ -438,7 +436,7 @@ func TestBuildRenditionV1PadsAsymmetricInlineCodeBackticks(t *testing.T) {
 				"[unsafe](javascript:alert(1))``` ``",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -462,7 +460,7 @@ func TestBuildRenditionV1RejectsStructuralCharactersInSafeLinkDestinations(t *te
 			Text:    `<a href="https://example.test/?q=&lt;iframe&gt;">safe</a>`,
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -501,14 +499,14 @@ func TestBuildRenditionV1TruncatesStructuralMarkdownWithoutExposingCode(t *testi
 	})
 	for limit := 1; limit < 110; limit++ {
 		t.Run("unit-"+strconv.Itoa(limit), func(t *testing.T) {
-			normalization := testNormalizePolicy(t, 100_000)
-			normalization.maxUnitChars = limit
-			assertTruncatedRenditionIsInert(t, evidence, normalization)
+			limits := testRenditionLimits(100_000)
+			limits.MaxUnitRunes = limit
+			assertTruncatedRenditionIsInert(t, evidence, limits)
 		})
 		t.Run("document-"+strconv.Itoa(limit), func(t *testing.T) {
-			normalization := testNormalizePolicy(t, limit)
-			normalization.maxUnitChars = 100_000
-			assertTruncatedRenditionIsInert(t, evidence, normalization)
+			limits := testRenditionLimits(limit)
+			limits.MaxUnitRunes = 100_000
+			assertTruncatedRenditionIsInert(t, evidence, limits)
 		})
 	}
 }
@@ -526,7 +524,7 @@ func TestBuildRenditionV1KeepsCodeAndTablesInTheirOriginalContexts(t *testing.T)
 				"| Name | Code |\n| --- | --- |\n| left | `a | b` |",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -552,7 +550,7 @@ func TestBuildRenditionV1KeepsFencedCodeInsideItsTableCell(t *testing.T) {
 			Text:    `<table><tr><th>Name</th><th>Code</th></tr><tr><td>left</td><td><pre><code>a | b</code></pre></td></tr></table>`,
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -584,7 +582,7 @@ func TestBuildRenditionV1EncodesSafeLinksInEveryMarkdownContext(t *testing.T) {
 | <a href="` + tableLink + `">cell</a> | safe |`,
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -616,14 +614,14 @@ func TestBuildRenditionV1KeepsNestedLinkCodeInertAtEveryLimit(t *testing.T) {
 	})
 	for limit := 1; limit < 160; limit++ {
 		t.Run("unit-"+strconv.Itoa(limit), func(t *testing.T) {
-			normalization := testNormalizePolicy(t, 100_000)
-			normalization.maxUnitChars = limit
-			assertNestedLinkCodeIsInert(t, evidence, normalization)
+			limits := testRenditionLimits(100_000)
+			limits.MaxUnitRunes = limit
+			assertNestedLinkCodeIsInert(t, evidence, limits)
 		})
 		t.Run("document-"+strconv.Itoa(limit), func(t *testing.T) {
-			normalization := testNormalizePolicy(t, limit)
-			normalization.maxUnitChars = 100_000
-			assertNestedLinkCodeIsInert(t, evidence, normalization)
+			limits := testRenditionLimits(limit)
+			limits.MaxUnitRunes = 100_000
+			assertNestedLinkCodeIsInert(t, evidence, limits)
 		})
 	}
 }
@@ -644,7 +642,7 @@ func TestBuildRenditionV1KeepsProviderTextFromCreatingMarkdownBlocks(t *testing.
 				"<p>&#96;&#96;&#96; entity fence</p><p>\\`\\`\\` escaped fence</p>",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -673,7 +671,7 @@ func TestBuildRenditionV1PreservesEscapedPipeInsideTableInlineCode(t *testing.T)
 			Text:    "| Name | Code |\n| --- | --- |\n| left | `a \\| b` |",
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -705,9 +703,9 @@ func TestBuildRenditionV1KeepsExactFitBudgetsAcrossBlocksAndUnits(t *testing.T) 
 			},
 		},
 	})
-	normalization := testNormalizePolicy(t, 5)
-	normalization.maxUnitChars = 5
-	policy, err := NewRenditionPolicy(normalization)
+	limits := testRenditionLimits(5)
+	limits.MaxUnitRunes = 5
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -717,9 +715,9 @@ func TestBuildRenditionV1KeepsExactFitBudgetsAcrossBlocksAndUnits(t *testing.T) 
 	assert.Equal(t, "first", rendered.Units[0].Text)
 	assert.Empty(t, rendered.Units[1].Text)
 	assert.Equal(t, "first\n", string(rendered.Markdown))
-	assert.LessOrEqual(t, utf8.RuneCountInString(rendered.Units[0].Text), normalization.maxUnitChars)
-	assert.LessOrEqual(t, utf8.RuneCountInString(rendered.Units[1].Text), normalization.maxUnitChars)
-	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), normalization.maxDocumentChars)
+	assert.LessOrEqual(t, utf8.RuneCountInString(rendered.Units[0].Text), limits.MaxUnitRunes)
+	assert.LessOrEqual(t, utf8.RuneCountInString(rendered.Units[1].Text), limits.MaxUnitRunes)
+	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), limits.MaxDocumentChars)
 	assert.Contains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
 }
 
@@ -729,7 +727,7 @@ func TestBuildRenditionV1ChargesAggregateSeparators(t *testing.T) {
 		{Order: 1, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorSection, IndexOrigin: EvidenceIndexOriginNone}, Text: "two"},
 	}})
 	for limit := 1; limit < 16; limit++ {
-		policy, err := NewRenditionPolicy(testNormalizePolicy(t, limit))
+		policy, err := NewRenditionPolicy(testRenditionLimits(limit))
 		require.NoError(t, err)
 		rendered, err := BuildRenditionV1(evidence, policy)
 		require.NoError(t, err)
@@ -744,10 +742,9 @@ func TestBuildRenditionV1FinalizesTruncatedHTMLContexts(t *testing.T) {
 	for _, source := range []string{`<a href="javascript:alert(1)">label`, `<code>code`, `<pre><code>block`, `<table><tr><td>cell`} {
 		evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceComplete, Family: "text", UnitKind: EvidenceUnitSection, Units: []SourceEvidenceUnitV1{{Order: 0, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorSection, IndexOrigin: EvidenceIndexOriginNone}, Text: source}}})
 		for limit := 1; limit < len(source); limit++ {
-			normalization := testNormalizePolicy(t, 10_000)
-			normalization.maxSourceUnitBytes = limit
-			policy, err := NewRenditionPolicy(normalization)
+			policy, err := NewRenditionPolicy(testRenditionLimits(10_000))
 			require.NoError(t, err)
+			policy.maxSourceUnitBytes = limit
 			rendered, err := BuildRenditionV1(evidence, policy)
 			if err == nil {
 				html := renderUnsafeMarkdown(t, rendered.Markdown)
@@ -759,7 +756,7 @@ func TestBuildRenditionV1FinalizesTruncatedHTMLContexts(t *testing.T) {
 
 func TestBuildRenditionV1PreservesTypedLists(t *testing.T) {
 	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceComplete, Family: "text", UnitKind: EvidenceUnitSection, Units: []SourceEvidenceUnitV1{{Order: 0, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorSection, IndexOrigin: EvidenceIndexOriginNone}, Text: `<ol start="3"><li>third</li><li><p>loose one</p><p>loose two</p><ul><li>nested</li></ul></li></ol><ul><li>plain</li></ul>`}}})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
@@ -854,7 +851,7 @@ func TestBuildRenditionV1PreservesExactListHierarchy(t *testing.T) {
 				`<ul><li>tail</li><li>end</li></ul>`,
 		}},
 	})
-	policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -900,9 +897,9 @@ func TestBuildRenditionV1PreservesBoundedListHierarchy(t *testing.T) {
 			Text:    `<ol start="0"><li>zero<ul><li>nested alpha</li><li>nested beta</li></ul></li><li>one</li></ol>`,
 		}},
 	})
-	normalization := testNormalizePolicy(t, 36)
-	normalization.maxUnitChars = 36
-	policy, err := NewRenditionPolicy(normalization)
+	limits := testRenditionLimits(36)
+	limits.MaxUnitRunes = 36
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -1003,7 +1000,7 @@ func TestBuildRenditionV1PreservesEveryListTopologyAtFullAndBoundedBudgets(t *te
 			})
 
 			t.Run("full", func(t *testing.T) {
-				policy, err := NewRenditionPolicy(testNormalizePolicy(t, 100_000))
+				policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 				require.NoError(t, err)
 				rendered, err := BuildRenditionV1(evidence, policy)
 				require.NoError(t, err)
@@ -1012,9 +1009,9 @@ func TestBuildRenditionV1PreservesEveryListTopologyAtFullAndBoundedBudgets(t *te
 			})
 
 			t.Run("bounded", func(t *testing.T) {
-				normalization := testNormalizePolicy(t, len(test.boundedMarkdown))
-				normalization.maxUnitChars = len(test.boundedMarkdown)
-				policy, err := NewRenditionPolicy(normalization)
+				limits := testRenditionLimits(len(test.boundedMarkdown))
+				limits.MaxUnitRunes = len(test.boundedMarkdown)
+				policy, err := NewRenditionPolicy(limits)
 				require.NoError(t, err)
 				rendered, err := BuildRenditionV1(evidence, policy)
 				require.NoError(t, err)
@@ -1042,9 +1039,9 @@ func TestBuildRenditionV1PreservesStructuralOnlyLooseListAtEveryCutoff(t *testin
 
 	for limit := 1; limit <= len(fullMarkdown); limit++ {
 		t.Run(strconv.Itoa(limit), func(t *testing.T) {
-			normalization := testNormalizePolicy(t, limit)
-			normalization.maxUnitChars = limit
-			policy, err := NewRenditionPolicy(normalization)
+			limits := testRenditionLimits(limit)
+			limits.MaxUnitRunes = limit
+			policy, err := NewRenditionPolicy(limits)
 			require.NoError(t, err)
 			rendered, err := BuildRenditionV1(evidence, policy)
 			if limit < 17 {
@@ -1144,9 +1141,9 @@ func TestBuildRenditionV1SeparatesNestedSameKindListsAtEveryCutoff(t *testing.T)
 
 			for limit := 1; limit <= len(test.fullMarkdown); limit++ {
 				t.Run(strconv.Itoa(limit), func(t *testing.T) {
-					normalization := testNormalizePolicy(t, limit)
-					normalization.maxUnitChars = limit
-					policy, err := NewRenditionPolicy(normalization)
+					limits := testRenditionLimits(limit)
+					limits.MaxUnitRunes = limit
+					policy, err := NewRenditionPolicy(limits)
 					require.NoError(t, err)
 					rendered, err := BuildRenditionV1(evidence, policy)
 					require.NoError(t, err)
@@ -1219,9 +1216,9 @@ func TestBuildRenditionV1RepresentsOrderedStartsWithoutOverflow(t *testing.T) {
 				"bounded": {markdown: test.boundedMarkdown, topology: test.boundedTopology},
 			} {
 				t.Run(name, func(t *testing.T) {
-					normalization := testNormalizePolicy(t, len(expected.markdown))
-					normalization.maxUnitChars = len(expected.markdown)
-					policy, err := NewRenditionPolicy(normalization)
+					limits := testRenditionLimits(len(expected.markdown))
+					limits.MaxUnitRunes = len(expected.markdown)
+					policy, err := NewRenditionPolicy(limits)
 					require.NoError(t, err)
 					rendered, err := BuildRenditionV1(evidence, policy)
 					require.NoError(t, err)
@@ -1250,9 +1247,9 @@ func TestBuildRenditionV1KeepsRepresentableOrderedPrefixAtEveryCutoff(t *testing
 
 	for limit := 1; limit <= len(degraded); limit++ {
 		t.Run(strconv.Itoa(limit), func(t *testing.T) {
-			normalization := testNormalizePolicy(t, limit)
-			normalization.maxUnitChars = limit
-			policy, err := NewRenditionPolicy(normalization)
+			limits := testRenditionLimits(limit)
+			limits.MaxUnitRunes = limit
+			policy, err := NewRenditionPolicy(limits)
 			require.NoError(t, err)
 			rendered, err := BuildRenditionV1(evidence, policy)
 			if limit < 12 {
@@ -1464,8 +1461,8 @@ func TestBuildRenditionV1ScalesLinearlyAtNearLimit(t *testing.T) {
 		}},
 	}, evidencePolicy)
 	require.NoError(t, err)
-	normalization := testNormalizePolicy(t, size)
-	policy, err := NewRenditionPolicy(normalization)
+	limits := testRenditionLimits(size)
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
@@ -1550,9 +1547,9 @@ func TestSerializeRenditionTreeUsesOneBudgetedLinearWalk(t *testing.T) {
 			Text:    `<ol start="999999999"><li>` + firstText + `</li><li>x</li></ol>`,
 		}},
 	})
-	normalization := testNormalizePolicy(t, len(wantCrossing))
-	normalization.maxUnitChars = len(wantCrossing)
-	policy, err := NewRenditionPolicy(normalization)
+	limits := testRenditionLimits(len(wantCrossing))
+	limits.MaxUnitRunes = len(wantCrossing)
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
@@ -1682,9 +1679,9 @@ func buildRenditionMarkdownResultForTest(t *testing.T, source string, limit int)
 			Text:    source,
 		}},
 	})
-	normalization := testNormalizePolicy(t, limit)
-	normalization.maxUnitChars = limit
-	policy, err := NewRenditionPolicy(normalization)
+	limits := testRenditionLimits(limit)
+	limits.MaxUnitRunes = limit
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 	return BuildRenditionV1(evidence, policy)
 }
@@ -1754,10 +1751,9 @@ func TestBuildRenditionV1FinalizesOpenTableCellContextsInPlace(t *testing.T) {
 			Text:    prefix + `</code></pre></a></td></tr></table> discarded`,
 		}},
 	})
-	normalization := testNormalizePolicy(t, 100_000)
-	normalization.maxSourceUnitBytes = len(prefix)
-	policy, err := NewRenditionPolicy(normalization)
+	policy, err := NewRenditionPolicy(testRenditionLimits(100_000))
 	require.NoError(t, err)
+	policy.maxSourceUnitBytes = len(prefix)
 
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
@@ -1792,9 +1788,9 @@ func TestBuildRenditionV1PrefixTruncatesRejectedLinkLabels(t *testing.T) {
 			})
 			for limit := 1; limit <= len(test.text); limit++ {
 				t.Run(strconv.Itoa(limit), func(t *testing.T) {
-					normalization := testNormalizePolicy(t, limit)
-					normalization.maxUnitChars = limit
-					policy, err := NewRenditionPolicy(normalization)
+					limits := testRenditionLimits(limit)
+					limits.MaxUnitRunes = limit
+					policy, err := NewRenditionPolicy(limits)
 					require.NoError(t, err)
 
 					rendered, err := BuildRenditionV1(evidence, policy)
@@ -1828,9 +1824,15 @@ func TestBuildRenditionV1PrefixTruncatesSafeLinkLabels(t *testing.T) {
 	}
 }
 
-func assertTruncatedRenditionIsInert(t *testing.T, evidence NormalizedEvidenceV1, normalization NormalizePolicy) {
+// testRenditionLimits mirrors the historical defaults: an effectively
+// unbounded unit and a 4,000-rune lexical segment.
+func testRenditionLimits(maxDocumentChars int) RenditionLimits {
+	return RenditionLimits{MaxDocumentChars: maxDocumentChars, MaxUnitRunes: 1_000_000, MaxSegmentRunes: 4_000}
+}
+
+func assertTruncatedRenditionIsInert(t *testing.T, evidence NormalizedEvidenceV1, limits RenditionLimits) {
 	t.Helper()
-	policy, err := NewRenditionPolicy(normalization)
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
@@ -1840,9 +1842,9 @@ func assertTruncatedRenditionIsInert(t *testing.T, evidence NormalizedEvidenceV1
 	assert.Contains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
 }
 
-func assertNestedLinkCodeIsInert(t *testing.T, evidence NormalizedEvidenceV1, normalization NormalizePolicy) {
+func assertNestedLinkCodeIsInert(t *testing.T, evidence NormalizedEvidenceV1, limits RenditionLimits) {
 	t.Helper()
-	policy, err := NewRenditionPolicy(normalization)
+	policy, err := NewRenditionPolicy(limits)
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)

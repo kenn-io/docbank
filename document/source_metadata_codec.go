@@ -1,9 +1,7 @@
 package document
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json/v2"
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -13,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -72,19 +71,18 @@ func SourceMetadataCanonicalKeyAllowed(key string) bool {
 
 // MarshalSourceMetadataV1 validates, canonicalizes, and hashes one record.
 func MarshalSourceMetadataV1(value SourceMetadataV1) ([]byte, string, error) {
-	canonical, err := canonicalSourceMetadataV1(value)
+	record, err := canonicalSourceMetadataV1(value)
 	if err != nil {
 		return nil, "", err
 	}
-	encoded, err := json.Marshal(canonical, json.Deterministic(true))
+	encoded, err := canonical.Marshal(record)
 	if err != nil {
 		return nil, "", fmt.Errorf("encoding source metadata: %w", err)
 	}
 	if len(encoded) > MaxSourceMetadataEncodedBytes {
 		return nil, "", errors.New("source metadata record is too large")
 	}
-	digest := sha256.Sum256(encoded)
-	return encoded, hex.EncodeToString(digest[:]), nil
+	return encoded, sha256Hex(encoded), nil
 }
 
 // DecodeSourceMetadataV1 accepts the exact v1 typed schema and returns its
@@ -93,15 +91,15 @@ func DecodeSourceMetadataV1(encoded []byte) (SourceMetadataV1, string, error) {
 	if len(encoded) > MaxSourceMetadataEncodedBytes {
 		return SourceMetadataV1{}, "", errors.New("source metadata record is too large")
 	}
-	var value SourceMetadataV1
-	if err := json.Unmarshal(encoded, &value, json.RejectUnknownMembers(true)); err != nil {
+	value, err := canonical.Decode[SourceMetadataV1](encoded)
+	if err != nil {
 		return SourceMetadataV1{}, "", fmt.Errorf("decoding source metadata: %w", err)
 	}
-	canonical, checksum, err := MarshalSourceMetadataV1(value)
+	record, checksum, err := MarshalSourceMetadataV1(value)
 	if err != nil {
 		return SourceMetadataV1{}, "", err
 	}
-	if !slices.Equal(encoded, canonical) {
+	if !bytes.Equal(encoded, record) {
 		return SourceMetadataV1{}, "", errors.New("source metadata bytes are not canonical")
 	}
 	return value, checksum, nil
@@ -199,7 +197,7 @@ func validateSourceMetadataString(value string) error {
 
 func canonicalSourceMetadataValue(value *SourceMetadataValueV1) error {
 	payloads := 0
-	if value.String != "" {
+	if value.String != nil {
 		payloads++
 	}
 	if value.Strings != nil {
@@ -219,12 +217,11 @@ func canonicalSourceMetadataValue(value *SourceMetadataValueV1) error {
 	}
 	switch value.Kind {
 	case SourceMetadataString:
-		if payloads != 1 || value.Strings != nil || value.Integer != nil || value.Number != nil ||
-			value.Boolean != nil || value.Timestamp != nil {
+		if payloads != 1 || value.String == nil {
 			return errors.New("string value has conflicting payloads")
 		}
-		value.String = norm.NFC.String(value.String)
-		return validateSourceMetadataString(value.String)
+		value.String = new(norm.NFC.String(*value.String))
+		return validateSourceMetadataString(*value.String)
 	case SourceMetadataStringList:
 		if payloads != 1 || value.Strings == nil {
 			return errors.New("string-list value has conflicting payloads")
@@ -232,7 +229,7 @@ func canonicalSourceMetadataValue(value *SourceMetadataValueV1) error {
 		if len(value.Strings) > MaxSourceMetadataListValues {
 			return errors.New("string-list value has too many entries")
 		}
-		value.Strings = append([]string(nil), value.Strings...)
+		value.Strings = slices.Clone(value.Strings)
 		for index := range value.Strings {
 			value.Strings[index] = norm.NFC.String(value.Strings[index])
 			if err := validateSourceMetadataString(value.Strings[index]); err != nil {
@@ -283,11 +280,7 @@ func canonicalSourceMetadataTimestamp(value *SourceMetadataTimestampV1) error {
 		}
 		return fmt.Errorf("normalized timestamp: %w", err)
 	}
-	switch value.Precision {
-	case SourceMetadataPrecisionDate, SourceMetadataPrecisionHour,
-		SourceMetadataPrecisionMinute, SourceMetadataPrecisionSecond,
-		SourceMetadataPrecisionFraction:
-	default:
+	if _, ok := sourceMetadataPrecisionLayouts[value.Precision]; !ok {
 		return errors.New("timestamp precision is invalid")
 	}
 	switch value.Timezone {
@@ -296,7 +289,7 @@ func canonicalSourceMetadataTimestamp(value *SourceMetadataTimestampV1) error {
 			hasRFC3339Offset(value.Normalized) {
 			return errors.New("timestamp timezone omission conflicts with normalized value")
 		}
-		return validateLocalTimestampPrecision(value.Normalized, value.Precision)
+		return validateTimestampPrecision(value.Normalized, value.Precision, false)
 	case SourceMetadataTimezoneUTC:
 		if value.Offset != "" || !strings.HasSuffix(value.Normalized, "Z") {
 			return errors.New("UTC timestamp timezone is inconsistent")
@@ -312,12 +305,7 @@ func canonicalSourceMetadataTimestamp(value *SourceMetadataTimestampV1) error {
 	if value.Precision == SourceMetadataPrecisionDate || value.Precision == SourceMetadataPrecisionHour {
 		return errors.New("timestamp timezone requires minute or finer precision")
 	}
-	parsed, err := time.Parse(time.RFC3339Nano, value.Normalized)
-	if err != nil {
-		return fmt.Errorf("timestamp timezone value is not RFC3339: %w", err)
-	}
-	_ = parsed
-	return validateZonedTimestampPrecision(value.Normalized, value.Precision)
+	return validateTimestampPrecision(value.Normalized, value.Precision, true)
 }
 
 func hasRFC3339Offset(value string) bool {
@@ -325,32 +313,34 @@ func hasRFC3339Offset(value string) bool {
 		value[len(value)-3] == ':'
 }
 
-func validateLocalTimestampPrecision(value string, precision SourceMetadataTimestampPrecision) error {
-	layout := map[SourceMetadataTimestampPrecision]string{
-		SourceMetadataPrecisionDate: "2006-01-02", SourceMetadataPrecisionHour: "2006-01-02T15",
-		SourceMetadataPrecisionMinute: "2006-01-02T15:04", SourceMetadataPrecisionSecond: "2006-01-02T15:04:05",
-		SourceMetadataPrecisionFraction: "2006-01-02T15:04:05.999999999",
-	}[precision]
-	if _, err := time.Parse(layout, value); err != nil {
-		return fmt.Errorf("timestamp without timezone does not match precision: %w", err)
-	}
-	return nil
+var sourceMetadataPrecisionLayouts = map[SourceMetadataTimestampPrecision]string{
+	SourceMetadataPrecisionDate:     "2006-01-02",
+	SourceMetadataPrecisionHour:     "2006-01-02T15",
+	SourceMetadataPrecisionMinute:   "2006-01-02T15:04",
+	SourceMetadataPrecisionSecond:   "2006-01-02T15:04:05",
+	SourceMetadataPrecisionFraction: "2006-01-02T15:04:05.999999999",
 }
 
-func validateZonedTimestampPrecision(value string, precision SourceMetadataTimestampPrecision) error {
-	base := strings.TrimSuffix(value, "Z")
-	if hasRFC3339Offset(value) {
-		base = value[:len(value)-6]
+// validateTimestampPrecision parses the normalized value with the exact
+// layout for its precision. time.Parse tolerates a fractional second after any
+// seconds field, so the fraction's presence is checked separately.
+func validateTimestampPrecision(
+	value string, precision SourceMetadataTimestampPrecision, zoned bool,
+) error {
+	layout := sourceMetadataPrecisionLayouts[precision]
+	base := value
+	if zoned {
+		layout += "Z07:00"
+		base = strings.TrimSuffix(value, "Z")
+		if hasRFC3339Offset(value) {
+			base = value[:len(value)-6]
+		}
 	}
-	hasFraction := strings.Contains(base, ".")
-	if (precision == SourceMetadataPrecisionFraction) != hasFraction {
+	if _, err := time.Parse(layout, value); err != nil {
+		return fmt.Errorf("timestamp does not match %s precision: %w", precision, err)
+	}
+	if (precision == SourceMetadataPrecisionFraction) != strings.Contains(base, ".") {
 		return errors.New("timestamp fraction does not match precision")
-	}
-	if precision == SourceMetadataPrecisionMinute && len(base) != len("2006-01-02T15:04") {
-		return errors.New("timestamp seconds do not match minute precision")
-	}
-	if precision == SourceMetadataPrecisionSecond && len(base) != len("2006-01-02T15:04:05") {
-		return errors.New("timestamp does not match second precision")
 	}
 	return nil
 }

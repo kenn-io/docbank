@@ -186,8 +186,10 @@ type ProcessingProfileConfig struct {
 	TrustBoundary               string   `toml:"trust_boundary"`
 }
 
-// ResolvedProcessingProfile keeps deployment retrieval policy alongside the
-// portable document profile without adding runtime limits to its fingerprint.
+// ResolvedProcessingProfile pairs the portable document profile with the
+// executable retrieval policy built from the same limits. The retrieval
+// limits are copied into the document profile, so they are part of the
+// profile fingerprint; changing them creates a new profile identity.
 type ResolvedProcessingProfile struct {
 	Document      document.ProcessingProfileV1
 	RetrievalName string

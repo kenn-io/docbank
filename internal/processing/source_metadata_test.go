@@ -601,7 +601,7 @@ func TestCanonicalSourceMetadataResultPublishesWarningForInvalidExtraction(t *te
 	metadata := emptySourceMetadata()
 	metadata.Fields = append(metadata.Fields, document.SourceMetadataFieldV1{
 		Key: "forbidden", Namespace: "xmp", SourceField: "Synthetic",
-		Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "value"},
+		Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("value")},
 	})
 
 	bounded := canonicalSourceMetadataResult(metadata)
@@ -670,7 +670,7 @@ func sourceMetadataBoolean(metadata document.SourceMetadataV1, key string) (bool
 func sourceMetadataString(metadata document.SourceMetadataV1, key string) (string, bool) {
 	for _, field := range metadata.Fields {
 		if field.Key == key && field.Value.Kind == document.SourceMetadataString {
-			return field.Value.String, true
+			return *field.Value.String, true
 		}
 	}
 	return "", false
@@ -846,6 +846,52 @@ func syntheticRichExifTIFF() []byte {
 			tiffASCII(0xa434, "Prime 50mm"),
 		},
 	)
+}
+
+func TestTopLevelBoxWalkersCapBoxCount(t *testing.T) {
+	padding := func(count int) []byte {
+		free := syntheticBMFFBox("free", nil)
+		out := make([]byte, 0, count*len(free))
+		for range count {
+			out = append(out, free...)
+		}
+		return out
+	}
+	cr3 := syntheticCR3()
+	ftypLen := int(binary.BigEndian.Uint32(cr3[:4]))
+	ftyp, moov := cr3[:ftypLen], cr3[ftypLen:]
+	mp4 := mediatest.MP4(64, 48, 1000)
+	mp4Ftyp := mp4[:int(binary.BigEndian.Uint32(mp4[:4]))]
+	mp4Rest := mp4[len(mp4Ftyp):]
+
+	t.Run("CR3 within cap", func(t *testing.T) {
+		data := append(append(append([]byte(nil), ftyp...), padding(maxSourceMetadataTopLevelBoxes-2)...), moov...)
+		_, size, warning, err := findCR3Moov(bytes.NewReader(data), int64(len(data)))
+		require.NoError(t, err)
+		require.Nil(t, warning)
+		assert.Positive(t, size)
+	})
+	t.Run("CR3 over cap", func(t *testing.T) {
+		data := append(append(append([]byte(nil), ftyp...), padding(maxSourceMetadataTopLevelBoxes)...), moov...)
+		_, _, warning, err := findCR3Moov(bytes.NewReader(data), int64(len(data)))
+		require.NoError(t, err)
+		require.NotNil(t, warning)
+		assert.Equal(t, "CR3 top-level box structure is malformed", warning.Detail)
+	})
+	t.Run("MP4 within cap", func(t *testing.T) {
+		data := append(append(append([]byte(nil), mp4Ftyp...), padding(maxSourceMetadataTopLevelBoxes-3)...), mp4Rest...)
+		compact, warning, err := compactMP4SourceMetadata(bytes.NewReader(data), int64(len(data)))
+		require.NoError(t, err)
+		require.Nil(t, warning)
+		assert.NotEmpty(t, compact)
+	})
+	t.Run("MP4 over cap", func(t *testing.T) {
+		data := append(append(append([]byte(nil), mp4Ftyp...), padding(maxSourceMetadataTopLevelBoxes)...), mp4Rest...)
+		_, warning, err := compactMP4SourceMetadata(bytes.NewReader(data), int64(len(data)))
+		require.NoError(t, err)
+		require.NotNil(t, warning)
+		assert.Equal(t, "MP4 top-level box structure is malformed", warning.Detail)
+	})
 }
 
 func syntheticCR3() []byte {
@@ -1086,12 +1132,12 @@ func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
 	target := store.SourceMetadataTarget{SourceSHA256: processingHash("a1"), Size: int64(len(payload))}
 	catalog := &sourceMetadataCatalogStub{targets: []store.SourceMetadataTarget{target}}
 	reader := &sourceMetadataReaderStub{payload: payload, closeErr: errors.New("verification failed")}
-	completed, err := BackfillSourceMetadata(t.Context(), catalog, reader, 10)
+	completed, err := BackfillSourceMetadataTargets(t.Context(), catalog, reader, catalog.targets)
 	require.ErrorContains(t, err, "verification failed")
 	assert.Zero(t, completed)
 	assert.Zero(t, catalog.published)
 	reader.closeErr = nil
-	completed, err = BackfillSourceMetadata(t.Context(), catalog, reader, 10)
+	completed, err = BackfillSourceMetadataTargets(t.Context(), catalog, reader, catalog.targets)
 	require.NoError(t, err)
 	assert.Equal(t, 1, completed)
 	assert.Equal(t, 1, catalog.published)
@@ -1193,9 +1239,6 @@ type sourceMetadataCatalogStub struct {
 	published int
 }
 
-func (s *sourceMetadataCatalogStub) MissingSourceMetadataTargets(context.Context, string, int) ([]store.SourceMetadataTarget, error) {
-	return s.targets, nil
-}
 func (s *sourceMetadataCatalogStub) PublishSourceMetadata(context.Context, string, string, []byte) (store.SourceMetadataGeneration, error) {
 	s.published++
 	return store.SourceMetadataGeneration{}, nil

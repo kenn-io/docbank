@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,26 @@ func TestDeploymentManifestMatchesPackageIdentity(t *testing.T) {
 	require.NoError(t, canonical.Canonicalize())
 	digest := sha256.Sum256(canonical)
 	assert.Equal(t, glmocr.DefaultDeploymentFingerprint, hex.EncodeToString(digest[:]))
+}
+
+func TestDeploymentIdentityPinsCurrentDeployFiles(t *testing.T) {
+	identity := glmocr.DefaultDeploymentIdentity()
+	assert.Len(t, identity.ModelFiles, 11)
+	assert.Len(t, identity.LayoutFiles, 6)
+	assert.Len(t, identity.EngineCommand, 21)
+	assert.Len(t, identity.RuntimeDependencies, 13)
+	for file, want := range map[string]string{
+		"safe_server.py":     identity.AdapterSHA256,
+		"engine_identity.py": identity.EngineAdapterSHA256,
+		"Dockerfile":         identity.ImageRecipeSHA256,
+		"requirements.lock":  identity.DependencyLockSHA256,
+		"config.yaml":        identity.PipelineConfigSHA256,
+	} {
+		content, err := os.ReadFile(filepath.Join("..", "..", "deploy", "glmocr", file))
+		require.NoError(t, err)
+		digest := sha256.Sum256(content)
+		assert.Equal(t, want, hex.EncodeToString(digest[:]), file)
+	}
 }
 
 func TestPolicyFingerprintTracksArtifactsAndRequiresLoopback(t *testing.T) {

@@ -12,13 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
-	"net/url"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,7 +31,7 @@ const (
 	providerID              = "marker.self-hosted-v1"
 	uploadPath              = "/marker/upload"
 	adapterContract         = "marker-self-hosted-adapter/v1"
-	timestampForm           = "2006-01-02T15:04:05.000000000Z"
+	provider                = providerutil.Provider("Marker")
 	defaultRequestTimeout   = 10 * time.Minute
 	defaultMaxDocumentBytes = int64(200 << 20)
 	defaultMaxRequestBytes  = int64(201 << 20)
@@ -53,19 +48,13 @@ const (
 	maxImages               = 64
 	maxImageBytes           = int64(256 << 20)
 	maxUnits                = 1_000_000
-	maxSecretBytes          = 64 << 10
 	pageSeparator           = "------------------------------------------------"
 )
 
-var (
-	_                       document.RenditionProvider = (*Client)(nil)
-	errMarkerRequestTimeout                            = errors.New("marker request timeout")
-)
+var _ document.RenditionProvider = (*Client)(nil)
 
 // SecretResolver resolves an optional operator-fronted Marker credential.
-type SecretResolver interface {
-	ResolveSecret(ctx context.Context, name string) (string, error)
-}
+type SecretResolver = providerutil.SecretResolver
 
 // Profile pins the operator deployment, runtime, credential name, conversion
 // mode, fixed wire contract, and every request/result bound.
@@ -153,8 +142,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 type Client struct {
 	profile    Profile
 	descriptor document.RenditionDescriptor
-	secrets    SecretResolver
-	http       *http.Client
+	executor   providerutil.Executor
 }
 
 // New validates a pinned self-hosted profile. The injected transport is the
@@ -165,12 +153,9 @@ func New(profile Profile, secrets SecretResolver, transport http.RoundTripper) (
 	if err != nil {
 		return nil, err
 	}
-	descriptor, err := document.NewRenditionDescriptor(profile.Descriptor)
-	if err != nil || !reflect.DeepEqual(descriptor, profile.Descriptor) {
-		if err == nil {
-			err = errors.New("descriptor is not canonical")
-		}
-		return nil, fmt.Errorf("marker: invalid descriptor: %w", err)
+	descriptor, err := provider.CanonicalDescriptor(profile.Descriptor)
+	if err != nil {
+		return nil, err
 	}
 	if descriptor.ID != providerID || descriptor.TrustBoundary != document.RenditionTrustOperatorNetwork ||
 		!descriptor.ReturnsMarkdown || !descriptor.ReturnsStructured || len(descriptor.ArtifactRoles) != 0 {
@@ -188,19 +173,19 @@ func New(profile Profile, secrets SecretResolver, transport http.RoundTripper) (
 	if descriptor.PolicyFingerprint != fingerprint {
 		return nil, errors.New("marker: descriptor policy fingerprint does not match profile")
 	}
-	if normalized.SecretBinding == "" {
-		if !nilValue(secrets) {
-			return nil, errors.New("marker: secret resolver requires a named binding")
-		}
-	} else if nilValue(secrets) {
-		return nil, errors.New("marker: named secret binding requires a resolver")
+	credential := providerutil.BearerCredential(normalized.SecretBinding, secrets)
+	if err := credential.Validate(provider); err != nil {
+		return nil, err
 	}
 	if transport == nil {
 		return nil, errors.New("marker: hardened transport is required")
 	}
 	normalized.Descriptor = descriptor
-	return &Client{profile: normalized, descriptor: providerutil.CloneDescriptor(descriptor), secrets: secrets,
-		http: providerhttp.IsolateClient(&http.Client{Transport: transport})}, nil
+	return &Client{profile: normalized, descriptor: descriptor, executor: providerutil.Executor{
+		Provider: provider, HTTP: providerhttp.IsolateClient(&http.Client{Transport: transport}),
+		Origin: normalized.Origin, RequestTimeout: normalized.RequestTimeout,
+		MaxResponseBytes: normalized.MaxResponseBytes, Credential: credential,
+	}}, nil
 }
 
 func (client *Client) Descriptor() document.RenditionDescriptor {
@@ -216,103 +201,58 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	}
 	metadata := upload.Metadata()
 	if metadata.ByteLength > client.profile.MaxDocumentBytes {
-		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker input exceeds the document byte limit", nil)
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "Marker input exceeds the document byte limit", nil)
 	}
 	if metadata.MediaFamily == "image" && metadata.ByteLength > media.MaxBytes {
-		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker image exceeds the verification byte limit", nil)
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "Marker image exceeds the verification byte limit", nil)
 	}
 	if strings.ContainsAny(metadata.Filename, "\r\n") {
-		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker upload filename contains a newline", nil)
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "Marker upload filename contains a newline", nil)
 	}
 	filename, ok := uploadFilename(metadata)
 	if !ok {
-		return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker input filename does not match the authorized format", nil)
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker input filename does not match the authorized format", nil)
 	}
 	metadata.Filename = filename
-	expiresAt, err := time.Parse(timestampForm, authorization.ExpiresAt)
+	operation, err := providerutil.NewOperation(ctx, provider, authorization.ExpiresAt, client.profile.RequestTimeout)
 	if err != nil {
-		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker authorization expiry is invalid", nil)
-	}
-	operationCtx, cancel := operationContext(ctx, expiresAt, client.profile.RequestTimeout)
-	defer cancel()
-	if err := checkOperation(ctx, operationCtx, expiresAt); err != nil {
 		return document.RenditionResult{}, err
 	}
-	stopInterrupt := context.AfterFunc(operationCtx, func() { _ = document.InterruptAuthorizedUpload(upload) })
-	source, err := providerutil.ReadAuthorizedUpload(operationCtx, upload, metadata, "Marker")
-	stopInterrupt()
+	defer operation.Cancel()
+	source, err := operation.ReadUpload(upload)
 	if err != nil {
-		if operationErr := checkOperation(ctx, operationCtx, expiresAt); operationErr != nil {
-			return document.RenditionResult{}, operationErr
-		}
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
-	expectedNaturalUnits := 0
-	switch metadata.MediaFamily {
-	case "pdf":
-		pages, countErr := formatdetect.CountPDFPages(source)
-		if countErr != nil || pages <= 0 {
-			return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker PDF page authority is invalid", countErr)
-		}
-		if pages > int64(client.profile.MaxUnits) {
-			return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker PDF exceeds the unit limit", nil)
-		}
-		expectedNaturalUnits = int(pages)
-	case "image":
-		detected, detectErr := media.DetectBytes(source, metadata.MediaType)
-		if detectErr != nil {
-			return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker image authority is invalid", detectErr)
-		}
-		if detected.Kind != media.KindImage || detected.MediaType != metadata.MediaType {
-			return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker image identity does not match the authorization", nil)
-		}
-		if detected.FrameCount != 1 || detected.Animated {
-			return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker requires a single-frame image", nil)
-		}
-		expectedNaturalUnits = 1
-	}
-	body, contentType, err := buildMultipart(metadata, source, client.profile.Mode, client.profile.MaxRequestBytes)
+	expectedNaturalUnits, err := client.localUnits(metadata, source)
 	if err != nil {
 		return document.RenditionResult{}, err
+	}
+	body := &providerutil.MultipartUpload{
+		FieldName: "file", Filename: metadata.Filename, MediaType: metadata.MediaType,
+		Source: bytes.NewReader(source), Length: int64(len(source)),
+		Fields: [][2]string{{"mode", client.profile.Mode}, {"force_ocr", "false"}, {"paginate_output", "true"}, {"output_format", "markdown"}},
+	}
+	encodedLength, err := body.EncodedLength()
+	if err != nil {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "could not prepare Marker upload", err)
+	}
+	if encodedLength > client.profile.MaxRequestBytes {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "Marker multipart request exceeds byte limit", nil)
 	}
 	started := time.Now().UTC()
-	request, err := http.NewRequestWithContext(operationCtx, http.MethodPost, client.profile.Origin+uploadPath, bytes.NewReader(body))
-	if err != nil {
-		return document.RenditionResult{}, providerError(document.RenditionErrorTransient, "could not prepare Marker request", err)
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", contentType)
-	if err := client.authorize(request); err != nil {
-		return document.RenditionResult{}, err
-	}
-	if err := checkOperation(ctx, operationCtx, expiresAt); err != nil {
-		return document.RenditionResult{}, err
-	}
-	response, err := client.http.Do(request)
-	if err != nil {
-		if operationErr := postSubmissionOperationError(ctx, operationCtx, expiresAt, err); operationErr != nil {
-			return document.RenditionResult{}, operationErr
-		}
-		return document.RenditionResult{}, providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return document.RenditionResult{}, statusError(response.StatusCode)
-	}
-	responseLimit := min(client.profile.MaxResponseBytes, int64(authorization.MaxTotalResultBytes))
-	responseBody, err := readBounded(ctx, operationCtx, expiresAt, response.Body, responseLimit)
+	var usage providerutil.Usage
+	response, err := client.executor.Do(operation, &usage, providerutil.Request{
+		Stage: providerutil.StageResult, Method: http.MethodPost, Path: uploadPath, Upload: body,
+		MaxResponseBytes: int64(authorization.MaxTotalResultBytes),
+	})
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if mediaErr != nil || mediaType != "application/json" {
-		return document.RenditionResult{}, malformedError("Marker response content type is invalid", mediaErr)
+	if !response.Success() {
+		return document.RenditionResult{}, provider.StatusError(providerutil.StageResult, response.Status, response.RetryAfter, nil)
 	}
-	if len(responseBody) > authorization.MaxTotalResultBytes {
-		return document.RenditionResult{}, malformedError("Marker response exceeds authorization", nil)
-	}
-	result, warnings, err := client.parseResult(responseBody, metadata.MediaFamily, expectedNaturalUnits)
+	result, warnings, err := client.parseResult(response.Body, metadata.MediaFamily, expectedNaturalUnits)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -320,23 +260,48 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	if authorization.MaxProviderMarkdownBytes == 0 {
 		providerMarkdown = nil
 	} else if len(providerMarkdown) > authorization.MaxProviderMarkdownBytes {
-		return document.RenditionResult{}, malformedError("Marker Markdown exceeds authorization", nil)
+		return document.RenditionResult{}, provider.Malformed("Marker Markdown exceeds authorization", nil)
 	}
-	completed := time.Now().UTC()
-	authorizationFingerprint, err := authorization.Fingerprint()
+	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
+		Descriptor: client.descriptor, Authorization: authorization, SourceSHA256: metadata.SHA256,
+		OperationID: "marker-" + authorization.RenditionRequestFingerprint,
+		StartedAt:   started, CompletedAt: time.Now().UTC(), Warnings: warnings,
+		Usage: usage.Rendition(int64(len(source)), int64(len(result.evidence.Units))),
+	})
 	if err != nil {
-		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected,
-			"Marker authorization fingerprint is invalid", err)
+		return document.RenditionResult{}, err
 	}
-	return document.RenditionResult{Evidence: result.evidence, ProviderMarkdown: providerMarkdown,
-		Receipt: document.RenditionReceipt{ProviderID: client.descriptor.ID,
-			DescriptorFingerprint:       client.descriptor.Fingerprint,
-			PolicyFingerprint:           authorization.PolicyFingerprint,
-			RenditionRequestFingerprint: authorization.RenditionRequestFingerprint,
-			AuthorizationFingerprint:    authorizationFingerprint,
-			SourceSHA256:                metadata.SHA256, OperationID: "marker-" + authorization.RenditionRequestFingerprint[:24],
-			StartedAt: started.Format(timestampForm), CompletedAt: completed.Format(timestampForm), Warnings: warnings,
-			Usage: document.RenditionUsage{Requests: 1, InputBytes: int64(len(source)), OutputBytes: int64(len(responseBody)), Units: int64(len(result.evidence.Units))}}}, nil
+	return document.RenditionResult{Evidence: result.evidence, ProviderMarkdown: providerMarkdown, Receipt: receipt}, nil
+}
+
+// localUnits proves the natural unit count of PDF and still-image sources
+// before egress so provider output can be checked against it.
+func (client *Client) localUnits(metadata document.AuthorizedUploadMetadata, source []byte) (int, error) {
+	switch metadata.MediaFamily {
+	case "pdf":
+		pages, err := formatdetect.CountPDFPages(source)
+		if err != nil || pages <= 0 {
+			return 0, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker PDF page authority is invalid", err)
+		}
+		if pages > int64(client.profile.MaxUnits) {
+			return 0, provider.Classified(document.RenditionErrorPolicyRejected, "Marker PDF exceeds the unit limit", nil)
+		}
+		return int(pages), nil
+	case "image":
+		detected, err := media.DetectBytes(source, metadata.MediaType)
+		if err != nil {
+			return 0, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker image authority is invalid", err)
+		}
+		if detected.Kind != media.KindImage || detected.MediaType != metadata.MediaType {
+			return 0, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker image identity does not match the authorization", nil)
+		}
+		if detected.FrameCount != 1 || detected.Animated {
+			return 0, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker requires a single-frame image", nil)
+		}
+		return 1, nil
+	default:
+		return 0, nil
+	}
 }
 
 type parsedResult struct {
@@ -354,14 +319,14 @@ func (client *Client) parseResult(body []byte, family string, expectedNaturalUni
 		Error    string            `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal(body, &wire, json.RejectUnknownMembers(true)); err != nil {
-		return parsedResult{}, nil, malformedError("Marker result JSON is invalid", err)
+		return parsedResult{}, nil, provider.Malformed("Marker result JSON is invalid", err)
 	}
 	if wire.Success == nil || !*wire.Success || wire.Format == nil || *wire.Format != "markdown" ||
 		wire.Output == nil || *wire.Output == "" || wire.Images == nil || len(wire.Metadata) == 0 || wire.Error != "" {
-		return parsedResult{}, nil, malformedError("Marker result is incomplete or unsuccessful", nil)
+		return parsedResult{}, nil, provider.Malformed("Marker result is incomplete or unsuccessful", nil)
 	}
 	if len(wire.Metadata) > int(client.profile.MaxMetadataBytes) {
-		return parsedResult{}, nil, malformedError("Marker metadata exceeds byte limit", nil)
+		return parsedResult{}, nil, provider.Malformed("Marker metadata exceeds byte limit", nil)
 	}
 	if err := validateImages(wire.Images, client.profile.MaxImages, client.profile.MaxImageBytes); err != nil {
 		return parsedResult{}, nil, err
@@ -371,17 +336,17 @@ func (client *Client) parseResult(body []byte, family string, expectedNaturalUni
 		return parsedResult{}, nil, err
 	}
 	if expectedNaturalUnits > 0 && !statsProveUnits(stats, expectedNaturalUnits) {
-		return parsedResult{}, nil, malformedError("Marker result does not prove complete source units", nil)
+		return parsedResult{}, nil, provider.Malformed("Marker result does not prove complete source units", nil)
 	}
 	markdown := []byte(*wire.Output)
 	if providerutil.InjectsDocbankFrontmatter(markdown) {
-		return parsedResult{}, nil, malformedError("Marker Markdown contains reserved Docbank frontmatter", nil)
+		return parsedResult{}, nil, provider.Malformed("Marker Markdown contains reserved Docbank frontmatter", nil)
 	}
 	evidence, natural := naturalEvidence(family, *wire.Output, stats)
 	if !natural {
 		degradedMarkdown := stripPaginationMarkers(*wire.Output)
 		if degradedMarkdown == "" {
-			return parsedResult{}, nil, malformedError("Marker result contains no usable evidence", nil)
+			return parsedResult{}, nil, provider.Malformed("Marker result contains no usable evidence", nil)
 		}
 		evidence = providerutil.DegradedEvidence(family, degradedMarkdown,
 			"Marker returned no source-native unit mapping")
@@ -418,16 +383,16 @@ func parseMetadata(raw jsontext.Value, maximum int) ([]pageStat, error) {
 		} `json:"page_stats"`
 	}
 	if err := json.Unmarshal(raw, &metadata, json.RejectUnknownMembers(true)); err != nil {
-		return nil, malformedError("Marker metadata schema changed", err)
+		return nil, provider.Malformed("Marker metadata schema changed", err)
 	}
 	if len(metadata.TableOfContents) == 0 || metadata.PageStats == nil || len(metadata.PageStats) > maximum {
-		return nil, malformedError("Marker metadata is incomplete or exceeds the unit limit", nil)
+		return nil, provider.Malformed("Marker metadata is incomplete or exceeds the unit limit", nil)
 	}
 	stats := make([]pageStat, len(metadata.PageStats))
 	for index, stat := range metadata.PageStats {
 		if stat.PageID == nil || *stat.PageID < 0 || len(stat.TextExtractionMethod) > 128 ||
 			len(stat.BlockCounts) == 0 || len(stat.BlockMetadata) == 0 {
-			return nil, malformedError("Marker page metadata is incomplete", nil)
+			return nil, provider.Malformed("Marker page metadata is incomplete", nil)
 		}
 		stats[index] = pageStat{PageID: *stat.PageID}
 	}
@@ -511,63 +476,24 @@ func stripPaginationMarkers(markdown string) string {
 
 func validateImages(images map[string]string, maximum int, maxBytes int64) error {
 	if len(images) > maximum {
-		return malformedError("Marker returned too many images", nil)
+		return provider.Malformed("Marker returned too many images", nil)
 	}
 	for name, encoded := range images {
 		if name == "" || len(name) > 1024 || !utf8.ValidString(name) || strings.ContainsRune(name, 0) ||
 			int64(base64.StdEncoding.DecodedLen(len(encoded))) > maxBytes {
-			return malformedError("Marker image output is invalid or exceeds limits", nil)
+			return provider.Malformed("Marker image output is invalid or exceeds limits", nil)
 		}
 		decoder := base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(encoded))
 		count, err := io.Copy(io.Discard, io.LimitReader(decoder, maxBytes+1))
 		if err != nil || count > maxBytes {
-			return malformedError("Marker image output is invalid or exceeds limits", err)
+			return provider.Malformed("Marker image output is invalid or exceeds limits", err)
 		}
 	}
-	return nil
-}
-
-func buildMultipart(metadata document.AuthorizedUploadMetadata, source []byte, mode string, maximum int64) ([]byte, string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", multipart.FileContentDisposition("file", metadata.Filename))
-	header.Set("Content-Type", metadata.MediaType)
-	part, err := writer.CreatePart(header)
-	if err == nil {
-		_, err = part.Write(source)
-	}
-	for _, field := range [][2]string{{"mode", mode}, {"force_ocr", "false"}, {"paginate_output", "true"}, {"output_format", "markdown"}} {
-		if err == nil {
-			err = writer.WriteField(field[0], field[1])
-		}
-	}
-	if err == nil {
-		err = writer.Close()
-	}
-	if err != nil {
-		return nil, "", providerError(document.RenditionErrorTransient, "could not prepare Marker upload", err)
-	}
-	if int64(body.Len()) > maximum {
-		return nil, "", providerError(document.RenditionErrorPolicyRejected, "Marker multipart request exceeds byte limit", nil)
-	}
-	return body.Bytes(), writer.FormDataContentType(), nil
-}
-
-func (client *Client) authorize(request *http.Request) error {
-	if client.profile.SecretBinding == "" {
-		return nil
-	}
-	secret, err := client.secrets.ResolveSecret(request.Context(), client.profile.SecretBinding)
-	if err != nil || secret == "" || len(secret) > maxSecretBytes || strings.ContainsAny(secret, "\r\n\x00") {
-		return providerError(document.RenditionErrorAuthentication, "Marker credential is unavailable or invalid", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+secret)
 	return nil
 }
 
 func normalizeProfile(profile Profile) (Profile, error) {
-	origin, err := validateOrigin(profile.Origin)
+	origin, err := provider.ValidateOrigin(profile.Origin, document.RenditionTrustOperatorNetwork)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -575,54 +501,28 @@ func normalizeProfile(profile Profile) (Profile, error) {
 	if !validFingerprint(profile.DeploymentFingerprint) || !validFingerprint(profile.RuntimeFingerprint) {
 		return Profile{}, errors.New("marker: deployment and runtime fingerprints must be lowercase SHA-256")
 	}
-	if profile.SecretBinding != "" && !validToken(profile.SecretBinding) {
-		return Profile{}, errors.New("marker: secret binding is invalid")
+	if profile.SecretBinding != "" {
+		if err := provider.ValidateIdentifier(profile.SecretBinding, "secret binding"); err != nil {
+			return Profile{}, err
+		}
 	}
 	if profile.Mode != "fast" && profile.Mode != "balanced" {
 		return Profile{}, errors.New("marker: mode must be fast or balanced")
 	}
-	if profile.RequestTimeout == 0 {
-		profile.RequestTimeout = defaultRequestTimeout
-	}
-	if profile.MaxDocumentBytes == 0 {
-		profile.MaxDocumentBytes = defaultMaxDocumentBytes
-	}
-	if profile.MaxRequestBytes == 0 {
-		profile.MaxRequestBytes = defaultMaxRequestBytes
-	}
-	if profile.MaxResponseBytes == 0 {
-		profile.MaxResponseBytes = defaultMaxResponseBytes
-	}
-	if profile.MaxMetadataBytes == 0 {
-		profile.MaxMetadataBytes = defaultMaxMetadataBytes
-	}
-	if profile.MaxImages == 0 {
-		profile.MaxImages = defaultMaxImages
-	}
-	if profile.MaxImageBytes == 0 {
-		profile.MaxImageBytes = defaultMaxImageBytes
-	}
-	if profile.MaxUnits == 0 {
-		profile.MaxUnits = defaultMaxUnits
-	}
-	if profile.RequestTimeout <= 0 || profile.RequestTimeout > maxTimeout || profile.MaxDocumentBytes <= 0 || profile.MaxDocumentBytes > maxDocumentBytes ||
-		profile.MaxRequestBytes <= profile.MaxDocumentBytes || profile.MaxRequestBytes > maxRequestBytes ||
-		profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > maxResponseBytes || profile.MaxMetadataBytes <= 0 || profile.MaxMetadataBytes > maxMetadataBytes ||
-		profile.MaxMetadataBytes > profile.MaxResponseBytes || profile.MaxImages < 1 || profile.MaxImages > maxImages ||
-		profile.MaxImageBytes <= 0 || profile.MaxImageBytes > maxImageBytes || profile.MaxImageBytes > profile.MaxResponseBytes ||
-		profile.MaxUnits < 1 || profile.MaxUnits > maxUnits {
+	if !providerutil.Bounded(&profile.RequestTimeout, defaultRequestTimeout, maxTimeout) ||
+		!providerutil.Bounded(&profile.MaxDocumentBytes, defaultMaxDocumentBytes, maxDocumentBytes) ||
+		!providerutil.Bounded(&profile.MaxRequestBytes, defaultMaxRequestBytes, maxRequestBytes) ||
+		profile.MaxRequestBytes <= profile.MaxDocumentBytes ||
+		!providerutil.Bounded(&profile.MaxResponseBytes, defaultMaxResponseBytes, maxResponseBytes) ||
+		!providerutil.Bounded(&profile.MaxMetadataBytes, defaultMaxMetadataBytes, maxMetadataBytes) ||
+		profile.MaxMetadataBytes > profile.MaxResponseBytes ||
+		!providerutil.Bounded(&profile.MaxImages, defaultMaxImages, maxImages) ||
+		!providerutil.Bounded(&profile.MaxImageBytes, defaultMaxImageBytes, maxImageBytes) ||
+		profile.MaxImageBytes > profile.MaxResponseBytes ||
+		!providerutil.Bounded(&profile.MaxUnits, defaultMaxUnits, maxUnits) {
 		return Profile{}, errors.New("marker: execution bounds are invalid")
 	}
 	return profile, nil
-}
-
-func validateOrigin(raw string) (string, error) {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Opaque != "" || parsed.ForceQuery || parsed.Fragment != "" ||
-		(parsed.Path != "" && parsed.Path != "/") || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", errors.New("marker: origin must be one HTTP(S) origin without path, credentials, query, or fragment")
-	}
-	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 func uploadFilename(metadata document.AuthorizedUploadMetadata) (string, bool) {
@@ -666,100 +566,9 @@ func filenameWithExtension(filename, extension, required string) (string, bool) 
 	return filename, extension == required
 }
 
-func operationContext(ctx context.Context, expiresAt time.Time, timeout time.Duration) (context.Context, context.CancelFunc) {
-	requestCtx, cancelRequest := context.WithTimeoutCause(ctx, timeout, errMarkerRequestTimeout)
-	operationCtx, cancelExpiry := context.WithDeadline(requestCtx, expiresAt)
-	return operationCtx, func() {
-		cancelExpiry()
-		cancelRequest()
-	}
-}
-
-func checkOperation(callerCtx, operationCtx context.Context, expiresAt time.Time) error {
-	if err := callerCtx.Err(); err != nil {
-		return providerError(document.RenditionErrorCanceled, "Marker rendering canceled", err)
-	}
-	if !time.Now().Before(expiresAt) {
-		return expiredError()
-	}
-	if errors.Is(context.Cause(operationCtx), errMarkerRequestTimeout) {
-		return providerError(document.RenditionErrorCapacity, "Marker request timeout reached", errMarkerRequestTimeout)
-	}
-	if err := operationCtx.Err(); err != nil {
-		return providerError(document.RenditionErrorCanceled, "Marker rendering canceled", err)
-	}
-	return nil
-}
-
-func postSubmissionOperationError(callerCtx, operationCtx context.Context, expiresAt time.Time, cause error) error {
-	if callerCtx.Err() == nil && time.Now().Before(expiresAt) &&
-		errors.Is(context.Cause(operationCtx), errMarkerRequestTimeout) {
-		return providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", cause)
-	}
-	return checkOperation(callerCtx, operationCtx, expiresAt)
-}
-
-func readBounded(callerCtx, operationCtx context.Context, expiresAt time.Time, reader io.Reader, maximum int64) ([]byte, error) {
-	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil {
-		if operationErr := postSubmissionOperationError(callerCtx, operationCtx, expiresAt, err); operationErr != nil {
-			return nil, operationErr
-		}
-		return nil, providerError(document.RenditionErrorAmbiguousSubmission, "could not read Marker result", err)
-	}
-	if operationErr := postSubmissionOperationError(callerCtx, operationCtx, expiresAt, operationCtx.Err()); operationErr != nil {
-		return nil, operationErr
-	}
-	if int64(len(value)) > maximum {
-		return nil, malformedError("Marker response exceeds byte limit", nil)
-	}
-	return value, nil
-}
-
-func statusError(status int) error {
-	if status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
-		status >= http.StatusInternalServerError && status <= 599 {
-		return providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", nil)
-	}
-	switch status {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return providerError(document.RenditionErrorAuthentication, "Marker authentication failed", nil)
-	case http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
-		return providerError(document.RenditionErrorUnsupportedInput, "Marker rejected the input format", nil)
-	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
-		return providerError(document.RenditionErrorPolicyRejected, "Marker rejected the upload", nil)
-	default:
-		return malformedError("Marker returned an unexpected HTTP status", nil)
-	}
-}
-
-func expiredError() error {
-	return providerError(document.RenditionErrorPolicyRejected, "Marker authorization expired", nil)
-}
-func malformedError(message string, cause error) error {
-	return providerError(document.RenditionErrorMalformedEvidence, message, cause)
-}
-
-func providerError(code document.RenditionErrorCode, message string, cause error) error {
-	return providerutil.ClassifiedError("Marker", code, message, cause)
-}
-
 func validFingerprint(value string) bool {
 	decoded, err := hex.DecodeString(value)
 	return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
-}
-
-func validToken(value string) bool {
-	if value == "" || len(value) > 128 || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
-		return false
-	}
-	for _, character := range value {
-		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("_.-", character) {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func compareFormats(left, right document.RenditionFormatCapability) int {
@@ -770,17 +579,4 @@ func compareFormats(left, right document.RenditionFormatCapability) int {
 		return value
 	}
 	return strings.Compare(string(left.InputKind), string(right.InputKind))
-}
-
-func nilValue(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

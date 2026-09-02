@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
@@ -315,6 +316,7 @@ func TestClientBoundsResponseBufferByAuthorization(t *testing.T) {
 	responseSource := strings.NewReader(strings.Repeat("x", 1024))
 	responseBody := &callbackReadCloser{reader: responseSource, before: func() {}}
 	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		_, _ = io.Copy(io.Discard, request.Body)
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: responseBody, Request: request}, nil
 	}))
 
@@ -376,11 +378,12 @@ func TestClientRechecksExpiryAndCancellationWhileReadingResponse(t *testing.T) {
 	t.Run("expiry after complete body", func(t *testing.T) {
 		fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
 		expiresAt := time.Now().UTC().Add(30 * time.Millisecond)
-		fixture.authorization.ExpiresAt = expiresAt.Format(timestampForm)
+		fixture.authorization.ExpiresAt = expiresAt.Format(providerutil.TimestampForm)
 		body := &callbackReadCloser{reader: strings.NewReader(complete), before: func() {
 			time.Sleep(time.Until(expiresAt) + 10*time.Millisecond)
 		}}
 		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			_, _ = io.Copy(io.Discard, request.Body)
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request}, nil
 		})
 		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, transport)
@@ -395,6 +398,7 @@ func TestClientRechecksExpiryAndCancellationWhileReadingResponse(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		body := &callbackReadCloser{reader: strings.NewReader(complete), before: cancel}
 		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			_, _ = io.Copy(io.Discard, request.Body)
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request}, nil
 		})
 		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, transport)
@@ -409,6 +413,7 @@ func TestClientRechecksExpiryAndCancellationWhileReadingResponse(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		body := &errorReadCloser{before: cancel, err: errors.New("private body failure")}
 		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			_, _ = io.Copy(io.Discard, request.Body)
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request}, nil
 		})
 		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, transport)
@@ -488,7 +493,7 @@ func TestClientClassifiesAuthCapacityTransportExpiryAndCancellation(t *testing.T
 	}{
 		{http.StatusUnauthorized, document.RenditionErrorAuthentication},
 		{http.StatusRequestTimeout, document.RenditionErrorAmbiguousSubmission},
-		{http.StatusTooManyRequests, document.RenditionErrorAmbiguousSubmission},
+		{http.StatusTooManyRequests, document.RenditionErrorRateLimited},
 		{http.StatusInternalServerError, document.RenditionErrorAmbiguousSubmission},
 		{http.StatusServiceUnavailable, document.RenditionErrorAmbiguousSubmission},
 		{http.StatusUnsupportedMediaType, document.RenditionErrorUnsupportedInput},
@@ -515,7 +520,7 @@ func TestClientClassifiesAuthCapacityTransportExpiryAndCancellation(t *testing.T
 	assertProviderCode(t, err, document.RenditionErrorAmbiguousSubmission)
 
 	expired := fixture
-	expired.authorization.ExpiresAt = time.Now().UTC().Add(-time.Second).Format(timestampForm)
+	expired.authorization.ExpiresAt = time.Now().UTC().Add(-time.Second).Format(providerutil.TimestampForm)
 	_, err = client.Render(t.Context(), expired.upload(), expired.authorization)
 	require.Error(t, err)
 
@@ -565,7 +570,7 @@ func newFixture(t *testing.T, family, mediaType, filename string, source []byte)
 		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: family, MediaType: mediaType,
 		InputKind: document.RenditionInputOriginalFile, DiscloseFilename: true,
 		MaxProviderMarkdownBytes: 4096, MaxTotalResultBytes: 32768,
-		AuthorizedAt: started.Format(timestampForm), ExpiresAt: started.Add(10 * time.Minute).Format(timestampForm)}
+		AuthorizedAt: started.Format(providerutil.TimestampForm), ExpiresAt: started.Add(10 * time.Minute).Format(providerutil.TimestampForm)}
 	return fixture{profile: profile, descriptor: profile.Descriptor, metadata: metadata, authorization: authorization, source: source}
 }
 
@@ -605,6 +610,7 @@ func staticTransport(status int, body string) http.RoundTripper {
 }
 
 func jsonResponse(request *http.Request, status int, body string) *http.Response {
+	_, _ = io.Copy(io.Discard, request.Body)
 	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}
 }
 

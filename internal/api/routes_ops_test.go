@@ -638,6 +638,43 @@ func TestGCReconcilesCrashRetainedLooseCopiesAfterPackedAuthorityRemoval(t *test
 	assert.NoFileExists(t, zstdPath)
 }
 
+// A GC page that only drains loose retirements left by an interrupted run
+// must still hand back a resumable cursor, or the route reports a false
+// "no progress" failure while candidates remain.
+func TestGCRunResumesAfterLeftoverRetirementDrain(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	first := createFileWithContent(t, ts, s, "/leftover.txt", "leftover retirement bytes")
+	second := createFileWithContent(t, ts, s, "/candidate.txt", "still a gc candidate")
+	for _, file := range []store.Node{first, second} {
+		_, etag := etagOf(t, ts, file.ID)
+		resp, body := do(t, ts, http.MethodPost,
+			fmt.Sprintf("/api/v1/nodes/%d/trash", file.ID),
+			map[string]string{"If-Match": etag}, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	primary, err := s.PrimaryBlobStore(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, s.DeleteBlobRowsWithGCRetirements(t.Context(), []string{first.BlobHash},
+		[]store.GCLooseRetirement{{
+			StoreID: primary.ID, Hash: packstore.Hash(first.BlobHash),
+			Encoding: packstore.LooseEncodingRaw,
+		}}, nil))
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.GCReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, 1, report.CandidateBlobs, "the remaining candidate is still collected")
+	assert.Equal(t, 1, report.RemovedBlobs)
+	assert.Equal(t, 2, report.ReclaimedFiles, "the leftover retirement and the candidate file")
+	assert.NoFileExists(t, filepath.Join(s.BlobsDir, first.BlobHash[:2], first.BlobHash))
+	assert.NoFileExists(t, filepath.Join(s.BlobsDir, second.BlobHash[:2], second.BlobHash))
+}
+
 func TestGCDryRunAndRun(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	f := createFileWithContent(t, ts, s, "/g.txt", "gc-me")

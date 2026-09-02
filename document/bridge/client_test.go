@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 )
 
 type testUpload struct {
@@ -128,7 +129,7 @@ func TestBridgeContractPreservesEarlyHTTPErrorWhileUploadIsBlocked(t *testing.T)
 			}
 			return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
 		})})
-	client.requestTimeout = 20 * time.Millisecond
+	client.executor.RequestTimeout = 20 * time.Millisecond
 
 	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 	var providerError *document.RenditionProviderError
@@ -279,7 +280,7 @@ func TestBridgeContractHonorsRetryDelayFromPollingError(t *testing.T) {
 
 	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
 	client.pollInterval = time.Millisecond
-	client.requestTimeout = 10 * time.Millisecond
+	client.executor.RequestTimeout = 10 * time.Millisecond
 	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), polls.Load())
@@ -290,7 +291,7 @@ func TestBridgeContractHonorsRetryDelayFromPollingError(t *testing.T) {
 func TestBridgeContractPreservesTopLevelRetryDelay(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	client := newTestBridgeClient(t, "https://bridge.invalid", fixture.descriptor, nil)
-	err := client.statusError(http.StatusTooManyRequests, jobEnvelope{RetryAfterMillis: 40})
+	err := client.statusError(providerutil.StageJob, http.StatusTooManyRequests, jobEnvelope{RetryAfterMillis: 40})
 	var providerError *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerError)
 	assert.Equal(t, 40*time.Millisecond, providerError.RetryAfter())
@@ -383,7 +384,7 @@ func TestBridgeContractRejectsArtifactAboveResponseLimitBeforeFetching(t *testin
 	t.Cleanup(server.Close)
 
 	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
-	client.maxResponseBytes = 4 << 10
+	client.executor.MaxResponseBytes = 4 << 10
 	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 	requireBridgeErrorContains(t, err, "response byte limit")
 	assert.Zero(t, artifactRequests.Load(), "oversized artifacts must fail before fetching")
@@ -399,7 +400,7 @@ func TestBridgeContractRejectsDotSegmentArtifactIDsBeforeFetching(t *testing.T) 
 		})})
 	for _, artifactID := range []string{".", ".."} {
 		t.Run(artifactID, func(t *testing.T) {
-			_, err := client.resolveArtifact(t.Context(), "job-artifact", artifactPayload{
+			_, err := client.resolveArtifact(newTestRendering(t, fixture), "job-artifact", artifactPayload{
 				MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
 				SHA256: sha256String(fixture.artifact), Location: "result", ArtifactID: artifactID,
 			}, fixture.authorization.MaxArtifactBytes)
@@ -550,7 +551,7 @@ func TestBridgeContractRejectsArtifactContentTypeLengthAndChecksumMismatch(t *te
 		want          string
 	}{
 		"content type": {mediaType: "text/plain", want: "content type"},
-		"length":       {declaredBytes: 1, want: "HTTP length"},
+		"length":       {declaredBytes: 1, want: "exceeds byte limit"},
 		"checksum":     {declaredHash: strings.Repeat("0", 64), want: "checksum"},
 	}
 	for name, test := range tests {
@@ -609,7 +610,7 @@ func TestBridgeContractClassifiesArtifactReadFailure(t *testing.T) {
 			}, nil
 		})})
 
-	_, err := client.fetchArtifact(t.Context(), "job-read-error", artifactPayload{
+	_, err := client.fetchArtifact(newTestRendering(t, fixture), "job-read-error", artifactPayload{
 		MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
 		SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
 	})
@@ -617,6 +618,52 @@ func TestBridgeContractClassifiesArtifactReadFailure(t *testing.T) {
 	require.ErrorAs(t, err, &providerError)
 	assert.Equal(t, document.RenditionErrorTransient, providerError.Code())
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+// A provider that declares a small artifact and then streams a large body must
+// be cut off at the declared length, not at the profile's global response
+// allowance, so it cannot make Docbank buffer far more than it authorized.
+func TestBridgeContractBoundsArtifactReadsByDeclaredLength(t *testing.T) {
+	fixture := newBridgeFixture(t).withStructuredArtifact(t)
+	oversized := &countingReader{reader: io.LimitReader(zeroReader{}, 8<<20)}
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK, ContentLength: -1,
+				Header:  http.Header{"Content-Type": []string{"application/json"}},
+				Body:    io.NopCloser(oversized),
+				Request: request,
+			}, nil
+		})})
+
+	for _, declared := range []int64{int64(len(fixture.artifact)), 0} {
+		oversized.read = 0
+		_, err := client.fetchArtifact(newTestRendering(t, fixture), "job-oversized", artifactPayload{
+			MediaType: "application/json", ByteLength: declared,
+			SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
+		})
+		require.Error(t, err)
+		assert.LessOrEqual(t, oversized.read, max(declared, 1)+1,
+			"reading stops one byte past a declared length of %d", declared)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(buffer []byte) (int, error) {
+	clear(buffer)
+	return len(buffer), nil
+}
+
+type countingReader struct {
+	reader io.Reader
+	read   int64
+}
+
+func (r *countingReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	r.read += int64(n)
+	return n, err
 }
 
 func TestBridgeContractClassifiesArtifactReadTimeout(t *testing.T) {
@@ -633,9 +680,9 @@ func TestBridgeContractClassifiesArtifactReadTimeout(t *testing.T) {
 				Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request,
 			}, nil
 		})})
-	client.requestTimeout = 10 * time.Millisecond
+	client.executor.RequestTimeout = 10 * time.Millisecond
 
-	_, err := client.fetchArtifact(t.Context(), "job-read-timeout", artifactPayload{
+	_, err := client.fetchArtifact(newTestRendering(t, fixture), "job-read-timeout", artifactPayload{
 		MediaType: "application/json", ByteLength: int64(len(fixture.artifact)),
 		SHA256: sha256String(fixture.artifact), ArtifactID: "structured-1",
 	})
@@ -698,7 +745,7 @@ func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
 				<-request.Context().Done()
 				return nil, request.Context().Err()
 			})})
-		client.requestTimeout = 10 * time.Millisecond
+		client.executor.RequestTimeout = 10 * time.Millisecond
 		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 		var providerError *document.RenditionProviderError
 		require.ErrorAs(t, err, &providerError)
@@ -724,11 +771,11 @@ func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request}, nil
 			})})
-		client.requestTimeout = 10 * time.Millisecond
+		client.executor.RequestTimeout = 10 * time.Millisecond
 		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 		var providerError *document.RenditionProviderError
 		require.ErrorAs(t, err, &providerError)
-		assert.Equal(t, document.RenditionErrorCapacity, providerError.Code())
+		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
 		assert.Equal(t, int64(4), polls.Load())
 	})
 }
@@ -748,7 +795,7 @@ func TestBridgeContractInterruptsBlockedUploadAfterRequestTimeout(t *testing.T) 
 			<-request.Context().Done()
 			return nil, request.Context().Err()
 		})})
-	client.requestTimeout = 20 * time.Millisecond
+	client.executor.RequestTimeout = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
 		_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
@@ -889,7 +936,7 @@ func TestBridgeContractBoundsPollingRetriesAndRefusesRedirects(t *testing.T) {
 			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 			var providerError *document.RenditionProviderError
 			require.ErrorAs(t, err, &providerError)
-			assert.Equal(t, document.RenditionErrorCapacity, providerError.Code())
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
 			assert.Equal(t, int64(4), polls.Load())
 		})
 	}
@@ -933,7 +980,9 @@ func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
 	defer cancel()
 	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Equal(t, context.DeadlineExceeded, err)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorCanceled, providerError.Code())
 	require.Eventually(t, func() bool { return deletes.Load() == 1 }, time.Second, time.Millisecond)
 }
 
@@ -960,8 +1009,10 @@ func TestBridgeContractClassifiesInternalTotalTimeout(t *testing.T) {
 	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	var providerError *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerError)
-	assert.Equal(t, document.RenditionErrorCapacity, providerError.Code())
-	assert.True(t, document.IsRenditionProviderErrorRetryable(err))
+	assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+	cause, ok := errors.AsType[*document.RenditionProviderError](errors.Unwrap(providerError))
+	require.True(t, ok)
+	assert.Equal(t, document.RenditionErrorCapacity, cause.Code())
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
@@ -991,7 +1042,7 @@ func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {
 				return nil, errors.New("unexpected bridge request")
 			}
 		})})
-	client.requestTimeout = maxBridgeTimeout
+	client.executor.RequestTimeout = maxBridgeTimeout
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 
@@ -1302,9 +1353,24 @@ func sha256String(value []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// requireBridgeErrorContains checks the private cause chain of a classified
+// error, which may be nested inside an ambiguous-submission wrapper.
 func requireBridgeErrorContains(t *testing.T, err error, want string) {
 	t.Helper()
 	var providerError *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerError)
-	require.ErrorContains(t, errors.Unwrap(providerError), want)
+	for cause := errors.Unwrap(providerError); cause != nil; cause = errors.Unwrap(cause) {
+		if strings.Contains(cause.Error(), want) {
+			return
+		}
+	}
+	require.Failf(t, "missing cause", "error chain of %v does not mention %q", err, want)
+}
+
+func newTestRendering(t *testing.T, fixture bridgeFixture) *rendering {
+	t.Helper()
+	operation, err := providerutil.NewOperation(t.Context(), provider, fixture.authorization.ExpiresAt, 2*time.Second)
+	require.NoError(t, err)
+	t.Cleanup(operation.Cancel)
+	return &rendering{operation: operation, authorization: fixture.authorization}
 }
