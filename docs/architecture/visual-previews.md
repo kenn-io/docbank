@@ -61,16 +61,18 @@ source before decoding and holds the vault mutation boundary through
 publication, so callers either observe a complete generation or a retryable
 error.
 
-The built-in producer currently accepts grayscale and three-component JPEG
-originals with absent or explicitly sRGB color metadata and no embedded ICC
-profile. It rejects CMYK and YCCK rather than applying an unmanaged color
-conversion. Accepted images have EXIF orientation applied, scale without
-upscaling to a 2048-pixel maximum edge, and encode as a quality-90 JPEG.
-Malformed JPEG bytes become a durable `failed` result; unsupported media types,
-JPEG features, and color profiles become a durable `unsupported` result. Read,
-verification, storage, and cancellation failures are retryable.
+The built-in producer currently accepts JPEG and PNG originals. JPEG inputs
+may be grayscale or three-component images; CMYK, YCCK, and embedded ICC
+profiles remain unsupported rather than receiving an unmanaged color
+conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
+profiles, and composite transparency onto white because the canonical output
+is JPEG. Accepted images scale without upscaling to a 2048-pixel maximum edge
+and encode as a quality-90 JPEG. Malformed source bytes become a durable
+`failed` result; unsupported media types, decoder features, and color profiles
+become a durable `unsupported` result. Read, verification, storage, and
+cancellation failures are retryable.
 
 Preview production is application-driven: opening a vault does not start a
-worker. Other still-image formats, camera RAW files, video frames, and color
-conversion require additional producers, but they use the same generation,
-retention, backup, and read contracts.
+worker. Other still-image formats, camera RAW files, video frames, and managed
+color conversion require additional producers, but they use the same
+generation, retention, backup, and read contracts.

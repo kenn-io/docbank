@@ -6,8 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"hash/crc32"
+	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"testing"
 
@@ -71,6 +74,102 @@ func TestProduceVisualPreviewAcceptsJPEGMediaTypeParameters(t *testing.T) {
 	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
 	require.NotNil(t, product.Preview.Output)
 	assert.Equal(t, "image/jpeg", product.Preview.Output.MediaType)
+}
+
+func TestProduceVisualPreviewAcceptsPNGAndFlattensTransparency(t *testing.T) {
+	canvas := image.NewNRGBA(image.Rect(0, 0, 64, 32))
+	for y := range 32 {
+		for x := range 64 {
+			if x < 32 {
+				canvas.SetNRGBA(x, y, color.NRGBA{R: 255})
+			} else {
+				canvas.SetNRGBA(x, y, color.NRGBA{A: 255})
+			}
+		}
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, canvas))
+	source := encoded.Bytes()
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)),
+		MediaType: "IMAGE/PNG; charset=utf-8",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 64, product.Preview.Output.Width)
+	assert.Equal(t, 32, product.Preview.Output.Height)
+	preview, err := jpeg.Decode(bytes.NewReader(product.Output))
+	require.NoError(t, err)
+	transparentRed, transparentGreen, transparentBlue, _ := preview.At(8, 16).RGBA()
+	opaqueRed, opaqueGreen, opaqueBlue, _ := preview.At(56, 16).RGBA()
+	assert.Greater(t, transparentRed, uint32(0xf000))
+	assert.Greater(t, transparentGreen, uint32(0xf000))
+	assert.Greater(t, transparentBlue, uint32(0xf000))
+	assert.Less(t, opaqueRed, uint32(0x1000))
+	assert.Less(t, opaqueGreen, uint32(0x1000))
+	assert.Less(t, opaqueBlue, uint32(0x1000))
+}
+
+func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
+	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "eXIf",
+		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 2, product.Preview.Output.Width)
+	assert.Equal(t, 3, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewRejectsPNGICCProfile(t *testing.T) {
+	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "iCCP", []byte("profile"))
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "unsupported_color_profile", product.Preview.Failure.Code)
+}
+
+func TestProduceVisualPreviewRecordsTruncatedPNGFailure(t *testing.T) {
+	complete := mediatest.PNG(64, 48, color.White)
+	source := complete[:len(complete)-1]
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
+	assert.Empty(t, product.Output)
+}
+
+func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testing.T) {
+	source := mediatest.PNG(1, 1, color.White)
+	binary.BigEndian.PutUint32(source[16:20], 10001)
+	binary.BigEndian.PutUint32(source[20:24], 10001)
+	binary.BigEndian.PutUint32(source[29:33], crc32.ChecksumIEEE(source[12:29]))
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
 }
 
 func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
@@ -155,6 +254,20 @@ func syntheticJPEGSegment(t *testing.T, source []byte, marker byte, payload []by
 	result = append(result, header...)
 	result = append(result, payload...)
 	return append(result, source[2:]...)
+}
+
+func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []byte) []byte {
+	t.Helper()
+	require.Len(t, chunkType, 4)
+	require.GreaterOrEqual(t, len(source), 33)
+	chunk := make([]byte, 12+len(payload))
+	binary.BigEndian.PutUint32(chunk[:4], uint32(len(payload)))
+	copy(chunk[4:8], chunkType)
+	copy(chunk[8:], payload)
+	binary.BigEndian.PutUint32(chunk[len(chunk)-4:], crc32.ChecksumIEEE(chunk[4:len(chunk)-4]))
+	result := append([]byte{}, source[:33]...)
+	result = append(result, chunk...)
+	return append(result, source[33:]...)
 }
 
 type failingVisualPreviewReadSeeker struct {
