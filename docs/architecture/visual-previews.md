@@ -55,6 +55,22 @@ and `Vault.OpenVisualPreview` to stream a ready output through the verified
 reader contract. Unsupported and failed results remain queryable but do not
 open as content.
 
-Docbank does not yet produce previews automatically. The catalog and read
-boundary are in place so format-specific producers can be added without
-changing preview identity, retention, backup, or application integration.
+`Vault.EnsureVisualPreview` synchronously produces the current preview for one
+exact version when no matching generation exists. It verifies the complete
+source before decoding and holds the vault mutation boundary through
+publication, so callers either observe a complete generation or a retryable
+error.
+
+The built-in producer currently accepts grayscale and three-component JPEG
+originals with absent or explicitly sRGB color metadata and no embedded ICC
+profile. It rejects CMYK and YCCK rather than applying an unmanaged color
+conversion. Accepted images have EXIF orientation applied, scale without
+upscaling to a 2048-pixel maximum edge, and encode as a quality-90 JPEG.
+Malformed JPEG bytes become a durable `failed` result; unsupported media types,
+JPEG features, and color profiles become a durable `unsupported` result. Read,
+verification, storage, and cancellation failures are retryable.
+
+Preview production is application-driven: opening a vault does not start a
+worker. Other still-image formats, camera RAW files, video frames, and color
+conversion require additional producers, but they use the same generation,
+retention, backup, and read contracts.

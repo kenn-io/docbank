@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +23,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -357,6 +360,70 @@ func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {
 	require.NoError(t, content.Reader.Verify())
 	require.NoError(t, content.Reader.Close())
 	assert.Equal(t, previewBytes, data)
+}
+
+func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	source := mediatest.JPEG(2050, 2, color.RGBA{R: 220, G: 40, B: 20, A: 255})
+	receipt, err := vault.Create(t.Context(), "/photo.jpg", bytes.NewReader(source), CreateOptions{
+		MediaType: "image/jpeg", Expected: contentIdentity(source),
+	})
+	require.NoError(t, err)
+
+	preview, err := vault.EnsureVisualPreview(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	require.NotNil(t, preview.Output)
+	assert.Equal(t, document.VisualPreviewReady, preview.State)
+	assert.Equal(t, "image/jpeg", preview.Output.MediaType)
+	assert.Equal(t, 2048, preview.Output.Width)
+	assert.Equal(t, 2, preview.Output.Height)
+	assert.Equal(t, receipt.Version.ID, preview.Version.ID)
+
+	retry, err := vault.EnsureVisualPreview(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, preview, retry)
+
+	opened, err := vault.OpenVisualPreview(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(opened.Reader)
+	require.NoError(t, err)
+	require.NoError(t, opened.Reader.Close())
+	decoded, err := jpeg.Decode(bytes.NewReader(encoded))
+	require.NoError(t, err)
+	assert.Equal(t, 2048, decoded.Bounds().Dx())
+	assert.Equal(t, 2, decoded.Bounds().Dy())
+}
+
+func TestVaultEnsureVisualPreviewRemovesLooseDuplicateOfPackedOutput(t *testing.T) {
+	root := t.TempDir()
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	source := mediatest.JPEG(3, 2, color.White)
+	first, err := vault.Create(t.Context(), "/first.jpg", bytes.NewReader(source), CreateOptions{
+		MediaType: "image/jpeg", Expected: contentIdentity(source),
+	})
+	require.NoError(t, err)
+	preview, err := vault.EnsureVisualPreview(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	require.NotNil(t, preview.Output)
+	_, err = vault.Pack(t.Context(), PackOptions{})
+	require.NoError(t, err)
+
+	second, err := vault.Create(t.Context(), "/second.jpg", bytes.NewReader(source), CreateOptions{
+		MediaType: "image/jpeg", Expected: contentIdentity(source),
+	})
+	require.NoError(t, err)
+	_, err = vault.EnsureVisualPreview(t.Context(), second.Version.ID)
+	require.NoError(t, err)
+
+	rawPath := filepath.Join(root, "blobs", preview.Output.BlobSHA256[:2], preview.Output.BlobSHA256)
+	assert.NoFileExists(t, rawPath)
+	assert.NoFileExists(t, rawPath+".zst")
 }
 
 func TestLeasedLimitedReaderShortRead(t *testing.T) {
