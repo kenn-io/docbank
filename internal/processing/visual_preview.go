@@ -270,7 +270,8 @@ func visualPreviewJPEGDecodeResult(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	if _, ok := errors.AsType[jpeg.FormatError](err); ok {
+	if _, ok := errors.AsType[jpeg.FormatError](err); ok ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return failedVisualPreview(base, "decode_failed", malformedDetail), nil
 	}
 	return VisualPreviewProduct{}, sourceContentUnavailable(

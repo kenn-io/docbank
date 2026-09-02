@@ -73,6 +73,21 @@ func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
 	assert.Empty(t, product.Output)
 }
 
+func TestProduceVisualPreviewRecordsTruncatedJPEGFailure(t *testing.T) {
+	complete := mediatest.JPEG(64, 48, color.RGBA{R: 220, G: 40, B: 20, A: 255})
+	source := complete[:len(complete)-1]
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/jpeg",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
+	assert.Empty(t, product.Output)
+}
+
 func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.GrayModel))
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.YCbCrModel))
