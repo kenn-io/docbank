@@ -174,10 +174,11 @@ func (client *Client) RenderResumable(
 		operation: operation}
 	var jobID string
 	if resume == nil {
-		jobID, err = client.submit(upload, &state)
-		if err != nil {
-			return document.RenditionResult{}, err
+		job, submitErr := client.submit(upload, &state)
+		if submitErr != nil {
+			return document.RenditionResult{}, submitErr
 		}
+		jobID = job.ID
 		checkpointedAt := time.Now().UTC()
 		handle := encodeResumeHandle(resumeStateV1{
 			jobID: jobID, authorizationFingerprint: resumeState.authorizationFingerprint,
@@ -187,6 +188,9 @@ func (client *Client) RenderResumable(
 			if err := checkpoint(document.RenditionResumeHandle{Value: handle}); err != nil {
 				return document.RenditionResult{}, err
 			}
+		}
+		if err := validateInitialStatus(job); err != nil {
+			return document.RenditionResult{}, err
 		}
 		if err := operation.Check(); err != nil {
 			return document.RenditionResult{}, provider.KnownJobError(err)
@@ -268,10 +272,10 @@ func (client *Client) validateInvocation(
 
 func (client *Client) submit(
 	upload document.AuthorizedUpload, state *operationState,
-) (string, error) {
+) (jobResponse, error) {
 	metadata := upload.Metadata()
 	if metadata.ByteLength > client.profile.MaxUploadBytes {
-		return "", provider.Classified(document.RenditionErrorPolicyRejected,
+		return jobResponse{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse upload exceeds profile limit", nil)
 	}
 	filename := metadata.Filename
@@ -279,12 +283,12 @@ func (client *Client) submit(
 		filename = "document.pdf"
 	}
 	if err := providerutil.ValidateMultipartFilename(filename); err != nil {
-		return "", provider.Classified(document.RenditionErrorPolicyRejected,
+		return jobResponse{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse upload filename contains a line break", err)
 	}
 	source, err := state.operation.ReadUpload(upload)
 	if err != nil {
-		return "", err
+		return jobResponse{}, err
 	}
 	defer clear(source)
 	body := &providerutil.MultipartUpload{
@@ -298,11 +302,11 @@ func (client *Client) submit(
 	}
 	requestBytes, err := body.EncodedLength()
 	if err != nil {
-		return "", provider.Classified(document.RenditionErrorTransient,
+		return jobResponse{}, provider.Classified(document.RenditionErrorTransient,
 			"LlamaParse request could not be built", err)
 	}
 	if requestBytes > client.profile.MaxRequestBytes {
-		return "", provider.Classified(document.RenditionErrorPolicyRejected,
+		return jobResponse{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse request exceeds profile limit", nil)
 	}
 	state.startedAt = time.Now().UTC()
@@ -311,19 +315,18 @@ func (client *Client) submit(
 		Upload: body, MaxResponseBytes: client.profile.MaxControlBytes,
 	})
 	if err != nil {
-		return "", err
+		return jobResponse{}, err
 	}
 	if !response.Success() {
-		return "", provider.StatusError(providerutil.StageSubmission, response.Status, response.RetryAfter, nil)
+		return jobResponse{}, provider.StatusError(
+			providerutil.StageSubmission, response.Status, response.RetryAfter, nil)
 	}
 	var job jobResponse
 	if err := strictJSON(response.Body, &job); err != nil || validateJobID(job.ID) != nil {
-		return "", provider.AmbiguousSubmission(provider.Malformed("LlamaParse submission schema changed", err))
+		return jobResponse{}, provider.AmbiguousSubmission(
+			provider.Malformed("LlamaParse submission schema changed", err))
 	}
-	if err := validateInitialStatus(job); err != nil {
-		return "", err
-	}
-	return job.ID, nil
+	return job, nil
 }
 
 func (client *Client) poll(
@@ -370,8 +373,7 @@ func (client *Client) poll(
 			return provider.Classified(document.RenditionErrorCanceled,
 				"LlamaParse job was canceled", nil)
 		default:
-			return provider.Classified(document.RenditionErrorPolicyRejected,
-				"LlamaParse status schema changed", nil)
+			return provider.AmbiguousJob(provider.Malformed("LlamaParse status schema changed", nil))
 		}
 	}
 	return provider.AmbiguousJob(provider.Classified(document.RenditionErrorCapacity,
@@ -882,7 +884,7 @@ func validateInitialStatus(job jobResponse) error {
 	case "CANCELLED":
 		return provider.Classified(document.RenditionErrorCanceled, "LlamaParse job was canceled", nil)
 	default:
-		return provider.Classified(document.RenditionErrorPolicyRejected, "LlamaParse submission schema changed", nil)
+		return provider.AmbiguousJob(provider.Malformed("LlamaParse submission schema changed", nil))
 	}
 }
 

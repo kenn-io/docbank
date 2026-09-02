@@ -582,6 +582,46 @@ func TestClientClassifiesProviderJobErrorsByCode(t *testing.T) {
 	}
 }
 
+func TestClientCheckpointsSubmissionBeforeInitialStatusValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want document.RenditionErrorCode
+	}{
+		{
+			name: "unknown status",
+			body: `{"id":"` + testJobID + `","status":"NEW_STATUS"}`,
+			want: document.RenditionErrorAmbiguousSubmission,
+		},
+		{
+			name: "terminal input error",
+			body: `{"id":"` + testJobID + `","status":"ERROR","error_code":"UNSUPPORTED_FILE_TYPE"}`,
+			want: document.RenditionErrorUnsupportedInput,
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\ninitial status\n%%EOF\n"))
+			var checkpoint document.RenditionResumeHandle
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != uploadPath {
+					t.Fatalf("initial status reached %s", request.URL.Path)
+				}
+				return response(request, http.StatusOK, testCase.body), nil
+			})
+
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil, func(handle document.RenditionResumeHandle) error {
+					checkpoint = handle
+					return nil
+				})
+
+			assertCode(t, err, testCase.want)
+			assert.True(t, strings.HasPrefix(checkpoint.Value, "lp2."+testJobID+"."))
+		})
+	}
+}
+
 func TestClientClassifiesAmbiguousSubmissionAndUnknownJobs(t *testing.T) {
 	fixture := newFixture(t, []byte("%PDF-1.7\nambiguous\n%%EOF\n"))
 	client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
