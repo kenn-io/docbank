@@ -26,11 +26,16 @@ Photo and video facts use two namespaces:
 - `media.container.*` contains format, media kind, pixel dimensions, image
   frame count, animation state, and known video duration.
 - `image.exif.*` contains camera and lens names, orientation, ISO, exposure
-  time, aperture, exposure bias, focal length, EXIF pixel dimensions, and GPS.
+  time, aperture, exposure bias, focal length, EXIF pixel dimensions, and GPS
+  evidence.
 
-GPS fields are marked sensitive. The embedded API returns them because its
-caller is trusted application code. Browser-session reads remove sensitive
-fields; other callers must enforce their own disclosure boundary.
+Latitude and longitude are published together only when both coordinates have
+valid hemisphere markers and degree, minute, and second ranges. An incomplete
+pair, invalid coordinate, or zero-zero placeholder is omitted with a warning.
+Complete EXIF GPS date and time fields become one UTC timestamp. GPS coordinate
+fields are marked sensitive. The embedded API returns them because its caller
+is trusted application code. Browser-session reads remove sensitive fields;
+other callers must enforce their own disclosure boundary.
 
 ## Current format boundary
 

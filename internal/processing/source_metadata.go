@@ -52,7 +52,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif,media-id3:v13")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif,media-id3:v14")
 
 	// errSourceMetadataBMFFMalformed marks deterministic box structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -441,7 +441,7 @@ func extractCR3SourceMetadata(reader io.ReaderAt, size int64) (document.SourceMe
 		collector.integer("media.container.height_px", "media.container", heightSource, height)
 	}
 	if cmt4, found := directories["CMT4"]; found {
-		gpsReader, gps, valid := sourceMetadataTIFFRoot(cmt4)
+		gpsReader, gps, valid := sourceMetadataTIFFRootEntries(cmt4)
 		if !valid || len(gps) == 0 {
 			collector.warn("unparseable_metadata", "image.exif", "CMT4", "CR3 GPS metadata is malformed")
 		} else {
@@ -460,7 +460,25 @@ func sourceMetadataTIFFRoot(data []byte) (exifReader, map[uint16][]byte, bool) {
 	if rootOffset < 8 {
 		return exifReader{}, nil, false
 	}
-	return reader, reader.entries(rootOffset), true
+	entries, _ := reader.typedEntries(rootOffset)
+	values := make(map[uint16][]byte, len(entries))
+	for tag, entry := range entries {
+		values[tag] = entry.value
+	}
+	return reader, values, true
+}
+
+func sourceMetadataTIFFRootEntries(data []byte) (exifReader, map[uint16]exifEntry, bool) {
+	reader, ok := newExifReader(data)
+	if !ok {
+		return exifReader{}, nil, false
+	}
+	rootOffset := reader.u32(4)
+	if rootOffset < 8 {
+		return exifReader{}, nil, false
+	}
+	entries, valid := reader.typedEntries(rootOffset)
+	return reader, entries, valid
 }
 
 func readCR3MetadataDirectories(
@@ -1677,6 +1695,11 @@ type exifReader struct {
 	format string
 }
 
+type exifEntry struct {
+	kind  uint16
+	value []byte
+}
+
 func newExifReader(data []byte) (exifReader, bool) {
 	if len(data) < 8 {
 		return exifReader{}, false
@@ -1700,20 +1723,33 @@ func (r exifReader) u32(offset int) uint32 {
 	return r.order.Uint32(r.data[offset:])
 }
 func (r exifReader) entries(offset uint32) map[uint16][]byte {
-	result := map[uint16][]byte{}
+	entries, _ := r.typedEntries(offset)
+	result := make(map[uint16][]byte, len(entries))
+	for tag, entry := range entries {
+		result[tag] = entry.value
+	}
+	return result
+}
+
+func (r exifReader) typedEntries(offset uint32) (map[uint16]exifEntry, bool) {
+	result := map[uint16]exifEntry{}
 	count, ok := r.u16(int(offset))
 	if !ok || count > 1024 {
-		return result
+		return result, false
 	}
 	for index := range count {
 		base := int(offset) + 2 + int(index)*12
-		tag, ok := r.u16(base)
-		if !ok {
-			break
+		if base < 0 || base > len(r.data)-12 {
+			return result, false
 		}
-		kind, _ := r.u16(base + 2)
-		items := r.u32(base + 4)
+		tag := r.order.Uint16(r.data[base:])
+		kind := r.order.Uint16(r.data[base+2:])
+		items := r.order.Uint32(r.data[base+4:])
+		if _, duplicate := result[tag]; duplicate {
+			return result, false
+		}
 		width := map[uint16]uint64{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}[kind]
+		result[tag] = exifEntry{kind: kind}
 		size := uint64(items) * width
 		if width == 0 || size > 1<<20 {
 			continue
@@ -1725,11 +1761,11 @@ func (r exifReader) entries(offset uint32) map[uint16][]byte {
 		}
 		sizeInt := int(size)
 		if start < 0 || start > len(r.data) || sizeInt > len(r.data)-start {
-			continue
+			return result, false
 		}
-		result[tag] = r.data[start : start+sizeInt]
+		result[tag] = exifEntry{kind: kind, value: r.data[start : start+sizeInt]}
 	}
-	return result
+	return result, true
 }
 func exifASCII(value []byte) string {
 	return strings.TrimSpace(strings.TrimRight(string(value), "\x00"))
@@ -1785,9 +1821,19 @@ func (c *metadataCollector) extractExifTIFF(data []byte) {
 			c.integer("image.exif.iso", "image.exif", "ISO", iso)
 		}
 	}
-	if raw := root[0x8825]; len(raw) >= 4 {
-		offset := reader.order.Uint32(raw)
-		c.exifGPS(reader, reader.entries(offset))
+	typedRoot, rootValid := reader.typedEntries(reader.u32(4))
+	if pointer, found := typedRoot[0x8825]; found {
+		if !rootValid || pointer.kind != 4 || len(pointer.value) != 4 {
+			c.warn("unparseable_metadata", "image.exif", "GPSInfoIFDPointer", "GPS metadata directory is malformed")
+			return
+		}
+		offset := reader.order.Uint32(pointer.value)
+		gps, valid := reader.typedEntries(offset)
+		if !valid || len(gps) == 0 {
+			c.warn("unparseable_metadata", "image.exif", "GPSInfoIFDPointer", "GPS metadata directory is malformed")
+			return
+		}
+		c.exifGPS(reader, gps)
 	}
 }
 
@@ -1837,36 +1883,126 @@ func (c *metadataCollector) extractExifDetails(reader exifReader, exif map[uint1
 	}
 	return isoFound
 }
-func (c *metadataCollector) exifGPS(reader exifReader, gps map[uint16][]byte) {
-	for _, item := range []struct {
-		refTag, valueTag uint16
-		key, source      string
-	}{{1, 2, "image.exif.gps_latitude", "GPSLatitude"}, {3, 4, "image.exif.gps_longitude", "GPSLongitude"}} {
-		raw := gps[item.valueTag]
-		if len(raw) < 24 {
-			continue
+func (c *metadataCollector) exifGPS(reader exifReader, gps map[uint16]exifEntry) {
+	hasCoordinates := exifEntriesContainAny(gps, 0x0001, 0x0002, 0x0003, 0x0004)
+	if hasCoordinates {
+		latitude, latitudeOK := exifGPSCoordinate(reader, gps[0x0001], gps[0x0002], "N", "S", 90)
+		longitude, longitudeOK := exifGPSCoordinate(reader, gps[0x0003], gps[0x0004], "E", "W", 180)
+		if !latitudeOK || !longitudeOK || latitude == 0 && longitude == 0 {
+			c.warn("unparseable_metadata", "image.exif", "GPSLatitude/GPSLongitude", "GPS coordinates are incomplete or invalid")
+		} else {
+			c.exifGPSCoordinates(latitude, longitude)
 		}
-		parts := make([]float64, 3)
-		valid := true
-		for index := range 3 {
-			numerator := reader.order.Uint32(raw[index*8:])
-			denominator := reader.order.Uint32(raw[index*8+4:])
-			if denominator == 0 {
-				valid = false
-				break
-			}
-			parts[index] = float64(numerator) / float64(denominator)
-		}
-		if !valid {
-			continue
-		}
-		value := parts[0] + parts[1]/60 + parts[2]/3600
-		ref := strings.ToUpper(exifASCII(gps[item.refTag]))
-		if ref == "S" || ref == "W" {
-			value = -value
-		}
-		c.string(item.key, "image.exif", item.source, strconv.FormatFloat(value, 'f', 7, 64), true)
 	}
+
+	hasTimestamp := exifEntriesContainAny(gps, 0x0007, 0x001d)
+	if hasTimestamp {
+		stamp, ok := exifGPSTimestamp(reader, gps[0x001d], gps[0x0007])
+		if !ok {
+			c.warn("unparseable_metadata", "image.exif", "GPSDateStamp/GPSTimeStamp", "GPS timestamp is incomplete or invalid")
+		} else {
+			c.timestamp("image.exif.gps_timestamp", "image.exif", "GPSDateStamp/GPSTimeStamp", stamp)
+		}
+	}
+}
+
+func exifEntriesContainAny(entries map[uint16]exifEntry, tags ...uint16) bool {
+	for _, tag := range tags {
+		if _, found := entries[tag]; found {
+			return true
+		}
+	}
+	return false
+}
+
+func exifGPSCoordinate(reader exifReader, ref, rawValue exifEntry, positiveRef, negativeRef string, maximum float64) (float64, bool) {
+	parts, ok := exifRationalTriple(reader, rawValue)
+	if !ok || parts[1] >= 60 || parts[2] >= 60 {
+		return 0, false
+	}
+	value := parts[0] + parts[1]/60 + parts[2]/3600
+	if value > maximum {
+		return 0, false
+	}
+	if ref.kind != 2 {
+		return 0, false
+	}
+	switch exifStrictASCII(ref.value) {
+	case positiveRef:
+		return value, true
+	case negativeRef:
+		return -value, true
+	default:
+		return 0, false
+	}
+}
+
+func exifRationalTriple(reader exifReader, entry exifEntry) ([3]float64, bool) {
+	if entry.kind != 5 || len(entry.value) != 24 {
+		return [3]float64{}, false
+	}
+	var values [3]float64
+	for index := range values {
+		denominator := reader.order.Uint32(entry.value[index*8+4:])
+		if denominator == 0 {
+			return [3]float64{}, false
+		}
+		values[index] = float64(reader.order.Uint32(entry.value[index*8:])) / float64(denominator)
+	}
+	return values, true
+}
+
+func exifGPSTimestamp(reader exifReader, rawDate, rawTime exifEntry) (string, bool) {
+	if rawDate.kind != 2 {
+		return "", false
+	}
+	date, err := time.Parse("2006:01:02", exifStrictASCII(rawDate.value))
+	parts, ok := exifRationalTriple(reader, rawTime)
+	if err != nil || !ok || math.Trunc(parts[0]) != parts[0] || math.Trunc(parts[1]) != parts[1] ||
+		parts[0] >= 24 || parts[1] >= 60 || parts[2] >= 60 {
+		return "", false
+	}
+	seconds := time.Duration(math.Round(parts[2] * float64(time.Second)))
+	if seconds >= time.Minute {
+		return "", false
+	}
+	stamp := date.Add(time.Duration(parts[0])*time.Hour + time.Duration(parts[1])*time.Minute + seconds)
+	return stamp.UTC().Format(time.RFC3339Nano), true
+}
+
+func exifStrictASCII(value []byte) string {
+	return strings.TrimRight(string(value), "\x00")
+}
+
+func (c *metadataCollector) exifGPSCoordinates(latitude, longitude float64) {
+	const (
+		latitudeKey     = "image.exif.gps_latitude"
+		longitudeKey    = "image.exif.gps_longitude"
+		latitudeSource  = "GPSLatitude"
+		longitudeSource = "GPSLongitude"
+	)
+	if c.seen[latitudeKey] || c.seen[longitudeKey] ||
+		!c.fieldLabelsAllowed(latitudeKey, "image.exif", latitudeSource) ||
+		!c.fieldLabelsAllowed(longitudeKey, "image.exif", longitudeSource) {
+		return
+	}
+	if len(c.record.Fields) > document.MaxSourceMetadataFields-2 {
+		c.warn("field_limit", "image.exif", latitudeSource+"/"+longitudeSource, "GPS coordinates were omitted")
+		return
+	}
+	latitudeValue := strconv.FormatFloat(latitude, 'f', 7, 64)
+	longitudeValue := strconv.FormatFloat(longitude, 'f', 7, 64)
+	if !c.reserveValueBytes(len(latitudeValue)+len(longitudeValue), "image.exif", latitudeSource+"/"+longitudeSource) {
+		return
+	}
+	c.seen[latitudeKey] = true
+	c.seen[longitudeKey] = true
+	c.record.Fields = append(c.record.Fields,
+		document.SourceMetadataFieldV1{Key: latitudeKey, Namespace: "image.exif", SourceField: latitudeSource, Sensitive: true,
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: latitudeValue}},
+		document.SourceMetadataFieldV1{Key: longitudeKey, Namespace: "image.exif", SourceField: longitudeSource, Sensitive: true,
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: longitudeValue}},
+	)
 }
 
 func splitValues(value string) []string {

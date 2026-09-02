@@ -244,7 +244,92 @@ func TestExtractSourceMetadataReadsCR3PhotoFacts(t *testing.T) {
 	longitude, found := sourceMetadataString(metadata, "image.exif.gps_longitude")
 	require.True(t, found)
 	assert.Equal(t, "-87.6250000", longitude)
+	gpsTimestamp, found := sourceMetadataTimestamp(metadata, "image.exif.gps_timestamp")
+	require.True(t, found)
+	assert.Equal(t, "2024-01-02T03:04:05Z", gpsTimestamp.Normalized)
+	assert.Equal(t, document.SourceMetadataTimezoneUTC, gpsTimestamp.Timezone)
 	assert.Empty(t, metadata.Warnings)
+}
+
+func TestExtractSourceMetadataOmitsIncompleteOrInvalidGPSCoordinates(t *testing.T) {
+	validLatitude := []syntheticTIFFEntry{
+		tiffASCII(0x0001, "N"),
+		tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
+	}
+	validLongitude := []syntheticTIFFEntry{
+		tiffASCII(0x0003, "W"),
+		tiffRationals(0x0004, [][2]uint32{{87, 1}, {37, 1}, {30, 1}}),
+	}
+	for _, testCase := range []struct {
+		name    string
+		entries []syntheticTIFFEntry
+	}{
+		{name: "missing longitude", entries: validLatitude},
+		{name: "unknown latitude reference", entries: append([]syntheticTIFFEntry{
+			tiffASCII(0x0001, "X"),
+			tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
+		}, validLongitude...)},
+		{name: "lowercase latitude reference", entries: append([]syntheticTIFFEntry{
+			tiffASCII(0x0001, "n"),
+			tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
+		}, validLongitude...)},
+		{name: "latitude has wrong TIFF type", entries: append([]syntheticTIFFEntry{
+			tiffASCII(0x0001, "N"),
+			{tag: 0x0002, kind: 2, value: tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}).value},
+		}, validLongitude...)},
+		{name: "latitude outside range", entries: append([]syntheticTIFFEntry{
+			tiffASCII(0x0001, "N"),
+			tiffRationals(0x0002, [][2]uint32{{91, 1}, {0, 1}, {0, 1}}),
+		}, validLongitude...)},
+		{name: "minutes outside range", entries: append([]syntheticTIFFEntry{
+			tiffASCII(0x0001, "N"),
+			tiffRationals(0x0002, [][2]uint32{{41, 1}, {60, 1}, {0, 1}}),
+		}, validLongitude...)},
+		{name: "null island", entries: []syntheticTIFFEntry{
+			tiffASCII(0x0001, "N"),
+			tiffRationals(0x0002, [][2]uint32{{0, 1}, {0, 1}, {0, 1}}),
+			tiffASCII(0x0003, "E"),
+			tiffRationals(0x0004, [][2]uint32{{0, 1}, {0, 1}, {0, 1}}),
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadata := ExtractSourceMetadata(syntheticCR3WithDirectories(
+				syntheticBMFFBox("CMT1", syntheticCR3CMT1()),
+				syntheticBMFFBox("CMT4", syntheticTIFFRoot(testCase.entries)),
+			))
+			_, latitudeFound := sourceMetadataString(metadata, "image.exif.gps_latitude")
+			_, longitudeFound := sourceMetadataString(metadata, "image.exif.gps_longitude")
+			assert.False(t, latitudeFound)
+			assert.False(t, longitudeFound)
+			assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+		})
+	}
+}
+
+func TestExtractSourceMetadataOmitsIncompleteGPSTimestamp(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticCR3WithDirectories(
+		syntheticBMFFBox("CMT1", syntheticCR3CMT1()),
+		syntheticBMFFBox("CMT4", syntheticTIFFRoot([]syntheticTIFFEntry{
+			tiffASCII(0x001d, "2024:01:02"),
+		})),
+	))
+
+	_, found := sourceMetadataTimestamp(metadata, "image.exif.gps_timestamp")
+	assert.False(t, found)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+}
+
+func TestExtractSourceMetadataWarnsForMalformedGPSDirectory(t *testing.T) {
+	metadata := ExtractSourceMetadata(syntheticTIFF(42,
+		[]syntheticTIFFEntry{
+			tiffLong(0x0100, 6000),
+			tiffLong(0x0101, 4000),
+			tiffLong(0x8825, 0xfffffff0),
+		},
+		nil,
+	))
+
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 }
 
 func TestExtractSourceMetadataWarnsForDuplicateCR3Directory(t *testing.T) {
@@ -765,6 +850,8 @@ func syntheticCR3() []byte {
 			tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
 			tiffASCII(0x0003, "W"),
 			tiffRationals(0x0004, [][2]uint32{{87, 1}, {37, 1}, {30, 1}}),
+			tiffRationals(0x0007, [][2]uint32{{3, 1}, {4, 1}, {5, 1}}),
+			tiffASCII(0x001d, "2024:01:02"),
 		})),
 	)
 }
