@@ -82,7 +82,10 @@ Embedded applications call `Vault.EnsureSourceMetadata` with an immutable
 content version ID to run the current local extractor synchronously for those
 exact bytes, or `Vault.SourceMetadata` for a read-only lookup. Ensuring an
 already-current generation is idempotent and does not start the daemon worker
-or scan unrelated content. Missing or corrupt physical source bytes retain the
-embedded API's `ErrContentUnavailable` identity. All read surfaces bind fields
-to the requested version and keep filename, path, ingest time, and filesystem
-time in separate attachment facts.
+or scan unrelated content. The ensure operation shares the vault mutation gate
+with content writes and physical maintenance, so its exact-version lookup,
+verified read, publication, and final result cannot straddle an authority
+change. Missing or corrupt physical source bytes retain the embedded API's
+`ErrContentUnavailable` identity. All read surfaces bind fields to the
+requested version and keep filename, path, ingest time, and filesystem time in
+separate attachment facts.

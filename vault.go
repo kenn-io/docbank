@@ -125,6 +125,9 @@ type Vault struct {
 	// testAfterWriteCommit exercises receipt completion after a Put or Create
 	// metadata mutation commits. Production constructors leave it nil.
 	testAfterWriteCommit func()
+	// testAfterSourceMetadataPublication exercises mutation ownership between
+	// metadata publication and the final exact-version read.
+	testAfterSourceMetadataPublication func()
 }
 
 // New creates or opens one embedded vault and holds its exclusive hierarchy
@@ -383,6 +386,11 @@ func (v *Vault) EnsureSourceMetadata(ctx context.Context, versionID string) (Sou
 		return SourceMetadata{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return SourceMetadata{}, err
+	}
 	version, err := v.metadata.ContentVersionByID(ctx, versionID)
 	if err != nil {
 		return SourceMetadata{}, err
@@ -406,6 +414,9 @@ func (v *Vault) EnsureSourceMetadata(ctx context.Context, versionID string) (Sou
 			)
 		}
 		return SourceMetadata{}, fmt.Errorf("ensuring source metadata for content version %q: %w", versionID, err)
+	}
+	if v.testAfterSourceMetadataPublication != nil {
+		v.testAfterSourceMetadataPublication()
 	}
 	view, err = v.metadata.ContentVersionSourceMetadata(ctx, versionID)
 	if err != nil {
