@@ -179,9 +179,6 @@ func (client *Client) RenderResumable(
 			return document.RenditionResult{}, err
 		}
 		checkpointedAt := time.Now().UTC()
-		if err := operation.Check(); err != nil {
-			return document.RenditionResult{}, err
-		}
 		handle := encodeResumeHandle(resumeStateV1{
 			jobID: jobID, authorizationFingerprint: resumeState.authorizationFingerprint,
 			submittedAt: state.startedAt, checkpointedAt: checkpointedAt,
@@ -190,6 +187,9 @@ func (client *Client) RenderResumable(
 			if err := checkpoint(document.RenditionResumeHandle{Value: handle}); err != nil {
 				return document.RenditionResult{}, err
 			}
+		}
+		if err := operation.Check(); err != nil {
+			return document.RenditionResult{}, provider.KnownJobError(err)
 		}
 	} else {
 		jobID = resumeState.jobID
@@ -898,8 +898,7 @@ func jobError(job jobResponse) error {
 		return provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse document exceeds the provider limit", nil)
 	case "ERROR_DURING_PROCESSING", "RECONSTRUCTION_ERROR", "MARKDOWN_EXTRACTION_FAILED":
-		return provider.Classified(document.RenditionErrorTransient,
-			"LlamaParse processing failed temporarily", nil)
+		return provider.Malformed("LlamaParse processing failed terminally", nil)
 	default:
 		return provider.Malformed("LlamaParse returned an unknown job error code", nil)
 	}

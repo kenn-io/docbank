@@ -550,9 +550,9 @@ func TestClientClassifiesProviderJobErrorsByCode(t *testing.T) {
 	}{
 		{name: "unsupported file", code: new("UNSUPPORTED_FILE_TYPE"), want: document.RenditionErrorUnsupportedInput},
 		{name: "document too large", code: new("DOCUMENT_TOO_LARGE"), want: document.RenditionErrorPolicyRejected},
-		{name: "processing failure", code: new("ERROR_DURING_PROCESSING"), want: document.RenditionErrorTransient},
-		{name: "reconstruction failure", code: new("RECONSTRUCTION_ERROR"), want: document.RenditionErrorTransient},
-		{name: "Markdown failure", code: new("MARKDOWN_EXTRACTION_FAILED"), want: document.RenditionErrorTransient},
+		{name: "processing failure", code: new("ERROR_DURING_PROCESSING"), want: document.RenditionErrorMalformedEvidence},
+		{name: "reconstruction failure", code: new("RECONSTRUCTION_ERROR"), want: document.RenditionErrorMalformedEvidence},
+		{name: "Markdown failure", code: new("MARKDOWN_EXTRACTION_FAILED"), want: document.RenditionErrorMalformedEvidence},
 		{name: "unknown code", code: new("NEW_PROVIDER_ERROR"), want: document.RenditionErrorMalformedEvidence},
 		{name: "missing code", want: document.RenditionErrorMalformedEvidence},
 	}
@@ -1145,6 +1145,64 @@ func TestClientRechecksLifecycleAfterResponseBodiesAndBeforeReturn(t *testing.T)
 
 		assertCode(t, err, document.RenditionErrorCanceled)
 	})
+
+	t.Run("accepted job is checkpointed before cancellation", func(t *testing.T) {
+		fixture := newFixture(t, []byte("%PDF-1.7\ncheckpoint before cancel\n%%EOF\n"))
+		ctx, cancel := context.WithCancel(t.Context())
+		checkpointed := false
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.URL.Path != uploadPath {
+				t.Fatalf("canceled accepted job reached %s", request.URL.Path)
+			}
+			result := response(request, http.StatusOK,
+				`{"id":"`+testJobID+`","status":"PENDING"}`)
+			result.Body = &callbackReadCloser{
+				reader: result.Body,
+				afterClose: func() {
+					cancel()
+				},
+			}
+			return result, nil
+		})
+
+		_, err := document.RenderRenditionWithResume(ctx, fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error {
+				checkpointed = true
+				return nil
+			})
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.True(t, checkpointed)
+	})
+
+	t.Run("accepted job is checkpointed before wall timeout", func(t *testing.T) {
+		fixture := newFixture(t, []byte("%PDF-1.7\ncheckpoint before timeout\n%%EOF\n"))
+		fixture.profile.MaxWallTime = 20 * time.Millisecond
+		checkpointed := false
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.URL.Path != uploadPath {
+				t.Fatalf("timed-out accepted job reached %s", request.URL.Path)
+			}
+			result := response(request, http.StatusOK,
+				`{"id":"`+testJobID+`","status":"PENDING"}`)
+			result.Body = &callbackReadCloser{
+				reader: result.Body,
+				afterClose: func() {
+					<-request.Context().Done()
+				},
+			}
+			return result, nil
+		})
+
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error {
+				checkpointed = true
+				return nil
+			})
+
+		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
+		assert.True(t, checkpointed)
+	})
 }
 
 type fixture struct {
@@ -1229,17 +1287,26 @@ type testSecrets struct {
 }
 
 type callbackReadCloser struct {
-	reader io.Reader
-	once   sync.Once
-	before func()
+	reader     io.Reader
+	once       sync.Once
+	closeOnce  sync.Once
+	before     func()
+	afterClose func()
 }
 
 func (body *callbackReadCloser) Read(buffer []byte) (int, error) {
-	body.once.Do(body.before)
+	if body.before != nil {
+		body.once.Do(body.before)
+	}
 	return body.reader.Read(buffer)
 }
 
-func (*callbackReadCloser) Close() error { return nil }
+func (body *callbackReadCloser) Close() error {
+	if body.afterClose != nil {
+		body.closeOnce.Do(body.afterClose)
+	}
+	return nil
+}
 
 type cancelWhenCheckedContext struct {
 	context.Context
