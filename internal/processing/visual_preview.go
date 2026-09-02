@@ -13,6 +13,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"io"
+	"mime"
 	"runtime"
 
 	xdraw "golang.org/x/image/draw"
@@ -72,7 +73,7 @@ func ProduceVisualPreview(
 		return VisualPreviewProduct{}, sourceContentUnavailable(
 			fmt.Errorf("verifying visual preview source: %w", err))
 	}
-	if target.MediaType != "image/jpeg" {
+	if !visualPreviewSupportsMediaType(target.MediaType) {
 		base.State = document.VisualPreviewUnsupported
 		base.Failure = &document.VisualPreviewFailureV1{
 			Code: "unsupported_media_type", Detail: "the built-in preview producer supports JPEG originals",
@@ -150,6 +151,11 @@ func ProduceVisualPreview(
 		MediaType: "image/jpeg", Width: width, Height: height,
 	}
 	return VisualPreviewProduct{Preview: base, Output: output}, nil
+}
+
+func visualPreviewSupportsMediaType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && mediaType == "image/jpeg"
 }
 
 func inspectVisualPreviewJPEG(

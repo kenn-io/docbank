@@ -59,6 +59,20 @@ func TestProduceVisualPreviewRejectsEmbeddedICCProfile(t *testing.T) {
 	assert.Empty(t, product.Output)
 }
 
+func TestProduceVisualPreviewAcceptsJPEGMediaTypeParameters(t *testing.T) {
+	source := mediatest.JPEG(3, 2, color.White)
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)),
+		MediaType: "IMAGE/JPEG; charset=utf-8",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, "image/jpeg", product.Preview.Output.MediaType)
+}
+
 func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
 	source := []byte{0xff, 0xd8, 0xff, 0xd9}
 	digest := sha256.Sum256(source)
