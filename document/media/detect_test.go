@@ -11,6 +11,7 @@ import (
 	"math"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,20 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 			assert.Equal(t, tt.width*tt.height, got.Pixels())
 		})
 	}
+}
+
+func TestDetectBytesReadsMP4CreationTime(t *testing.T) {
+	payload := mediatest.MP4(640, 368, 3500)
+	mvhd := bytes.Index(payload, []byte("mvhd"))
+	require.GreaterOrEqual(t, mvhd, 4)
+	want := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	const mp4EpochToUnix = int64(2_082_844_800)
+	binary.BigEndian.PutUint32(payload[mvhd+8:mvhd+12], uint32(want.Unix()+mp4EpochToUnix))
+
+	metadata, err := media.DetectBytes(payload, "video/mp4")
+	require.NoError(t, err)
+	require.NotNil(t, metadata.CreatedAt)
+	assert.Equal(t, want, *metadata.CreatedAt)
 }
 
 func TestDetectBytesRejectsUnsupportedAndMalformedInput(t *testing.T) {

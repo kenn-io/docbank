@@ -13,6 +13,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,6 +103,21 @@ func TestExtractSourceMetadataReadsVisualContainerFacts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtractSourceMetadataReadsMP4CreationTime(t *testing.T) {
+	payload := mediatest.MP4(640, 368, 3500)
+	mvhd := bytes.Index(payload, []byte("mvhd"))
+	require.GreaterOrEqual(t, mvhd, 4)
+	want := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	const mp4EpochToUnix = int64(2_082_844_800)
+	binary.BigEndian.PutUint32(payload[mvhd+8:mvhd+12], uint32(want.Unix()+mp4EpochToUnix))
+
+	metadata := ExtractSourceMetadata(payload)
+	created, found := sourceMetadataTimestamp(metadata, "created")
+	require.True(t, found)
+	assert.Equal(t, want.Format(time.RFC3339), created.Normalized)
+	assert.Equal(t, document.SourceMetadataTimezoneUTC, created.Timezone)
 }
 
 func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
@@ -1112,6 +1128,9 @@ func TestLargeMP4SourceMetadataSkipsPayloadWithoutBufferingIt(t *testing.T) {
 	duration, found := sourceMetadataInteger(metadata, "media.container.duration_ms")
 	require.True(t, found)
 	assert.Equal(t, int64(3500), duration)
+	created, found := sourceMetadataTimestamp(metadata, "created")
+	require.True(t, found)
+	assert.Equal(t, "2024-06-15T14:30:22Z", created.Normalized)
 	assert.NotContains(t, sourceMetadataWarningCodes(metadata), "input_too_large")
 }
 
@@ -1237,6 +1256,10 @@ type sparseSourceMetadataReader struct {
 
 func syntheticSparseLargeMP4() *sparseSourceMetadataReader {
 	metadata := mediatest.MP4(640, 368, 3500)
+	mvhd := bytes.Index(metadata, []byte("mvhd"))
+	const mp4EpochToUnix = int64(2_082_844_800)
+	binary.BigEndian.PutUint32(metadata[mvhd+8:mvhd+12], uint32(
+		time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC).Unix()+mp4EpochToUnix))
 	ftypSize := int(binary.BigEndian.Uint32(metadata[:4]))
 	ftyp := append([]byte(nil), metadata[:ftypSize]...)
 	moov := append([]byte(nil), metadata[ftypSize:]...)

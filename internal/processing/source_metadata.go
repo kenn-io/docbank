@@ -52,7 +52,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif,media-id3:v14")
+		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v15")
 
 	// errSourceMetadataBMFFMalformed marks deterministic box structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -1653,6 +1653,9 @@ func (c *metadataCollector) extractVisual(data []byte) {
 		}
 		if metadata.DurationKnown {
 			c.integer("media.container.duration_ms", "media.container", "DurationMS", metadata.DurationMS)
+		}
+		if metadata.CreatedAt != nil {
+			c.timestamp("created", "media.container", "mvhd.CreationTime", metadata.CreatedAt.Format(time.RFC3339))
 		}
 	}
 	if bytes.HasPrefix(data, []byte{0xff, 0xd8}) {

@@ -3,6 +3,7 @@ package media
 import (
 	"errors"
 	"math"
+	"time"
 )
 
 // Format identifies a detected media container.
@@ -48,6 +49,9 @@ type Metadata struct {
 	// DurationKnown reports that the container declared a measurable
 	// duration. Fragmented or header-only video leaves it false.
 	DurationKnown bool `json:"duration_known,omitzero"`
+	// CreatedAt is the MP4 movie-header creation time when it is present and
+	// representable as an RFC 3339 timestamp.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
 	// Animated reports a multi-frame image.
 	Animated bool `json:"animated,omitzero"`
 }
