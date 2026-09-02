@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 )
 
@@ -192,6 +193,8 @@ func TestClientDegradesTransformedFamiliesWithoutInventingUnits(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 			assert.Equal(t, document.EvidenceUnitGeneric, result.Evidence.UnitKind)
+			require.Len(t, result.Evidence.Units, 1)
+			assert.Equal(t, "Readable", result.Evidence.Units[0].Text)
 		})
 	}
 }
@@ -227,6 +230,20 @@ func TestClientRejectsUnsupportedFilenameIdentityAndBoundsBeforeEgress(t *testin
 	tooLargeFixture := fixture.withDescriptor(tooLarge.Descriptor)
 	_, err = client.Render(t.Context(), tooLargeFixture.upload(), tooLargeFixture.authorization)
 	assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
+
+	oversizedImage := newFixture(t, "image", "image/png", "scan.png", mediatest.PNG(4, 3, nil))
+	oversizedImage.profile.MaxDocumentBytes = media.MaxBytes + 1
+	oversizedImage.profile.MaxRequestBytes = media.MaxBytes + (1 << 20)
+	oversizedImage.profile.Descriptor = descriptorFor(t, oversizedImage.profile)
+	oversizedImage = oversizedImage.withDescriptor(oversizedImage.profile.Descriptor)
+	oversizedImage.metadata.ByteLength = media.MaxBytes + 1
+	oversizedImage.authorization.SourceBytes = oversizedImage.metadata.ByteLength
+	var reads atomic.Int64
+	upload := &testUpload{Reader: &callbackReadCloser{reader: bytes.NewReader(oversizedImage.source), before: func() { reads.Add(1) }}, metadata: oversizedImage.metadata}
+	client = newClient(t, oversizedImage.profile, testSecrets{"marker-front": "secret"}, transport)
+	_, err = client.Render(t.Context(), upload, oversizedImage.authorization)
+	assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
+	assert.Zero(t, reads.Load())
 	assert.Zero(t, calls.Load())
 }
 

@@ -218,6 +218,9 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	if metadata.ByteLength > client.profile.MaxDocumentBytes {
 		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker input exceeds the document byte limit", nil)
 	}
+	if metadata.MediaFamily == "image" && metadata.ByteLength > media.MaxBytes {
+		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker image exceeds the verification byte limit", nil)
+	}
 	if strings.ContainsAny(metadata.Filename, "\r\n") {
 		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker upload filename contains a newline", nil)
 	}
@@ -376,7 +379,11 @@ func (client *Client) parseResult(body []byte, family string, expectedNaturalUni
 	}
 	evidence, natural := naturalEvidence(family, *wire.Output, stats)
 	if !natural {
-		evidence = providerutil.DegradedEvidence(family, *wire.Output,
+		degradedMarkdown := stripPaginationMarkers(*wire.Output)
+		if degradedMarkdown == "" {
+			return parsedResult{}, nil, malformedError("Marker result contains no usable evidence", nil)
+		}
+		evidence = providerutil.DegradedEvidence(family, degradedMarkdown,
 			"Marker returned no source-native unit mapping")
 	}
 	warnings := []string(nil)
@@ -489,6 +496,17 @@ func pageLine(line string) (int, bool) {
 	}
 	value, err := strconv.Atoi(line[1:closeIndex])
 	return value, err == nil && value >= 0
+}
+
+func stripPaginationMarkers(markdown string) string {
+	lines := strings.Split(markdown, "\n")
+	clean := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if _, separator := pageLine(line); !separator {
+			clean = append(clean, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(clean, "\n"))
 }
 
 func validateImages(images map[string]string, maximum int, maxBytes int64) error {
