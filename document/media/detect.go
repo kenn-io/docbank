@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"math/bits"
+	"time"
 
 	_ "image/jpeg" // Register the JPEG decoder used by image.DecodeConfig.
 	_ "image/png"  // Register the PNG decoder used by image.DecodeConfig.
@@ -103,6 +104,7 @@ func sniff(data []byte) (Metadata, error) {
 			Format: FormatMP4, Kind: KindVideo, MediaType: "video/mp4",
 			Width: info.width, Height: info.height,
 			DurationMS: info.durationMS, DurationKnown: info.durationKnown,
+			CreatedAt: info.createdAt,
 		}, nil
 	default:
 		return Metadata{}, ErrUnsupportedMedia
@@ -418,6 +420,7 @@ type mp4Info struct {
 	trackDurations       []uint64
 	mediaDurations       []mp4Duration
 	unknownDuration      bool
+	createdAt            *time.Time
 }
 
 type mp4Duration struct {
@@ -588,6 +591,7 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 	// Full box: version(1) flags(3) creation modification timescale duration.
 	switch payload[0] {
 	case 0:
+		info.createdAt = mp4CreationTime(uint64(binary.BigEndian.Uint32(payload[4:8])), math.MaxUint32)
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[12:16]))
 		info.movieDuration = uint64(binary.BigEndian.Uint32(payload[16:20]))
 		if info.movieDuration == math.MaxUint32 {
@@ -598,6 +602,7 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 		if len(payload) < 32 {
 			return false
 		}
+		info.createdAt = mp4CreationTime(binary.BigEndian.Uint64(payload[4:12]), math.MaxUint64)
 		info.timescale = uint64(binary.BigEndian.Uint32(payload[20:24]))
 		info.movieDuration = binary.BigEndian.Uint64(payload[24:32])
 		if info.movieDuration == math.MaxUint64 {
@@ -607,6 +612,18 @@ func parseMVHD(payload []byte, info *mp4Info) bool {
 	default:
 		return false
 	}
+}
+
+func mp4CreationTime(seconds, unknown uint64) *time.Time {
+	if seconds == 0 || seconds == unknown || seconds > math.MaxInt64 {
+		return nil
+	}
+	const mp4EpochToUnix = int64(2_082_844_800)
+	created := time.Unix(int64(seconds)-mp4EpochToUnix, 0).UTC()
+	if created.Year() < 1 || created.Year() > 9999 {
+		return nil
+	}
+	return &created
 }
 
 // parseTKHD records a track's duration in movie-timescale units and its

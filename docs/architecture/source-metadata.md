@@ -58,7 +58,8 @@ omitted.
 
 For larger MP4 files, the worker verifies the complete content identity, scans
 the top-level box headers, skips media payload boxes, and reads only bounded
-file-type and movie metadata. Malformed or oversized MP4 metadata produces a
+file-type and movie metadata, including the movie-header creation time when
+present. Malformed or oversized MP4 metadata produces a
 durable warning. Storage and read failures remain retryable errors. Other
 large RAF files similarly read only the fixed header, a bounded embedded-JPEG
 metadata window, and a bounded raw-metadata directory after full verification.
