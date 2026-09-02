@@ -208,6 +208,11 @@ func TestClientRejectsUnsupportedFilenameIdentityAndBoundsBeforeEgress(t *testin
 	_, err := client.Render(t.Context(), wrong.upload(), wrong.authorization)
 	assertProviderCode(t, err, document.RenditionErrorUnsupportedInput)
 
+	unsafe := fixture
+	unsafe.metadata.Filename = "report\r\nx-marker: injected.pdf"
+	_, err = client.Render(t.Context(), unsafe.upload(), unsafe.authorization)
+	assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
+
 	wrong = fixture
 	wrong.metadata.SHA256 = strings.Repeat("0", 64)
 	wrong.authorization.SourceSHA256 = wrong.metadata.SHA256
@@ -480,6 +485,16 @@ func TestClientClassifiesAuthCapacityTransportExpiryAndCancellation(t *testing.T
 		return nil, errors.New("private transport")
 	}))
 	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	assertProviderCode(t, err, document.RenditionErrorAmbiguousSubmission)
+
+	bounded := fixture.profile
+	bounded.MaxResponseBytes = 64
+	bounded.MaxMetadataBytes = 32
+	bounded.Descriptor = descriptorFor(t, bounded)
+	boundedFixture := fixture.withDescriptor(bounded.Descriptor)
+	client = newClient(t, bounded, testSecrets{"marker-front": "secret"}, staticTransport(
+		http.StatusServiceUnavailable, strings.Repeat("x", 65)))
+	_, err = client.Render(t.Context(), boundedFixture.upload(), boundedFixture.authorization)
 	assertProviderCode(t, err, document.RenditionErrorAmbiguousSubmission)
 
 	expired := fixture

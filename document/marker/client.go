@@ -218,6 +218,9 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	if metadata.ByteLength > client.profile.MaxDocumentBytes {
 		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker input exceeds the document byte limit", nil)
 	}
+	if strings.ContainsAny(metadata.Filename, "\r\n") {
+		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker upload filename contains a newline", nil)
+	}
 	filename, ok := uploadFilename(metadata)
 	if !ok {
 		return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker input filename does not match the authorized format", nil)
@@ -291,13 +294,13 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 		return document.RenditionResult{}, providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return document.RenditionResult{}, statusError(response.StatusCode)
+	}
 	responseLimit := min(client.profile.MaxResponseBytes, int64(authorization.MaxTotalResultBytes))
 	responseBody, err := readBounded(ctx, operationCtx, expiresAt, response.Body, responseLimit)
 	if err != nil {
 		return document.RenditionResult{}, err
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return document.RenditionResult{}, statusError(response.StatusCode)
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/json" {

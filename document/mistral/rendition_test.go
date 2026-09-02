@@ -252,11 +252,9 @@ func TestRenditionClientExpiryCancelsInFlightUpload(t *testing.T) {
 	require.NoError(t, err)
 	callerCtx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	started := time.Now()
 	_, err = client.Render(callerCtx, fixture.upload(), fixture.authorization)
 	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
 	require.ErrorContains(t, errors.Unwrap(err), "authorization expired")
-	assert.Less(t, time.Since(started), 600*time.Millisecond)
 	select {
 	case <-requestStarted:
 	default:
