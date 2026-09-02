@@ -716,7 +716,7 @@ func processingProfile(t *testing.T) store.ProcessingProfileRecord {
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
 			CompletenessFingerprint: processingHash("b1"), LexicalSegmenterFingerprint: processingHash("b2"),
-			MaxSegmentRunes: 100, MaxUnitRunes: 1000,
+			MaxDocumentChars: 100_000, MaxSegmentRunes: 100, MaxUnitRunes: 1000,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
 			NormalizerFingerprint:      processingHash("b3"), RenditionContract: document.RenditionContractV1,
 			SanitizerFingerprint: processingHash("b4"), SourceEvidenceContract: document.SourceEvidenceContractV1,

@@ -273,6 +273,8 @@ WITH backup_authorized_blobs(hash) AS (
 	WHERE output_blob_hash IS NOT NULL
 	UNION
 	SELECT source_sha256 FROM rendition_builds
+	UNION
+	SELECT source_sha256 FROM rendition_jobs
 )
 `
 
@@ -977,8 +979,13 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM rendition_lexical_segments)
 		    + (SELECT COUNT(*) FROM rendition_attachments)
 		    + (SELECT COUNT(*) FROM rendition_heads)
+		    + (SELECT COUNT(*) FROM rendition_jobs)
+		    + (SELECT COUNT(*) FROM rendition_job_waiters)
+		    + (SELECT COUNT(*) FROM rendition_blob_staging)
 		    + (SELECT COUNT(*) FROM current_rendition_roots)
 		    + (SELECT COUNT(*) FROM derivative_purge_suppressions)
+		    + (SELECT COUNT(*) FROM derivative_blob_purge_pending)
+		    + (SELECT COUNT(*) FROM derivative_pack_purge_pending)
 		    + (SELECT COUNT(*) FROM processing_consent_grants)
 		    + (SELECT COUNT(*) FROM processing_consent_revocations)
 		    + (SELECT COUNT(*) FROM processing_incarnations
@@ -1380,6 +1387,8 @@ var metadataRequiredFields = map[string][]string{
 	metadataLexicalGenerationType:          processingMetadataRequiredFields[metadataLexicalGenerationType],
 	metadataCurrentRenditionRootType:       processingMetadataRequiredFields[metadataCurrentRenditionRootType],
 	metadataDerivativePurgeSuppressionType: processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
+	metadataRenditionJobType:               processingMetadataRequiredFields[metadataRenditionJobType],
+	metadataRenditionJobWaiterType:         processingMetadataRequiredFields[metadataRenditionJobWaiterType],
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -1392,6 +1401,13 @@ var metadataNullableFields = map[string]map[string]bool{
 	"extracted_text":                   {"error": true, "text": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataProcessingConsentGrantType: {"expires_at": true},
+	metadataRenditionJobType: {
+		"execution_snapshot": true, "claim_owner": true, "lease_expires_at": true,
+		"provider_resume_handle": true, "selected_waiter_id": true,
+		"authorization_grant_id": true, "authorization_incarnation_id": true,
+		"authorization_revocation_fence": true, "lexical_generation_id": true,
+		"failure_code": true,
+	},
 	metadataDerivativePurgeSuppressionType: {
 		"superseded_at": true, "superseding_build_id": true,
 	},

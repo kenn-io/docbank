@@ -34,10 +34,45 @@ const (
 	renditionTimestampForm       = "2006-01-02T15:04:05.000000000Z"
 )
 
+var errRenditionAuthorizationPolicyMismatch = errors.New(
+	"authorization policy fingerprint does not match descriptor")
+
+// IsRenditionAuthorizationPolicyMismatch reports whether provider execution
+// was rejected before egress because its sealed policy differs from the
+// current provider descriptor.
+func IsRenditionAuthorizationPolicyMismatch(err error) bool {
+	return errors.Is(err, errRenditionAuthorizationPolicyMismatch)
+}
+
 // RenditionProvider renders one authorized upload into provider-neutral evidence.
 type RenditionProvider interface {
 	Descriptor() RenditionDescriptor
 	Render(ctx context.Context, upload AuthorizedUpload, authorization RenditionAuthorization) (RenditionResult, error)
+}
+
+// RenditionResumeHandle is an opaque, provider-issued durable operation
+// identity. Core persists it only after the provider checkpoints it; callers
+// must never derive a handle from source or job identity.
+type RenditionResumeHandle struct {
+	Value string
+}
+
+// RenditionResumeCheckpoint durably records a provider-issued handle before
+// the provider continues work whose outcome may otherwise become ambiguous.
+type RenditionResumeCheckpoint func(RenditionResumeHandle) error
+
+// ResumableRenditionProvider is the narrow optional contract for providers
+// that can continue a known durable operation without resubmitting source
+// bytes. A nil handle starts new work; a non-nil handle resumes exactly that
+// provider-issued operation. On resume, core validates the sealed upload
+// metadata but passes a nil upload to the provider, making source resubmission
+// unavailable through this contract.
+type ResumableRenditionProvider interface {
+	RenditionProvider
+	RenderResumable(
+		ctx context.Context, upload AuthorizedUpload, authorization RenditionAuthorization,
+		resume *RenditionResumeHandle, checkpoint RenditionResumeCheckpoint,
+	) (RenditionResult, error)
 }
 
 // AuthorizedUpload is a read-once upload with immutable, authorization-bound metadata.
@@ -308,19 +343,16 @@ func RenderRendition(
 		return RenditionResult{}, contextErr
 	}
 	if err != nil {
+		if contractErr, ok := errors.AsType[*renditionResumeContractError](err); ok {
+			return RenditionResult{}, contractErr.cause
+		}
 		if classified := ValidateRenditionProviderError(err); classified != nil {
 			return RenditionResult{}, classified
 		}
 		return RenditionResult{}, err
 	}
-	if err := validateRenditionArtifactCount(sealed.MaxArtifacts, result.Artifacts); err != nil {
-		return RenditionResult{}, err
-	}
-	if err := preflightRenditionResult(sealed.MaxTotalResultBytes, result); err != nil {
-		return RenditionResult{}, err
-	}
-	result = cloneRenditionResult(result)
-	if err := ValidateRenditionResult(descriptor, sealed, result); err != nil {
+	result, err = validateAndOwnRenditionResult(descriptor, sealed, result)
+	if err != nil {
 		return RenditionResult{}, err
 	}
 	if err := providerUpload.verify(executionCtx); err != nil {
@@ -339,6 +371,135 @@ func RenderRendition(
 		return RenditionResult{}, err
 	}
 	return result, nil
+}
+
+func validateAndOwnRenditionResult(
+	descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
+) (RenditionResult, error) {
+	if err := validateRenditionArtifactCount(authorization.MaxArtifacts, result.Artifacts); err != nil {
+		return RenditionResult{}, err
+	}
+	if err := preflightRenditionResult(authorization.MaxTotalResultBytes, result); err != nil {
+		return RenditionResult{}, err
+	}
+	result = cloneRenditionResult(result)
+	if err := ValidateRenditionResult(descriptor, authorization, result); err != nil {
+		return RenditionResult{}, err
+	}
+	return result, nil
+}
+
+// RenderRenditionWithResume applies the ordinary sealed request/result
+// contract while allowing an optional provider-neutral durable resume handle.
+// Providers without the optional contract may start work but cannot consume a
+// persisted handle.
+func RenderRenditionWithResume(
+	ctx context.Context, provider RenditionProvider, upload AuthorizedUpload,
+	authorization RenditionAuthorization, resume *RenditionResumeHandle,
+	checkpoint RenditionResumeCheckpoint,
+) (RenditionResult, error) {
+	if nilInterface(provider) {
+		return RenderRendition(ctx, provider, upload, authorization)
+	}
+	if _, supportsResume := provider.(ResumableRenditionProvider); !supportsResume && resume == nil {
+		return RenderRendition(ctx, provider, upload, authorization)
+	}
+	var resumeCopy *RenditionResumeHandle
+	if resume != nil {
+		resumeValue := *resume
+		resumeCopy = &resumeValue
+	}
+	call := &resumableRenditionCall{
+		provider: provider, resume: resumeCopy, checkpoint: newRenditionCheckpoint(checkpoint),
+	}
+	return RenderRendition(ctx, call, upload, authorization)
+}
+
+type resumableRenditionCall struct {
+	provider   RenditionProvider
+	resume     *RenditionResumeHandle
+	checkpoint *renditionCheckpoint
+}
+
+type renditionResumeContractError struct{ cause error }
+
+func (err *renditionResumeContractError) Error() string { return err.cause.Error() }
+func (err *renditionResumeContractError) Unwrap() error { return err.cause }
+
+func (call *resumableRenditionCall) Descriptor() RenditionDescriptor {
+	return call.provider.Descriptor()
+}
+
+func (call *resumableRenditionCall) Render(
+	ctx context.Context, upload AuthorizedUpload, authorization RenditionAuthorization,
+) (RenditionResult, error) {
+	provider, ok := call.provider.(ResumableRenditionProvider)
+	if !ok {
+		return RenditionResult{}, &renditionResumeContractError{
+			cause: errors.New("rendition provider does not support durable resume"),
+		}
+	}
+	if call.resume != nil {
+		if err := validateRenditionResumeHandle(*call.resume); err != nil {
+			return RenditionResult{}, &renditionResumeContractError{cause: err}
+		}
+		upload = nil
+	}
+	result, err := provider.RenderResumable(
+		ctx, upload, authorization, call.resume, call.checkpoint.Record,
+	)
+	if checkpointErr := call.checkpoint.Err(); checkpointErr != nil {
+		return RenditionResult{}, &renditionResumeContractError{cause: checkpointErr}
+	}
+	return result, err
+}
+
+type renditionCheckpoint struct {
+	checkpoint RenditionResumeCheckpoint
+	mu         sync.Mutex
+	err        error
+}
+
+func newRenditionCheckpoint(checkpoint RenditionResumeCheckpoint) *renditionCheckpoint {
+	if checkpoint == nil {
+		checkpoint = func(RenditionResumeHandle) error { return nil }
+	}
+	return &renditionCheckpoint{checkpoint: checkpoint}
+}
+
+func (checkpoint *renditionCheckpoint) Record(handle RenditionResumeHandle) error {
+	err := validateRenditionResumeHandle(handle)
+	if err == nil {
+		err = checkpoint.checkpoint(handle)
+	}
+	if err != nil {
+		checkpoint.mu.Lock()
+		if checkpoint.err == nil {
+			checkpoint.err = err
+		}
+		checkpoint.mu.Unlock()
+	}
+	return err
+}
+
+func (checkpoint *renditionCheckpoint) Err() error {
+	checkpoint.mu.Lock()
+	defer checkpoint.mu.Unlock()
+	return checkpoint.err
+}
+
+func validateRenditionResumeHandle(handle RenditionResumeHandle) error {
+	if handle.Value == "" || len(handle.Value) > 512 {
+		return errors.New("rendition resume handle must contain 1-512 characters")
+	}
+	for _, char := range handle.Value {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' || strings.ContainsRune("-._~", char) {
+			continue
+		}
+		return errors.New("rendition resume handle contains unsupported characters")
+	}
+	return nil
 }
 
 // ValidateRenditionResult rejects provider output outside the authorized contract.
@@ -928,7 +1089,7 @@ func validateAuthorizationWithoutUpload(descriptor RenditionDescriptor, authoriz
 		return errors.New("authorization descriptor fingerprint does not match descriptor")
 	}
 	if authorization.PolicyFingerprint != descriptor.PolicyFingerprint {
-		return errors.New("authorization policy fingerprint does not match descriptor")
+		return errRenditionAuthorizationPolicyMismatch
 	}
 	for subject, value := range map[string]string{
 		"rendition request fingerprint": authorization.RenditionRequestFingerprint,

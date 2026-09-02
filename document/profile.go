@@ -85,6 +85,7 @@ type RenditionBindingV1 struct {
 type EvidenceLexicalPolicyV1 struct {
 	CompletenessFingerprint     string `json:"completeness_fingerprint"`
 	LexicalSegmenterFingerprint string `json:"lexical_segmenter_fingerprint"`
+	MaxDocumentChars            int    `json:"max_document_chars"`
 	MaxSegmentRunes             int    `json:"max_segment_runes"`
 	MaxUnitRunes                int    `json:"max_unit_runes"`
 	NormalizedEvidenceContract  string `json:"normalized_evidence_contract"`
@@ -505,6 +506,9 @@ func validateEvidenceLexicalPolicy(policy EvidenceLexicalPolicyV1) error {
 	}
 	if policy.MaxUnitRunes <= 0 || policy.MaxUnitRunes > maxEvidenceUnitRunes {
 		return fmt.Errorf("evidence max unit runes must be between 1 and %d", maxEvidenceUnitRunes)
+	}
+	if policy.MaxDocumentChars <= 0 {
+		return errors.New("evidence max document chars must be positive")
 	}
 	if policy.MaxSegmentRunes <= 0 || policy.MaxSegmentRunes > maxEvidenceSegmentRunes {
 		return fmt.Errorf("evidence max segment runes must be between 1 and %d", maxEvidenceSegmentRunes)

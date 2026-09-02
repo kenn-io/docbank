@@ -139,6 +139,7 @@ attachment_policy_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 completeness_fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 consent_fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 lexical_segmenter_fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+max_document_chars = 100000
 max_segment_runes = 2000
 max_unit_runes = 100000
 normalizer_fingerprint = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -301,7 +302,8 @@ func validProcessingConfig() Config {
 			Rendition: "primary", Embeddings: []string{"semantic"}, Retrieval: "hybrid",
 			AttachmentPolicyFingerprint: strings.Repeat("a", 64), CompletenessFingerprint: strings.Repeat("b", 64),
 			ConsentFingerprint: strings.Repeat("c", 64), LexicalSegmenterFingerprint: strings.Repeat("d", 64),
-			MaxSegmentRunes: 100, MaxUnitRunes: 1000, NormalizerFingerprint: strings.Repeat("e", 64),
+			MaxDocumentChars: 100_000, MaxSegmentRunes: 100, MaxUnitRunes: 1000,
+			NormalizerFingerprint:   strings.Repeat("e", 64),
 			RetainSanitizedMarkdown: true, SanitizerFingerprint: strings.Repeat("f", 64), TrustBoundary: "vault",
 		}},
 	}

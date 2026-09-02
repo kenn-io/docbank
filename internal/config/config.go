@@ -170,6 +170,7 @@ type ProcessingProfileConfig struct {
 	ConsentFingerprint          string   `toml:"consent_fingerprint"`
 	Embeddings                  []string `toml:"embeddings"`
 	LexicalSegmenterFingerprint string   `toml:"lexical_segmenter_fingerprint"`
+	MaxDocumentChars            int      `toml:"max_document_chars"`
 	MaxSegmentRunes             int      `toml:"max_segment_runes"`
 	MaxUnitRunes                int      `toml:"max_unit_runes"`
 	NormalizedEvidenceContract  string   `toml:"normalized_evidence_contract"`
@@ -615,6 +616,7 @@ func (c Config) assembleProcessingProfile(name string) (ResolvedProcessingProfil
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
 			CompletenessFingerprint:     configured.CompletenessFingerprint,
 			LexicalSegmenterFingerprint: configured.LexicalSegmenterFingerprint,
+			MaxDocumentChars:            configured.MaxDocumentChars,
 			MaxSegmentRunes:             configured.MaxSegmentRunes, MaxUnitRunes: configured.MaxUnitRunes,
 			NormalizedEvidenceContract: valueOr(configured.NormalizedEvidenceContract, document.NormalizedEvidenceContractV1),
 			NormalizerFingerprint:      configured.NormalizerFingerprint,

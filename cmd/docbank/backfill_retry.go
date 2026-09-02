@@ -59,3 +59,12 @@ func (retries backfillRetrySet) waitDelay(now time.Time, fallback time.Duration)
 	}
 	return delay
 }
+
+func backfillBatchWaitDelay(
+	attempted int, retries backfillRetrySet, now time.Time,
+) time.Duration {
+	if attempted != 0 || len(retries) == 0 {
+		return 100 * time.Millisecond
+	}
+	return retries.waitDelay(now, 10*time.Second)
+}

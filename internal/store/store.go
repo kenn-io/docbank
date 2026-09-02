@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -18,12 +19,13 @@ var schemaSQL string
 
 // Store is the single access path to the docbank database.
 type Store struct {
-	db             *sql.DB
-	path           string
-	rootID         int64
-	vaultID        string
-	primaryStoreID string
-	driver         docsqlite.Driver
+	db                *sql.DB
+	path              string
+	rootID            int64
+	vaultID           string
+	primaryStoreID    string
+	driver            docsqlite.Driver
+	renditionEgressMu sync.RWMutex
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created

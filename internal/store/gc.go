@@ -223,6 +223,11 @@ func (s *Store) PurgeDerivatives(
 		attachmentSet := stringSet(request.AttachmentIDs)
 		explicitBuilds := stringSet(request.BuildIDs)
 		requestedBuilds := stringSet(request.BuildIDs)
+		jobPurgeScopes, err := purgeRenditionJobWaitersTx(
+			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All, asOf)
+		if err != nil {
+			return err
+		}
 		attachments, err := renditionAttachmentsForPurgeTx(ctx, tx)
 		if err != nil {
 			return err
@@ -311,6 +316,12 @@ func (s *Store) PurgeDerivatives(
 		if err != nil {
 			return err
 		}
+		jobSuppressionChanges, err := installDerivativePurgeSuppressionRecordsTx(
+			ctx, tx, jobPurgeScopes)
+		if err != nil {
+			return err
+		}
+		suppressionChanges = append(suppressionChanges, jobSuppressionChanges...)
 		legacyVersionSet := make(map[string]struct{}, len(versionSet)+len(selected))
 		for versionID := range versionSet {
 			legacyVersionSet[versionID] = struct{}{}
@@ -601,8 +612,9 @@ func (s *Store) PurgeDerivatives(
 				EXISTS(SELECT 1 FROM content_versions WHERE blob_hash=?) OR
 				EXISTS(SELECT 1 FROM rendition_artifacts WHERE blob_hash=?) OR
 				EXISTS(SELECT 1 FROM rendition_builds WHERE source_sha256=?) OR
-				EXISTS(SELECT 1 FROM visual_preview_generations WHERE output_blob_hash=?)`,
-				hash, hash, hash, hash).Scan(&reachable); err != nil {
+				EXISTS(SELECT 1 FROM visual_preview_generations WHERE output_blob_hash=?) OR
+				EXISTS(SELECT 1 FROM rendition_jobs WHERE source_sha256=?)`,
+				hash, hash, hash, hash, hash).Scan(&reachable); err != nil {
 				return fmt.Errorf("checking purged derivative blob %s reachability: %w", hash, err)
 			}
 			if !reachable {
@@ -617,7 +629,8 @@ func (s *Store) PurgeDerivatives(
 			   OR EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash=derivative_blob_purge_pending.blob_hash)
 			   OR EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256=derivative_blob_purge_pending.blob_hash)
 			   OR EXISTS (SELECT 1 FROM visual_preview_generations p
-			             WHERE p.output_blob_hash=derivative_blob_purge_pending.blob_hash)`); err != nil {
+			             WHERE p.output_blob_hash=derivative_blob_purge_pending.blob_hash)
+			   OR EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256=derivative_blob_purge_pending.blob_hash)`); err != nil {
 			return fmt.Errorf("reconciling derivative blob purge targets: %w", err)
 		}
 		if err := func() (retErr error) {
@@ -1232,6 +1245,7 @@ func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 		                  WHERE p.output_blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending p
 		                  WHERE p.blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding unreachable blobs: %w", err)
@@ -1252,6 +1266,7 @@ func (s *Store) UnreachableDerivativePurgeBlobs(ctx context.Context) ([]BlobInfo
 		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
 		  AND NOT EXISTS (SELECT 1 FROM visual_preview_generations p
 		                  WHERE p.output_blob_hash = b.hash)
+		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = b.hash)
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding pending derivative purge blobs: %w", err)
@@ -1328,6 +1343,7 @@ const unreachableBlobsStartPageSQL = `
 	                       WHERE v.output_blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
 	                       WHERE d.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 const unreachableBlobsResumePageSQL = `
@@ -1348,6 +1364,7 @@ const unreachableBlobsResumePageSQL = `
 	                       WHERE v.output_blob_hash = p.hash)
 	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
 	                       WHERE d.blob_hash = p.hash)
+	       AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = p.hash)
 	FROM raw_page p ORDER BY p.hash`
 
 func unreachableBlobScanQuery(after *string, limit int) (string, []any) {

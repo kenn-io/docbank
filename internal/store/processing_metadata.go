@@ -11,6 +11,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
@@ -32,6 +33,8 @@ const (
 	metadataProcessingIncarnationType      = "processing_incarnation"
 	metadataProcessingConsentGrantType     = "processing_consent_grant"
 	metadataProcessingConsentRevokeType    = "processing_consent_revocation"
+	metadataRenditionJobType               = "rendition_job"
+	metadataRenditionJobWaiterType         = "rendition_job_waiter"
 )
 
 type metadataProcessingProfile struct {
@@ -196,6 +199,54 @@ type metadataProcessingConsentRevocation struct {
 	RevokedAt               string `json:"revoked_at"`
 }
 
+type metadataRenditionJob struct {
+	Type                              string                                 `json:"type"`
+	ID                                string                                 `json:"job_id"`
+	VaultID                           string                                 `json:"vault_id"`
+	SourceSHA256                      string                                 `json:"source_sha256"`
+	RenditionRequestFingerprint       string                                 `json:"rendition_request_fingerprint"`
+	EvidenceLexicalFingerprint        string                                 `json:"evidence_lexical_fingerprint"`
+	CapturedArtifactPolicyFingerprint string                                 `json:"captured_artifact_policy_fingerprint"`
+	CapturedArtifactPolicy            jsontext.Value                         `json:"captured_artifact_policy"`
+	ExecutionIdentityFingerprint      string                                 `json:"execution_identity_fingerprint"`
+	ExecutionIdentity                 document.RenditionExecutionIdentityV1  `json:"execution_identity"`
+	ExecutionSnapshot                 *document.RenditionExecutionSnapshotV1 `json:"execution_snapshot"`
+	State                             RenditionJobState                      `json:"state"`
+	Phase                             RenditionJobPhase                      `json:"phase"`
+	ClaimOwner                        *string                                `json:"claim_owner"`
+	ClaimEpoch                        int64                                  `json:"claim_epoch"`
+	LeaseExpiresAt                    *string                                `json:"lease_expires_at"`
+	AvailableAt                       string                                 `json:"available_at"`
+	ProviderStarted                   bool                                   `json:"provider_started"`
+	ProviderAttempts                  int                                    `json:"provider_attempts"`
+	ProviderResumeHandle              *string                                `json:"provider_resume_handle"`
+	SelectedWaiterID                  *string                                `json:"selected_waiter_id"`
+	AuthorizationGrantID              *string                                `json:"authorization_grant_id"`
+	AuthorizationIncarnationID        *string                                `json:"authorization_incarnation_id"`
+	AuthorizationRevocationFence      *int64                                 `json:"authorization_revocation_fence"`
+	LexicalGenerationID               *string                                `json:"lexical_generation_id"`
+	FailureCode                       *RenditionFailureCode                  `json:"failure_code"`
+	CreatedAt                         string                                 `json:"created_at"`
+	UpdatedAt                         string                                 `json:"updated_at"`
+}
+
+type metadataRenditionJobWaiter struct {
+	Type                  string   `json:"type"`
+	ID                    string   `json:"waiter_id"`
+	JobID                 string   `json:"job_id"`
+	ContentVersionID      string   `json:"content_version_id"`
+	ProfileFingerprint    string   `json:"profile_fingerprint"`
+	Principal             string   `json:"principal"`
+	Scope                 string   `json:"scope"`
+	DisclosureFingerprint string   `json:"disclosure_fingerprint"`
+	InputClasses          []string `json:"input_classes"`
+	RetainedClasses       []string `json:"retained_classes"`
+	State                 string   `json:"state"`
+	AttachmentID          string   `json:"attachment_id"`
+	CreatedAt             string   `json:"created_at"`
+	UpdatedAt             string   `json:"updated_at"`
+}
+
 var processingMetadataRequiredFields = map[string][]string{
 	metadataProcessingIncarnationType: {
 		metadataTypeField, "incarnation_id", metadataCreatedAtField,
@@ -260,6 +311,23 @@ var processingMetadataRequiredFields = map[string][]string{
 		metadataTypeField, "source_sha256", "profile_fingerprint", "build_id",
 		"purged_at", "active", "superseded_at", "superseding_build_id",
 	},
+	metadataRenditionJobType: {
+		metadataTypeField, "job_id", auditVaultIDField, "source_sha256",
+		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
+		"captured_artifact_policy_fingerprint", "captured_artifact_policy",
+		"execution_identity_fingerprint", "execution_identity", "execution_snapshot",
+		"state", "phase", "claim_owner", "claim_epoch", "lease_expires_at", "available_at",
+		"provider_started", "provider_attempts", "provider_resume_handle", "selected_waiter_id",
+		"authorization_grant_id", "authorization_incarnation_id",
+		"authorization_revocation_fence", "lexical_generation_id", "failure_code",
+		metadataCreatedAtField, "updated_at",
+	},
+	metadataRenditionJobWaiterType: {
+		metadataTypeField, "waiter_id", "job_id", "content_version_id",
+		"profile_fingerprint", "principal", "scope", "disclosure_fingerprint",
+		"input_classes", "retained_classes", "state", "attachment_id",
+		metadataCreatedAtField, "updated_at",
+	},
 }
 
 func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -297,10 +365,115 @@ func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write met
 	if err := exportLexicalGenerations(ctx, tx, write); err != nil {
 		return err
 	}
+	if err := exportRenditionJobs(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportRenditionJobWaiters(ctx, tx, write); err != nil {
+		return err
+	}
 	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
 		return err
 	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
+}
+
+func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT job_id,vault_uid,source_sha256,rendition_request_fingerprint,
+		       evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
+		       captured_artifact_policy_json,execution_identity_fingerprint,
+		       execution_identity_json,execution_snapshot_json,state,phase,claim_owner,
+		       claim_epoch,lease_expires_at,available_at,provider_started,provider_attempts,
+		       provider_resume_handle,selected_waiter_id,authorization_grant_id,
+		       authorization_incarnation_id,authorization_revocation_fence,
+		       lexical_generation_id,failure_code,created_at,updated_at
+		FROM rendition_jobs ORDER BY job_id`)
+	if err != nil {
+		return fmt.Errorf("exporting rendition jobs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataRenditionJob{Type: metadataRenditionJobType}
+		var policy, identity string
+		var snapshot, owner, lease, handle, waiter, grant, incarnation, generation, failure sql.NullString
+		var fence sql.NullInt64
+		if err := rows.Scan(&record.ID, &record.VaultID, &record.SourceSHA256,
+			&record.RenditionRequestFingerprint, &record.EvidenceLexicalFingerprint,
+			&record.CapturedArtifactPolicyFingerprint, &policy,
+			&record.ExecutionIdentityFingerprint, &identity, &snapshot, &record.State,
+			&record.Phase, &owner, &record.ClaimEpoch, &lease, &record.AvailableAt,
+			&record.ProviderStarted, &record.ProviderAttempts, &handle, &waiter, &grant, &incarnation, &fence,
+			&generation, &failure, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return fmt.Errorf("scanning rendition job metadata: %w", err)
+		}
+		record.CapturedArtifactPolicy = jsontext.Value(policy)
+		parsedIdentity, err := document.ParseRenditionExecutionIdentityV1([]byte(identity))
+		if err != nil {
+			return fmt.Errorf("decoding rendition job execution identity: %w", err)
+		}
+		record.ExecutionIdentity = parsedIdentity
+		if snapshot.Valid {
+			parsed, err := document.ParseRenditionExecutionSnapshotV1([]byte(snapshot.String))
+			if err != nil {
+				return fmt.Errorf("decoding rendition job execution snapshot: %w", err)
+			}
+			record.ExecutionSnapshot = &parsed
+		}
+		record.ClaimOwner, record.LeaseExpiresAt = stringPtr(owner), stringPtr(lease)
+		record.ProviderResumeHandle, record.SelectedWaiterID = stringPtr(handle), stringPtr(waiter)
+		record.AuthorizationGrantID = stringPtr(grant)
+		record.AuthorizationIncarnationID = stringPtr(incarnation)
+		record.AuthorizationRevocationFence = int64Ptr(fence)
+		record.LexicalGenerationID = stringPtr(generation)
+		if failure.Valid {
+			code := RenditionFailureCode(failure.String)
+			record.FailureCode = &code
+		}
+		if err := validateMetadataRenditionJob(record); err != nil {
+			return fmt.Errorf("validating rendition job metadata: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("rendition job", rows)
+}
+
+func exportRenditionJobWaiters(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+		       attachment_id,created_at,updated_at
+		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
+	if err != nil {
+		return fmt.Errorf("exporting rendition job waiters: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}
+		var inputs, retained string
+		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
+			&record.ProfileFingerprint, &record.Principal, &record.Scope,
+			&record.DisclosureFingerprint, &inputs, &retained, &record.State,
+			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
+		}
+		if err := json.Unmarshal([]byte(inputs), &record.InputClasses); err != nil {
+			return fmt.Errorf("decoding rendition job waiter input classes: %w", err)
+		}
+		if err := json.Unmarshal([]byte(retained), &record.RetainedClasses); err != nil {
+			return fmt.Errorf("decoding rendition job waiter retained classes: %w", err)
+		}
+		if _, err := validateMetadataRenditionJobWaiter(record); err != nil {
+			return fmt.Errorf("validating rendition job waiter metadata: %w", err)
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("rendition job waiter", rows)
 }
 
 func exportProcessingConsent(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -417,7 +590,7 @@ func exportLexicalGenerations(
 		      ) OR EXISTS(
 		         SELECT 1 FROM current_rendition_roots r
 		         WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
-		           AND r.root_kind IN ('retention','audit')
+		           AND r.root_kind IN ('retention','audit','job')
 		      )
 		ORDER BY g.generation_id`)
 	if err != nil {
@@ -482,7 +655,7 @@ func exportDurableCurrentRenditionRoots(
 		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
 		       active,released_at
 		FROM current_rendition_roots
-		WHERE root_kind IN ('retention','audit')
+		WHERE root_kind IN ('retention','audit') OR (root_kind='job' AND active=1)
 		ORDER BY root_id`)
 	if err != nil {
 		return fmt.Errorf("exporting durable current rendition roots: %w", err)
@@ -604,16 +777,18 @@ func exportRenditionBuilds(ctx context.Context, tx metadataQuerier, write metada
 
 func exportRenditionArtifacts(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT build_id,artifact_id,role,blob_hash,size,checksum,state
+		SELECT build_id,artifact_id,role,blob_hash,size,checksum
 		FROM rendition_artifacts ORDER BY build_id,artifact_id`)
 	if err != nil {
 		return fmt.Errorf("exporting rendition artifacts: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		record := metadataRenditionArtifact{Type: metadataRenditionArtifactType}
+		record := metadataRenditionArtifact{
+			Type: metadataRenditionArtifactType, State: RenditionArtifactVerified,
+		}
 		if err := rows.Scan(&record.BuildID, &record.ArtifactID, &record.Role,
-			&record.BlobHash, &record.Size, &record.Checksum, &record.State); err != nil {
+			&record.BlobHash, &record.Size, &record.Checksum); err != nil {
 			return fmt.Errorf("scanning rendition artifact metadata: %w", err)
 		}
 		if err := write(record); err != nil {
@@ -838,9 +1013,9 @@ func (s *Store) importProcessingMetadataRecord(
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum,state)
-			VALUES(?,?,?,?,?,?,?)`, value.BuildID, value.ArtifactID, value.Role,
-			value.BlobHash, value.Size, value.Checksum, value.State)
+			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum)
+			VALUES(?,?,?,?,?,?)`, value.BuildID, value.ArtifactID, value.Role,
+			value.BlobHash, value.Size, value.Checksum)
 		return err
 	case metadataRenditionUnitType:
 		var value metadataRenditionUnit
@@ -915,6 +1090,94 @@ func (s *Store) importProcessingMetadataRecord(
 			return err
 		}
 		return restoreLexicalGenerationTx(ctx, tx, value)
+	case metadataRenditionJobType:
+		var value metadataRenditionJob
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateMetadataRenditionJob(value); err != nil {
+			return err
+		}
+		identityJSON, _, err := document.CanonicalRenditionExecutionIdentityV1(
+			value.ExecutionIdentity)
+		if err != nil {
+			return err
+		}
+		var snapshotJSON any
+		if value.ExecutionSnapshot != nil {
+			encoded, err := document.CanonicalRenditionExecutionSnapshotV1(
+				*value.ExecutionSnapshot)
+			if err != nil {
+				return err
+			}
+			snapshotJSON = string(encoded)
+		}
+		selectedWaiterID := value.SelectedWaiterID
+		authorizationGrantID := value.AuthorizationGrantID
+		authorizationIncarnationID := value.AuthorizationIncarnationID
+		authorizationRevocationFence := value.AuthorizationRevocationFence
+		if value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
+			value.State == RenditionJobRetryWait {
+			// A restore keeps sealed provider and staged local work, but imported
+			// consent belongs to the old processing incarnation. Force selection
+			// and authorization through fresh consent before any resumed provider
+			// call or local publication.
+			selectedWaiterID = nil
+			authorizationGrantID = nil
+			authorizationIncarnationID = nil
+			authorizationRevocationFence = nil
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_jobs(
+			job_id,vault_uid,source_sha256,rendition_request_fingerprint,
+			evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
+			captured_artifact_policy_json,execution_identity_fingerprint,
+			execution_identity_json,execution_snapshot_json,state,phase,claim_owner,
+			claim_epoch,lease_expires_at,available_at,provider_started,provider_attempts,
+			provider_resume_handle,selected_waiter_id,authorization_grant_id,
+			authorization_incarnation_id,authorization_revocation_fence,
+			lexical_generation_id,failure_code,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			value.ID, value.VaultID, value.SourceSHA256, value.RenditionRequestFingerprint,
+			value.EvidenceLexicalFingerprint, value.CapturedArtifactPolicyFingerprint,
+			string(value.CapturedArtifactPolicy), value.ExecutionIdentityFingerprint,
+			string(identityJSON), snapshotJSON, value.State, value.Phase, value.ClaimOwner,
+			value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, value.ProviderStarted,
+			value.ProviderAttempts,
+			value.ProviderResumeHandle, selectedWaiterID, authorizationGrantID,
+			authorizationIncarnationID, authorizationRevocationFence,
+			value.LexicalGenerationID, value.FailureCode, value.CreatedAt, value.UpdatedAt)
+		return err
+	case metadataRenditionJobWaiterType:
+		var value metadataRenditionJobWaiter
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		authority, err := validateMetadataRenditionJobWaiter(value)
+		if err != nil {
+			return err
+		}
+		var policyJSON string
+		if err := tx.QueryRowContext(ctx, `SELECT captured_artifact_policy_json
+			FROM rendition_jobs WHERE job_id=?`, value.JobID).Scan(&policyJSON); err != nil {
+			return fmt.Errorf("reading restored rendition job captured artifact policy: %w", err)
+		}
+		policy, err := normalizeCapturedArtifactPolicyV1(jsontext.Value(policyJSON))
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(authority.retained, policy.retainedRoles()) {
+			return errors.New(
+				"rendition waiter retained artifact classes do not match captured policy")
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
+			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+			attachment_id,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+			value.ProfileFingerprint, authority.principal, authority.scope,
+			authority.disclosure, authority.inputsJSON, authority.retainedJSON, value.State,
+			value.AttachmentID, value.CreatedAt, value.UpdatedAt)
+		return err
 	case metadataCurrentRenditionRootType:
 		var value metadataCurrentRenditionRoot
 		if err := decodeMetadataRecord(raw, &value); err != nil {
@@ -1061,6 +1324,186 @@ func validateMetadataLexicalGeneration(value metadataLexicalGeneration) error {
 	return nil
 }
 
+func validateMetadataRenditionJob(value metadataRenditionJob) error {
+	if value.Type != metadataRenditionJobType || value.ClaimEpoch < 0 || value.ProviderAttempts < 0 {
+		return errors.New("invalid rendition job metadata")
+	}
+	for subject, digest := range map[string]string{
+		"rendition job ID": value.ID, "rendition job source SHA-256": value.SourceSHA256,
+		"rendition request fingerprint":        value.RenditionRequestFingerprint,
+		"evidence lexical fingerprint":         value.EvidenceLexicalFingerprint,
+		"captured artifact policy fingerprint": value.CapturedArtifactPolicyFingerprint,
+		"execution identity fingerprint":       value.ExecutionIdentityFingerprint,
+	} {
+		if err := validateCatalogSHA256(digest, subject); err != nil {
+			return err
+		}
+	}
+	if err := validateUUIDv4(value.VaultID); err != nil {
+		return err
+	}
+	policy, err := normalizeCapturedArtifactPolicyV1(value.CapturedArtifactPolicy)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(policy.canonical, value.CapturedArtifactPolicy) ||
+		digestCatalogJSON(policy.canonical) != value.CapturedArtifactPolicyFingerprint {
+		return errors.New("rendition job captured artifact policy identity is invalid")
+	}
+	_, fingerprint, err := document.CanonicalRenditionExecutionIdentityV1(value.ExecutionIdentity)
+	if err != nil || fingerprint != value.ExecutionIdentityFingerprint {
+		return errors.Join(errors.New("rendition job execution identity is invalid"), err)
+	}
+	if value.ExecutionIdentity.Upload.SHA256 != value.SourceSHA256 ||
+		value.ExecutionIdentity.Authorization.RenditionRequestFingerprint !=
+			value.RenditionRequestFingerprint {
+		return errors.New("rendition job execution identity disagrees with job authority")
+	}
+	if renditionSharedBuildID(value.VaultID, value.SourceSHA256,
+		value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
+		value.CapturedArtifactPolicyFingerprint) != value.ID {
+		return errors.New("rendition job ID does not match immutable shared-build identity")
+	}
+	if value.ExecutionSnapshot != nil {
+		if _, err := document.CanonicalRenditionExecutionSnapshotV1(*value.ExecutionSnapshot); err != nil {
+			return err
+		}
+		_, snapshotFingerprint, _ := document.CanonicalRenditionExecutionIdentityV1(
+			value.ExecutionSnapshot.Identity)
+		if snapshotFingerprint != value.ExecutionIdentityFingerprint {
+			return errors.New("rendition job execution snapshot identity drifted")
+		}
+	}
+	if value.ProviderStarted && value.ExecutionSnapshot == nil ||
+		value.ProviderResumeHandle != nil && value.ExecutionSnapshot == nil ||
+		(value.ClaimOwner == nil) != (value.LeaseExpiresAt == nil) ||
+		(value.State == RenditionJobRunning) != (value.ClaimOwner != nil) ||
+		(value.AuthorizationGrantID == nil) != (value.AuthorizationIncarnationID == nil) ||
+		(value.AuthorizationGrantID == nil) != (value.AuthorizationRevocationFence == nil) {
+		return errors.New("rendition job durable authority is inconsistent")
+	}
+	if value.ClaimOwner != nil && !validRenditionWorkerOwner(*value.ClaimOwner) {
+		return errors.New("rendition job claim owner is invalid")
+	}
+	if value.ProviderResumeHandle != nil && !validRenditionResumeHandle(*value.ProviderResumeHandle) {
+		return errors.New("rendition job resume handle is invalid")
+	}
+	if value.SelectedWaiterID != nil {
+		if err := validateCatalogSHA256(*value.SelectedWaiterID, "selected rendition waiter ID"); err != nil {
+			return err
+		}
+	}
+	if value.AuthorizationGrantID != nil {
+		if err := validateUUIDv4(*value.AuthorizationGrantID); err != nil {
+			return err
+		}
+		if err := validateUUIDv4(*value.AuthorizationIncarnationID); err != nil {
+			return err
+		}
+		if *value.AuthorizationRevocationFence < 0 {
+			return errors.New("rendition job authorization fence is invalid")
+		}
+	}
+	if value.LexicalGenerationID != nil {
+		if err := validateCatalogSHA256(*value.LexicalGenerationID, "rendition job lexical generation ID"); err != nil {
+			return err
+		}
+	}
+	if !validRenditionJobState(value.State) {
+		return errors.New("rendition job state is invalid")
+	}
+	if !validRenditionJobPhase(value.Phase) {
+		return errors.New("rendition job phase is invalid")
+	}
+	if !validRenditionJobStatePhase(value.State, value.Phase) {
+		return errors.New("rendition job state and phase are inconsistent")
+	}
+	if value.State == RenditionJobOperatorRequired &&
+		(value.FailureCode == nil || *value.FailureCode != RenditionFailureAmbiguous) {
+		return errors.New("rendition job terminal phase is inconsistent")
+	}
+	if value.Phase == RenditionPhaseProvider && value.ProviderResumeHandle == nil &&
+		(value.State == RenditionJobQueued || value.State == RenditionJobRetryWait ||
+			value.State == RenditionJobRunning && !value.ProviderStarted) {
+		return errors.New("rendition job provider phase cannot start a fresh submission after restore")
+	}
+	if (value.Phase == RenditionPhaseQueued &&
+		(value.ProviderStarted || value.ExecutionSnapshot != nil || value.ProviderResumeHandle != nil)) ||
+		(value.Phase == RenditionPhaseProvider &&
+			(!value.ProviderStarted || value.ExecutionSnapshot == nil)) {
+		return errors.New("rendition job provider boundary is inconsistent")
+	}
+	if value.FailureCode != nil {
+		if !validRenditionFailureCode(*value.FailureCode) {
+			return errors.New("rendition job failure code is invalid")
+		}
+	}
+	for field, timestamp := range map[string]string{
+		"rendition job available_at": value.AvailableAt,
+		"rendition job created_at":   value.CreatedAt,
+		"rendition job updated_at":   value.UpdatedAt,
+	} {
+		if err := validateMetadataTime(field, timestamp); err != nil {
+			return err
+		}
+	}
+	if value.LeaseExpiresAt != nil {
+		return validateMetadataTime("rendition job lease_expires_at", *value.LeaseExpiresAt)
+	}
+	return nil
+}
+
+func validateMetadataRenditionJobWaiter(
+	value metadataRenditionJobWaiter,
+) (normalizedConsentAuthority, error) {
+	if value.Type != metadataRenditionJobWaiterType || !validRenditionWaiterState(value.State) {
+		return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter metadata")
+	}
+	for subject, digest := range map[string]string{
+		"rendition waiter ID": value.ID, "rendition waiter job ID": value.JobID,
+		"rendition waiter profile fingerprint":    value.ProfileFingerprint,
+		"rendition waiter disclosure fingerprint": value.DisclosureFingerprint,
+		"rendition waiter attachment ID":          value.AttachmentID,
+	} {
+		if err := validateCatalogSHA256(digest, subject); err != nil {
+			return normalizedConsentAuthority{}, err
+		}
+	}
+	if err := validateUUIDv4(value.ContentVersionID); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
+		Principal: value.Principal, Scope: value.Scope,
+		ProfileFingerprint:    value.ProfileFingerprint,
+		DisclosureFingerprint: value.DisclosureFingerprint,
+		InputClasses:          value.InputClasses, RetainedArtifactClasses: value.RetainedClasses,
+	})
+	if err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if !slices.Equal(authority.inputs, value.InputClasses) ||
+		!slices.Equal(authority.retained, value.RetainedClasses) {
+		return normalizedConsentAuthority{}, errors.New("rendition waiter classes are not canonical")
+	}
+	if err := validateRenditionWaiterInputClasses(authority.inputs); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if renditionScopedID("waiter", value.JobID, value.ContentVersionID,
+		value.ProfileFingerprint, authority.principal, authority.scope, authority.disclosure,
+		authority.inputsJSON, authority.retainedJSON) != value.ID ||
+		renditionScopedID("attachment", value.JobID, value.ContentVersionID,
+			value.ProfileFingerprint) != value.AttachmentID {
+		return normalizedConsentAuthority{}, errors.New("rendition waiter identity is invalid")
+	}
+	if err := validateMetadataTime("rendition waiter created_at", value.CreatedAt); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	if err := validateMetadataTime("rendition waiter updated_at", value.UpdatedAt); err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	return authority, nil
+}
+
 func validateMetadataDerivativePurgeSuppression(
 	value metadataDerivativePurgeSuppression,
 ) error {
@@ -1169,7 +1612,8 @@ func validateDurableCurrentRenditionRootMetadata(
 	value metadataCurrentRenditionRoot, root CurrentRenditionRoot,
 ) error {
 	if value.Type != metadataCurrentRenditionRootType ||
-		(root.Kind != RenditionRootRetention && root.Kind != RenditionRootAudit) {
+		(root.Kind != RenditionRootRetention && root.Kind != RenditionRootAudit &&
+			root.Kind != RenditionRootJob) {
 		return errors.New("invalid durable current rendition root record")
 	}
 	if err := validateCurrentRenditionRoot(root); err != nil {
@@ -1210,6 +1654,10 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 		SELECT preview.output_blob_hash, preview.output_size
 		FROM visual_preview_generations preview
 		WHERE preview.state='ready'
+		UNION
+		SELECT j.source_sha256, source.size
+		FROM rendition_jobs j
+		JOIN blobs source ON source.hash=j.source_sha256
 		ORDER BY 1, 2`)
 	if err != nil {
 		return fmt.Errorf("listing retained rendition bytes: %w", err)
@@ -1257,6 +1705,8 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		UNION
 		SELECT output_blob_hash FROM visual_preview_generations
 		WHERE output_blob_hash IS NOT NULL
+		UNION
+		SELECT source_sha256 FROM rendition_jobs
 		ORDER BY source_sha256`)
 	if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)
@@ -1711,6 +2161,9 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			return fmt.Errorf("invalid processing profile %s: %w", id, err)
 		}
 	}
+	if err := validateRenditionJobExecutionProfiles(ctx, tx); err != nil {
+		return err
+	}
 
 	buildIDs, err := loadProcessingMetadataIDs(
 		ctx, tx, "rendition build", `SELECT build_id FROM rendition_builds ORDER BY build_id`,
@@ -1773,6 +2226,36 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			   AND a.content_version_id=h.content_version_id
 			   AND a.profile_fingerprint=h.profile_fingerprint
 			  WHERE a.attachment_id IS NULL
+			)`},
+		{"rendition job belongs to another vault", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_jobs j
+			  WHERE j.vault_uid != (SELECT vault_uid FROM vault_metadata WHERE singleton=1)
+			)`},
+		{"rendition job waiter authority disagrees", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_job_waiters w
+			  JOIN rendition_jobs j ON j.job_id=w.job_id
+			  JOIN content_versions v ON v.version_id=w.content_version_id
+			  JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
+			  WHERE v.blob_hash != j.source_sha256
+			     OR p.rendition_request_fingerprint != j.rendition_request_fingerprint
+			     OR p.evidence_lexical_fingerprint != j.evidence_lexical_fingerprint
+			     OR p.rendition_disclosure_fingerprint != w.disclosure_fingerprint
+			)`},
+		{"rendition job selected waiter is missing", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_jobs j
+			  LEFT JOIN rendition_job_waiters w
+			    ON w.waiter_id=j.selected_waiter_id AND w.job_id=j.job_id
+			  WHERE j.selected_waiter_id IS NOT NULL AND w.waiter_id IS NULL
+			)`},
+		{"rendition job staged build is missing", `
+			SELECT EXISTS(
+			  SELECT 1 FROM rendition_jobs j
+			  LEFT JOIN rendition_builds b ON b.build_id=j.job_id
+			  WHERE j.phase IN ('build_staged','generation_staged','published')
+			    AND b.build_id IS NULL
 			)`},
 	}
 	for _, check := range checks {
@@ -1847,7 +2330,80 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	lexicalSchema, err := lexicalGenerationSchemaPresentTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if lexicalSchema {
+		var missingJobGeneration bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM rendition_jobs j
+			LEFT JOIN rendition_lexical_generations g
+			  ON g.generation_id=j.lexical_generation_id
+			WHERE j.phase IN ('generation_staged','published')
+			  AND g.generation_id IS NULL
+		)`).Scan(&missingJobGeneration); err != nil {
+			return fmt.Errorf("validating rendition job staged generation: %w", err)
+		}
+		if missingJobGeneration {
+			return errors.New("rendition job staged generation is missing")
+		}
+		var generationID string
+		err = tx.QueryRowContext(ctx, `SELECT generation_id FROM rendition_lexical_heads
+			WHERE singleton=1`).Scan(&generationID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading restored lexical head: %w", err)
+		}
+		if err == nil {
+			if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
+				return err
+			}
+		}
+	}
 	return validateCurrentRenditionRootState(ctx, tx)
+}
+
+func validateRenditionJobExecutionProfiles(ctx context.Context, query metadataQuerier) (retErr error) {
+	rows, err := query.QueryContext(ctx, `
+		SELECT DISTINCT j.job_id,j.execution_identity_json,
+		       j.captured_artifact_policy_json,p.canonical_profile
+		FROM rendition_jobs j
+		JOIN rendition_job_waiters w ON w.job_id=j.job_id
+		JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
+		ORDER BY j.job_id,p.canonical_profile`)
+	if err != nil {
+		return fmt.Errorf("reading rendition job execution profiles: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	for rows.Next() {
+		var jobID, identityJSON, policyJSON, profileJSON string
+		if err := rows.Scan(&jobID, &identityJSON, &policyJSON, &profileJSON); err != nil {
+			return fmt.Errorf("reading rendition job execution profile: %w", err)
+		}
+		identity, err := document.ParseRenditionExecutionIdentityV1([]byte(identityJSON))
+		if err != nil {
+			return fmt.Errorf("rendition job %s execution identity: %w", jobID, err)
+		}
+		var profile document.ProcessingProfileV1
+		if err := json.Unmarshal(
+			[]byte(profileJSON), &profile, json.RejectUnknownMembers(true)); err != nil {
+			return fmt.Errorf("rendition job %s execution profile: %w", jobID, err)
+		}
+		if err := document.ValidateRenditionExecutionProfileV1(identity, profile); err != nil {
+			return fmt.Errorf("rendition job %s execution profile: %w", jobID, err)
+		}
+		policy, err := normalizeCapturedArtifactPolicyV1(jsontext.Value(policyJSON))
+		if err != nil {
+			return fmt.Errorf("rendition job %s captured artifact policy: %w", jobID, err)
+		}
+		if err := validateCapturedArtifactPolicyForProfile(policy, profile); err != nil {
+			return fmt.Errorf("rendition job %s captured artifact policy: %w", jobID, err)
+		}
+	}
+	return rows.Err()
 }
 
 func validateProcessingConsentState(ctx context.Context, tx metadataQuerier) error {
@@ -1987,6 +2543,8 @@ func validateProcessingIncarnations(ctx context.Context, tx metadataQuerier) err
 }
 
 func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) (_ error) {
+	activeJobBuildRoots := make(map[string]bool)
+	activeJobGenerationRoots := make(map[string]bool)
 	rows, err := tx.QueryContext(ctx, `
 		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
 		       COALESCE(expires_at,''),active,released_at
@@ -2041,8 +2599,67 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 		if !present {
 			return fmt.Errorf("current rendition root %s target %s is missing", root.ID, root.TargetID)
 		}
+		if root.Kind == RenditionRootJob {
+			prefix := "rendition_job_build_"
+			if root.TargetKind == RenditionRootLexicalGeneration {
+				prefix = "rendition_job_generation_"
+			}
+			jobID := strings.TrimPrefix(root.ID, prefix)
+			if jobID == root.ID {
+				return fmt.Errorf("current rendition job root %s has invalid identity", root.ID)
+			}
+			var epoch int64
+			var generationID sql.NullString
+			if err := tx.QueryRowContext(ctx,
+				`SELECT claim_epoch,lexical_generation_id FROM rendition_jobs WHERE job_id=?`, jobID,
+			).Scan(&epoch, &generationID); err != nil {
+				return fmt.Errorf("current rendition job root %s has no job authority: %w", root.ID, err)
+			}
+			if root.FencingToken > epoch || active && root.FencingToken != epoch {
+				return fmt.Errorf("current rendition job root %s fencing token is invalid", root.ID)
+			}
+			switch root.TargetKind {
+			case RenditionRootBuild:
+				if root.TargetID != jobID {
+					return fmt.Errorf("current rendition job root %s does not match the job build", root.ID)
+				}
+				activeJobBuildRoots[jobID] = true
+			case RenditionRootLexicalGeneration:
+				if !generationID.Valid || root.TargetID != generationID.String {
+					return fmt.Errorf(
+						"current rendition job root %s does not match the job lexical generation", root.ID)
+				}
+				activeJobGenerationRoots[jobID] = true
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	jobs, err := tx.QueryContext(ctx, `
+		SELECT job_id,phase FROM rendition_jobs
+		WHERE phase IN ('build_staged','generation_staged') ORDER BY job_id`)
+	if err != nil {
+		return fmt.Errorf("reading staged rendition jobs: %w", err)
+	}
+	defer func() { _ = jobs.Close() }()
+	for jobs.Next() {
+		var jobID string
+		var phase RenditionJobPhase
+		if err := jobs.Scan(&jobID, &phase); err != nil {
+			return fmt.Errorf("scanning staged rendition job: %w", err)
+		}
+		if !activeJobBuildRoots[jobID] {
+			return errors.New("rendition job staged build root is missing")
+		}
+		if phase == RenditionPhaseGenerationStaged && !activeJobGenerationRoots[jobID] {
+			return errors.New("rendition job staged generation root is missing")
+		}
+	}
+	if err := rowsError("staged rendition job", jobs); err != nil {
 		return err
 	}
 	return validateDerivativePurgeSuppressionState(ctx, tx)

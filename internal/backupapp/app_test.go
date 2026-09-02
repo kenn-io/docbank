@@ -363,7 +363,7 @@ func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
 			CompletenessFingerprint: strings.Repeat("1", 64), LexicalSegmenterFingerprint: strings.Repeat("2", 64),
-			MaxSegmentRunes: 100, MaxUnitRunes: 1000,
+			MaxDocumentChars: 100_000, MaxSegmentRunes: 100, MaxUnitRunes: 1000,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
 			NormalizerFingerprint:      strings.Repeat("3", 64), RenditionContract: document.RenditionContractV1,
 			SanitizerFingerprint: strings.Repeat("4", 64), SourceEvidenceContract: document.SourceEvidenceContractV1,
@@ -2252,7 +2252,7 @@ func backupProcessingProfile(t *testing.T) store.ProcessingProfileRecord {
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
 			CompletenessFingerprint: backupHash("completeness"), LexicalSegmenterFingerprint: backupHash("segmenter"),
-			MaxSegmentRunes: 100, MaxUnitRunes: 1_000,
+			MaxDocumentChars: 100_000, MaxSegmentRunes: 100, MaxUnitRunes: 1_000,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
 			NormalizerFingerprint:      backupHash("normalizer"), RenditionContract: document.RenditionContractV1,
 			SanitizerFingerprint: backupHash("sanitizer"), SourceEvidenceContract: document.SourceEvidenceContractV1,

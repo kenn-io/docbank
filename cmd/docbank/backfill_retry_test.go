@@ -36,7 +36,6 @@ func TestBackfillRetrySetQuarantinesFailuresWithoutBlockingOtherTargets(t *testi
 	retries.succeeded("bad")
 	assert.True(t, retries.ready("bad", now))
 }
-
 func TestBackfillRetrySetWaitsUntilEarliestRetry(t *testing.T) {
 	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	retries := newBackfillRetrySet()
@@ -44,4 +43,15 @@ func TestBackfillRetrySetWaitsUntilEarliestRetry(t *testing.T) {
 	retries.failed("second", now.Add(time.Second))
 
 	assert.Equal(t, 5*time.Second, retries.waitDelay(now, time.Second))
+}
+
+func TestBackfillBatchWaitHonorsRetryWhenEveryTargetIsSkipped(t *testing.T) {
+	retries := newBackfillRetrySet()
+	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	retries.failed("deferred", now)
+
+	assert.Equal(t, 5*time.Second,
+		backfillBatchWaitDelay(0, retries, now))
+	assert.Equal(t, 100*time.Millisecond,
+		backfillBatchWaitDelay(1, retries, now))
 }

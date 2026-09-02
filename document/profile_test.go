@@ -26,12 +26,12 @@ func TestCanonicalProfileMatchesGoldenAndCanonicalizesInput(t *testing.T) {
 	want = bytes.TrimSuffix(want, []byte("\n"))
 	assert.Equal(t, want, encoded)
 	assert.Equal(t, original, profile, "canonicalization must not mutate caller-owned policy")
-	assert.Equal(t, "389b38a03edb9c156e4804473d96accbef7d0e773f49387b84b1b7e6ade33b91", fingerprints.Profile)
+	assert.Equal(t, "d1f4c031ff9161c9034d3fb56c871a91423d84564fc48024e80a9ec4e45057ff", fingerprints.Profile)
 	assert.Equal(t, "9d0a202be29b43e16684f74b540a41778443fe2f4757d4b1815d85994f5b2522", fingerprints.RenditionRequest)
-	assert.Equal(t, "f5405d835d1bb377cade66ca6e18b488972fadc862bfd96faf746cd374184819", fingerprints.EvidenceLexical)
+	assert.Equal(t, "1a79d280a3eefc9b8e6402e6f9a491783db7c2804ae00ac03160a963a48aa7d7", fingerprints.EvidenceLexical)
 	assert.Equal(t, map[string]string{
 		"direct":   "59c57d1c5b5b3106ce6310660b0ec8aa038c58c20bdcaad9ef711c40b0ae9ff1",
-		"semantic": "dff3236afbf4b8810a1ff40a1c812f9ae7bef5dae28c08b6a80f78e811094872",
+		"semantic": "d39106ffbbf86c37f9c51d229535e7bde503cf12fffcd25560544bb8fa128f3b",
 	}, fingerprints.EmbeddingInput)
 	assert.Equal(t, map[string]string{
 		"direct":   "dc2da50bb2d163a114834bbcee2ea439cd838da23f4e0ac8a504d9b007487357",
@@ -105,6 +105,9 @@ func TestCanonicalProfileFingerprintsTrackExactLayerFields(t *testing.T) {
 		{"completeness rules", func(p *document.ProcessingProfileV1) { p.EvidenceLexical.CompletenessFingerprint = fingerprint("c") }, layers("profile", "evidence", "input:semantic")},
 		{"lexical segmenter", func(p *document.ProcessingProfileV1) {
 			p.EvidenceLexical.LexicalSegmenterFingerprint = fingerprint("c")
+		}, layers("profile", "evidence", "input:semantic")},
+		{"document character limit", func(p *document.ProcessingProfileV1) {
+			p.EvidenceLexical.MaxDocumentChars++
 		}, layers("profile", "evidence", "input:semantic")},
 		{"unit rune limit", func(p *document.ProcessingProfileV1) { p.EvidenceLexical.MaxUnitRunes++ }, layers("profile", "evidence", "input:semantic")},
 		{"segment rune limit", func(p *document.ProcessingProfileV1) { p.EvidenceLexical.MaxSegmentRunes++ }, layers("profile", "evidence", "input:semantic")},
@@ -275,7 +278,8 @@ func syntheticProcessingProfileV1() document.ProcessingProfileV1 {
 			TrustBoundary:      "processor-primary", UploadOptionsFingerprint: fingerprint("f"),
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
-			CompletenessFingerprint: fingerprint("6"), LexicalSegmenterFingerprint: fingerprint("5"), MaxSegmentRunes: 2_000, MaxUnitRunes: 100_000,
+			CompletenessFingerprint: fingerprint("6"), LexicalSegmenterFingerprint: fingerprint("5"), MaxDocumentChars: 100_000,
+			MaxSegmentRunes: 2_000, MaxUnitRunes: 100_000,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, NormalizerFingerprint: fingerprint("3"),
 			RenditionContract: document.RenditionContractV1, SanitizerFingerprint: fingerprint("4"), SourceEvidenceContract: document.SourceEvidenceContractV1,
 		},
