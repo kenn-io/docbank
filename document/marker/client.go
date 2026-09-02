@@ -215,9 +215,11 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	if metadata.ByteLength > client.profile.MaxDocumentBytes {
 		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker input exceeds the document byte limit", nil)
 	}
-	if !filenameMatches(metadata) {
+	filename, ok := uploadFilename(metadata)
+	if !ok {
 		return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput, "Marker input filename does not match the authorized format", nil)
 	}
+	metadata.Filename = filename
 	expiresAt, err := time.Parse(timestampForm, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected, "Marker authorization expiry is invalid", nil)
@@ -281,7 +283,8 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 		return document.RenditionResult{}, providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	responseBody, err := readBounded(operationCtx, expiresAt, response.Body, client.profile.MaxResponseBytes)
+	responseLimit := min(client.profile.MaxResponseBytes, int64(authorization.MaxTotalResultBytes))
+	responseBody, err := readBounded(operationCtx, expiresAt, response.Body, responseLimit)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -299,7 +302,10 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if len(result.markdown) > authorization.MaxProviderMarkdownBytes {
+	providerMarkdown := result.markdown
+	if authorization.MaxProviderMarkdownBytes == 0 {
+		providerMarkdown = nil
+	} else if len(providerMarkdown) > authorization.MaxProviderMarkdownBytes {
 		return document.RenditionResult{}, malformedError("Marker Markdown exceeds authorization", nil)
 	}
 	completed := time.Now().UTC()
@@ -308,7 +314,7 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected,
 			"Marker authorization fingerprint is invalid", err)
 	}
-	return document.RenditionResult{Evidence: result.evidence, ProviderMarkdown: result.markdown,
+	return document.RenditionResult{Evidence: result.evidence, ProviderMarkdown: providerMarkdown,
 		Receipt: document.RenditionReceipt{ProviderID: client.descriptor.ID,
 			DescriptorFingerprint:       client.descriptor.Fingerprint,
 			PolicyFingerprint:           authorization.PolicyFingerprint,
@@ -354,6 +360,9 @@ func (client *Client) parseResult(body []byte, family string, expectedNaturalUni
 		return parsedResult{}, nil, malformedError("Marker result does not prove complete source units", nil)
 	}
 	markdown := []byte(*wire.Output)
+	if providerutil.InjectsDocbankFrontmatter(markdown) {
+		return parsedResult{}, nil, malformedError("Marker Markdown contains reserved Docbank frontmatter", nil)
+	}
 	evidence, natural := naturalEvidence(family, *wire.Output, stats)
 	if !natural {
 		evidence = providerutil.DegradedEvidence(family, *wire.Output,
@@ -587,32 +596,45 @@ func validateOrigin(raw string) (string, error) {
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
-func filenameMatches(metadata document.AuthorizedUploadMetadata) bool {
+func uploadFilename(metadata document.AuthorizedUploadMetadata) (string, bool) {
 	ext := strings.ToLower(filepath.Ext(metadata.Filename))
 	switch metadata.MediaType {
 	case "application/pdf":
-		return ext == ".pdf"
+		return filenameWithExtension(metadata.Filename, ext, ".pdf")
 	case "image/jpeg":
-		return ext == ".jpg" || ext == ".jpeg"
+		if metadata.Filename == "" {
+			return "document.jpg", true
+		}
+		return metadata.Filename, ext == ".jpg" || ext == ".jpeg"
 	case "image/png":
-		return ext == ".png"
+		return filenameWithExtension(metadata.Filename, ext, ".png")
 	case "image/webp":
-		return ext == ".webp"
+		return filenameWithExtension(metadata.Filename, ext, ".webp")
 	case "image/gif":
-		return ext == ".gif"
+		return filenameWithExtension(metadata.Filename, ext, ".gif")
 	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		return ext == ".docx"
+		return filenameWithExtension(metadata.Filename, ext, ".docx")
 	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-		return ext == ".xlsx"
+		return filenameWithExtension(metadata.Filename, ext, ".xlsx")
 	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		return ext == ".pptx"
+		return filenameWithExtension(metadata.Filename, ext, ".pptx")
 	case "application/epub+zip":
-		return ext == ".epub"
+		return filenameWithExtension(metadata.Filename, ext, ".epub")
 	case "text/html":
-		return ext == ".html" || ext == ".htm"
+		if metadata.Filename == "" {
+			return "document.html", true
+		}
+		return metadata.Filename, ext == ".html" || ext == ".htm"
 	default:
-		return false
+		return "", false
 	}
+}
+
+func filenameWithExtension(filename, extension, required string) (string, bool) {
+	if filename == "" {
+		return "document" + required, true
+	}
+	return filename, extension == required
 }
 
 func operationContext(ctx context.Context, expiresAt time.Time, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -657,15 +679,13 @@ func readBounded(ctx context.Context, expiresAt time.Time, reader io.Reader, max
 }
 
 func statusError(status int) error {
+	if status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
+		status >= http.StatusInternalServerError && status <= 599 {
+		return providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", nil)
+	}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return providerError(document.RenditionErrorAuthentication, "Marker authentication failed", nil)
-	case http.StatusTooManyRequests:
-		return providerError(document.RenditionErrorRateLimited, "Marker rate limit is exhausted", nil)
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusInsufficientStorage:
-		return providerError(document.RenditionErrorCapacity, "Marker capacity is unavailable", nil)
-	case http.StatusInternalServerError:
-		return providerError(document.RenditionErrorTransient, "Marker is temporarily unavailable", nil)
 	case http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
 		return providerError(document.RenditionErrorUnsupportedInput, "Marker rejected the input format", nil)
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:

@@ -96,6 +96,35 @@ func TestClientUploadsExactBytesToFixedRouteAndMapsProvenPages(t *testing.T) {
 	assert.Equal(t, fixture.metadata.SHA256, result.Receipt.SourceSHA256)
 }
 
+func TestClientUsesSyntheticFilenameWhenDisclosureIsWithheld(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "private-report.pdf", testPDF(1))
+	fixture.authorization.DiscloseFilename = false
+	expectedMetadata := fixture.metadata
+	expectedMetadata.Filename = "document.pdf"
+	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		assertMultipart(t, request, expectedMetadata, fixture.source)
+		return jsonResponse(request, http.StatusOK, `{"format":"markdown","output":"{0}------------------------------------------------\n\nComplete","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"pdftext","block_counts":[],"block_metadata":{}}]},"success":true}`), nil
+	}))
+
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+
+	require.NoError(t, err)
+}
+
+func TestClientUsesMarkdownForEvidenceWhenRetentionIsNotAuthorized(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
+	fixture.authorization.MaxProviderMarkdownBytes = 0
+	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK,
+		`{"format":"markdown","output":"{0}------------------------------------------------\n\nComplete","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"pdftext","block_counts":[],"block_metadata":{}}]},"success":true}`))
+
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+
+	require.NoError(t, err)
+	assert.Empty(t, result.ProviderMarkdown)
+	require.Len(t, result.Evidence.Units, 1)
+	assert.Equal(t, "Complete", result.Evidence.Units[0].Text)
+}
+
 func TestDescriptorCoversMarkerConverterFamilies(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
 	want := []document.RenditionFormatCapability{
@@ -252,6 +281,31 @@ func TestClientRequiresLocalProofOfCompletePDFUnitsAndTotalResultBound(t *testin
 	assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
 }
 
+func TestClientBoundsResponseBufferByAuthorization(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
+	fixture.authorization.MaxTotalResultBytes = 64
+	responseSource := strings.NewReader(strings.Repeat("x", 1024))
+	responseBody := &callbackReadCloser{reader: responseSource, before: func() {}}
+	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: responseBody, Request: request}, nil
+	}))
+
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+
+	assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
+	assert.Equal(t, 1024-65, responseSource.Len())
+}
+
+func TestClientRejectsReservedDocbankFrontmatter(t *testing.T) {
+	fixture := newFixture(t, "word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "notes.docx", []byte("synthetic source"))
+	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK,
+		`{"format":"markdown","output":"---\ndocbank-sanitized-markdown/v1\n---\nprovider content","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"surya","block_counts":[],"block_metadata":{}}]},"success":true}`))
+
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+
+	assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
+}
+
 func TestClientProvesStillImageIdentityBeforeEgress(t *testing.T) {
 	const complete = `{"format":"markdown","output":"{0}------------------------------------------------\n\nImage text","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"surya","block_counts":[],"block_metadata":{}}]},"success":true}`
 	still := newFixture(t, "image", "image/png", "scan.png", mediatest.PNG(4, 3, nil))
@@ -344,8 +398,10 @@ func TestClientClassifiesAuthCapacityTransportExpiryAndCancellation(t *testing.T
 		want   document.RenditionErrorCode
 	}{
 		{http.StatusUnauthorized, document.RenditionErrorAuthentication},
-		{http.StatusTooManyRequests, document.RenditionErrorRateLimited},
-		{http.StatusServiceUnavailable, document.RenditionErrorCapacity},
+		{http.StatusRequestTimeout, document.RenditionErrorAmbiguousSubmission},
+		{http.StatusTooManyRequests, document.RenditionErrorAmbiguousSubmission},
+		{http.StatusInternalServerError, document.RenditionErrorAmbiguousSubmission},
+		{http.StatusServiceUnavailable, document.RenditionErrorAmbiguousSubmission},
 		{http.StatusUnsupportedMediaType, document.RenditionErrorUnsupportedInput},
 	} {
 		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(testCase.status, "private"))
