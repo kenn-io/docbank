@@ -127,8 +127,8 @@ func TestEnqueueRenditionJobRejectsExecutionOutsideProfile(t *testing.T) {
 		{"evidence policy", func(identity *document.RenditionExecutionIdentityV1) {
 			identity.EvidencePolicy.MaxDocumentChars--
 		}},
-		{"normalization policy", func(identity *document.RenditionExecutionIdentityV1) {
-			identity.RenditionPolicy.Normalization.MaxDocumentChars--
+		{"rendition policy", func(identity *document.RenditionExecutionIdentityV1) {
+			identity.RenditionPolicy.MaxUnitRunes--
 		}},
 		{"document bytes", func(identity *document.RenditionExecutionIdentityV1) {
 			identity.Upload.ByteLength = 2 << 20
@@ -572,7 +572,7 @@ func TestRenditionJobMetadataRoundTripPreservesAmbiguousFenceAndRequiresFreshCon
 	require.NoError(t, s.ExportMetadata(t.Context(), &second))
 	assert.Equal(t, first.Bytes(), second.Bytes(), "job authority export must be deterministic")
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadata(
 		t.Context(), bytes.NewReader(first.Bytes())))
 	restoredJob, err := restored.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
@@ -624,7 +624,7 @@ func TestRenditionJobMetadataRestoreRejectsWaiterRetainedPolicySubset(t *testing
 	}
 
 	restored := newTestStore(t)
-	err = restored.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(malformed.Bytes()))
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed.Bytes()))
 	require.ErrorContains(t, err, "retained artifact classes do not match captured policy")
 }
 
@@ -671,7 +671,7 @@ func TestRenditionJobMetadataRestoreRejectsNonOriginalWaiterConsent(t *testing.T
 	}
 
 	restored := newTestStore(t)
-	err = restored.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(malformed.Bytes()))
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed.Bytes()))
 	require.ErrorContains(t, err, "input classes do not match original source egress")
 }
 
@@ -692,7 +692,7 @@ func TestRenditionJobMetadataRestoreRejectsInvalidStatePhase(t *testing.T) {
 		})
 
 	restored := newTestStore(t)
-	err = restored.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(malformed))
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "state and phase are inconsistent")
 }
 
@@ -719,7 +719,7 @@ func TestRenditionJobMetadataRestoreRejectsProviderBoundaryInQueuedPhase(t *test
 		})
 
 	restored := newTestStore(t)
-	err = restored.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(malformed))
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "provider boundary is inconsistent")
 }
 
@@ -777,7 +777,7 @@ func TestRenditionJobMetadataRestoreRejectsCapturedPolicyOutsideProfile(t *testi
 	}
 
 	restored := newTestStore(t)
-	err = restored.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(malformed.Bytes()))
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed.Bytes()))
 	require.ErrorContains(t, err,
 		`role "normalized_evidence" deterministically produces 1 artifacts outside [2,2]`)
 }
@@ -823,7 +823,7 @@ func TestRenditionJobMetadataRestoreRejectsUnsafeFreshProviderReset(t *testing.T
 	}
 
 	restored := newTestStore(t)
-	err = restored.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(malformed.Bytes()))
+	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed.Bytes()))
 	require.ErrorContains(t, err, "provider phase cannot start a fresh submission after restore")
 }
 
@@ -851,7 +851,7 @@ func TestRenditionJobMetadataRoundTripPreservesSealedDurableResumeAuthority(t *t
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadata(
 		t.Context(), bytes.NewReader(exported.Bytes())))
 	_, _, err = restored.EnqueueRenditionJob(t.Context(), request)
 	require.ErrorIs(t, err, ErrProcessingConsentRequired)
@@ -958,7 +958,7 @@ func TestRenditionJobMetadataRoundTripPreservesActiveStagedBuildRoot(t *testing.
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadata(
 		t.Context(), bytes.NewReader(exported.Bytes())))
 	restoredJob, err := restored.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
@@ -1073,7 +1073,7 @@ func TestRenditionJobMetadataRestoreRejectsMissingOrMisdirectedJobRoots(t *testi
 				malformed.WriteByte('\n')
 			}
 			restored := newTestStore(t)
-			err := restored.ImportMetadataForBackupRestore(
+			err := restored.ImportMetadata(
 				t.Context(), bytes.NewReader(malformed.Bytes()))
 			require.ErrorContains(t, err, test.wantError)
 		})
@@ -1267,11 +1267,9 @@ func renditionJobTestExecutionIdentity(
 	if err != nil {
 		panic(err)
 	}
-	normalization, err := document.NewNormalizePolicy(100_000)
-	if err != nil {
-		panic(err)
-	}
-	rendition, err := document.NewRenditionPolicy(normalization, 100)
+	rendition, err := document.NewRenditionPolicy(document.RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 100,
+	})
 	if err != nil {
 		panic(err)
 	}

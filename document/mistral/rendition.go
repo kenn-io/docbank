@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,15 +20,13 @@ import (
 
 const (
 	renditionProviderID = "mistral.ocr-v1"
-	renditionTimeForm   = "2006-01-02T15:04:05.000000000Z"
+	renditionProvider   = providerutil.Provider("Mistral")
 )
 
 var _ document.RenditionProvider = (*RenditionClient)(nil)
 
 // SecretResolver resolves only the profile-bound Mistral OCR credential.
-type SecretResolver interface {
-	ResolveSecret(ctx context.Context, name string) (string, error)
-}
+type SecretResolver = providerutil.SecretResolver
 
 // Profile binds one rendition adapter to the existing Mistral OCR policy and
 // its complete capability evidence.
@@ -64,12 +61,9 @@ func NewRenditionProvider(
 	if err := manifest.ValidateComplete(); err != nil {
 		return nil, fmt.Errorf("mistral rendition capability manifest: %w", err)
 	}
-	descriptor, err := document.NewRenditionDescriptor(profile.Descriptor)
-	if err != nil || !reflect.DeepEqual(descriptor, profile.Descriptor) {
-		if err == nil {
-			err = errors.New("descriptor is not canonical")
-		}
-		return nil, fmt.Errorf("mistral rendition descriptor: %w", err)
+	descriptor, err := renditionProvider.CanonicalDescriptor(profile.Descriptor)
+	if err != nil {
+		return nil, err
 	}
 	if descriptor.ID != renditionProviderID {
 		return nil, fmt.Errorf("mistral rendition descriptor ID must be %s", renditionProviderID)
@@ -95,27 +89,18 @@ func NewRenditionProvider(
 			return nil, fmt.Errorf("mistral rendition format %q has no enforceable upload authority", candidate.ID)
 		}
 	}
-	if profile.SecretBinding == "" || nilValue(secrets) {
+	if profile.SecretBinding == "" || providerutil.IsNil(secrets) {
 		return nil, errors.New("mistral rendition requires a named secret binding and resolver")
 	}
-	if err := validateRenditionToken(profile.SecretBinding, "secret binding"); err != nil {
+	if err := renditionProvider.ValidateIdentifier(profile.SecretBinding, "secret binding"); err != nil {
 		return nil, err
 	}
 	if httpClient == nil {
 		return nil, errors.New("mistral rendition HTTP client is required")
 	}
-	if profile.Timeout == 0 {
-		profile.Timeout = DefaultTimeout
-	}
-	if profile.MaxRetries == 0 {
-		profile.MaxRetries = DefaultMaxRetries
-	}
-	if profile.MaxRetryDelay == 0 {
-		profile.MaxRetryDelay = DefaultMaxRetryDelay
-	}
-	if profile.Timeout < 0 || profile.Timeout > MaxTimeout ||
-		profile.MaxRetries < 0 || profile.MaxRetries > MaxRetries ||
-		profile.MaxRetryDelay < 0 || profile.MaxRetryDelay > MaxRetryDelay {
+	if !providerutil.Bounded(&profile.Timeout, DefaultTimeout, MaxTimeout) ||
+		!providerutil.Bounded(&profile.MaxRetries, DefaultMaxRetries, MaxRetries) ||
+		!providerutil.Bounded(&profile.MaxRetryDelay, DefaultMaxRetryDelay, MaxRetryDelay) {
 		return nil, errors.New("mistral rendition execution bounds are invalid")
 	}
 	isolate := providerhttp.IsolateClient(httpClient)
@@ -131,10 +116,7 @@ func NewRenditionProvider(
 	if err != nil {
 		return nil, fmt.Errorf("mistral rendition client: %w", err)
 	}
-	return &RenditionClient{
-		descriptor: providerutil.CloneDescriptor(descriptor), policy: profile.Policy, manifest: manifest,
-		ocr: ocr,
-	}, nil
+	return &RenditionClient{descriptor: descriptor, policy: profile.Policy, manifest: manifest, ocr: ocr}, nil
 }
 
 // Descriptor returns an immutable copy of the configured provider identity.
@@ -156,54 +138,103 @@ func (client *RenditionClient) Render(
 	}
 	metadata := upload.Metadata()
 	if metadata.ByteLength > client.policy.values.MaxDocumentBytes {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorPolicyRejected,
+		return document.RenditionResult{}, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
 			"Mistral input exceeds the policy byte limit", nil)
 	}
-	expiresAt, err := time.Parse(renditionTimeForm, authorization.ExpiresAt)
+	operation, err := providerutil.NewOperation(ctx, renditionProvider, authorization.ExpiresAt, 0)
 	if err != nil {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorPolicyRejected,
-			"Mistral authorization expiry is invalid", err)
+		return document.RenditionResult{}, err
 	}
+	defer operation.Cancel()
 	startedAt := time.Now().UTC()
-	if !startedAt.Before(expiresAt) {
-		return document.RenditionResult{}, expiredRenditionError()
-	}
-	operationCtx, cancel := context.WithDeadline(ctx, expiresAt)
-	defer cancel()
-	stopInterrupt := context.AfterFunc(operationCtx, func() { _ = document.InterruptAuthorizedUpload(upload) })
-	source, err := providerutil.ReadAuthorizedUpload(operationCtx, upload, metadata, "Mistral")
-	stopInterrupt()
+	source, err := operation.ReadUpload(upload)
 	if err != nil {
-		if authorizationDeadlineExpired(ctx, operationCtx) {
-			return document.RenditionResult{}, expiredRenditionError()
-		}
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
+	candidate, localUnits, err := client.verifySource(source, metadata)
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	providerResult, err := client.process(operation, source, metadata, candidate,
+		min(client.policy.values.MaxResponseBytes, int64(authorization.MaxTotalResultBytes)))
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	if candidate.ID == formatIDPDF && int64(providerResult.UnitsProcessed) != localUnits {
+		return document.RenditionResult{}, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
+			"Mistral OCR page count changed", ErrCapabilityContract)
+	}
+	completedAt := time.Now().UTC()
+	if err := operation.Check(); err != nil {
+		return document.RenditionResult{}, err
+	}
+	includeMarkdown := authorization.MaxProviderMarkdownBytes > 0
+	evidence, markdown, err := mistralEvidence(
+		providerResult.Document, includeMarkdown, int64(authorization.MaxTotalResultBytes),
+	)
+	if err != nil {
+		return document.RenditionResult{}, renditionProvider.Malformed("Mistral OCR output is malformed", err)
+	}
+	if providerutil.InjectsDocbankFrontmatter(markdown) {
+		return document.RenditionResult{}, renditionProvider.Malformed(
+			"Mistral OCR provider Markdown attempts Docbank frontmatter injection", nil)
+	}
+	if len(markdown) > authorization.MaxProviderMarkdownBytes {
+		return document.RenditionResult{}, renditionProvider.Malformed("Mistral OCR Markdown exceeds authorization", nil)
+	}
+	receipt, err := providerutil.NewReceipt(renditionProvider, providerutil.Receipt{
+		Descriptor: client.descriptor, Authorization: authorization, SourceSHA256: metadata.SHA256,
+		OperationID: "mistral-" + authorization.RenditionRequestFingerprint,
+		StartedAt:   startedAt, CompletedAt: completedAt,
+		Usage: document.RenditionUsage{
+			Requests: int64(providerResult.Metrics.Requests), Retries: int64(providerResult.Metrics.Retries),
+			InputBytes: metadata.ByteLength, OutputBytes: providerResult.ResponseBytes,
+			Units: int64(providerResult.UnitsProcessed),
+		},
+	})
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	return document.RenditionResult{Evidence: evidence, ProviderMarkdown: markdown, Receipt: receipt}, nil
+}
+
+// verifySource re-detects the exact format and proves the PDF page count
+// before any byte leaves the process.
+func (client *RenditionClient) verifySource(
+	source []byte, metadata document.AuthorizedUploadMetadata,
+) (CandidateFormat, int64, error) {
 	candidate, err := formatdetect.DetectFormat(bytes.NewReader(source), int64(len(source)), metadata.MediaType)
 	if err != nil {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorUnsupportedInput,
+		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
 			"Mistral input format could not be verified", err)
 	}
 	if candidate.Family != metadata.MediaFamily || candidate.MediaType != metadata.MediaType {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorPolicyRejected,
+		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
 			"Mistral input identity does not match authorization", nil)
 	}
-	localUnits := int64(0)
-	if candidate.ID == formatIDPDF {
-		localUnits, err = formatdetect.CountPDFPages(source)
-		if err != nil {
-			return document.RenditionResult{}, renditionError(document.RenditionErrorUnsupportedInput,
-				"Mistral PDF page count could not be verified", err)
-		}
-		if localUnits <= 0 || localUnits > int64(client.policy.values.MaxUnits) {
-			return document.RenditionResult{}, renditionError(document.RenditionErrorPolicyRejected,
-				"Mistral PDF exceeds the complete unit limit", nil)
-		}
+	if candidate.ID != formatIDPDF {
+		return candidate, 0, nil
 	}
+	localUnits, err := formatdetect.CountPDFPages(source)
+	if err != nil {
+		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
+			"Mistral PDF page count could not be verified", err)
+	}
+	if localUnits <= 0 || localUnits > int64(client.policy.values.MaxUnits) {
+		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
+			"Mistral PDF exceeds the complete unit limit", nil)
+	}
+	return candidate, localUnits, nil
+}
+
+func (client *RenditionClient) process(
+	operation *providerutil.Operation, source []byte, metadata document.AuthorizedUploadMetadata,
+	candidate CandidateFormat, maxResponseBytes int64,
+) (Result, error) {
 	formatAuthorization, err := client.policy.Authorize(client.manifest, candidate.ID)
 	if err != nil {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorUnsupportedInput,
+		return Result{}, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
 			"Mistral input has no enforceable upload authority", err)
 	}
 	snapshot := preparedSnapshot{
@@ -226,72 +257,19 @@ func (client *RenditionClient) Render(
 		}
 		return bytes.Clone(source), nil
 	}
-	checkExpiry := func() error {
-		if !time.Now().UTC().Before(expiresAt) {
-			return expiredRenditionError()
-		}
-		return nil
-	}
 	options := probeRequestOptions(candidate, client.policy.values.MaxUnits,
 		client.policy.values.ExtractHeader, client.policy.values.ExtractFooter)
 	providerResult, err := client.ocr.processWith(
-		operationCtx, snapshotForAttempt, readDocument, checkExpiry, options,
-		formatAuthorization.method, client.policy.values.MaxUnits,
-		min(client.policy.values.MaxResponseBytes, int64(authorization.MaxTotalResultBytes)),
+		operation.Context(), snapshotForAttempt, readDocument, operation.Check, options,
+		formatAuthorization.method, client.policy.values.MaxUnits, maxResponseBytes,
 	)
 	if err != nil {
-		if authorizationDeadlineExpired(ctx, operationCtx) {
-			return document.RenditionResult{}, expiredRenditionError()
+		if operationErr := operation.Check(); operationErr != nil {
+			return Result{}, operationErr
 		}
-		return document.RenditionResult{}, classifyRenditionError(ctx, err)
+		return Result{}, classifyRenditionError(err)
 	}
-	if candidate.ID == formatIDPDF && int64(providerResult.UnitsProcessed) != localUnits {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorPolicyRejected,
-			"Mistral OCR page count changed", ErrCapabilityContract)
-	}
-	completedAt := time.Now().UTC()
-	if !completedAt.Before(expiresAt) {
-		return document.RenditionResult{}, expiredRenditionError()
-	}
-	includeMarkdown := authorization.MaxProviderMarkdownBytes > 0
-	evidence, markdown, err := mistralEvidence(
-		providerResult.Document, includeMarkdown, int64(authorization.MaxTotalResultBytes),
-	)
-	if err != nil {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorMalformedEvidence,
-			"Mistral OCR output is malformed", err)
-	}
-	if providerutil.InjectsDocbankFrontmatter(markdown) {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorMalformedEvidence,
-			"Mistral OCR provider Markdown attempts Docbank frontmatter injection", nil)
-	}
-	if len(markdown) > authorization.MaxProviderMarkdownBytes {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorMalformedEvidence,
-			"Mistral OCR Markdown exceeds authorization", nil)
-	}
-	authorizationFingerprint, err := authorization.Fingerprint()
-	if err != nil {
-		return document.RenditionResult{}, renditionError(document.RenditionErrorPolicyRejected,
-			"Mistral authorization fingerprint is invalid", err)
-	}
-	return document.RenditionResult{
-		Evidence: evidence, ProviderMarkdown: markdown,
-		Receipt: document.RenditionReceipt{
-			ProviderID: client.descriptor.ID, DescriptorFingerprint: client.descriptor.Fingerprint,
-			PolicyFingerprint:           authorization.PolicyFingerprint,
-			RenditionRequestFingerprint: authorization.RenditionRequestFingerprint,
-			AuthorizationFingerprint:    authorizationFingerprint,
-			SourceSHA256:                metadata.SHA256,
-			OperationID:                 "mistral-" + authorization.RenditionRequestFingerprint[:24],
-			StartedAt:                   startedAt.Format(renditionTimeForm),
-			CompletedAt:                 completedAt.Format(renditionTimeForm),
-			Usage: document.RenditionUsage{
-				Requests: int64(providerResult.Metrics.Requests), Retries: int64(providerResult.Metrics.Retries),
-				InputBytes: metadata.ByteLength, OutputBytes: providerResult.ResponseBytes,
-				Units: int64(providerResult.UnitsProcessed),
-			},
-		},
-	}, nil
+	return providerResult, nil
 }
 
 func mistralEvidence(
@@ -409,58 +387,41 @@ func renditionUnitKinds(
 	}
 }
 
-func classifyRenditionError(ctx context.Context, cause error) error {
+// classifyRenditionError maps the OCR client's private failures onto the
+// shared provider error classes. HTTP statuses use the shared status table
+// as a synchronous result exchange; the OCR client already retried transient
+// statuses, so exhaustion is reported as transient rather than ambiguous.
+func classifyRenditionError(cause error) error {
 	if providerError, ok := errors.AsType[*document.RenditionProviderError](cause); ok {
 		return providerError
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return renditionError(document.RenditionErrorCanceled, "Mistral rendering canceled", ctxErr)
-	}
 	if _, ok := errors.AsType[*credentialError](cause); ok {
-		return renditionError(document.RenditionErrorAuthentication,
+		return renditionProvider.Classified(document.RenditionErrorAuthentication,
 			"Mistral credential is unavailable", cause)
 	}
-	if transient, ok := errors.AsType[*transientError](cause); ok && transient.status == http.StatusTooManyRequests {
-		return renditionError(document.RenditionErrorRateLimited, "Mistral rate limit was exhausted", cause)
-	}
-	if transient, ok := errors.AsType[*transientError](cause); ok &&
-		(transient.status == http.StatusServiceUnavailable || transient.status == http.StatusInsufficientStorage) {
-		return renditionError(document.RenditionErrorCapacity, "Mistral capacity is unavailable", cause)
+	if transient, ok := errors.AsType[*transientError](cause); ok && transient.status != 0 {
+		code, message := renditionProvider.StatusClass(providerutil.StageResult, transient.status)
+		return renditionProvider.Classified(code, message, cause)
 	}
 	if permanent, ok := errors.AsType[*permanentResponseError](cause); ok {
-		switch permanent.status {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return renditionError(document.RenditionErrorAuthentication, "Mistral authentication was rejected", cause)
-		case http.StatusUnsupportedMediaType:
-			return renditionError(document.RenditionErrorUnsupportedInput, "Mistral input format was rejected", cause)
-		default:
-			return renditionError(document.RenditionErrorPolicyRejected, "Mistral rejected the OCR request", cause)
-		}
+		code, message := renditionProvider.StatusClass(providerutil.StageResult, permanent.status)
+		return renditionProvider.Classified(code, message, cause)
 	}
 	switch {
 	case errors.Is(cause, ErrTransientResponse):
-		return renditionError(document.RenditionErrorTransient, "Mistral request retries were exhausted", cause)
+		return renditionProvider.Classified(document.RenditionErrorTransient,
+			"Mistral request retries were exhausted", cause)
 	case errors.Is(cause, ErrCapabilityContract):
-		return renditionError(document.RenditionErrorPolicyRejected, "Mistral OCR capability changed", cause)
+		return renditionProvider.Classified(document.RenditionErrorPolicyRejected,
+			"Mistral OCR capability changed", cause)
 	case errors.Is(cause, ErrPermanentResponse):
-		return renditionError(document.RenditionErrorPolicyRejected, "Mistral rejected the OCR request", cause)
+		return renditionProvider.Classified(document.RenditionErrorPolicyRejected,
+			"Mistral rejected the OCR request", cause)
 	case errors.Is(cause, ErrResponseTooLarge):
-		return renditionError(document.RenditionErrorMalformedEvidence, "Mistral OCR response exceeds policy", cause)
+		return renditionProvider.Malformed("Mistral OCR response exceeds policy", cause)
 	default:
-		return renditionError(document.RenditionErrorMalformedEvidence, "Mistral OCR response is malformed", cause)
+		return renditionProvider.Malformed("Mistral OCR response is malformed", cause)
 	}
-}
-
-func expiredRenditionError() error {
-	return renditionError(document.RenditionErrorPolicyRejected, "Mistral authorization expired", nil)
-}
-
-func authorizationDeadlineExpired(callerCtx, operationCtx context.Context) bool {
-	return callerCtx.Err() == nil && errors.Is(operationCtx.Err(), context.DeadlineExceeded)
-}
-
-func renditionError(code document.RenditionErrorCode, message string, cause error) error {
-	return providerutil.ClassifiedError("Mistral", code, message, cause)
 }
 
 func renditionCandidate(format document.RenditionFormatCapability) (CandidateFormat, bool) {
@@ -470,31 +431,4 @@ func renditionCandidate(format document.RenditionFormatCapability) (CandidateFor
 		}
 	}
 	return CandidateFormat{}, false
-}
-
-func validateRenditionToken(value, subject string) error {
-	if value == "" || len(value) > 128 || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
-		return fmt.Errorf("mistral rendition %s must contain 1-128 characters", subject)
-	}
-	for _, char := range value {
-		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
-			char >= '0' && char <= '9' || strings.ContainsRune("_.-", char) {
-			continue
-		}
-		return fmt.Errorf("mistral rendition %s contains unsupported characters", subject)
-	}
-	return nil
-}
-
-func nilValue(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

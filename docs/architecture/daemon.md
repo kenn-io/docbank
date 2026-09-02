@@ -148,11 +148,19 @@ process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
 terminal state in deterministic order. Terminal records remain until restart,
 which makes a failed task visible instead of silently disappearing.
 
-Every daemon runs `extract:plain-text`, the bounded worker that verifies and
-indexes supported current text content. Configured watched inboxes add one
-`watch:<name>` runner each. Extraction-cache writes share the ordinary mutation
-side of the daemon operation gate, so GC cannot retire a blob while the worker
-is reading and publishing its derived index.
+Every daemon runs three derived-data jobs. `extract:plain-text` is the bounded
+worker that verifies and indexes supported current text content.
+`extract:source-metadata` reads every retained original that the current
+extractor has not processed and publishes typed metadata for it; it keeps
+watching for new content. `maintenance:auxiliary-checksums` computes the MD5
+of every retained blob that predates auxiliary checksums, then completes; new
+writes record their MD5 at ingest, so on an existing vault the first daemon
+start after upgrade reads every stored blob once. `process:renditions` runs
+only when a rendition provider is bound to the daemon, so its presence in
+`docbank jobs` means rendition work can actually happen. Configured watched
+inboxes add one `watch:<name>` runner each. All derived-data writes share the
+ordinary mutation side of the daemon operation gate, one target at a time, so
+GC cannot retire a blob while a worker is reading and publishing from it.
 
 `docbank watch list` and authenticated `GET /api/v1/watches` join those runner
 records to the daemon's effective watched-inbox configuration. This gives

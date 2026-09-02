@@ -208,6 +208,34 @@ identity. Update the deployment manifest and Go policy together, build a newly
 tagged image, run the synthetic benchmark, and only then change the systemd
 deployment.
 
+### Regenerate the deployment identity
+
+`deployment.json` pins the SHA-256 of `safe_server.py`, `engine_identity.py`,
+`Dockerfile`, `requirements.lock`, and `config.yaml`, and the Go package
+`document/glmocr` pins the same digests plus the fingerprint of the whole
+manifest. Changing any of those five files therefore needs three edits in one
+change; `go test ./document/glmocr/` fails until they agree.
+
+1. Recompute the digests of the changed files and write them into
+   `deployment.json` (`adapter_sha256`, `engine_adapter_sha256`,
+   `image_recipe_sha256`, `dependency_lock_sha256`, `pipeline_config_sha256`):
+
+   ```bash
+   sha256sum safe_server.py engine_identity.py Dockerfile requirements.lock config.yaml
+   ```
+
+2. Recompute the manifest fingerprint from the canonical JSON encoding
+   (sorted keys, no whitespace) and update the matching `Default*SHA256`
+   constants and `DefaultDeploymentFingerprint` in `document/glmocr/policy.go`:
+
+   ```bash
+   python3 -c 'import hashlib, json; print(hashlib.sha256(json.dumps(json.load(open("deployment.json")), sort_keys=True, separators=(",", ":")).encode()).hexdigest())'
+   ```
+
+3. Replace the image tag in `compose.yaml` with the first twelve characters of
+   the new fingerprint so a rebuilt image is never confused with the previous
+   deployment.
+
 Rollback does not modify any other model or service:
 
 ```bash

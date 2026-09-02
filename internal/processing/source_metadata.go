@@ -48,11 +48,19 @@ const (
 	xmpPDFNamespace                      = "http://ns.adobe.com/pdf/1.3/"
 )
 
+// sourceMetadataExtractorDescriptor names the local parser bundle. Bump the
+// trailing version whenever any parser changes what it extracts: every vault
+// then re-extracts every original, so the bump must be deliberate. A test
+// pins the resulting fingerprint so the bump cannot be forgotten or made by
+// accident.
+const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
+	"ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v15"
+
 var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdfcpu-info+xmp+pages,ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v15")
+		sourceMetadataExtractorDescriptor)
 
 	// errSourceMetadataBMFFMalformed marks deterministic box structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -78,26 +86,12 @@ func fingerprintSourceMetadataExtractor(descriptor string) string {
 }
 
 type sourceMetadataCatalog interface {
-	MissingSourceMetadataTargets(ctx context.Context, fingerprint string, limit int) ([]store.SourceMetadataTarget, error)
 	PublishSourceMetadata(ctx context.Context, sourceSHA256, fingerprint string, canonical []byte) (store.SourceMetadataGeneration, error)
 }
 
 type sourceMetadataBlobReader interface {
 	verifiedBlobReader
 	OpenSeekableContext(ctx context.Context, hash string) (io.ReadSeekCloser, int64, error)
-}
-
-// BackfillSourceMetadata extracts a deterministic resumable batch from exact,
-// locally verified original bytes. No provider or network boundary is used.
-func BackfillSourceMetadata(ctx context.Context, catalog sourceMetadataCatalog, blobs sourceMetadataBlobReader, limit int) (int, error) {
-	if catalog == nil || blobs == nil {
-		return 0, errors.New("source metadata backfill requires catalog and blob stores")
-	}
-	targets, err := catalog.MissingSourceMetadataTargets(ctx, SourceMetadataExtractorFingerprint, limit)
-	if err != nil {
-		return 0, err
-	}
-	return BackfillSourceMetadataTargets(ctx, catalog, blobs, targets)
 }
 
 // BackfillSourceMetadataTargets processes a selected batch while allowing
@@ -538,13 +532,20 @@ func readCR3MetadataDirectories(
 	return nil, &missingWarning, nil
 }
 
+// maxSourceMetadataTopLevelBoxes bounds the top-level box walk. Real files
+// hold a handful of boxes; a header-sized run of empty boxes is an attack on
+// the walker's time, not metadata.
+const maxSourceMetadataTopLevelBoxes = 4096
+
 func findCR3Moov(
 	reader io.ReaderAt, sourceSize int64,
 ) (int64, int64, *document.SourceMetadataWarningV1, error) {
 	var moovOffset, moovSize int64
+	boxes := 0
 	for offset := int64(0); offset < sourceSize; {
 		box, err := readSourceMetadataMP4Box(reader, offset, sourceSize-offset)
-		if errors.Is(err, errSourceMetadataBMFFMalformed) {
+		boxes++
+		if errors.Is(err, errSourceMetadataBMFFMalformed) || boxes > maxSourceMetadataTopLevelBoxes {
 			warning := sourceWarning("unparseable_metadata", "media.container", "CR3",
 				"CR3 top-level box structure is malformed")
 			return 0, 0, &warning, nil
@@ -643,9 +644,11 @@ func compactMP4SourceMetadata(
 	var moov []byte
 	moovCount := 0
 	fragmented := false
+	boxes := 0
 	for offset := int64(0); offset < sourceSize; {
 		box, err := readSourceMetadataMP4Box(reader, offset, sourceSize-offset)
-		if errors.Is(err, errSourceMetadataBMFFMalformed) {
+		boxes++
+		if errors.Is(err, errSourceMetadataBMFFMalformed) || boxes > maxSourceMetadataTopLevelBoxes {
 			warning := sourceWarning("unparseable_metadata", "media.container", "MP4",
 				"MP4 top-level box structure is malformed")
 			return nil, &warning, nil
@@ -873,7 +876,7 @@ func (c *metadataCollector) string(key, namespace, source, value string, sensiti
 	}
 	c.seen[key] = true
 	c.record.Fields = append(c.record.Fields, document.SourceMetadataFieldV1{Key: key, Namespace: namespace,
-		SourceField: source, Sensitive: sensitive, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: value}})
+		SourceField: source, Sensitive: sensitive, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(value)}})
 }
 func (c *metadataCollector) strings(key, namespace, source string, values []string) {
 	filtered := make([]string, 0, len(values))
@@ -2017,9 +2020,9 @@ func (c *metadataCollector) exifGPSCoordinates(latitude, longitude float64) {
 	c.seen[longitudeKey] = true
 	c.record.Fields = append(c.record.Fields,
 		document.SourceMetadataFieldV1{Key: latitudeKey, Namespace: "image.exif", SourceField: latitudeSource, Sensitive: true,
-			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: latitudeValue}},
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(latitudeValue)}},
 		document.SourceMetadataFieldV1{Key: longitudeKey, Namespace: "image.exif", SourceField: longitudeSource, Sensitive: true,
-			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: longitudeValue}},
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(longitudeValue)}},
 	)
 }
 

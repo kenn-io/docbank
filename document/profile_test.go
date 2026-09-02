@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -265,6 +266,36 @@ func TestCanonicalProfileEnforcesPortableBounds(t *testing.T) {
 	aboveMaximum.Rendition.RequestedArtifacts = append(aboveMaximum.Rendition.RequestedArtifacts, document.EvidenceArtifactImage)
 	_, _, err = document.CanonicalProfile(aboveMaximum)
 	require.ErrorContains(t, err, "too many requested artifacts")
+}
+
+func TestRenditionExecutionPoliciesTruncateUnitsAtProfileLimit(t *testing.T) {
+	profile := syntheticProcessingProfileV1()
+	profile.EvidenceLexical.MaxUnitRunes = 100
+	profile.EvidenceLexical.MaxSegmentRunes = 40
+	evidencePolicy, renditionPolicy, err := document.RenditionExecutionPoliciesForProfileV1(profile)
+	require.NoError(t, err)
+	assert.Equal(t, document.RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100, MaxSegmentRunes: 40,
+	}, renditionPolicy.Limits())
+
+	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
+		Family: "text", UnitKind: document.EvidenceUnitSection,
+		Units: []document.SourceEvidenceUnitV1{{
+			Order: 0, Text: strings.Repeat("page text ", 30),
+			Locator: document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorSection, IndexOrigin: document.EvidenceIndexOriginNone},
+		}},
+	}, evidencePolicy)
+	require.NoError(t, err)
+	rendered, err := document.BuildRenditionV1(evidence, renditionPolicy)
+	require.NoError(t, err)
+	require.Len(t, rendered.Units, 1)
+	assert.LessOrEqual(t, utf8.RuneCountInString(rendered.Units[0].Text), 100)
+	for _, segment := range rendered.LexicalSegments {
+		assert.LessOrEqual(t, utf8.RuneCountInString(segment.Text), 40)
+	}
+	assert.Contains(t, rendered.Warnings, document.RenditionWarningV1{Code: "truncated"})
 }
 
 func syntheticProcessingProfileV1() document.ProcessingProfileV1 {

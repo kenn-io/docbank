@@ -318,7 +318,7 @@ func derivativeSuppressionAuditRecord(
 		}
 	}
 	return audit.Record{Kind: auditDerivativePurgeSuppressionKind, Fields: []audit.Field{
-		{Name: "source_sha256", Value: digests[0]},
+		{Name: columnSourceSHA256, Value: digests[0]},
 		{Name: "profile_fingerprint", Value: digests[1]},
 		{Name: "build_id", Value: digests[2]},
 		{Name: "purged_at", Value: purgedAt},
@@ -489,7 +489,7 @@ func validateReplayedDerivativeSuppression(record audit.Record) error {
 	if record.Kind != auditDerivativePurgeSuppressionKind {
 		return errors.New("invalid derivative purge suppression kind")
 	}
-	for _, name := range []string{"source_sha256", "profile_fingerprint", "build_id"} {
+	for _, name := range []string{columnSourceSHA256, "profile_fingerprint", "build_id"} {
 		if _, err := auditDigestField(record, name); err != nil {
 			return err
 		}

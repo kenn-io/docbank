@@ -236,6 +236,15 @@ across moves and renames. Content replacement retains the node ID, creates an
 immutable version, and changes its current pointer, hash, media type, and
 revision.
 
+File nodes and versions also carry `md5`, an auxiliary checksum of the same
+logical bytes for interoperability with tools that key on MD5; it is never an
+identity. Single-node and version-detail responses include `source_metadata`
+when the daemon has extracted metadata from the original bytes (see
+[Source metadata](source-metadata.md)); browser-session reads omit fields the
+extractor marked sensitive, while API-key reads receive every field. Ingest
+preflight reports `cloud_placeholders`, the files whose bytes a cloud-drive
+provider has not materialized locally.
+
 `GET /nodes/{id}/content` exposes the catalog identity before streaming in
 `X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
 `X-Docbank-Blob-Size`. It then hashes the bytes while they pass through the

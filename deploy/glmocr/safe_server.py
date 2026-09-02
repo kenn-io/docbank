@@ -8,13 +8,12 @@ import json
 import math
 import os
 import tempfile
-import time
 import urllib.request
-import uuid
 from importlib.metadata import distribution, version
 from io import BytesIO
 from pathlib import Path
 
+from engine_identity import sha256_file, validate_snapshot
 from flask import Flask, jsonify, request
 from glmocr.config import load_config
 from glmocr.pipeline import Pipeline
@@ -53,60 +52,9 @@ def response_payload(json_result, markdown_result, deployment_fingerprint):
     return {
         "json_result": json_result,
         "markdown_result": markdown_result,
-        "layout_details": json_result,
-        "md_results": markdown_result,
-        "data_info": {"pages": []},
-        "usage": {},
         "model": "glm-ocr",
         "deployment_fingerprint": deployment_fingerprint,
-        "id": f"chatcmpl-{uuid.uuid4().hex[:29]}",
-        "created": int(time.time()),
     }
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def artifact_digest(path: Path, algorithm: str) -> str:
-    if algorithm == "sha256":
-        return sha256_file(path)
-    if algorithm == "git-sha1":
-        content = path.read_bytes()
-        digest = hashlib.sha1(usedforsecurity=False)
-        digest.update(f"blob {len(content)}\0".encode())
-        digest.update(content)
-        return digest.hexdigest()
-    raise RuntimeError("deployment manifest uses an unsupported digest")
-
-
-def validate_snapshot(root: Path, artifacts: object, name: str) -> None:
-    if not isinstance(artifacts, list) or not artifacts:
-        raise RuntimeError(f"{name} manifest is empty")
-    expected_paths = set()
-    for artifact in artifacts:
-        if not isinstance(artifact, dict) or set(artifact) != {"path", "algorithm", "digest"}:
-            raise RuntimeError(f"{name} manifest entry is invalid")
-        relative = artifact["path"]
-        if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
-            raise RuntimeError(f"{name} manifest path is invalid")
-        if relative in expected_paths:
-            raise RuntimeError(f"{name} manifest path is duplicated")
-        expected_paths.add(relative)
-        candidate = root / relative
-        if not candidate.is_file() or artifact_digest(candidate, artifact["algorithm"]) != artifact["digest"]:
-            raise RuntimeError(f"{name} artifact {relative} does not match the pinned deployment")
-    actual_paths = {
-        str(path.relative_to(root))
-        for path in root.rglob("*")
-        if path.is_file() and ".cache" not in path.relative_to(root).parts
-    }
-    if actual_paths != expected_paths:
-        raise RuntimeError(f"{name} snapshot does not match the complete manifest")
 
 
 def validate_deployment(config_path: str) -> str:

@@ -55,15 +55,15 @@ type SourceMetadataTimestampV1 struct {
 }
 
 // SourceMetadataValueV1 is a closed typed union. Exactly one payload matching
-// Kind is populated.
+// Kind is non-nil; an empty string or empty list is still a present payload.
 type SourceMetadataValueV1 struct {
-	Boolean   *bool                      `json:"boolean,omitempty"`
-	Integer   *int64                     `json:"integer,omitempty"`
+	Boolean   *bool                      `json:"boolean,omitzero"`
+	Integer   *int64                     `json:"integer,omitzero"`
 	Kind      SourceMetadataValueKind    `json:"kind"`
-	Number    *float64                   `json:"number,omitempty"`
-	String    string                     `json:"string,omitempty"`
-	Strings   []string                   `json:"strings,omitempty"`
-	Timestamp *SourceMetadataTimestampV1 `json:"timestamp,omitempty"`
+	Number    *float64                   `json:"number,omitzero"`
+	String    *string                    `json:"string,omitzero"`
+	Strings   []string                   `json:"strings,omitzero"`
+	Timestamp *SourceMetadataTimestampV1 `json:"timestamp,omitzero"`
 }
 
 // SourceMetadataFieldV1 is one canonical claim with its exact source label.

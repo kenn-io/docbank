@@ -500,9 +500,13 @@ func TestPruneSoleWaiterKeepsAmbiguousJobSourceOutOfGC(t *testing.T) {
 		ctx, created.ID, created.Revision, testSHA256([]byte("sole-waiter-replacement")),
 		21, "application/pdf")
 	require.NoError(t, err)
-	_, err = s.PruneContentVersions(ctx, node.ID, node.Revision,
+	receipt, err := s.PruneContentVersions(ctx, node.ID, node.Revision,
 		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
 	require.NoError(t, err)
+	assert.Equal(t, 1, receipt.SharedBlobs,
+		"the job still pins the pruned version's bytes, so prune must not call them releasable")
+	assert.Zero(t, receipt.ReleasableBlobs)
+	assert.Zero(t, receipt.ReleasableBytes)
 	current, err := s.RenditionJobByID(ctx, job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, RenditionJobOperatorRequired, current.State)
@@ -531,7 +535,7 @@ func TestPruneSoleWaiterKeepsAmbiguousJobSourceOutOfGC(t *testing.T) {
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	restoredJob, err := restored.RenditionJobByID(ctx, job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, RenditionJobOperatorRequired, restoredJob.State)

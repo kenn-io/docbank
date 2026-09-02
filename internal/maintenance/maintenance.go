@@ -253,7 +253,13 @@ func GarbageCollect(
 			return report, err
 		}
 		if len(pending) != 0 {
+			// Draining leftover retirements consumed the budget without
+			// advancing through the candidate scan, so the caller resumes from
+			// the same position. An unset hash resumes from the first key.
 			report.More = pendingMore || len(tracked) != 0 || scan.More
+			if report.More {
+				report.NextCursor = encodeCursor(operationGC, state.Hash)
+			}
 			return report, nil
 		}
 	}

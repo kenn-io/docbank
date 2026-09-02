@@ -166,7 +166,8 @@ func registerReadRoutes(api huma.API, d Deps) {
 		if metadataErr == nil {
 			body.SourceMetadata = fromStoreSourceMetadata(metadata, browserSessionRequest(ctx))
 		}
-		if metadataErr != nil && !errors.Is(metadataErr, store.ErrNotFound) {
+		if metadataErr != nil && !errors.Is(metadataErr, store.ErrNotFound) &&
+			!errors.Is(metadataErr, store.ErrSourceMetadataCorrupt) {
 			return nil, FromStoreError(metadataErr)
 		}
 		return &contentVersionOutput{Body: body}, nil

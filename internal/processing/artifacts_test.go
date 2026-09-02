@@ -139,14 +139,19 @@ func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	interrupted := &cancelOnSecondChecksumOpen{delegate: blobs, cancel: cancel}
-	completed, err := BackfillAuxiliaryChecksums(ctx, catalog, interrupted, 10)
+	missing := func() []store.BlobChecksumTarget {
+		targets, err := catalog.MissingBlobChecksumTargetsAfter(t.Context(), "", 10)
+		require.NoError(t, err)
+		return targets
+	}
+	completed, err := BackfillAuxiliaryChecksumTargets(ctx, catalog, interrupted, missing())
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, completed)
 
-	completed, err = BackfillAuxiliaryChecksums(t.Context(), catalog, blobs, 10)
+	completed, err = BackfillAuxiliaryChecksumTargets(t.Context(), catalog, blobs, missing())
 	require.NoError(t, err)
 	assert.Equal(t, 1, completed)
-	completed, err = BackfillAuxiliaryChecksums(t.Context(), catalog, blobs, 10)
+	completed, err = BackfillAuxiliaryChecksumTargets(t.Context(), catalog, blobs, missing())
 	require.NoError(t, err)
 	assert.Zero(t, completed, "completed rows must not be recomputed")
 
@@ -182,13 +187,13 @@ func TestPublishRenditionRejectsLexicalSegmentLimitOutsideCanonicalProfile(t *te
 	staged := fixture.stage(t,
 		publicationIDs{"b1", "51", "91"}, "short searchable evidence", "short markdown",
 	)
-	normalization, err := document.NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	staged.RenditionPolicy, err = document.NewRenditionPolicy(normalization, 4_000)
+	staged.RenditionPolicy, err = document.NewRenditionPolicy(document.RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 4_000,
+	})
 	require.NoError(t, err)
 
 	_, err = publisher.PublishRendition(t.Context(), staged)
-	require.ErrorContains(t, err, "canonical profile max segment runes")
+	require.ErrorContains(t, err, "canonical profile rendition limits")
 }
 
 func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t *testing.T) {
@@ -281,7 +286,7 @@ func TestPublishRenditionRejectsRetentionAndConcreteProfileBoundsBeforeWriting(t
 		},
 		{
 			name: "unit rune bound",
-			want: "max unit runes",
+			want: "canonical profile rendition limits",
 			mutate: func(t *testing.T, staged *StagedRendition) {
 				t.Helper()
 				updateStagedProfile(t, staged, func(profile *document.ProcessingProfileV1) {
@@ -335,7 +340,7 @@ func TestPublishRenditionRejectsForgedProducerGraph(t *testing.T) {
 	}{
 		{
 			name: "noncanonical normalized evidence bytes with forged checksums",
-			want: "not exact canonical bytes",
+			want: "not canonical JSON",
 			mutate: func(t *testing.T, staged *StagedRendition) {
 				t.Helper()
 				evidenceBytes, err := io.ReadAll(staged.Artifacts[0].Payload)
@@ -572,9 +577,9 @@ func newPublicationFixture(t *testing.T) publicationFixture {
 	require.NoError(t, err)
 	evidencePolicy, err := document.NewEvidencePolicy(100_000)
 	require.NoError(t, err)
-	normalizationPolicy, err := document.NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	renditionPolicy, err := document.NewRenditionPolicy(normalizationPolicy, 100)
+	renditionPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 100,
+	})
 	require.NoError(t, err)
 	return publicationFixture{
 		catalog: catalog, blobs: blobs, profile: processingProfile(t),

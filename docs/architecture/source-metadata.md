@@ -21,13 +21,22 @@ and a sensitive flag. The current contract supports strings, string lists,
 integers, numbers, booleans, and timestamps that preserve the precision and
 timezone stated by the source.
 
-Photo and video facts use two namespaces:
+Values are one of `string`, `string_list`, `integer`, `number`, `boolean`,
+or `timestamp`; the `kind` field names which payload is present. The current
+extractor publishes these namespaces:
 
-- `media.container.*` contains format, media kind, pixel dimensions, image
-  frame count, animation state, and known video duration.
-- `image.exif.*` contains camera and lens names, orientation, ISO, exposure
-  time, aperture, exposure bias, focal length, EXIF pixel dimensions, and GPS
-  evidence.
+| Namespace | Sources | Keys |
+|-----------|---------|------|
+| `media.container` | JPEG, PNG, WebP, GIF, MP4 | `format`, `kind`, `width_px`, `height_px`, `frame_count`, `animated`, `duration_ms` |
+| `image.exif` | JPEG APP1, TIFF-based RAW, RAF, CR3 | `camera_make`, `camera_model`, `lens_make`, `lens_model`, `orientation`, `iso`, `exposure_time_seconds`, `f_number`, `exposure_bias_ev`, `focal_length_mm`, `pixel_width`, `pixel_height`, `gps_latitude`, `gps_longitude`, `gps_timestamp` |
+| `xmp` | XMP packets in PDF and images | Dublin Core and XMP basic properties by their XMP name |
+| `pdf.info` | PDF Info dictionary | Info entries by their PDF key, plus the page count |
+| `office.core`, `office.custom` | OOXML core and custom properties | core properties by name, `word_count`, and each custom property under `office.custom.<name>` |
+| `email` | RFC 5322 messages | `from`, `to`, `cc`, `bcc`, `subject`, `sent`, `received` |
+| `calendar` | iCalendar | `start`, `end`, and their `.raw` source text |
+| `media.id3` | ID3 tags | tag frames such as `album` by their common name |
+
+GPS coordinates are the fields currently marked sensitive.
 
 Latitude and longitude are published together only when both coordinates have
 valid hemisphere markers and degree, minute, and second ranges. An incomplete
@@ -76,7 +85,9 @@ have a bounded parser.
 An extractor fingerprint identifies the complete local parser bundle. A parser
 change creates a new immutable generation and moves the active head for that
 content SHA-256; old generations remain evidence. Retrying the same generation
-is idempotent.
+is idempotent. Because the fingerprint covers every parser, any change to it
+makes the daemon re-read and re-extract every retained original in every
+vault; a test pins the fingerprint so that cost is taken deliberately.
 
 The HTTP node and content-version detail surfaces return the active generation.
 Embedded applications call `Vault.EnsureSourceMetadata` with an immutable

@@ -17,9 +17,9 @@ func TestRenditionExecutionIdentityBindsEveryStableProviderAndOutputInput(t *tes
 	authorization.DiscloseFilename = true
 	evidence, err := NewEvidencePolicy(100_000)
 	require.NoError(t, err)
-	normalization, err := NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	rendition, err := NewRenditionPolicy(normalization, 1_000)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
+	})
 	require.NoError(t, err)
 	base, err := NewRenditionExecutionIdentityV1(metadata, authorization, evidence, rendition)
 	require.NoError(t, err)
@@ -47,9 +47,17 @@ func TestRenditionExecutionIdentityBindsEveryStableProviderAndOutputInput(t *tes
 		"evidence policy": func(_ *AuthorizedUploadMetadata, _ *RenditionAuthorization, evidence *EvidencePolicy, _ *RenditionPolicy) {
 			*evidence, _ = NewEvidencePolicy(99_999)
 		},
-		"normalization policy": func(_ *AuthorizedUploadMetadata, _ *RenditionAuthorization, _ *EvidencePolicy, rendition *RenditionPolicy) {
-			normalization, _ := NewNormalizePolicy(99_999)
-			*rendition, _ = NewRenditionPolicy(normalization, 1_000)
+		"rendition document limit": func(_ *AuthorizedUploadMetadata, _ *RenditionAuthorization, _ *EvidencePolicy, rendition *RenditionPolicy) {
+			*rendition, _ = NewRenditionPolicy(RenditionLimits{
+				MaxDocumentChars: 99_999, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000})
+		},
+		"rendition unit limit": func(_ *AuthorizedUploadMetadata, _ *RenditionAuthorization, _ *EvidencePolicy, rendition *RenditionPolicy) {
+			*rendition, _ = NewRenditionPolicy(RenditionLimits{
+				MaxDocumentChars: 100_000, MaxUnitRunes: 99_999, MaxSegmentRunes: 1_000})
+		},
+		"rendition segment limit": func(_ *AuthorizedUploadMetadata, _ *RenditionAuthorization, _ *EvidencePolicy, rendition *RenditionPolicy) {
+			*rendition, _ = NewRenditionPolicy(RenditionLimits{
+				MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 999})
 		},
 	}
 	for name, mutate := range mutations {
@@ -85,9 +93,9 @@ func TestRenditionExecutionIdentityOmitsWithheldFilename(t *testing.T) {
 	require.False(t, authorization.DiscloseFilename)
 	evidence, err := NewEvidencePolicy(100_000)
 	require.NoError(t, err)
-	normalization, err := NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	rendition, err := NewRenditionPolicy(normalization, 1_000)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
+	})
 	require.NoError(t, err)
 
 	first, err := NewRenditionExecutionIdentityV1(
@@ -122,14 +130,59 @@ func TestRenditionExecutionIdentityRequiresDisclosedFilename(t *testing.T) {
 	authorization.DiscloseFilename = true
 	evidence, err := NewEvidencePolicy(100_000)
 	require.NoError(t, err)
-	normalization, err := NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	rendition, err := NewRenditionPolicy(normalization, 1_000)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
+	})
 	require.NoError(t, err)
 
 	_, err = NewRenditionExecutionIdentityV1(
 		metadata, authorization, evidence, rendition)
 	require.ErrorContains(t, err, "disclosed filename")
+}
+
+func TestSealRenditionExecutionAtClassifiesBoundaryFailures(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	evidence, err := NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
+	})
+	require.NoError(t, err)
+	for name, testCase := range map[string]struct {
+		mutate func(*AuthorizedUploadMetadata, *RenditionAuthorization)
+		now    time.Duration
+		want   error
+	}{
+		"unsafe upload filename": {want: ErrRenditionUploadInvalid,
+			mutate: func(metadata *AuthorizedUploadMetadata, authorization *RenditionAuthorization) {
+				metadata.Filename = "../escaped.pdf"
+				authorization.DiscloseFilename = true
+			}},
+		"authorization source mismatch": {want: ErrRenditionAuthorizationInvalid,
+			mutate: func(_ *AuthorizedUploadMetadata, authorization *RenditionAuthorization) {
+				authorization.SourceBytes++
+			}},
+		"policy mismatch": {want: ErrRenditionAuthorizationInvalid,
+			mutate: func(_ *AuthorizedUploadMetadata, authorization *RenditionAuthorization) {
+				authorization.PolicyFingerprint = sha256Hex([]byte("other policy"))
+			}},
+		"expired interval": {want: ErrRenditionAuthorizationExpired, now: time.Hour,
+			mutate: func(*AuthorizedUploadMetadata, *RenditionAuthorization) {}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			metadata := validAuthorizedUploadMetadata()
+			authorization := validRenditionAuthorization(descriptor, metadata)
+			testCase.mutate(&metadata, &authorization)
+			upload := &syntheticAuthorizedUpload{
+				ReadCloser: io.NopCloser(bytes.NewReader([]byte("synthetic exact source"))),
+				metadata:   metadata,
+			}
+			provider := &syntheticResumableRenditionProvider{descriptor: descriptor}
+			_, err := SealRenditionExecutionAt(
+				time.Now().UTC().Add(testCase.now), provider, upload, authorization, evidence, rendition)
+			require.ErrorIs(t, err, testCase.want)
+		})
+	}
 }
 
 func TestResumeRenditionUsesOriginalSealedAuthorizationWithoutUpload(t *testing.T) {
@@ -141,9 +194,9 @@ func TestResumeRenditionUsesOriginalSealedAuthorizationWithoutUpload(t *testing.
 	authorization.ExpiresAt = historical.Add(10 * time.Minute).Format(renditionTimestampForm)
 	evidence, err := NewEvidencePolicy(100_000)
 	require.NoError(t, err)
-	normalization, err := NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	rendition, err := NewRenditionPolicy(normalization, 1_000)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 1_000,
+	})
 	require.NoError(t, err)
 	upload := &syntheticAuthorizedUpload{
 		ReadCloser: io.NopCloser(bytes.NewReader([]byte("synthetic exact source"))),

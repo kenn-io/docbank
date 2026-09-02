@@ -475,7 +475,7 @@ func summarizeAuditEnrollment(
 			return AuditEnrollmentPreview{}, errors.New("audit preview logical size overflows int64")
 		}
 		preview.LogicalVersionBytes += int64(size)
-		hash, err := auditDigestField(version, "blob_hash")
+		hash, err := auditDigestField(version, columnBlobHash)
 		if err != nil {
 			return AuditEnrollmentPreview{}, err
 		}

@@ -254,12 +254,12 @@ func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
 		Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "staged-projection-authority",
 	})
-	_, err := s.db.Exec(lexicalProjectionSchema)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err := s.db.Exec(`
 		CREATE TRIGGER erase_staged_projection
 		AFTER INSERT ON rendition_lexical_generation_manifests BEGIN
-			DELETE FROM rendition_lexical_fts WHERE generation_id=NEW.generation_id;
+			DELETE FROM rendition_lexical_index WHERE build_id IN (
+				SELECT build_id FROM rendition_lexical_generation_builds
+				WHERE generation_id=NEW.generation_id);
 		END`)
 	require.NoError(t, err)
 
@@ -724,7 +724,10 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 
 	second, err := s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, first, second)
+	assert.Equal(t, first.ProfileFingerprint, second.ProfileFingerprint)
+	assert.Zero(t, second.EligibleRows, "a retry with nothing new to publish reads no cached text")
+	assert.Zero(t, second.MigratedBuilds)
+	assert.Zero(t, second.QueuedBlobs)
 	var stored string
 	require.NoError(t, s.db.QueryRow(
 		`SELECT next_attempt_at FROM text_extraction_queue WHERE blob_hash=?`, hash,

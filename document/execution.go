@@ -3,12 +3,13 @@ package document
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
 	"slices"
 	"time"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -46,14 +47,19 @@ func (policy EvidencePolicy) Identity() EvidencePolicyIdentity {
 // RenditionPolicyIdentity is every value that can affect normalized Markdown,
 // units, and lexical segments.
 type RenditionPolicyIdentity struct {
-	Normalization   NormalizePolicyIdentity `json:"normalization"`
-	MaxSegmentRunes int                     `json:"max_segment_runes"`
+	MaxDocumentChars   int `json:"max_document_chars"`
+	MaxLinkChars       int `json:"max_link_chars"`
+	MaxSegmentRunes    int `json:"max_segment_runes"`
+	MaxSourceUnitBytes int `json:"max_source_unit_bytes"`
+	MaxUnitRunes       int `json:"max_unit_runes"`
 }
 
 // Identity returns every effective rendition-construction policy value.
 func (policy RenditionPolicy) Identity() RenditionPolicyIdentity {
 	return RenditionPolicyIdentity{
-		Normalization: policy.normalization.Identity(), MaxSegmentRunes: policy.maxSegmentRunes,
+		MaxDocumentChars: policy.maxDocumentChars, MaxLinkChars: policy.maxLinkChars,
+		MaxSegmentRunes: policy.maxSegmentRunes, MaxSourceUnitBytes: policy.maxSourceUnitBytes,
+		MaxUnitRunes: policy.maxUnitRunes,
 	}
 }
 
@@ -129,7 +135,7 @@ func CanonicalRenditionExecutionIdentityV1(
 	if err := validateRenditionExecutionIdentity(identity); err != nil {
 		return nil, "", err
 	}
-	encoded, err := canonicalJSON(identity)
+	encoded, err := canonical.Marshal(identity)
 	if err != nil {
 		return nil, "", fmt.Errorf("encoding rendition execution identity: %w", err)
 	}
@@ -138,15 +144,15 @@ func CanonicalRenditionExecutionIdentityV1(
 
 // ParseRenditionExecutionIdentityV1 decodes only the exact canonical form.
 func ParseRenditionExecutionIdentityV1(raw []byte) (RenditionExecutionIdentityV1, error) {
-	var identity RenditionExecutionIdentityV1
-	if err := json.Unmarshal(raw, &identity, json.RejectUnknownMembers(true)); err != nil {
+	identity, err := canonical.Decode[RenditionExecutionIdentityV1](raw)
+	if err != nil {
 		return RenditionExecutionIdentityV1{}, fmt.Errorf("decoding rendition execution identity: %w", err)
 	}
-	canonical, _, err := CanonicalRenditionExecutionIdentityV1(identity)
+	encoded, _, err := CanonicalRenditionExecutionIdentityV1(identity)
 	if err != nil {
 		return RenditionExecutionIdentityV1{}, err
 	}
-	if !bytes.Equal(raw, canonical) {
+	if !bytes.Equal(raw, encoded) {
 		return RenditionExecutionIdentityV1{}, errors.New("rendition execution identity is not canonical")
 	}
 	return cloneRenditionExecutionIdentity(identity), nil
@@ -163,27 +169,27 @@ func ValidateRenditionExecutionProfileV1(
 	if err := validateRenditionExecutionIdentity(identity); err != nil {
 		return err
 	}
-	canonical, err := CanonicalizeProfile(profile)
+	canonicalProfile, err := CanonicalizeProfile(profile)
 	if err != nil {
 		return err
 	}
-	_, fingerprints, err := CanonicalProfile(canonical)
+	_, fingerprints, err := CanonicalProfile(canonicalProfile)
 	if err != nil {
 		return err
 	}
-	expectedEvidence, expectedRendition, err := renditionExecutionPoliciesForCanonicalProfileV1(canonical)
+	expectedEvidence, expectedRendition, err := renditionExecutionPoliciesForCanonicalProfileV1(canonicalProfile)
 	if err != nil {
 		return err
 	}
-	if canonical.Rendition == nil ||
+	if canonicalProfile.Rendition == nil ||
 		identity.Authorization.RenditionRequestFingerprint != fingerprints.RenditionRequest ||
-		identity.Authorization.ProviderID != canonical.Rendition.Descriptor.ID ||
-		identity.Authorization.DescriptorFingerprint != canonical.Rendition.Descriptor.Fingerprint ||
-		identity.Authorization.DiscloseFilename != canonical.Rendition.DiscloseFilename ||
+		identity.Authorization.ProviderID != canonicalProfile.Rendition.Descriptor.ID ||
+		identity.Authorization.DescriptorFingerprint != canonicalProfile.Rendition.Descriptor.Fingerprint ||
+		identity.Authorization.DiscloseFilename != canonicalProfile.Rendition.DiscloseFilename ||
 		identity.EvidencePolicy != expectedEvidence.Identity() ||
 		identity.RenditionPolicy != expectedRendition.Identity() ||
 		identity.Upload.InputKind != RenditionInputOriginalFile ||
-		!renditionExecutionAuthorizationMatchesProfileV1(identity, *canonical.Rendition) {
+		!renditionExecutionAuthorizationMatchesProfileV1(identity, *canonicalProfile.Rendition) {
 		return errors.New("rendition execution identity does not match executable profile")
 	}
 	return nil
@@ -225,11 +231,11 @@ func renditionExecutionAuthorizationMatchesProfileV1(
 func RenditionExecutionPoliciesForProfileV1(
 	profile ProcessingProfileV1,
 ) (EvidencePolicy, RenditionPolicy, error) {
-	canonical, err := CanonicalizeProfile(profile)
+	canonicalProfile, err := CanonicalizeProfile(profile)
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
-	return renditionExecutionPoliciesForCanonicalProfileV1(canonical)
+	return renditionExecutionPoliciesForCanonicalProfileV1(canonicalProfile)
 }
 
 func renditionExecutionPoliciesForCanonicalProfileV1(
@@ -243,12 +249,11 @@ func renditionExecutionPoliciesForCanonicalProfileV1(
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
-	normalization, err := NewNormalizePolicy(profile.EvidenceLexical.MaxDocumentChars)
-	if err != nil {
-		return EvidencePolicy{}, RenditionPolicy{}, err
-	}
-	rendition, err := NewRenditionPolicy(
-		normalization, profile.EvidenceLexical.MaxSegmentRunes)
+	rendition, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: profile.EvidenceLexical.MaxDocumentChars,
+		MaxUnitRunes:     profile.EvidenceLexical.MaxUnitRunes,
+		MaxSegmentRunes:  profile.EvidenceLexical.MaxSegmentRunes,
+	})
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
@@ -300,7 +305,7 @@ func CanonicalRenditionExecutionSnapshotV1(snapshot RenditionExecutionSnapshotV1
 	if err := validateRenditionExecutionSnapshot(snapshot); err != nil {
 		return nil, err
 	}
-	encoded, err := canonicalJSON(snapshot)
+	encoded, err := canonical.Marshal(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("encoding rendition execution snapshot: %w", err)
 	}
@@ -309,15 +314,15 @@ func CanonicalRenditionExecutionSnapshotV1(snapshot RenditionExecutionSnapshotV1
 
 // ParseRenditionExecutionSnapshotV1 decodes only exact canonical snapshots.
 func ParseRenditionExecutionSnapshotV1(raw []byte) (RenditionExecutionSnapshotV1, error) {
-	var snapshot RenditionExecutionSnapshotV1
-	if err := json.Unmarshal(raw, &snapshot, json.RejectUnknownMembers(true)); err != nil {
+	snapshot, err := canonical.Decode[RenditionExecutionSnapshotV1](raw)
+	if err != nil {
 		return RenditionExecutionSnapshotV1{}, fmt.Errorf("decoding rendition execution snapshot: %w", err)
 	}
-	canonical, err := CanonicalRenditionExecutionSnapshotV1(snapshot)
+	encoded, err := CanonicalRenditionExecutionSnapshotV1(snapshot)
 	if err != nil {
 		return RenditionExecutionSnapshotV1{}, err
 	}
-	if !bytes.Equal(raw, canonical) {
+	if !bytes.Equal(raw, encoded) {
 		return RenditionExecutionSnapshotV1{}, errors.New("rendition execution snapshot is not canonical")
 	}
 	return cloneRenditionExecutionSnapshot(snapshot), nil
@@ -493,16 +498,15 @@ func evidencePolicyFromIdentity(identity EvidencePolicyIdentity) (EvidencePolicy
 }
 
 func renditionPolicyFromIdentity(identity RenditionPolicyIdentity) (RenditionPolicy, error) {
-	normalization, err := NewNormalizePolicy(identity.Normalization.MaxDocumentChars)
+	policy, err := NewRenditionPolicy(RenditionLimits{
+		MaxDocumentChars: identity.MaxDocumentChars, MaxUnitRunes: identity.MaxUnitRunes,
+		MaxSegmentRunes: identity.MaxSegmentRunes,
+	})
 	if err != nil {
 		return RenditionPolicy{}, err
 	}
-	if normalization.Identity() != identity.Normalization {
-		return RenditionPolicy{}, errors.New("document normalization policy identity is unsupported")
-	}
-	policy, err := NewRenditionPolicy(normalization, identity.MaxSegmentRunes)
-	if err != nil {
-		return RenditionPolicy{}, err
+	if policy.Identity() != identity {
+		return RenditionPolicy{}, errors.New("rendition policy identity is unsupported")
 	}
 	return policy, nil
 }

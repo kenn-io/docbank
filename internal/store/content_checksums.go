@@ -105,14 +105,6 @@ func (s *Store) RecordVerifiedBlobChecksum(ctx context.Context, record BlobCheck
 	})
 }
 
-// MissingBlobChecksumTargets returns a deterministic resumable batch of
-// retained originals and sanitized Markdown without auxiliary checksums.
-func (s *Store) MissingBlobChecksumTargets(
-	ctx context.Context, limit int,
-) ([]BlobChecksumTarget, error) {
-	return s.MissingBlobChecksumTargetsAfter(ctx, "", limit)
-}
-
 // MissingBlobChecksumTargetsAfter returns the next ordered page after one
 // SHA-256 cursor. Callers can keep later blobs progressing while a failed
 // target waits for retry.

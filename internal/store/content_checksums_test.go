@@ -41,7 +41,7 @@ func TestAuxiliaryChecksumValidationAndMissingBackfillTargets(t *testing.T) {
 	_, err = s.BlobChecksums(t.Context(), hash)
 	require.ErrorIs(t, err, ErrNotFound)
 
-	targets, err := s.MissingBlobChecksumTargets(t.Context(), 10)
+	targets, err := s.MissingBlobChecksumTargetsAfter(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Equal(t, []BlobChecksumTarget{{BlobSHA256: hash, Size: 4}}, targets)
 
@@ -54,7 +54,7 @@ func TestAuxiliaryChecksumValidationAndMissingBackfillTargets(t *testing.T) {
 	require.NoError(t, s.RecordVerifiedBlobChecksum(t.Context(), BlobChecksumRecord{
 		BlobSHA256: hash, MD5: "8d777f385d3dfec8815d20f7496026dc",
 	}))
-	targets, err = s.MissingBlobChecksumTargets(t.Context(), 10)
+	targets, err = s.MissingBlobChecksumTargetsAfter(t.Context(), "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, targets)
 }

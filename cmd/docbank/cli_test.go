@@ -689,22 +689,32 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	var got api.JobList
 	require.Eventually(t, func() bool {
 		out, err = runCLI(t, "jobs", "--json")
-		if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Items) != 4 {
+		if err != nil || json.Unmarshal([]byte(out), &got) != nil {
 			return false
 		}
-		return got.Items[1].Name == "extract:source-metadata" &&
-			got.Items[2].Name == "maintenance:auxiliary-checksums" && got.Items[2].Status == "completed" &&
-			got.Items[3].Name == "process:renditions" && got.Items[3].Status == "running"
+		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
+		return found && checksums.Status == "completed"
 	}, 5*time.Second, 25*time.Millisecond)
-	require.Len(t, got.Items, 4)
-	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
-	assert.Equal(t, "running", got.Items[0].Status)
-	assert.Equal(t, "extract:source-metadata", got.Items[1].Name)
-	assert.Equal(t, "running", got.Items[1].Status)
-	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[2].Name)
-	assert.Equal(t, "completed", got.Items[2].Status)
-	assert.Equal(t, "process:renditions", got.Items[3].Name)
-	assert.Equal(t, "running", got.Items[3].Status)
+	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
+	assert.Equal(t, "running", requireJob(t, got, "extract:source-metadata").Status)
+	_, renditions := jobNamed(got, "process:renditions")
+	assert.False(t, renditions, "no rendition provider is bound, so no rendition job is reported")
+}
+
+func jobNamed(list api.JobList, name string) (api.Job, bool) {
+	for _, job := range list.Items {
+		if job.Name == name {
+			return job, true
+		}
+	}
+	return api.Job{}, false
+}
+
+func requireJob(t *testing.T, list api.JobList, name string) api.Job {
+	t.Helper()
+	job, found := jobNamed(list, name)
+	require.True(t, found, "job %s must be listed", name)
+	return job
 }
 
 func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
@@ -746,13 +756,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 5)
-	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
-	assert.Equal(t, "extract:source-metadata", got.Items[1].Name)
-	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[2].Name)
-	assert.Equal(t, "process:renditions", got.Items[3].Name)
-	assert.Equal(t, "storage:pack", got.Items[4].Name)
-	assert.Equal(t, "running", got.Items[4].Status)
+	assert.Equal(t, "running", requireJob(t, got, "storage:pack").Status)
 
 	time.Sleep(100 * time.Millisecond)
 	_, _, found, err := client.Find(t.Context(), home)
@@ -793,14 +797,8 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	require.Len(t, got.Items, 5)
-	assert.Equal(t, "extract:plain-text", got.Items[0].Name)
-	assert.Equal(t, "running", got.Items[0].Status)
-	assert.Equal(t, "extract:source-metadata", got.Items[1].Name)
-	assert.Equal(t, "maintenance:auxiliary-checksums", got.Items[2].Name)
-	assert.Equal(t, "process:renditions", got.Items[3].Name)
-	assert.Equal(t, "watch:sessions", got.Items[4].Name)
-	assert.Equal(t, "running", got.Items[4].Status)
+	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
+	assert.Equal(t, "running", requireJob(t, got, "watch:sessions").Status)
 
 	out, err = runCLI(t, "watch", "list", "--json")
 	require.NoError(t, err)

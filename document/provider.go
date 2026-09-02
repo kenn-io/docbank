@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -34,8 +36,23 @@ const (
 	renditionTimestampForm       = "2006-01-02T15:04:05.000000000Z"
 )
 
-var errRenditionAuthorizationPolicyMismatch = errors.New(
-	"authorization policy fingerprint does not match descriptor")
+// Provider-boundary failures that retrying the same sealed inputs cannot fix
+// are wrapped with these identities so orchestration can stop retrying.
+var (
+	// ErrRenditionAuthorizationInvalid means the authorization disagrees with
+	// the provider descriptor, the upload, or its own bounds.
+	ErrRenditionAuthorizationInvalid = errors.New("rendition authorization is invalid")
+	// ErrRenditionAuthorizationExpired means the authorization interval does
+	// not contain the egress clock; a fresh authorization may succeed.
+	ErrRenditionAuthorizationExpired = errors.New("rendition authorization is not current")
+	// ErrRenditionUploadInvalid means the upload metadata can never be sent
+	// to a provider.
+	ErrRenditionUploadInvalid = errors.New("rendition upload is invalid")
+)
+
+var errRenditionAuthorizationPolicyMismatch = fmt.Errorf(
+	"%w: authorization policy fingerprint does not match descriptor",
+	ErrRenditionAuthorizationInvalid)
 
 // IsRenditionAuthorizationPolicyMismatch reports whether provider execution
 // was rejected before egress because its sealed policy differs from the
@@ -157,7 +174,7 @@ func NewRenditionDescriptor(value RenditionDescriptor) (RenditionDescriptor, err
 	if err := validateRenditionDescriptorFields(value); err != nil {
 		return RenditionDescriptor{}, err
 	}
-	encoded, err := canonicalJSON(descriptorIdentity(value))
+	encoded, err := canonical.Marshal(descriptorIdentity(value))
 	if err != nil {
 		return RenditionDescriptor{}, fmt.Errorf("encode rendition descriptor: %w", err)
 	}
@@ -267,13 +284,13 @@ func validateRenditionProviderRequestAt(
 	}
 	metadata := upload.Metadata()
 	if err := validateAuthorizedUploadMetadata(metadata); err != nil {
-		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, fmt.Errorf("%w: %w", ErrRenditionUploadInvalid, err)
 	}
 	if second := upload.Metadata(); second != metadata {
 		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, errors.New("authorized upload metadata changed during validation")
 	}
 	if err := validateRenditionAuthorization(descriptor, metadata, authorization); err != nil {
-		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
+		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, fmt.Errorf("%w: %w", ErrRenditionAuthorizationInvalid, err)
 	}
 	if err := validateAuthorizationCurrentAt(authorization, now); err != nil {
 		return RenditionDescriptor{}, AuthorizedUploadMetadata{}, err
@@ -1140,14 +1157,14 @@ func validateAuthorizationWithoutUpload(descriptor RenditionDescriptor, authoriz
 func validateAuthorizationCurrentAt(authorization RenditionAuthorization, now time.Time) error {
 	authorizedAt, err := parseRenditionTimestamp(authorization.AuthorizedAt)
 	if err != nil {
-		return errors.New("authorization time must be canonical")
+		return fmt.Errorf("%w: authorization time must be canonical", ErrRenditionAuthorizationInvalid)
 	}
 	expiresAt, err := parseRenditionTimestamp(authorization.ExpiresAt)
 	if err != nil {
-		return errors.New("authorization expiry must be canonical")
+		return fmt.Errorf("%w: authorization expiry must be canonical", ErrRenditionAuthorizationInvalid)
 	}
 	if now.Before(authorizedAt) || !now.Before(expiresAt) {
-		return errors.New("authorization is not current")
+		return ErrRenditionAuthorizationExpired
 	}
 	return nil
 }

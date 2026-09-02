@@ -946,8 +946,10 @@ Shows daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
 Running tasks have no finish timestamp; terminal task records remain visible
 until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
-Every daemon registers `extract:plain-text`; configured watched inboxes add
-`watch:<name>` tasks. See [Daemon](architecture/daemon.md).
+Every daemon registers `extract:plain-text`, `extract:source-metadata`, and
+`maintenance:auxiliary-checksums`; `process:renditions` appears only when a
+rendition provider is bound, and configured watched inboxes add `watch:<name>`
+tasks. See [Daemon](architecture/daemon.md) for what each job does.
 
 ## docbank watch
 

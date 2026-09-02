@@ -624,12 +624,41 @@ func TestRenditionWorkerQuarantinesSealTimePolicyMismatch(t *testing.T) {
 	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadataForBackupRestore(
+	require.NoError(t, restored.ImportMetadata(
 		t.Context(), bytes.NewReader(exported.Bytes())))
 	restoredJob, err := restored.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, store.RenditionJobFailed, restoredJob.State)
 	assert.Equal(t, store.RenditionFailureTerminal, restoredJob.FailureCode)
+}
+
+func TestRenditionWorkerQuarantinesSealTimeInvalidUpload(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	fixture.profile = profile
+	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+	grantWorkerConsent(t, fixture.catalog, request)
+	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Runtime: driftedWorkerRuntime{provider: provider, unsafeFilename: true},
+		Gate:    api.NewOperationGate(),
+		Owner:   "rendition-worker-seal-invalid-upload", LeaseDuration: time.Minute,
+		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
+	})
+	require.NoError(t, err)
+
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Zero(t, provider.calls)
+	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RenditionJobFailed, current.State)
+	assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
 }
 
 func TestRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t *testing.T) {
@@ -1158,6 +1187,7 @@ func (runtime countingWorkerRuntime) Prepare(
 type driftedWorkerRuntime struct {
 	provider       *workerProvider
 	policyMismatch bool
+	unsafeFilename bool
 }
 
 func (runtime driftedWorkerRuntime) Prepare(
@@ -1174,6 +1204,11 @@ func (runtime driftedWorkerRuntime) Prepare(
 	upload, ok := execution.Upload.(*workerUpload)
 	if !ok {
 		return RenditionExecution{}, errors.New("synthetic runtime returned unexpected upload type")
+	}
+	if runtime.unsafeFilename {
+		upload.metadata.Filename = "../escaped.pdf"
+		execution.Authorization.DiscloseFilename = true
+		return execution, nil
 	}
 	upload.metadata.CapabilityRecordChecksum = processingHash("runtime-drift")
 	execution.Authorization.CapabilityRecordChecksum = upload.metadata.CapabilityRecordChecksum
@@ -1219,11 +1254,9 @@ func (runtime workerRuntime) Prepare(
 	if err != nil {
 		return RenditionExecution{}, err
 	}
-	normalization, err := document.NewNormalizePolicy(100_000)
-	if err != nil {
-		return RenditionExecution{}, err
-	}
-	rendition, err := document.NewRenditionPolicy(normalization, 100)
+	rendition, err := document.NewRenditionPolicy(document.RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 100,
+	})
 	if err != nil {
 		return RenditionExecution{}, err
 	}
@@ -1581,11 +1614,9 @@ func workerJobRequest(
 	if err != nil {
 		panic(err)
 	}
-	normalization, err := document.NewNormalizePolicy(100_000)
-	if err != nil {
-		panic(err)
-	}
-	rendition, err := document.NewRenditionPolicy(normalization, 100)
+	rendition, err := document.NewRenditionPolicy(document.RenditionLimits{
+		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 100,
+	})
 	if err != nil {
 		panic(err)
 	}

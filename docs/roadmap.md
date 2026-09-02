@@ -16,7 +16,7 @@ appear elsewhere only when they materially explain the design and are marked
 | 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses Kit's shared backup and multi-location packstore engines) |
 | 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
 | 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, and bounded plain-text extraction implemented; reusable document normalization, Mistral OCR, media detection, and Voyage multimodal embedding packages are available, while automatic PDF/Office extraction into a Docbank vault remains |
+| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, bounded plain-text extraction, automatic source-metadata extraction from originals, auxiliary MD5 checksums, canonical JPEG previews through the embedded API, and the durable derivative catalog (renditions, lexical projection, consent) implemented; reusable document normalization, OCR and rendition provider adapters, media detection, and embedding packages are available as Go libraries, while daemon-owned rendition processing and automatic PDF/Office extraction into a Docbank vault remain |
 | 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job and storage/backup inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
 | 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
 
@@ -209,6 +209,7 @@ management, and browser/TUI mutation controls are deliberately deferred.
 
 ## Deferred beyond v1
 
-Automatic OCR of scans within a Docbank vault, embeddings/AI tagging, at-rest encryption of the live store,
-encryption for backup repositories, importing attachments out of msgvault,
-multi-user/sharing, and an MCP server wrapping the API.
+At-rest encryption of the live store, encryption for backup repositories,
+importing attachments out of msgvault, and multi-user/sharing. Daemon-owned
+document processing, embeddings, semantic search, and an MCP server are in
+progress on top of the derivative catalog.

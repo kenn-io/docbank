@@ -705,7 +705,7 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 	snapshot, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	var metadata bytes.Buffer
-	require.NoError(t, exportV090MetadataSnapshot(t.Context(), snapshot, &metadata))
+	require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), snapshot, &metadata, 1))
 	require.NoError(t, snapshot.Rollback())
 	require.NoError(t, db.Close())
 	return v090Fixture{
@@ -798,7 +798,7 @@ func createV2Fixture(
 	snapshot, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	var metadata bytes.Buffer
-	require.NoError(t, exportMetadataSnapshot(t.Context(), snapshot, &metadata))
+	require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), snapshot, &metadata, 2))
 	require.NoError(t, snapshot.Rollback())
 	require.NoError(t, db.Close())
 	return v2Fixture{
@@ -853,7 +853,7 @@ func createV3Fixture(t *testing.T, path string, driver docsqlite.Driver) v3Fixtu
 	snapshot, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	var metadata bytes.Buffer
-	require.NoError(t, exportMetadataSnapshot(t.Context(), snapshot, &metadata))
+	require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), snapshot, &metadata, 3))
 	require.NoError(t, snapshot.Rollback())
 	require.NoError(t, db.Close())
 	return v3Fixture{

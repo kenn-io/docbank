@@ -199,9 +199,6 @@ func (s *Store) PurgeDerivatives(
 	if err := validatePurgeRequest(request); err != nil {
 		return PurgeReport{}, err
 	}
-	lexicalGenerationReaders.Lock()
-	defer lexicalGenerationReaders.Unlock()
-
 	report := PurgeReport{ImmutableBackupCopiesUntouched: true}
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		auditActive, err := auditAuthorityActiveTx(ctx, tx)
@@ -357,152 +354,148 @@ func (s *Store) PurgeDerivatives(
 			}
 		}
 
-		lexicalSchema, err := lexicalGenerationSchemaPresentTx(ctx, tx)
+		headExclusions := make(map[string]struct{}, len(candidateBuilds)+len(logicallyPurgedBuilds))
+		for buildID := range candidateBuilds {
+			headExclusions[buildID] = struct{}{}
+		}
+		for buildID := range logicallyPurgedBuilds {
+			headExclusions[buildID] = struct{}{}
+		}
+		generationRows, err := tx.QueryContext(ctx, `
+			SELECT generation_id,build_id
+			FROM rendition_lexical_generation_builds ORDER BY generation_id,build_id`)
+		if err != nil {
+			return fmt.Errorf("reading lexical generation build membership: %w", err)
+		}
+		defer func(rows *sql.Rows) { _ = rows.Close() }(generationRows)
+		generationBuilds := make(map[string][]string)
+		for generationRows.Next() {
+			var generationID, buildID string
+			if err := generationRows.Scan(&generationID, &buildID); err != nil {
+				return fmt.Errorf("scanning lexical generation build membership: %w", err)
+			}
+			generationBuilds[generationID] = append(generationBuilds[generationID], buildID)
+		}
+		if err := generationRows.Err(); err != nil {
+			return fmt.Errorf("reading lexical generation build membership: %w", err)
+		}
+		generationRows, err = tx.QueryContext(ctx, `
+			SELECT g.generation_id,
+			       EXISTS(SELECT 1 FROM rendition_lexical_heads h
+			              WHERE h.generation_id=g.generation_id),
+			       EXISTS(SELECT 1 FROM current_rendition_roots r
+			              WHERE r.target_kind='lexical_generation'
+			                AND r.target_id=g.generation_id
+			                AND r.active=1
+			                AND (r.expires_at IS NULL OR r.expires_at>?))
+			FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
+		if err != nil {
+			return fmt.Errorf("listing lexical generations for collection: %w", err)
+		}
+		defer func(rows *sql.Rows) { _ = rows.Close() }(generationRows)
+		type generationState struct {
+			id              string
+			headed          bool
+			typedRooted     bool
+			targetsExcluded bool
+		}
+		var generations []generationState
+		for generationRows.Next() {
+			var generation generationState
+			if err := generationRows.Scan(
+				&generation.id, &generation.headed, &generation.typedRooted,
+			); err != nil {
+				return fmt.Errorf("scanning lexical generation for collection: %w", err)
+			}
+			for _, buildID := range generationBuilds[generation.id] {
+				if _, excluded := headExclusions[buildID]; excluded {
+					generation.targetsExcluded = true
+					break
+				}
+			}
+			generations = append(generations, generation)
+		}
+		if err := generationRows.Err(); err != nil {
+			return fmt.Errorf("listing lexical generations for collection: %w", err)
+		}
+		var replacementGenerationID string
+		for index := range generations {
+			generation := &generations[index]
+			if !generation.headed || !generation.targetsExcluded {
+				continue
+			}
+			replacement, err := stageLexicalGenerationExcludingTx(ctx, tx, headExclusions)
+			if err != nil {
+				return fmt.Errorf("staging lexical purge replacement: %w", err)
+			}
+			if replacement.ID == "" {
+				if _, err := tx.ExecContext(ctx,
+					`DELETE FROM rendition_lexical_heads WHERE generation_id=?`, generation.id,
+				); err != nil {
+					return fmt.Errorf("revoking empty lexical generation %s head: %w", generation.id, err)
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE rendition_lexical_heads SET generation_id=?
+					WHERE singleton=1 AND generation_id=?`, replacement.ID, generation.id,
+				); err != nil {
+					return fmt.Errorf("publishing lexical purge replacement %s: %w",
+						replacement.ID, err)
+				}
+				replacementGenerationID = replacement.ID
+			}
+			generation.headed = false
+		}
+
+		pinned := s.pinnedLexicalGenerationIDs()
+		for _, generation := range generations {
+			if generation.id == replacementGenerationID || generation.headed {
+				continue
+			}
+			if _, live := pinned[generation.id]; generation.typedRooted || live {
+				report.RetainedLexicalGenerations = append(
+					report.RetainedLexicalGenerations, generation.id)
+				for _, buildID := range generationBuilds[generation.id] {
+					if _, selected := candidateBuilds[buildID]; selected {
+						delete(candidateBuilds, buildID)
+						report.RetainedBuildIDs = append(report.RetainedBuildIDs, buildID)
+					}
+				}
+				continue
+			}
+			if _, err = tx.ExecContext(ctx,
+				`DELETE FROM rendition_lexical_heads WHERE generation_id=?`, generation.id,
+			); err != nil {
+				return fmt.Errorf("removing lexical generation %s head: %w", generation.id, err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`, generation.id,
+			); err != nil {
+				return fmt.Errorf("removing lexical generation %s manifest: %w", generation.id, err)
+			}
+			result, err = tx.ExecContext(ctx,
+				`DELETE FROM rendition_lexical_generations WHERE generation_id=?`, generation.id)
+			if err != nil {
+				return fmt.Errorf("removing lexical generation %s: %w", generation.id, err)
+			}
+			count, err := rowsAffectedInt(result)
+			if err != nil {
+				return err
+			}
+			report.RemovedLexicalGenerations += count
+		}
+
+		unindexed, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
+			WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
+			                  WHERE gb.build_id=rendition_lexical_index.build_id)`)
+		if err != nil {
+			return fmt.Errorf("removing lexical index rows no generation names: %w", err)
+		}
+		count, err := rowsAffectedInt(unindexed)
 		if err != nil {
 			return err
 		}
-		if lexicalSchema {
-			headExclusions := make(map[string]struct{}, len(candidateBuilds)+len(logicallyPurgedBuilds))
-			for buildID := range candidateBuilds {
-				headExclusions[buildID] = struct{}{}
-			}
-			for buildID := range logicallyPurgedBuilds {
-				headExclusions[buildID] = struct{}{}
-			}
-			generationRows, err := tx.QueryContext(ctx, `
-				SELECT generation_id,build_id
-				FROM rendition_lexical_generation_builds ORDER BY generation_id,build_id`)
-			if err != nil {
-				return fmt.Errorf("reading lexical generation build membership: %w", err)
-			}
-			defer func(rows *sql.Rows) { _ = rows.Close() }(generationRows)
-			generationBuilds := make(map[string][]string)
-			for generationRows.Next() {
-				var generationID, buildID string
-				if err := generationRows.Scan(&generationID, &buildID); err != nil {
-					return fmt.Errorf("scanning lexical generation build membership: %w", err)
-				}
-				generationBuilds[generationID] = append(generationBuilds[generationID], buildID)
-			}
-			if err := generationRows.Err(); err != nil {
-				return fmt.Errorf("reading lexical generation build membership: %w", err)
-			}
-			generationRows, err = tx.QueryContext(ctx, `
-				SELECT g.generation_id,
-				       EXISTS(SELECT 1 FROM rendition_lexical_heads h
-				              WHERE h.generation_id=g.generation_id),
-				       EXISTS(SELECT 1 FROM current_rendition_roots r
-				              WHERE r.target_kind='lexical_generation'
-				                AND r.target_id=g.generation_id
-				                AND r.active=1
-				                AND (r.expires_at IS NULL OR r.expires_at>?))
-				FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
-			if err != nil {
-				return fmt.Errorf("listing lexical generations for collection: %w", err)
-			}
-			defer func(rows *sql.Rows) { _ = rows.Close() }(generationRows)
-			type generationState struct {
-				id              string
-				headed          bool
-				typedRooted     bool
-				targetsExcluded bool
-			}
-			var generations []generationState
-			for generationRows.Next() {
-				var generation generationState
-				if err := generationRows.Scan(
-					&generation.id, &generation.headed, &generation.typedRooted,
-				); err != nil {
-					return fmt.Errorf("scanning lexical generation for collection: %w", err)
-				}
-				for _, buildID := range generationBuilds[generation.id] {
-					if _, excluded := headExclusions[buildID]; excluded {
-						generation.targetsExcluded = true
-						break
-					}
-				}
-				generations = append(generations, generation)
-			}
-			if err := generationRows.Err(); err != nil {
-				return fmt.Errorf("listing lexical generations for collection: %w", err)
-			}
-			var replacementGenerationID string
-			for index := range generations {
-				generation := &generations[index]
-				if !generation.headed || !generation.targetsExcluded {
-					continue
-				}
-				replacement, err := stageLexicalGenerationExcludingTx(ctx, tx, headExclusions)
-				if err != nil {
-					return fmt.Errorf("staging lexical purge replacement: %w", err)
-				}
-				if replacement.ID == "" {
-					if _, err := tx.ExecContext(ctx,
-						`DELETE FROM rendition_lexical_heads WHERE generation_id=?`, generation.id,
-					); err != nil {
-						return fmt.Errorf("revoking empty lexical generation %s head: %w", generation.id, err)
-					}
-				} else {
-					if _, err := tx.ExecContext(ctx, `
-						UPDATE rendition_lexical_heads SET generation_id=?
-						WHERE singleton=1 AND generation_id=?`, replacement.ID, generation.id,
-					); err != nil {
-						return fmt.Errorf("publishing lexical purge replacement %s: %w",
-							replacement.ID, err)
-					}
-					replacementGenerationID = replacement.ID
-				}
-				generation.headed = false
-			}
-
-			readers := lexicalGenerationReaders.stores[s]
-			for _, generation := range generations {
-				if generation.id == replacementGenerationID || generation.headed {
-					continue
-				}
-				if generation.typedRooted || readers[generation.id] != 0 {
-					report.RetainedLexicalGenerations = append(
-						report.RetainedLexicalGenerations, generation.id)
-					for _, buildID := range generationBuilds[generation.id] {
-						if _, selected := candidateBuilds[buildID]; selected {
-							delete(candidateBuilds, buildID)
-							report.RetainedBuildIDs = append(report.RetainedBuildIDs, buildID)
-						}
-					}
-					continue
-				}
-				if _, err = tx.ExecContext(ctx,
-					`DELETE FROM rendition_lexical_heads WHERE generation_id=?`, generation.id,
-				); err != nil {
-					return fmt.Errorf("removing lexical generation %s head: %w", generation.id, err)
-				}
-				result, err = tx.ExecContext(ctx,
-					`DELETE FROM rendition_lexical_fts WHERE generation_id=?`, generation.id)
-				if err != nil {
-					return fmt.Errorf("removing lexical generation %s rows: %w", generation.id, err)
-				}
-				count, err := rowsAffectedInt(result)
-				if err != nil {
-					return err
-				}
-				report.RemovedLexicalRows += count
-				if _, err := tx.ExecContext(ctx,
-					`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`, generation.id,
-				); err != nil {
-					return fmt.Errorf("removing lexical generation %s manifest: %w", generation.id, err)
-				}
-				result, err = tx.ExecContext(ctx,
-					`DELETE FROM rendition_lexical_generations WHERE generation_id=?`, generation.id)
-				if err != nil {
-					return fmt.Errorf("removing lexical generation %s: %w", generation.id, err)
-				}
-				count, err = rowsAffectedInt(result)
-				if err != nil {
-					return err
-				}
-				report.RemovedLexicalGenerations += count
-			}
-		}
+		report.RemovedLexicalRows += count
 
 		artifactBlobs := make(map[string]struct{})
 		if err := func() (retErr error) {
@@ -550,6 +543,7 @@ func (s *Store) PurgeDerivatives(
 				query       string
 				destination *int
 			}{
+				{`DELETE FROM rendition_lexical_index WHERE build_id=?`, &report.RemovedLexicalRows},
 				{`DELETE FROM rendition_lexical_segments WHERE build_id=?`, &report.RemovedLexicalSegments},
 				{`DELETE FROM rendition_units WHERE build_id=?`, &report.RemovedUnits},
 				{`DELETE FROM rendition_artifacts WHERE build_id=?`, &report.RemovedArtifacts},
@@ -608,13 +602,9 @@ func (s *Store) PurgeDerivatives(
 
 		for hash := range artifactBlobs {
 			var reachable bool
-			if err := tx.QueryRowContext(ctx, `SELECT
-				EXISTS(SELECT 1 FROM content_versions WHERE blob_hash=?) OR
-				EXISTS(SELECT 1 FROM rendition_artifacts WHERE blob_hash=?) OR
-				EXISTS(SELECT 1 FROM rendition_builds WHERE source_sha256=?) OR
-				EXISTS(SELECT 1 FROM visual_preview_generations WHERE output_blob_hash=?) OR
-				EXISTS(SELECT 1 FROM rendition_jobs WHERE source_sha256=?)`,
-				hash, hash, hash, hash, hash).Scan(&reachable); err != nil {
+			if err := tx.QueryRowContext(ctx, `WITH target(hash) AS (SELECT ?)
+				SELECT `+blobReferencedSQL("target.hash", blobRootReferences)+` FROM target`,
+				hash).Scan(&reachable); err != nil {
 				return fmt.Errorf("checking purged derivative blob %s reachability: %w", hash, err)
 			}
 			if !reachable {
@@ -625,12 +615,8 @@ func (s *Store) PurgeDerivatives(
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM derivative_blob_purge_pending
-			WHERE EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash=derivative_blob_purge_pending.blob_hash)
-			   OR EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash=derivative_blob_purge_pending.blob_hash)
-			   OR EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256=derivative_blob_purge_pending.blob_hash)
-			   OR EXISTS (SELECT 1 FROM visual_preview_generations p
-			             WHERE p.output_blob_hash=derivative_blob_purge_pending.blob_hash)
-			   OR EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256=derivative_blob_purge_pending.blob_hash)`); err != nil {
+			WHERE `+blobReferencedSQL("derivative_blob_purge_pending.blob_hash", blobRootReferences),
+		); err != nil {
 			return fmt.Errorf("reconciling derivative blob purge targets: %w", err)
 		}
 		if err := func() (retErr error) {
@@ -800,17 +786,6 @@ func rowsAffectedInt(result sql.Result) (int, error) {
 	return int(count), nil
 }
 
-func lexicalGenerationSchemaPresentTx(ctx context.Context, tx metadataQuerier) (bool, error) {
-	var present bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM sqlite_schema
-		WHERE type='table' AND name='rendition_lexical_generations'
-	)`).Scan(&present); err != nil {
-		return false, fmt.Errorf("checking lexical generation schema: %w", err)
-	}
-	return present, nil
-}
-
 // PutCurrentRenditionRoot creates or renews one exact root. A higher fencing
 // token supersedes prior authority; an equal record is an idempotent replay.
 func (s *Store) PutCurrentRenditionRoot(ctx context.Context, root CurrentRenditionRoot) error {
@@ -949,17 +924,9 @@ func requireCurrentRenditionTargetTx(
 		}
 	case RenditionRootLexicalGeneration:
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM sqlite_schema WHERE type='table'
-			AND name='rendition_lexical_generations'
-		)`).Scan(&present); err != nil {
-			return fmt.Errorf("checking lexical generation schema: %w", err)
-		}
-		if present {
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
-			)`, root.TargetID).Scan(&present); err != nil {
-				return fmt.Errorf("checking current lexical generation root: %w", err)
-			}
+			SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
+		)`, root.TargetID).Scan(&present); err != nil {
+			return fmt.Errorf("checking current lexical generation root: %w", err)
 		}
 	}
 	if !present {
@@ -970,9 +937,6 @@ func requireCurrentRenditionTargetTx(
 
 // DerivativeGCPlan returns the complete currently-unrooted derivative set.
 func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retErr error) {
-	lexicalGenerationReaders.Lock()
-	defer lexicalGenerationReaders.Unlock()
-
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return DerivativeGCPlan{}, fmt.Errorf("starting derivative GC snapshot: %w", err)
@@ -1030,70 +994,61 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 		return DerivativeGCPlan{}, fmt.Errorf("closing derivative build candidates: %w", err)
 	}
 
-	var lexicalSchema bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM sqlite_schema
-		WHERE type='table' AND name='rendition_lexical_generations'
-	)`).Scan(&lexicalSchema); err != nil {
-		return DerivativeGCPlan{}, fmt.Errorf("checking lexical generation schema: %w", err)
+	generationRows, err := tx.QueryContext(ctx, `
+		SELECT g.generation_id,
+		       EXISTS(SELECT 1 FROM rendition_lexical_heads h
+		              WHERE h.generation_id=g.generation_id),
+		       EXISTS(SELECT 1 FROM current_rendition_roots r
+		              WHERE r.target_kind='lexical_generation'
+		                AND r.target_id=g.generation_id
+		                AND r.active=1
+		                AND (r.expires_at IS NULL OR r.expires_at>?))
+		FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
+	if err != nil {
+		return DerivativeGCPlan{}, fmt.Errorf("planning lexical generations: %w", err)
 	}
-	if lexicalSchema {
-		generationRows, err := tx.QueryContext(ctx, `
-			SELECT g.generation_id,
-			       EXISTS(SELECT 1 FROM rendition_lexical_heads h
-			              WHERE h.generation_id=g.generation_id),
-			       EXISTS(SELECT 1 FROM current_rendition_roots r
-			              WHERE r.target_kind='lexical_generation'
-			                AND r.target_id=g.generation_id
-			                AND r.active=1
-			                AND (r.expires_at IS NULL OR r.expires_at>?))
-			FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
+	defer func() { _ = generationRows.Close() }()
+	pinned := s.pinnedLexicalGenerationIDs()
+	var rootedGenerationIDs []string
+	for generationRows.Next() {
+		var generationID string
+		var headed, rooted bool
+		if err := generationRows.Scan(&generationID, &headed, &rooted); err != nil {
+			return DerivativeGCPlan{}, fmt.Errorf("scanning lexical generation candidate: %w", err)
+		}
+		if _, live := pinned[generationID]; headed || rooted || live {
+			rootedGenerationIDs = append(rootedGenerationIDs, generationID)
+		} else {
+			plan.LexicalGenerations = append(plan.LexicalGenerations, generationID)
+		}
+	}
+	if err := generationRows.Err(); err != nil {
+		return DerivativeGCPlan{}, fmt.Errorf("planning lexical generations: %w", err)
+	}
+	if err := generationRows.Close(); err != nil {
+		return DerivativeGCPlan{}, fmt.Errorf("closing lexical generation candidates: %w", err)
+	}
+	rootedBuilds := make(map[string]struct{})
+	for _, generationID := range rootedGenerationIDs {
+		buildIDs, err := stringColumnTx(ctx, tx,
+			"rooted lexical generation "+generationID, `
+			SELECT build_id FROM rendition_lexical_generation_builds
+			WHERE generation_id=? ORDER BY build_id`, generationID)
 		if err != nil {
-			return DerivativeGCPlan{}, fmt.Errorf("planning lexical generations: %w", err)
+			return DerivativeGCPlan{}, err
 		}
-		defer func() { _ = generationRows.Close() }()
-		readers := lexicalGenerationReaders.stores[s]
-		var rootedGenerationIDs []string
-		for generationRows.Next() {
-			var generationID string
-			var headed, rooted bool
-			if err := generationRows.Scan(&generationID, &headed, &rooted); err != nil {
-				return DerivativeGCPlan{}, fmt.Errorf("scanning lexical generation candidate: %w", err)
-			}
-			if headed || rooted || readers[generationID] != 0 {
-				rootedGenerationIDs = append(rootedGenerationIDs, generationID)
-			} else {
-				plan.LexicalGenerations = append(plan.LexicalGenerations, generationID)
+		for _, buildID := range buildIDs {
+			rootedBuilds[buildID] = struct{}{}
+		}
+	}
+	if len(rootedBuilds) != 0 {
+		candidates := plan.Builds[:0]
+		for _, build := range plan.Builds {
+			if _, rooted := rootedBuilds[build.BuildID]; !rooted {
+				candidates = append(candidates, build)
 			}
 		}
-		if err := generationRows.Err(); err != nil {
-			return DerivativeGCPlan{}, fmt.Errorf("planning lexical generations: %w", err)
-		}
-		if err := generationRows.Close(); err != nil {
-			return DerivativeGCPlan{}, fmt.Errorf("closing lexical generation candidates: %w", err)
-		}
-		rootedBuilds := make(map[string]struct{})
-		for _, generationID := range rootedGenerationIDs {
-			buildIDs, err := stringColumnTx(ctx, tx,
-				"rooted lexical generation "+generationID, `
-				SELECT build_id FROM rendition_lexical_generation_builds
-				WHERE generation_id=? ORDER BY build_id`, generationID)
-			if err != nil {
-				return DerivativeGCPlan{}, err
-			}
-			for _, buildID := range buildIDs {
-				rootedBuilds[buildID] = struct{}{}
-			}
-		}
-		if len(rootedBuilds) != 0 {
-			candidates := plan.Builds[:0]
-			for _, build := range plan.Builds {
-				if _, rooted := rootedBuilds[build.BuildID]; !rooted {
-					candidates = append(candidates, build)
-				}
-			}
-			plan.Builds = candidates
-		}
+		plan.Builds = candidates
 	}
 	expiredRows, err := tx.QueryContext(ctx, `
 		SELECT root_id FROM current_rendition_roots
@@ -1238,14 +1193,7 @@ func scanBlobInfos(rows *sql.Rows, op string) ([]BlobInfo, error) {
 func (s *Store) UnreachableBlobs(ctx context.Context) ([]BlobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
-		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM visual_preview_generations p
-		                  WHERE p.output_blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending p
-		                  WHERE p.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = b.hash)
+		WHERE `+blobUnreferencedSQL("b.hash", blobRootReferences, blobGCHolds)+`
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding unreachable blobs: %w", err)
@@ -1261,12 +1209,7 @@ func (s *Store) UnreachableDerivativePurgeBlobs(ctx context.Context) ([]BlobInfo
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.hash, b.size FROM blobs b
 		JOIN derivative_blob_purge_pending p ON p.blob_hash = b.hash
-		WHERE NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM visual_preview_generations p
-		                  WHERE p.output_blob_hash = b.hash)
-		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = b.hash)
+		WHERE `+blobUnreferencedSQL("b.hash", blobRootReferences)+`
 		ORDER BY b.hash`)
 	if err != nil {
 		return nil, fmt.Errorf("finding pending derivative purge blobs: %w", err)
@@ -1325,7 +1268,7 @@ func (s *Store) UnreachableBlobsPageFrom(
 	return page, nil
 }
 
-const unreachableBlobsStartPageSQL = `
+var unreachableBlobsStartPageSQL = `
 	WITH raw_page AS MATERIALIZED (
 		SELECT b.hash, l.stored_size AS loose_stored_size
 		FROM blobs b
@@ -1336,17 +1279,10 @@ const unreachableBlobsStartPageSQL = `
 		ORDER BY b.hash LIMIT ?
 	)
 	SELECT p.hash, p.loose_stored_size,
-	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM visual_preview_generations v
-	                       WHERE v.output_blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
-	                       WHERE d.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = p.hash)
+	       ` + blobUnreferencedSQL("p.hash", blobRootReferences, blobGCHolds) + `
 	FROM raw_page p ORDER BY p.hash`
 
-const unreachableBlobsResumePageSQL = `
+var unreachableBlobsResumePageSQL = `
 	WITH raw_page AS MATERIALIZED (
 		SELECT b.hash, l.stored_size AS loose_stored_size
 		FROM blobs b
@@ -1357,14 +1293,7 @@ const unreachableBlobsResumePageSQL = `
 		WHERE b.hash > ? ORDER BY b.hash LIMIT ?
 	)
 	SELECT p.hash, p.loose_stored_size,
-	       NOT EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_builds r WHERE r.source_sha256 = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_artifacts a WHERE a.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM visual_preview_generations v
-	                       WHERE v.output_blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM derivative_blob_purge_pending d
-	                       WHERE d.blob_hash = p.hash)
-	       AND NOT EXISTS (SELECT 1 FROM rendition_jobs j WHERE j.source_sha256 = p.hash)
+	       ` + blobUnreferencedSQL("p.hash", blobRootReferences, blobGCHolds) + `
 	FROM raw_page p ORDER BY p.hash`
 
 func unreachableBlobScanQuery(after *string, limit int) (string, []any) {

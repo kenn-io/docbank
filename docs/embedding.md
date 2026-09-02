@@ -146,7 +146,9 @@ for _, field := range metadata.Fields {
 
 The operation is synchronous, local, and scoped to the requested version. It
 reuses the current extractor generation when one already exists and does not
-start background workers or process other content. It returns
+start background workers or process other content. It holds the vault's
+mutation lock for the whole extraction, up to a 64 MiB read of the original,
+so concurrent `Put`, `Create`, and maintenance calls wait behind it. It returns
 `ErrContentUnavailable` when the cataloged source bytes cannot be opened or
 verified. `SourceMetadata` remains a read-only lookup and returns `ErrNotFound`
 when no generation has been published. Both methods return all local fields,
@@ -266,11 +268,14 @@ defer part.Reader.Close()
 _, err = io.Copy(dst, part.Reader)
 ```
 
-Raw loose content uses native filesystem offsets. Compressed loose and packed
-content may materialize a seekable representation or decode from the beginning,
-so applications should not infer constant-time physical seeking from the public
-range contract. The reader returns exactly the requested length or an error and
-holds the vault lifecycle lease until `Close`. A successful partial read proves
+Raw loose content uses native filesystem offsets. Compressed loose content is
+decoded to a temporary file first, and packed content is decoded into memory
+in full before the range is served, so a range read of a large packed object
+costs its whole decoded size in RAM; applications should not infer cheap
+physical seeking from the public range contract. A range outside the version's
+bytes returns `ErrInvalidContentRange`. The reader returns exactly the
+requested length, or `io.ErrUnexpectedEOF` if the stream ends early, and holds
+the vault lifecycle lease until `Close`. A successful partial read proves
 catalog authorization, decoded size, and range bounds; it is not whole-object
 integrity verification. Use `OpenVersionContent` to consume and verify the full
 stream, or a maintenance verification operation when full integrity evidence is

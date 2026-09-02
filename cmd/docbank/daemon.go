@@ -151,146 +151,8 @@ func runServe(ctx context.Context) (retErr error) {
 	}()
 	operationGate := api.NewOperationGate()
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
-	// The worker waits without claiming jobs until the first adapter registers.
-	// Later slices can wire adapters before or after this point without changing
-	// durable job admission behavior.
-	renditionWorker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-		Catalog: s, Blobs: blobs, Runtime: runtimeRegistry, Gate: operationGate,
-		Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
-		IdleDelay: time.Second,
-	})
-	if workerErr != nil {
-		return fmt.Errorf("configuring rendition worker: %w", workerErr)
-	}
-	if err := jobSupervisor.Start("process:renditions", renditionWorker.Run); err != nil {
-		return fmt.Errorf("starting rendition worker: %w", err)
-	}
-	if err := jobSupervisor.Start("maintenance:auxiliary-checksums", func(ctx context.Context) error {
-		cursor := ""
-		retries := newBackfillRetrySet()
-		seen := make(map[string]struct{})
-		for {
-			targets, listErr := s.MissingBlobChecksumTargetsAfter(ctx, cursor, 100)
-			if listErr != nil {
-				return listErr
-			}
-			if len(targets) == 0 {
-				cursor = ""
-				retries.retain(seen)
-				clear(seen)
-				if len(retries) == 0 {
-					return nil
-				}
-				if err := waitDaemonJob(ctx, retries.waitDelay(time.Now().UTC(), 10*time.Second)); err != nil {
-					return err
-				}
-				continue
-			}
-			cursor = targets[len(targets)-1].BlobSHA256
-			completed := 0
-			attempted := 0
-			err := operationGate.MutateContext(ctx, func() error {
-				var batchErr error
-				for _, target := range targets {
-					seen[target.BlobSHA256] = struct{}{}
-					now := time.Now().UTC()
-					if !retries.ready(target.BlobSHA256, now) {
-						continue
-					}
-					attempted++
-					done, targetErr := processing.BackfillAuxiliaryChecksumTargets(
-						ctx, s, blobs, []store.BlobChecksumTarget{target})
-					completed += done
-					if targetErr != nil {
-						retries.failed(target.BlobSHA256, now)
-						batchErr = errors.Join(batchErr, targetErr)
-					} else {
-						retries.succeeded(target.BlobSHA256)
-					}
-				}
-				return batchErr
-			})
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				logger.Warn("auxiliary checksum backfill will retry", "completed", completed, "error", err)
-			}
-			delay := backfillBatchWaitDelay(attempted, retries, time.Now().UTC())
-			if err := waitDaemonJob(ctx, delay); err != nil {
-				return err
-			}
-		}
-	}); err != nil {
-		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
-	}
-	if err := jobSupervisor.Start("extract:source-metadata", func(ctx context.Context) error {
-		idleDelay := time.Second
-		cursor := ""
-		retries := newBackfillRetrySet()
-		seen := make(map[string]struct{})
-		for {
-			targets, listErr := s.MissingSourceMetadataTargetsAfter(
-				ctx, processing.SourceMetadataExtractorFingerprint, cursor, 10)
-			if listErr != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				logger.Warn("listing source metadata targets will retry", "error", listErr)
-				if err := waitDaemonJob(ctx, 5*time.Second); err != nil {
-					return err
-				}
-				continue
-			}
-			if len(targets) == 0 {
-				cursor = ""
-				retries.retain(seen)
-				clear(seen)
-				delay := retries.waitDelay(time.Now().UTC(), idleDelay)
-				if err := waitDaemonJob(ctx, delay); err != nil {
-					return err
-				}
-				idleDelay = min(idleDelay*2, 10*time.Second)
-				continue
-			}
-			cursor = targets[len(targets)-1].SourceSHA256
-			idleDelay = time.Second
-			completed := 0
-			attempted := 0
-			err := operationGate.MutateContext(ctx, func() error {
-				var batchErr error
-				for _, target := range targets {
-					seen[target.SourceSHA256] = struct{}{}
-					now := time.Now().UTC()
-					if !retries.ready(target.SourceSHA256, now) {
-						continue
-					}
-					attempted++
-					done, targetErr := processing.BackfillSourceMetadataTargets(
-						ctx, s, blobs, []store.SourceMetadataTarget{target})
-					completed += done
-					if targetErr != nil {
-						retries.failed(target.SourceSHA256, now)
-						batchErr = errors.Join(batchErr, targetErr)
-					} else {
-						retries.succeeded(target.SourceSHA256)
-					}
-				}
-				return batchErr
-			})
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				logger.Warn("source metadata backfill will retry", "completed", completed, "error", err)
-			}
-			delay := backfillBatchWaitDelay(attempted, retries, time.Now().UTC())
-			if err := waitDaemonJob(ctx, delay); err != nil {
-				return err
-			}
-		}
-	}); err != nil {
-		return fmt.Errorf("starting source metadata backfill: %w", err)
+	if err := startProcessingJobs(jobSupervisor, s, blobs, runtimeRegistry, operationGate, logger); err != nil {
+		return err
 	}
 	placementRunner := blob.PlacementRunner{
 		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
@@ -469,15 +331,60 @@ func runServe(ctx context.Context) (retErr error) {
 	return serveErr
 }
 
-func waitDaemonJob(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
+// startProcessingJobs registers the daemon jobs that derive data from stored
+// originals. The rendition worker starts only when a provider adapter is
+// bound, so `docbank jobs` never reports rendition work that cannot happen.
+func startProcessingJobs(
+	supervisor *jobs.Supervisor, s *store.Store, blobs *blob.Store,
+	runtimes *processing.RenditionRuntimeRegistry, gate *api.OperationGate, logger *slog.Logger,
+) error {
+	if runtimes.Ready() {
+		worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+			Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
+			Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
+			IdleDelay: time.Second,
+		})
+		if err != nil {
+			return fmt.Errorf("configuring rendition worker: %w", err)
+		}
+		if err := supervisor.Start("process:renditions", worker.Run); err != nil {
+			return fmt.Errorf("starting rendition worker: %w", err)
+		}
 	}
+	checksums := &processing.Backfill[store.BlobChecksumTarget]{
+		Name: "auxiliary-checksums", Page: 100, IdleDelay: time.Second, DrainOnce: true,
+		List:   s.MissingBlobChecksumTargetsAfter,
+		Key:    func(target store.BlobChecksumTarget) string { return target.BlobSHA256 },
+		Mutate: gate.MutateContext,
+		Logger: logger,
+		Process: func(ctx context.Context, target store.BlobChecksumTarget) error {
+			_, err := processing.BackfillAuxiliaryChecksumTargets(
+				ctx, s, blobs, []store.BlobChecksumTarget{target})
+			return err
+		},
+	}
+	if err := supervisor.Start("maintenance:auxiliary-checksums", checksums.Run); err != nil {
+		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
+	}
+	metadata := &processing.Backfill[store.SourceMetadataTarget]{
+		Name: "source-metadata", Page: 10, IdleDelay: time.Second,
+		List: func(ctx context.Context, after string, limit int) ([]store.SourceMetadataTarget, error) {
+			return s.MissingSourceMetadataTargetsAfter(
+				ctx, processing.SourceMetadataExtractorFingerprint, after, limit)
+		},
+		Key:    func(target store.SourceMetadataTarget) string { return target.SourceSHA256 },
+		Mutate: gate.MutateContext,
+		Logger: logger,
+		Process: func(ctx context.Context, target store.SourceMetadataTarget) error {
+			_, err := processing.BackfillSourceMetadataTargets(
+				ctx, s, blobs, []store.SourceMetadataTarget{target})
+			return err
+		},
+	}
+	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
+		return fmt.Errorf("starting source metadata backfill: %w", err)
+	}
+	return nil
 }
 
 func validateConfiguredWatchStores(

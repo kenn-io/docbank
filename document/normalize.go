@@ -294,12 +294,6 @@ func joinDocumentUnitEvidence(header, body, footer string) (string, int) {
 	return strings.Join(parts, "\n\n"), bodyOffset
 }
 
-// sanitizeMarkdown converts untrusted provider Markdown into inert canonical
-// Markdown-like text. It preserves NormalizeDocument's frozen behavior.
-func sanitizeMarkdown(markdown string, maxLinkChars, maxSourceBytes int) (string, []canonicalHeadingMark, bool, error) {
-	return sanitizeMarkdownWithActiveHTML(markdown, maxLinkChars, maxSourceBytes, false)
-}
-
 // sanitizeRenditionMarkdown applies the normalizer's frozen text rules plus
 // removes the body of active HTML elements from a durable rendition.
 func sanitizeRenditionMarkdown(markdown string, maxLinkChars, maxSourceBytes, maxRunes int) (string, bool, bool, error) {
@@ -451,10 +445,10 @@ func (r *renditionHTMLRenderer) renderRawHTML(
 	return goldmarkast.WalkSkipChildren, nil
 }
 
-func sanitizeMarkdownWithActiveHTML(
-	markdown string,
-	maxLinkChars, maxSourceBytes int,
-	dropActiveHTML bool,
+// sanitizeMarkdown converts untrusted provider Markdown into inert canonical
+// Markdown-like text. It preserves NormalizeDocument's frozen behavior.
+func sanitizeMarkdown(
+	markdown string, maxLinkChars, maxSourceBytes int,
 ) (string, []canonicalHeadingMark, bool, error) {
 	if markdown == "" {
 		return "", nil, false, nil
@@ -471,9 +465,7 @@ func sanitizeMarkdownWithActiveHTML(
 	if err := parser.Convert([]byte(markdown), &rendered); err != nil {
 		return "", nil, false, fmt.Errorf("parse provider Markdown: %w", err)
 	}
-	writer := canonicalHTMLWriter{
-		maxLinkChars: maxLinkChars, dropActiveHTML: dropActiveHTML, escapeMarkdown: dropActiveHTML,
-	}
+	writer := canonicalHTMLWriter{maxLinkChars: maxLinkChars}
 	if err := writer.consume(bytes.NewReader(rendered.Bytes())); err != nil {
 		return "", nil, false, err
 	}
@@ -2167,32 +2159,15 @@ func serializeRenditionTable(rows [][][]renditionInline) string {
 }
 
 type canonicalHTMLWriter struct {
-	output         strings.Builder
-	maxLinkChars   int
-	inPre          bool
-	skipTag        string
-	skipDepth      int
-	cellIndex      int
-	links          []string
-	renditionLinks []*renditionLink
-	preFenceOpen   bool
-	pendingSpace   bool
-	dropActiveHTML bool
-	escapeMarkdown bool
-	preLanguage    string
-	preContent     strings.Builder
-	inlineCode     bool
-	inlineContent  strings.Builder
-	inTable        bool
-	inTableCell    bool
-	tableRows      [][]string
-	tableRow       []string
-	tableCell      strings.Builder
-}
-
-type renditionLink struct {
-	destination string
-	text        strings.Builder
+	output       strings.Builder
+	maxLinkChars int
+	inPre        bool
+	skipTag      string
+	skipDepth    int
+	cellIndex    int
+	links        []string
+	preFenceOpen bool
+	pendingSpace bool
 }
 
 func (w *canonicalHTMLWriter) consume(reader io.Reader) error {
@@ -2233,13 +2208,6 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 		w.skipDepth = 1
 		return
 	}
-	if w.dropActiveHTML && isActiveHTML(tag) {
-		if !selfClosing && !isHTMLVoidElement(tag) {
-			w.skipTag = tag
-			w.skipDepth = 1
-		}
-		return
-	}
 	if tag == "svg" {
 		if !selfClosing {
 			w.skipTag = tag
@@ -2249,12 +2217,6 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 	}
 	switch tag {
 	case "table":
-		if w.escapeMarkdown {
-			w.block()
-			w.inTable = true
-			w.tableRows = nil
-			return
-		}
 		w.block()
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		w.block()
@@ -2267,31 +2229,15 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 	case "br":
 		w.line()
 	case "tr":
-		if w.escapeMarkdown && w.inTable {
-			w.tableRow = nil
-			return
-		}
 		w.line()
 		w.cellIndex = 0
 	case "td", "th":
-		if w.escapeMarkdown && w.inTable {
-			w.inTableCell = true
-			w.tableCell.Reset()
-			return
-		}
 		if w.cellIndex > 0 {
 			w.output.WriteString(" | ")
 		}
 		w.cellIndex++
 	case "pre":
 		w.block()
-		if w.escapeMarkdown {
-			w.inPre = true
-			w.preFenceOpen = true
-			w.preLanguage = ""
-			w.preContent.Reset()
-			return
-		}
 		w.output.WriteString("```")
 		w.inPre = true
 		w.preFenceOpen = true
@@ -2300,26 +2246,15 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 			for _, attribute := range token.Attr {
 				if attribute.Key == "class" && strings.HasPrefix(attribute.Val, "language-") {
 					if language := safeCodeLanguage(strings.TrimPrefix(attribute.Val, "language-")); language != "" {
-						if w.escapeMarkdown {
-							w.preLanguage = language
-						} else {
-							w.output.WriteString(language)
-						}
+						w.output.WriteString(language)
 					}
 				}
 			}
-			if !w.escapeMarkdown {
-				w.output.WriteByte('\n')
-			}
+			w.output.WriteByte('\n')
 			w.preFenceOpen = false
 		} else if !w.inPre {
 			w.flushPendingSpace()
-			if w.escapeMarkdown {
-				w.inlineCode = true
-				w.inlineContent.Reset()
-			} else {
-				w.output.WriteByte('`')
-			}
+			w.output.WriteByte('`')
 		}
 	case "img":
 		for _, attribute := range token.Attr {
@@ -2348,26 +2283,10 @@ func (w *canonicalHTMLWriter) startTag(token html.Token, selfClosing bool) {
 			}
 		}
 	case "a":
-		if w.escapeMarkdown {
-			w.flushPendingSpace()
-			link := ""
-			for _, attribute := range token.Attr {
-				if attribute.Key == "href" {
-					link = safeRenditionLink(attribute.Val, w.maxLinkChars)
-					break
-				}
-			}
-			w.renditionLinks = append(w.renditionLinks, &renditionLink{destination: link})
-			return
-		}
 		link := ""
 		for _, attribute := range token.Attr {
 			if attribute.Key == "href" {
-				if w.escapeMarkdown {
-					link = safeRenditionLink(attribute.Val, w.maxLinkChars)
-				} else {
-					link = safeStoredLink(attribute.Val, w.maxLinkChars)
-				}
+				link = safeStoredLink(attribute.Val, w.maxLinkChars)
 				break
 			}
 		}
@@ -2415,37 +2334,10 @@ func (w *canonicalHTMLWriter) endTag(tag string) {
 	case "li":
 		w.line()
 	case "tr":
-		if w.escapeMarkdown && w.inTable {
-			w.tableRows = append(w.tableRows, append([]string(nil), w.tableRow...))
-			return
-		}
 		w.line()
-	case "td", "th":
-		if w.escapeMarkdown && w.inTable && w.inTableCell {
-			w.tableRow = append(w.tableRow, w.tableCell.String())
-			w.tableCell.Reset()
-			w.inTableCell = false
-			return
-		}
 	case "table":
-		if w.escapeMarkdown && w.inTable {
-			w.inTable = false
-			w.writeRenditionRaw(serializeGFMTable(w.tableRows))
-			w.tableRows = nil
-			w.block()
-			return
-		}
 		w.block()
 	case "pre":
-		if w.escapeMarkdown {
-			w.writeSafeCodeFence(w.preLanguage, w.preContent.String())
-			w.inPre = false
-			w.preFenceOpen = false
-			w.preLanguage = ""
-			w.preContent.Reset()
-			w.block()
-			return
-		}
 		if w.preFenceOpen {
 			w.output.WriteByte('\n')
 		}
@@ -2457,28 +2349,9 @@ func (w *canonicalHTMLWriter) endTag(tag string) {
 	case "code":
 		if !w.inPre {
 			w.flushPendingSpace()
-			if w.escapeMarkdown {
-				w.writeSafeInlineCode(w.inlineContent.String())
-				w.inlineCode = false
-				w.inlineContent.Reset()
-			} else {
-				w.output.WriteByte('`')
-			}
+			w.output.WriteByte('`')
 		}
 	case "a":
-		if w.escapeMarkdown {
-			if len(w.renditionLinks) == 0 {
-				return
-			}
-			link := w.renditionLinks[len(w.renditionLinks)-1]
-			w.renditionLinks = w.renditionLinks[:len(w.renditionLinks)-1]
-			if link.destination == "" {
-				w.writeRenditionRaw(link.text.String())
-			} else {
-				w.writeRenditionRaw("[" + link.text.String() + "](" + link.destination + ")")
-			}
-			return
-		}
 		w.flushPendingSpace()
 		if len(w.links) == 0 {
 			return
@@ -2526,19 +2399,11 @@ func isHTMLBlockElement(tag string) bool {
 
 func (w *canonicalHTMLWriter) writeText(value string) {
 	if w.inPre {
-		if w.escapeMarkdown {
-			w.preContent.WriteString(stripUnsafeControls(value))
-			return
-		}
 		if w.preFenceOpen {
 			w.output.WriteByte('\n')
 			w.preFenceOpen = false
 		}
 		w.output.WriteString(stripUnsafeControls(value))
-		return
-	}
-	if w.inlineCode {
-		w.inlineContent.WriteString(stripUnsafeControls(value))
 		return
 	}
 	value = stripUnsafeControls(value)
@@ -2548,87 +2413,8 @@ func (w *canonicalHTMLWriter) writeText(value string) {
 			continue
 		}
 		w.flushPendingSpace()
-		w.writeMarkdownRune(character)
+		w.output.WriteRune(character)
 	}
-}
-
-func (w *canonicalHTMLWriter) writeMarkdownRune(character rune) {
-	if w.escapeMarkdown && strings.ContainsRune("\\\\`*_{}[]<>#!|~", character) {
-		w.writeRenditionRaw("\\")
-	}
-	if w.escapeMarkdown {
-		w.writeRenditionRaw(string(character))
-		return
-	}
-	w.output.WriteRune(character)
-}
-
-func (w *canonicalHTMLWriter) writeRenditionRaw(value string) {
-	if len(w.renditionLinks) > 0 {
-		w.renditionLinks[len(w.renditionLinks)-1].text.WriteString(value)
-		return
-	}
-	if w.inTableCell {
-		w.tableCell.WriteString(value)
-		return
-	}
-	w.output.WriteString(value)
-}
-
-func (w *canonicalHTMLWriter) writeSafeInlineCode(content string) {
-	fence := strings.Repeat("`", maxBacktickRun(content)+1)
-	w.writeRenditionRaw(fence)
-	if strings.HasPrefix(content, "`") || strings.HasSuffix(content, "`") {
-		w.writeRenditionRaw(" ")
-	}
-	w.writeRenditionRaw(content)
-	if strings.HasPrefix(content, "`") || strings.HasSuffix(content, "`") {
-		w.writeRenditionRaw(" ")
-	}
-	w.writeRenditionRaw(fence)
-}
-
-func serializeGFMTable(rows [][]string) string {
-	if len(rows) == 0 {
-		return ""
-	}
-	columns := 0
-	for _, row := range rows {
-		columns = max(columns, len(row))
-	}
-	if columns == 0 {
-		return ""
-	}
-	format := func(row []string) string {
-		cells := make([]string, columns)
-		copy(cells, row)
-		return "| " + strings.Join(cells, " | ") + " |"
-	}
-	delimiter := make([]string, columns)
-	for index := range delimiter {
-		delimiter[index] = "---"
-	}
-	lines := []string{format(rows[0]), "| " + strings.Join(delimiter, " | ") + " |"}
-	for _, row := range rows[1:] {
-		lines = append(lines, format(row))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (w *canonicalHTMLWriter) writeSafeCodeFence(language, content string) {
-	if w.inTableCell {
-		w.writeSafeInlineCode(strings.ReplaceAll(strings.Join(strings.Fields(content), " "), "|", "\\|"))
-		return
-	}
-	fence := strings.Repeat("`", max(3, maxBacktickRun(content)+1))
-	w.writeRenditionRaw(fence)
-	w.writeRenditionRaw(language)
-	w.writeRenditionRaw("\n")
-	w.writeRenditionRaw(content)
-	if !strings.HasSuffix(content, "\n") {
-		w.writeRenditionRaw("\n")
-	}
-	w.writeRenditionRaw(fence)
 }
 
 func maxBacktickRun(value string) int {
@@ -2646,13 +2432,6 @@ func maxBacktickRun(value string) int {
 }
 
 func (w *canonicalHTMLWriter) flushPendingSpace() {
-	if w.escapeMarkdown {
-		if w.pendingSpace && w.renditionTargetHasContent() {
-			w.writeRenditionRaw(" ")
-		}
-		w.pendingSpace = false
-		return
-	}
 	if w.pendingSpace && w.output.Len() > 0 &&
 		!strings.HasSuffix(w.output.String(), "\n") && !strings.HasSuffix(w.output.String(), " ") {
 		w.output.WriteByte(' ')
@@ -2660,21 +2439,7 @@ func (w *canonicalHTMLWriter) flushPendingSpace() {
 	w.pendingSpace = false
 }
 
-func (w *canonicalHTMLWriter) renditionTargetHasContent() bool {
-	if len(w.renditionLinks) > 0 {
-		return w.renditionLinks[len(w.renditionLinks)-1].text.Len() > 0
-	}
-	if w.inTableCell {
-		return w.tableCell.Len() > 0
-	}
-	return w.output.Len() > 0 && !strings.HasSuffix(w.output.String(), "\n")
-}
-
 func (w *canonicalHTMLWriter) line() {
-	if w.escapeMarkdown && w.inTable {
-		w.pendingSpace = false
-		return
-	}
 	w.pendingSpace = false
 	if w.output.Len() > 0 && !strings.HasSuffix(w.output.String(), "\n") {
 		w.output.WriteByte('\n')
@@ -2682,10 +2447,6 @@ func (w *canonicalHTMLWriter) line() {
 }
 
 func (w *canonicalHTMLWriter) block() {
-	if w.escapeMarkdown && w.inTable {
-		w.pendingSpace = false
-		return
-	}
 	w.line()
 	if w.output.Len() > 0 && !strings.HasSuffix(w.output.String(), "\n\n") {
 		w.output.WriteByte('\n')

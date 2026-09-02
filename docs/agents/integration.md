@@ -121,9 +121,14 @@ curl --fail-with-body --get \
 
 A node response includes stable `id`, mutable `revision`, `kind`, and
 timestamps. File nodes also include stable `current_version_id`, immutable
-SHA-256 `blob_hash`, and raw `size`; directories omit content identity. Live
-single-node responses include the current `path`. Node and version IDs survive
-renames; use a live path only for display or a one-shot path operation.
+SHA-256 `blob_hash`, an auxiliary `md5`, and raw `size`; directories omit
+content identity. Live single-node responses include the current `path` and,
+once the daemon has extracted it, `source_metadata` with typed facts read from
+the original bytes. Fields the extractor marks sensitive, such as GPS
+coordinates, are returned to API-key callers and omitted from browser
+sessions; treat that as a display rule, not a boundary, because the same
+session can download the original. Node and version IDs survive renames; use a
+live path only for display or a one-shot path operation.
 
 The CLI exposes the same distinction without requiring JSON parsing. Human
 listings print copyable selectors such as `id:42`, and existing-node commands

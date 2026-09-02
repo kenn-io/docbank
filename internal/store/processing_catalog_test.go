@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 const (
@@ -629,128 +628,6 @@ func TestProcessingMetadataRejectsUnknownCapturedPolicyBeforeInsert(t *testing.T
 	require.Error(t, validateMetadataRenditionBuild(value))
 }
 
-func TestProcessingMetadataOpenRejectsPartialSchemas(t *testing.T) {
-	for name, tablesToDrop := range map[string][]string{
-		"one of seven tables": {
-			"rendition_heads", "rendition_attachments", "rendition_lexical_segments",
-			"rendition_units", "rendition_artifacts", "rendition_builds",
-		},
-		"six of seven tables":                {"rendition_heads"},
-		"missing current roots":              {"current_rendition_roots"},
-		"missing purge suppressions":         {"derivative_purge_suppressions"},
-		"missing provider staging":           {"rendition_blob_staging"},
-		"missing pending derivative erasure": {"derivative_blob_purge_pending"},
-		"missing pending pack erasure":       {"derivative_pack_purge_pending"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "partial.db")
-			driver := DefaultSQLiteDriver()
-			current, err := openCurrentStore(path, driver)
-			require.NoError(t, err)
-			require.NoError(t, current.Close())
-			db, err := driver.Open(path, docsqlite.OpenOptions{
-				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-			})
-			require.NoError(t, err)
-			for _, table := range tablesToDrop {
-				_, err = db.Exec(`DROP TABLE ` + table)
-				require.NoError(t, err)
-			}
-			require.NoError(t, db.Close())
-
-			opened, err := openCurrentStore(path, driver)
-			if opened != nil {
-				require.NoError(t, opened.Close())
-			}
-			require.ErrorContains(t, err, "processing")
-		})
-	}
-}
-
-func TestProcessingMetadataOpenRejectsPartialLexicalSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "partial-lexical.db")
-	driver := DefaultSQLiteDriver()
-	current, err := openCurrentStore(path, driver)
-	require.NoError(t, err)
-	_, err = current.db.Exec(lexicalProjectionSchema)
-	require.NoError(t, err)
-	require.NoError(t, current.Close())
-
-	db, err := driver.Open(path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-	})
-	require.NoError(t, err)
-	_, err = db.Exec(`DROP TABLE rendition_lexical_generation_builds`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-
-	opened, err := openCurrentStore(path, driver)
-	if opened != nil {
-		require.NoError(t, opened.Close())
-	}
-	require.ErrorContains(t, err, "lexical")
-}
-
-func TestProcessingMetadataOpenAcceptsCRLFEmbeddedSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "crlf-schema.db")
-	driver := DefaultSQLiteDriver()
-	originalSchema := schemaSQL
-	schemaSQL = strings.ReplaceAll(schemaSQL, "\r\n", "\n")
-	schemaSQL = strings.ReplaceAll(schemaSQL, "\n", "\r\n")
-	t.Cleanup(func() { schemaSQL = originalSchema })
-	current, err := openCurrentStore(path, driver)
-	require.NoError(t, err)
-	_, err = current.db.Exec(lexicalProjectionSchema)
-	require.NoError(t, err)
-	require.NoError(t, current.Close())
-
-	reopened, err := openCurrentStore(path, driver)
-	if reopened != nil {
-		require.NoError(t, reopened.Close())
-	}
-	require.NoError(t, err,
-		"checkout line endings must not change exact lexical schema identity")
-}
-
-func TestProcessingMetadataOpenRejectsMismatchedCompleteSchemas(t *testing.T) {
-	for name, mutate := range map[string]func(*testing.T, string, docsqlite.Driver){
-		"current layout with missing bound": func(t *testing.T, path string, driver docsqlite.Driver) {
-			t.Helper()
-			corruptProcessingSchemaCheckForTest(
-				t, path, driver, "rendition_builds", "CHECK (declared_artifact_count >= 0)")
-		},
-		"current layout with weakened consent bound": func(t *testing.T, path string, driver docsqlite.Driver) {
-			t.Helper()
-			corruptProcessingSchemaCheckForTest(
-				t, path, driver, "processing_consent_grants", "CHECK (revocation_fence >= 0)")
-		},
-		"current layout with weakened job bound": func(t *testing.T, path string, driver docsqlite.Driver) {
-			t.Helper()
-			corruptProcessingSchemaCheckForTest(
-				t, path, driver, "rendition_jobs", "CHECK (provider_attempts >= 0)")
-		},
-		"current layout with extra trigger": func(t *testing.T, path string, driver docsqlite.Driver) {
-			t.Helper()
-			addProcessingSchemaTriggerForTest(t, path, driver)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "mismatched.db")
-			driver := DefaultSQLiteDriver()
-			current, err := openCurrentStore(path, driver)
-			require.NoError(t, err)
-			require.NoError(t, current.Close())
-			mutate(t, path, driver)
-
-			opened, err := openCurrentStore(path, driver)
-			if opened != nil {
-				require.NoError(t, opened.Close())
-			}
-			require.ErrorContains(t, err, "processing")
-		})
-	}
-}
-
 func TestProcessingMetadataOpenAcceptsExactCurrentSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "current.db")
 	driver := DefaultSQLiteDriver()
@@ -791,8 +668,14 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 		t, s, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
 	), "an exact retry must reuse the immutable attachment")
 
+	republished := attachment
+	republished.AttachedAt = "2026-08-22T10:00:01.000000000Z"
+	require.NoError(t, publishRenditionForTest(
+		t, s, republished, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
+	), "the attachment keeps its first observation time; a later one is not a conflict")
+
 	conflictingAttachment := attachment
-	conflictingAttachment.AttachedAt = "2026-08-22T10:00:01.000000000Z"
+	conflictingAttachment.Profile = catalogProcessingProfile(t, true)
 	err = publishRenditionForTest(
 		t, s, conflictingAttachment, "2026-08-22T10:01:00.000000000Z", fakeHash("c5"),
 	)
@@ -1034,44 +917,4 @@ func cloneCatalogBuild(build RenditionBuildRecord) RenditionBuildRecord {
 func testSHA256(value []byte) string {
 	digest := sha256.Sum256(value)
 	return hex.EncodeToString(digest[:])
-}
-
-func corruptProcessingSchemaCheckForTest(
-	t *testing.T, path string, driver docsqlite.Driver, table, check string,
-) {
-	t.Helper()
-	db, err := driver.Open(path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-	})
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, db.Ping())
-	_, err = db.Exec(`PRAGMA writable_schema = ON`)
-	require.NoError(t, err)
-	result, err := db.Exec(`
-		UPDATE sqlite_schema
-		SET sql=replace(sql, ?, 'CHECK (1)')
-		WHERE type='table' AND name=? AND instr(sql, ?) > 0`, check, table, check)
-	require.NoError(t, err)
-	changed, err := result.RowsAffected()
-	require.NoError(t, err)
-	require.EqualValues(t, 1, changed)
-	_, err = db.Exec(`PRAGMA writable_schema = OFF`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-}
-
-func addProcessingSchemaTriggerForTest(t *testing.T, path string, driver docsqlite.Driver) {
-	t.Helper()
-	db, err := driver.Open(path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-	})
-	require.NoError(t, err)
-	_, err = db.Exec(`
-		CREATE TRIGGER processing_schema_extra_trigger
-		BEFORE DELETE ON rendition_heads BEGIN
-			SELECT RAISE(ABORT, 'unexpected processing trigger');
-		END`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
 }

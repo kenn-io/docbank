@@ -409,7 +409,7 @@ func (provider *Provider) postProcessError(
 }
 
 func providerError(code document.RenditionErrorCode, message string, cause error) error {
-	return providerutil.ClassifiedError("PyMuPDF", code, message, cause)
+	return providerutil.ClassifiedError("PyMuPDF", code, message, 0, cause)
 }
 
 func cleanEnvironment() []string {

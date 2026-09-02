@@ -319,25 +319,56 @@ type metadataQuerier interface {
 // exportMetadataSnapshot writes metadata from an already pinned SQLite snapshot.
 // Backup capture uses this entry point so metadata and blob membership come
 // from the same frozen transaction.
+// metadataSourceLayout names the released storage schema that a metadata
+// export reads from. Export and validation select record kinds by this
+// version; they never inspect sqlite_schema to guess which tables exist.
+type metadataSourceLayout struct {
+	schemaVersion int
+	backupScoped  bool
+}
+
+func currentMetadataLayout() metadataSourceLayout {
+	return metadataSourceLayout{schemaVersion: currentStorageSchemaVersion}
+}
+
+// legacyV090 reports the one layout recognized by structure rather than by a
+// recorded schema version.
+func (layout metadataSourceLayout) legacyV090() bool {
+	return layout.schemaVersion == 1
+}
+
+// hasDerivativeCatalog reports whether the source records auxiliary checksums,
+// source metadata, visual previews, and the processing catalog. Released
+// layouts before schema v4 predate all of them.
+func (layout metadataSourceLayout) hasDerivativeCatalog() bool {
+	return layout.schemaVersion >= 4
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false, false)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
 
 func exportBackupMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false, true)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w,
+		metadataSourceLayout{schemaVersion: currentStorageSchemaVersion, backupScoped: true})
 }
 
-func exportV090MetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, true, false)
+// exportReleasedMetadataSnapshot exports the logical authority of a database
+// that still uses an earlier released storage schema.
+func exportReleasedMetadataSnapshot(
+	ctx context.Context, tx metadataQuerier, w io.Writer, schemaVersion int,
+) error {
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w,
+		metadataSourceLayout{schemaVersion: schemaVersion})
 }
 
 func exportMetadataSnapshotWithVaultIdentity(
-	ctx context.Context, tx metadataQuerier, w io.Writer, legacyV090, backupScoped bool,
+	ctx context.Context, tx metadataQuerier, w io.Writer, layout metadataSourceLayout,
 ) error {
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
-	vaultID, err := readVaultIdentity(ctx, tx, legacyV090)
+	vaultID, err := readVaultIdentity(ctx, tx, layout.legacyV090())
 	if err != nil {
 		return fmt.Errorf("reading vault identity: %w", err)
 	}
@@ -345,9 +376,10 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
 		return fmt.Errorf("reading node ID high-water mark: %w", err)
 	}
-	if err := validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, legacyV090); err != nil {
+	if err := validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, layout); err != nil {
 		return fmt.Errorf("validating metadata snapshot: %w", err)
 	}
+	backupScoped := layout.backupScoped
 	write := newMetadataJSONWriter(w)
 	if err := write(metadataHeader{
 		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
@@ -358,11 +390,13 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportBlobs(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
-	if err := exportBlobChecksums(ctx, tx, write, backupScoped); err != nil {
-		return err
-	}
-	if err := exportSourceMetadata(ctx, tx, write, backupScoped); err != nil {
-		return err
+	if layout.hasDerivativeCatalog() {
+		if err := exportBlobChecksums(ctx, tx, write, backupScoped); err != nil {
+			return err
+		}
+		if err := exportSourceMetadata(ctx, tx, write, backupScoped); err != nil {
+			return err
+		}
 	}
 	if err := exportNodes(ctx, tx, write); err != nil {
 		return err
@@ -373,8 +407,10 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportVisualPreviews(ctx, tx, write); err != nil {
-		return err
+	if layout.hasDerivativeCatalog() {
+		if err := exportVisualPreviews(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if err := exportProvenance(ctx, tx, write); err != nil {
 		return err
@@ -393,6 +429,9 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportAuditMetadata(ctx, tx, write); err != nil {
 		return err
+	}
+	if !layout.hasDerivativeCatalog() {
+		return nil
 	}
 	return exportProcessingMetadata(ctx, tx, write)
 }
@@ -445,17 +484,6 @@ ORDER BY b.hash`
 func exportBlobChecksums(
 	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
 ) error {
-	var checksumTable bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM sqlite_master WHERE type='table' AND name='blob_checksums'
-	)`).Scan(&checksumTable); err != nil {
-		return fmt.Errorf("detecting blob checksum schema: %w", err)
-	}
-	// Released source layouts predate auxiliary checksums. Their deterministic
-	// cutover stream intentionally omits records for a later verified backfill.
-	if !checksumTable {
-		return nil
-	}
 	query := `SELECT blob_sha256,md5 FROM blob_checksums ORDER BY blob_sha256`
 	if backupScoped {
 		query = BackupBlobAuthorityCTE + `
@@ -486,14 +514,6 @@ ORDER BY c.blob_sha256`
 }
 
 func exportSourceMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool) error {
-	var present bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
-		WHERE type='table' AND name='source_metadata_generations')`).Scan(&present); err != nil {
-		return fmt.Errorf("detecting source metadata schema: %w", err)
-	}
-	if !present {
-		return nil
-	}
 	query := `SELECT generation_id,source_sha256,contract_version,extractor_fingerprint,
 		canonical_json,checksum,created_at FROM source_metadata_generations ORDER BY generation_id`
 	if backupScoped {
@@ -565,14 +585,6 @@ func validateSourceMetadataGenerationRecord(record metadataSourceMetadataGenerat
 }
 
 func exportVisualPreviews(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	var present bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
-		WHERE type='table' AND name='visual_preview_generations')`).Scan(&present); err != nil {
-		return fmt.Errorf("detecting visual preview schema: %w", err)
-	}
-	if !present {
-		return nil
-	}
 	rows, err := tx.QueryContext(ctx, `SELECT generation_id,vault_uid,content_version_id,
 		source_sha256,contract_version,recipe_fingerprint,canonical_result,checksum,created_at,
 		state,output_blob_hash,output_size,output_media_type,output_width,output_height,
@@ -891,20 +903,15 @@ func stringPtr(v sql.NullString) *string {
 	return &v.String
 }
 
-// ImportMetadata replaces the pristine root in a newly created store with a
-// logical JSONL snapshot. It refuses a store containing user or pack state.
+// ImportMetadata imports one deterministic logical metadata snapshot into a
+// pristine target. It proves relationships and identities, not physical
+// bytes: a restore must call VerifyRenditionBlobBytes after every loose or
+// packed blob is available and before publishing the target.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
-	return s.importMetadata(ctx, r, true)
+	return s.importMetadata(ctx, r)
 }
 
-// ImportMetadataForBackupRestore imports logical metadata before Kit restores
-// physical content. The backup restore must call VerifyRenditionBlobBytes after
-// every loose or packed blob is available and before publishing the target.
-func (s *Store) ImportMetadataForBackupRestore(ctx context.Context, r io.Reader) error {
-	return s.importMetadata(ctx, r, false)
-}
-
-func (s *Store) importMetadata(ctx context.Context, r io.Reader, verifyProcessingBytes bool) error {
+func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -917,7 +924,7 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader, verifyProcessin
 		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
-		header, err := s.importMetadataLines(ctx, tx, r, verifyProcessingBytes)
+		header, err := s.importMetadataLines(ctx, tx, r)
 		if err != nil {
 			return err
 		}
@@ -1009,7 +1016,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		{"rendition_lexical_generations", `SELECT COUNT(*) FROM rendition_lexical_generations`},
 		{"rendition_lexical_generation_manifests", `SELECT COUNT(*) FROM rendition_lexical_generation_manifests`},
 		{"rendition_lexical_generation_builds", `SELECT COUNT(*) FROM rendition_lexical_generation_builds`},
-		{"rendition_lexical_fts", `SELECT COUNT(*) FROM rendition_lexical_fts`},
+		{"rendition_lexical_index", `SELECT COUNT(*) FROM rendition_lexical_index`},
 		{"rendition_lexical_heads", `SELECT COUNT(*) FROM rendition_lexical_heads`},
 	} {
 		var exists bool
@@ -1033,7 +1040,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 }
 
 func (s *Store) importMetadataLines(
-	ctx context.Context, tx *sql.Tx, r io.Reader, verifyProcessingBytes bool,
+	ctx context.Context, tx *sql.Tx, r io.Reader,
 ) (metadataHeader, error) {
 	dec := jsontext.NewDecoder(bufio.NewReader(r))
 	rawHeader, err := dec.ReadValue()
@@ -1069,14 +1076,14 @@ func (s *Store) importMetadataLines(
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw, verifyProcessingBytes); err != nil {
+		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
 
 func (s *Store) importMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value, verifyProcessingBytes bool,
+	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
@@ -1086,7 +1093,7 @@ func (s *Store) importMetadataRecord(
 		return err
 	}
 	if isProcessingMetadataType(kind) {
-		return s.importProcessingMetadataRecord(ctx, tx, kind, raw, verifyProcessingBytes)
+		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -1358,18 +1365,18 @@ var metadataHeaderFields = []string{metadataTypeField, "format", "version", audi
 var metadataRequiredFields = map[string][]string{
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
-	metadataSourceMetadataGenerationType:   {metadataTypeField, "generation_id", "source_sha256", "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
-	metadataSourceMetadataHeadType:         {metadataTypeField, "source_sha256", "generation_id", "published_at"},
-	metadataVisualPreviewGenerationType:    {metadataTypeField, "generation_id", auditVaultIDField, "content_version_id", "source_sha256", "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
+	metadataSourceMetadataGenerationType:   {metadataTypeField, "generation_id", columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
+	metadataSourceMetadataHeadType:         {metadataTypeField, columnSourceSHA256, "generation_id", "published_at"},
+	metadataVisualPreviewGenerationType:    {metadataTypeField, "generation_id", auditVaultIDField, "content_version_id", columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:          {metadataTypeField, "content_version_id", "generation_id", "published_at"},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
-	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", metadataSizeField},
+	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
-	"extracted_text":                       {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	"extracted_text":                       {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 	metadataAuditAuthorityType:             {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
 	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
 	metadataAuditMembershipType:            {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
@@ -1738,13 +1745,13 @@ func validateProvenanceTime(value string) error {
 }
 
 func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence int64) error {
-	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, false)
+	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, currentMetadataLayout())
 }
 
 func validateMetadataStateWithVaultIdentity(
-	ctx context.Context, tx metadataQuerier, nodeSequence int64, legacyV090 bool,
+	ctx context.Context, tx metadataQuerier, nodeSequence int64, layout metadataSourceLayout,
 ) error {
-	vaultID, err := readVaultIdentity(ctx, tx, legacyV090)
+	vaultID, err := readVaultIdentity(ctx, tx, layout.legacyV090())
 	if err != nil {
 		return fmt.Errorf("reading vault identity: %w", err)
 	}
@@ -1757,11 +1764,13 @@ func validateMetadataStateWithVaultIdentity(
 	if err := validateWatchSourceRelations(ctx, tx); err != nil {
 		return err
 	}
-	if err := validateProcessingMetadataState(ctx, tx); err != nil {
-		return err
-	}
-	if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
-		return err
+	if layout.hasDerivativeCatalog() {
+		if err := validateProcessingMetadataState(ctx, tx); err != nil {
+			return err
+		}
+		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
+			return err
+		}
 	}
 	topology, err := loadAuditTopologyRows(ctx, tx)
 	if err != nil {
@@ -1800,14 +1809,6 @@ func validateMetadataStateWithVaultIdentity(
 func validateVisualPreviewMetadataState(
 	ctx context.Context, tx metadataQuerier, vaultID string,
 ) error {
-	var present bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
-		WHERE type='table' AND name='visual_preview_generations')`).Scan(&present); err != nil {
-		return fmt.Errorf("detecting visual preview metadata: %w", err)
-	}
-	if !present {
-		return nil
-	}
 	var mismatch bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM visual_preview_generations g

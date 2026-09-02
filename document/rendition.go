@@ -8,50 +8,70 @@ import (
 // RenditionContractV1 identifies the durable, sanitized rendition contract.
 const RenditionContractV1 = "rendition/v1"
 
-// RenditionPolicy binds rendition construction to the frozen document
-// normalization limits.
-type RenditionPolicy struct {
-	normalization   NormalizePolicy
-	maxSegmentRunes int
+// Sanitizer bounds fixed for rendition/v1. They are part of the policy
+// identity so a future change splits shared builds instead of reusing them.
+const (
+	renditionMaxSourceUnitBytes = 4_000_000
+	renditionMaxLinkChars       = 2_048
+)
+
+// RenditionLimits are the profile-owned bounds applied while building a
+// rendition: the whole-document budget, the per-unit truncation point, and
+// the lexical segment size.
+type RenditionLimits struct {
+	MaxDocumentChars int
+	MaxUnitRunes     int
+	MaxSegmentRunes  int
 }
 
-// NewRenditionPolicy returns a policy whose bounds match the supplied document
-// normalization policy and, when supplied, the canonical evidence-lexical
-// segment limit. The normalization chunk limit remains the compatibility
-// default for callers that do not publish against a processing profile.
-func NewRenditionPolicy(normalization NormalizePolicy, lexicalSegmentLimit ...int) (RenditionPolicy, error) {
-	if err := normalization.validate(); err != nil {
-		return RenditionPolicy{}, fmt.Errorf("rendition normalization policy: %w", err)
+// RenditionPolicy binds rendition construction to one immutable set of
+// limits. Renditions never chunk, so it carries no chunk bounds.
+type RenditionPolicy struct {
+	maxDocumentChars   int
+	maxUnitRunes       int
+	maxSegmentRunes    int
+	maxSourceUnitBytes int
+	maxLinkChars       int
+}
+
+// NewRenditionPolicy returns a policy that truncates every unit at the
+// supplied profile limits and segments text at the lexical segment size.
+func NewRenditionPolicy(limits RenditionLimits) (RenditionPolicy, error) {
+	policy := RenditionPolicy{
+		maxDocumentChars:   limits.MaxDocumentChars,
+		maxUnitRunes:       limits.MaxUnitRunes,
+		maxSegmentRunes:    limits.MaxSegmentRunes,
+		maxSourceUnitBytes: renditionMaxSourceUnitBytes,
+		maxLinkChars:       renditionMaxLinkChars,
 	}
-	if len(lexicalSegmentLimit) > 1 {
-		return RenditionPolicy{}, errors.New("rendition policy accepts at most one lexical segment limit")
+	if err := policy.validate(); err != nil {
+		return RenditionPolicy{}, err
 	}
-	maxSegmentRunes := normalization.maxChunkRunes
-	if len(lexicalSegmentLimit) == 1 {
-		maxSegmentRunes = lexicalSegmentLimit[0]
-	}
-	if maxSegmentRunes <= 0 || maxSegmentRunes > maxEvidenceSegmentRunes {
-		return RenditionPolicy{}, fmt.Errorf(
-			"rendition max segment runes must be between 1 and %d", maxEvidenceSegmentRunes)
-	}
-	return RenditionPolicy{
-		normalization: normalization, maxSegmentRunes: maxSegmentRunes,
-	}, nil
+	return policy, nil
 }
 
 func (p RenditionPolicy) validate() error {
-	if err := p.normalization.validate(); err != nil {
-		return fmt.Errorf("rendition policy: %w", err)
+	if p.maxDocumentChars <= 0 {
+		return errors.New("rendition policy max document chars must be positive")
+	}
+	if p.maxUnitRunes <= 0 || p.maxUnitRunes > maxEvidenceUnitRunes {
+		return fmt.Errorf("rendition policy max unit runes must be between 1 and %d", maxEvidenceUnitRunes)
 	}
 	if p.maxSegmentRunes <= 0 || p.maxSegmentRunes > maxEvidenceSegmentRunes {
 		return fmt.Errorf("rendition policy max segment runes must be between 1 and %d", maxEvidenceSegmentRunes)
 	}
+	if p.maxSourceUnitBytes <= 0 || p.maxLinkChars <= 0 {
+		return errors.New("rendition policy sanitizer bounds must be positive")
+	}
 	return nil
 }
 
-// MaxSegmentRunes returns the durable lexical segment bound carried by the
-// policy for publication-profile validation.
-func (p RenditionPolicy) MaxSegmentRunes() int { return p.maxSegmentRunes }
+// Limits returns the profile-owned bounds carried by the policy.
+func (p RenditionPolicy) Limits() RenditionLimits {
+	return RenditionLimits{
+		MaxDocumentChars: p.maxDocumentChars, MaxUnitRunes: p.maxUnitRunes, MaxSegmentRunes: p.maxSegmentRunes,
+	}
+}
 
 // RenditionWarningV1 records a non-fatal loss of source provenance while
 // retaining sanitized readable evidence.
@@ -96,13 +116,6 @@ type RenditionV1 struct {
 	MarkdownChecksum string
 	Units            []NormalizedUnitV1
 	Warnings         []RenditionWarningV1
-}
-
-func validateRenditionPolicy(policy RenditionPolicy) error {
-	if err := policy.validate(); err != nil {
-		return err
-	}
-	return nil
 }
 
 func invalidRenditionError(reason string) error {

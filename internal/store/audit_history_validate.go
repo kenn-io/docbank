@@ -1302,11 +1302,11 @@ func (replay *auditedHistoryReplay) validateContentTransitionSource(
 	if sourceRevision >= priorRevision+1 {
 		return errors.New("content revert source is not older than the resulting revision")
 	}
-	sourceHash, err := auditDigestField(source, "blob_hash")
+	sourceHash, err := auditDigestField(source, columnBlobHash)
 	if err != nil {
 		return err
 	}
-	if err := requireAuditDigest(post, "blob_hash", sourceHash); err != nil {
+	if err := requireAuditDigest(post, columnBlobHash, sourceHash); err != nil {
 		return errors.New("content revert bytes do not match its source")
 	}
 	sourceSize, err := auditUnsignedField(source, metadataSizeField)

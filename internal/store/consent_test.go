@@ -331,7 +331,7 @@ func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testin
 	require.NoError(t, err)
 	require.NotEqual(t, grant.ProcessingIncarnationID, freshIncarnation.ID)
 
-	require.NoError(t, target.ImportMetadataForBackupRestore(t.Context(), bytes.NewReader(snapshot.Bytes())))
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(snapshot.Bytes())))
 	current, err := target.CurrentProcessingIncarnation(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, freshIncarnation.ID, current.ID)

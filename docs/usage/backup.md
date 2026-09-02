@@ -239,6 +239,13 @@ DOCBANK_HOME=~/Restores/docbank-test docbank tree /
 DOCBANK_HOME=~/Restores/docbank-test docbank daemon stop
 ```
 
+## Backups move forward only
+
+A backup records every kind of authority the writing release knows about. An
+older release refuses a snapshot that contains a record kind it does not
+understand rather than restoring a vault with silent gaps, so restore with the
+release that wrote the backup or a newer one.
+
 ## Repository placement
 
 Keep the repository outside `$DOCBANK_HOME`. It is independent archive state,

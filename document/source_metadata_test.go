@@ -27,7 +27,7 @@ func TestSourceMetadataV1CanonicalGolden(t *testing.T) {
 					Offset: "-07:00", Precision: SourceMetadataPrecisionSecond, Timezone: SourceMetadataTimezoneOffset,
 				}}},
 			{Key: "title", Namespace: "pdf.info", SourceField: "Title",
-				Value: SourceMetadataValueV1{Kind: SourceMetadataString, String: "Synthetic report"}},
+				Value: SourceMetadataValueV1{Kind: SourceMetadataString, String: new("Synthetic report")}},
 		},
 		Warnings: []SourceMetadataWarningV1{{
 			Code: "unparseable_timestamp", Namespace: "pdf.info", SourceField: "ModDate",
@@ -53,7 +53,7 @@ func TestSourceMetadataV1CanonicalGolden(t *testing.T) {
 func TestSourceMetadataV1RejectsAmbiguityAndUnboundedValues(t *testing.T) {
 	base := SourceMetadataV1{ContractVersion: SourceMetadataContractV1,
 		Fields: []SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
-			Value: SourceMetadataValueV1{Kind: SourceMetadataString, String: "safe"}}}}
+			Value: SourceMetadataValueV1{Kind: SourceMetadataString, String: new("safe")}}}}
 	for _, testCase := range []struct {
 		name   string
 		mutate func(*SourceMetadataV1)
@@ -63,10 +63,10 @@ func TestSourceMetadataV1RejectsAmbiguityAndUnboundedValues(t *testing.T) {
 			v.Fields = append(v.Fields, v.Fields[0])
 		}},
 		{name: "invalid UTF-8", want: "UTF-8", mutate: func(v *SourceMetadataV1) {
-			v.Fields[0].Value.String = string([]byte{0xff})
+			v.Fields[0].Value.String = new(string([]byte{0xff}))
 		}},
 		{name: "oversized value", want: "too large", mutate: func(v *SourceMetadataV1) {
-			v.Fields[0].Value.String = string(make([]byte, MaxSourceMetadataValueBytes+1))
+			v.Fields[0].Value.String = new(string(make([]byte, MaxSourceMetadataValueBytes+1)))
 		}},
 		{name: "oversized key", want: "forbidden canonical key", mutate: func(v *SourceMetadataV1) {
 			v.Fields[0].Key = "office.custom." + strings.Repeat("a", MaxSourceMetadataLabelBytes)

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -89,12 +90,10 @@ func (registry *RenditionRuntimeRegistry) WaitReady(ctx context.Context) error {
 func (registry *RenditionRuntimeRegistry) Register(
 	descriptorFingerprint string, runtime RenditionRuntime,
 ) error {
-	if registry == nil || len(descriptorFingerprint) != sha256.Size*2 ||
-		renditionInterfaceNil(runtime) {
+	if registry == nil || renditionInterfaceNil(runtime) {
 		return errors.New("rendition runtime registration is invalid")
 	}
-	if _, err := hex.DecodeString(descriptorFingerprint); err != nil ||
-		descriptorFingerprint != string(bytes.ToLower([]byte(descriptorFingerprint))) {
+	if !canonical.IsSHA256Hex(descriptorFingerprint) {
 		return errors.New("rendition runtime descriptor fingerprint is invalid")
 	}
 	registry.mu.Lock()
@@ -461,7 +460,11 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 			worker.clock().UTC(), execution.Provider, execution.Upload, execution.Authorization,
 			execution.EvidencePolicy, execution.RenditionPolicy)
 		if sealErr != nil {
-			if document.IsRenditionAuthorizationPolicyMismatch(sealErr) {
+			// An invalid authorization or upload cannot be fixed by retrying
+			// the same sealed inputs. An expired interval can: a new attempt
+			// prepares a fresh one.
+			if errors.Is(sealErr, document.ErrRenditionAuthorizationInvalid) ||
+				errors.Is(sealErr, document.ErrRenditionUploadInvalid) {
 				return true, worker.markFailed(
 					ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
 			}

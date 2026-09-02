@@ -36,7 +36,7 @@ import (
 func TestClientPreservesSourceMetadataOnStatAndVersionDetail(t *testing.T) {
 	metadata := &api.SourceMetadata{ContractVersion: document.SourceMetadataContractV1,
 		ExtractorFingerprint: strings.Repeat("a", 64), Checksum: strings.Repeat("b", 64),
-		Fields:   []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Synthetic"}}},
+		Fields:   []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic")}}},
 		Warnings: []document.SourceMetadataWarningV1{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -51,7 +51,7 @@ func TestClientPreservesSourceMetadataOnStatAndVersionDetail(t *testing.T) {
 	node, err := c.Stat(t.Context(), "/report.pdf")
 	require.NoError(t, err)
 	require.NotNil(t, node.SourceMetadata)
-	assert.Equal(t, "Synthetic", node.SourceMetadata.Fields[0].Value.String)
+	assert.Equal(t, "Synthetic", *node.SourceMetadata.Fields[0].Value.String)
 	version, err := c.Version(t.Context(), "11111111-1111-4111-8111-111111111111")
 	require.NoError(t, err)
 	require.NotNil(t, version.SourceMetadata)
@@ -1254,10 +1254,13 @@ func TestStorageRepackRoundTrip(t *testing.T) {
 
 	var report api.StorageRepackReport
 	var repackErr error
+	// The pack becomes eligible once the platform clock has moved past its
+	// creation time. Each attempt is a daemon round trip, so a loaded CI
+	// runner needs more than a second of attempts.
 	require.Eventually(t, func() bool {
 		report, repackErr = c.StorageRepack(t.Context(), 0, time.Nanosecond, 1)
 		return repackErr == nil && report.PacksRewritten == 1
-	}, time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"pack should become eligible after the platform clock advances")
 	require.NoError(t, repackErr)
 	assert.Equal(t, 1, report.PacksRewritten)

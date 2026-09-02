@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -268,7 +267,7 @@ var processingMetadataRequiredFields = map[string][]string{
 		"consent_fingerprint", "rendition_disclosure_fingerprint", "trust_boundary",
 	},
 	metadataRenditionBuildType: {
-		metadataTypeField, "build_id", auditVaultIDField, "source_sha256",
+		metadataTypeField, "build_id", auditVaultIDField, columnSourceSHA256,
 		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
 		"captured_artifact_policy_fingerprint", "captured_artifact_policy",
 		"authorization_checksum", "provider_operation_id", "provider_receipt",
@@ -277,7 +276,7 @@ var processingMetadataRequiredFields = map[string][]string{
 		"declared_artifact_count", "unit_count", "lexical_segment_count",
 	},
 	metadataRenditionArtifactType: {
-		metadataTypeField, "build_id", "artifact_id", "role", "blob_hash",
+		metadataTypeField, "build_id", "artifact_id", "role", columnBlobHash,
 		metadataSizeField, "checksum", "state",
 	},
 	metadataRenditionUnitType: {
@@ -308,11 +307,11 @@ var processingMetadataRequiredFields = map[string][]string{
 		"fencing_token", "recorded_at", "active", "released_at",
 	},
 	metadataDerivativePurgeSuppressionType: {
-		metadataTypeField, "source_sha256", "profile_fingerprint", "build_id",
+		metadataTypeField, columnSourceSHA256, "profile_fingerprint", "build_id",
 		"purged_at", "active", "superseded_at", "superseding_build_id",
 	},
 	metadataRenditionJobType: {
-		metadataTypeField, "job_id", auditVaultIDField, "source_sha256",
+		metadataTypeField, "job_id", auditVaultIDField, columnSourceSHA256,
 		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
 		"captured_artifact_policy_fingerprint", "captured_artifact_policy",
 		"execution_identity_fingerprint", "execution_identity", "execution_snapshot",
@@ -331,13 +330,6 @@ var processingMetadataRequiredFields = map[string][]string{
 }
 
 func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	present, err := processingMetadataSchemaPresent(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if !present {
-		return nil
-	}
 	if err := exportProcessingConsent(ctx, tx, write); err != nil {
 		return err
 	}
@@ -575,10 +567,6 @@ func exportProcessingConsentGrants(
 func exportLexicalGenerations(
 	ctx context.Context, tx metadataQuerier, write metadataWrite,
 ) error {
-	present, err := lexicalGenerationSchemaPresentTx(ctx, tx)
-	if err != nil || !present {
-		return err
-	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT g.generation_id,g.segment_count,m.manifest_digest,m.build_digest,g.built_at,
 		       EXISTS(SELECT 1 FROM rendition_lexical_heads h
@@ -901,7 +889,7 @@ func isProcessingMetadataType(kind string) bool {
 }
 
 func (s *Store) importProcessingMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value, verifyPhysicalBytes bool,
+	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
 	switch kind {
 	case metadataProcessingIncarnationType:
@@ -1076,7 +1064,7 @@ func (s *Store) importProcessingMetadataRecord(
 		}); err != nil {
 			return err
 		}
-		if err := s.validateImportedRenditionHead(ctx, tx, value, verifyPhysicalBytes); err != nil {
+		if err := validateImportedRenditionHead(ctx, tx, value); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `
@@ -1240,9 +1228,6 @@ func restoreLexicalGenerationTx(
 	if err := validateMetadataLexicalGeneration(value); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-		return fmt.Errorf("initializing restored lexical projection: %w", err)
-	}
 	segments := make([]lexicalManifestRow, 0, value.SegmentCount)
 	for _, buildID := range value.BuildIDs {
 		buildSegments, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
@@ -1270,13 +1255,8 @@ func restoreLexicalGenerationTx(
 				value.GenerationID, buildID, err)
 		}
 	}
-	for _, segment := range segments {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_fts(
-			generation_id,build_id,segment_id,text) VALUES(?,?,?,?)`,
-			value.GenerationID, segment.buildID, segment.segmentID, segment.text); err != nil {
-			return fmt.Errorf("rebuilding restored lexical generation %s: %w",
-				value.GenerationID, err)
-		}
+	if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
+		return fmt.Errorf("rebuilding restored lexical generation %s: %w", value.GenerationID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_manifests(
 		generation_id,manifest_digest,build_digest) VALUES(?,?,?)`,
@@ -1732,15 +1712,8 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 	var generationID string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		present, err := processingMetadataSchemaPresent(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !present {
-			return nil
-		}
 		var activeGenerationID string
-		err = tx.QueryRowContext(ctx, `SELECT generation_id
+		err := tx.QueryRowContext(ctx, `SELECT generation_id
 			FROM rendition_lexical_heads WHERE singleton=1`).Scan(&activeGenerationID)
 		if err == nil {
 			if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, activeGenerationID); err != nil {
@@ -1748,7 +1721,7 @@ func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 			}
 			return nil
 		}
-		if !errors.Is(err, sql.ErrNoRows) && !isMissingLexicalSchema(err) {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("reading restored lexical projection head: %w", err)
 		}
 		var heads int
@@ -1776,10 +1749,7 @@ func (s *Store) RebuildRenditionLexicalProjection(ctx context.Context) error {
 		return fmt.Errorf("rebuilding restored lexical projection: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
-			ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`, generationID,
-		); err != nil {
+		if err := s.publishLexicalHeadTx(ctx, tx, generationID); err != nil {
 			return fmt.Errorf("publishing rebuilt lexical projection: %w", err)
 		}
 		return nil
@@ -1815,8 +1785,12 @@ func verifyRenditionBlob(
 	return nil
 }
 
-func (s *Store) validateImportedRenditionHead(
-	ctx context.Context, tx *sql.Tx, head metadataRenditionHead, verifyPhysicalBytes bool,
+// validateImportedRenditionHead checks that a restored head resolves through
+// its exact attachment, build, and cataloged bytes. Physical bytes are proven
+// later by VerifyRenditionBlobBytes, once every loose or packed blob is
+// available through the restored catalog.
+func validateImportedRenditionHead(
+	ctx context.Context, tx *sql.Tx, head metadataRenditionHead,
 ) (retErr error) {
 	var buildID string
 	var source importedProcessingBlob
@@ -1836,89 +1810,6 @@ func (s *Store) validateImportedRenditionHead(
 	}
 	if err := validateRenditionBuildStateTx(ctx, tx, buildID); err != nil {
 		return err
-	}
-	blobs := []importedProcessingBlob{source}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT blob_hash,size FROM rendition_artifacts
-		WHERE build_id=? ORDER BY artifact_id`, buildID)
-	if err != nil {
-		return fmt.Errorf("reading imported rendition artifact bytes: %w", err)
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("closing imported rendition artifact bytes: %w", err))
-		}
-	}()
-	for rows.Next() {
-		var blob importedProcessingBlob
-		if err := rows.Scan(&blob.hash, &blob.size); err != nil {
-			return fmt.Errorf("scanning imported rendition artifact bytes: %w", err)
-		}
-		blobs = append(blobs, blob)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating imported rendition artifact bytes: %w", err)
-	}
-	if !verifyPhysicalBytes {
-		return nil
-	}
-
-	layout, err := packstore.NewLayout(
-		filepath.Join(filepath.Dir(s.path), "blobs"),
-		packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"},
-	)
-	if err != nil {
-		return fmt.Errorf("opening processing blob layout: %w", err)
-	}
-	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
-	if err != nil {
-		return fmt.Errorf("opening processing blob verifier: %w", err)
-	}
-	defer func() { retErr = errors.Join(retErr, backend.Close()) }()
-	verified := make(map[string]bool, len(blobs))
-	for _, blob := range blobs {
-		if verified[blob.hash] {
-			continue
-		}
-		if err := verifyImportedProcessingBlob(ctx, backend, blob); err != nil {
-			return err
-		}
-		verified[blob.hash] = true
-	}
-	return nil
-}
-
-func verifyImportedProcessingBlob(
-	ctx context.Context, backend *packstore.FilesystemBackend, blob importedProcessingBlob,
-) (retErr error) {
-	hash, err := packstore.ParseHash(blob.hash)
-	if err != nil {
-		return fmt.Errorf("parsing imported processing blob %s: %w", blob.hash, err)
-	}
-	stream, logicalSize, err := backend.OpenLoose(ctx, hash, packstore.LooseLocation{
-		Encoding: packstore.LooseEncodingRaw, LogicalSize: blob.size, StoredSize: blob.size,
-	})
-	if err != nil {
-		return fmt.Errorf("opening physical processing blob %s: %w", blob.hash, err)
-	}
-	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
-	if logicalSize != blob.size {
-		return fmt.Errorf(
-			"physical processing blob %s size %d does not match catalog size %d",
-			blob.hash, logicalSize, blob.size,
-		)
-	}
-	read, err := io.Copy(io.Discard, stream)
-	if err != nil {
-		return fmt.Errorf("reading physical processing blob %s: %w", blob.hash, err)
-	}
-	if read != blob.size {
-		return fmt.Errorf(
-			"physical processing blob %s read %d bytes, want %d", blob.hash, read, blob.size,
-		)
-	}
-	if err := stream.Verify(); err != nil {
-		return fmt.Errorf("verifying physical processing blob %s: %w", blob.hash, err)
 	}
 	return nil
 }
@@ -2135,15 +2026,32 @@ func validateMetadataRenditionAttachment(value metadataRenditionAttachment) erro
 	return validateMetadataTime("rendition attachment attached_at", value.AttachedAt)
 }
 
+// validateProcessingBlobReferences rejects derivative rows that name bytes
+// the blob catalog no longer records. Foreign keys enforce this on a normal
+// connection; the check also covers databases edited with foreign keys off.
+func validateProcessingBlobReferences(ctx context.Context, tx metadataQuerier) error {
+	for _, reference := range blobRootReferences {
+		if reference.table == "content_versions" {
+			continue
+		}
+		var dangling bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM `+reference.table+` r LEFT JOIN blobs b ON b.hash=r.`+reference.column+`
+			WHERE r.`+reference.column+` IS NOT NULL AND b.hash IS NULL)`).Scan(&dangling); err != nil {
+			return fmt.Errorf("validating %s blob references: %w", reference.table, err)
+		}
+		if dangling {
+			return fmt.Errorf("%s references missing blob authority", reference.table)
+		}
+	}
+	return nil
+}
+
 func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) error {
-	present, err := processingMetadataSchemaPresent(ctx, tx)
-	if err != nil {
+	if err := validateProcessingConsentState(ctx, tx); err != nil {
 		return err
 	}
-	if !present {
-		return nil
-	}
-	if err := validateProcessingConsentState(ctx, tx); err != nil {
+	if err := validateProcessingBlobReferences(ctx, tx); err != nil {
 		return err
 	}
 	profileIDs, err := loadProcessingMetadataIDs(
@@ -2333,34 +2241,28 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	lexicalSchema, err := lexicalGenerationSchemaPresentTx(ctx, tx)
-	if err != nil {
-		return err
+	var missingJobGeneration bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM rendition_jobs j
+		LEFT JOIN rendition_lexical_generations g
+		  ON g.generation_id=j.lexical_generation_id
+		WHERE j.phase IN ('generation_staged','published')
+		  AND g.generation_id IS NULL
+	)`).Scan(&missingJobGeneration); err != nil {
+		return fmt.Errorf("validating rendition job staged generation: %w", err)
 	}
-	if lexicalSchema {
-		var missingJobGeneration bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_jobs j
-			LEFT JOIN rendition_lexical_generations g
-			  ON g.generation_id=j.lexical_generation_id
-			WHERE j.phase IN ('generation_staged','published')
-			  AND g.generation_id IS NULL
-		)`).Scan(&missingJobGeneration); err != nil {
-			return fmt.Errorf("validating rendition job staged generation: %w", err)
-		}
-		if missingJobGeneration {
-			return errors.New("rendition job staged generation is missing")
-		}
-		var generationID string
-		err = tx.QueryRowContext(ctx, `SELECT generation_id FROM rendition_lexical_heads
-			WHERE singleton=1`).Scan(&generationID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("reading restored lexical head: %w", err)
-		}
-		if err == nil {
-			if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
-				return err
-			}
+	if missingJobGeneration {
+		return errors.New("rendition job staged generation is missing")
+	}
+	var generationID string
+	err = tx.QueryRowContext(ctx, `SELECT generation_id FROM rendition_lexical_heads
+		WHERE singleton=1`).Scan(&generationID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reading restored lexical head: %w", err)
+	}
+	if err == nil {
+		if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
+			return err
 		}
 	}
 	return validateCurrentRenditionRootState(ctx, tx)
@@ -2582,16 +2484,9 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=?)`, root.TargetID,
 			).Scan(&present)
 		case RenditionRootLexicalGeneration:
-			var schema bool
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-				SELECT 1 FROM sqlite_schema WHERE type='table'
-				AND name='rendition_lexical_generations'
-			)`).Scan(&schema)
-			if err == nil && schema {
-				err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-					SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
-				)`, root.TargetID).Scan(&present)
-			}
+				SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
+			)`, root.TargetID).Scan(&present)
 		}
 		if err != nil {
 			return fmt.Errorf("validating current rendition root %s target: %w", root.ID, err)
@@ -2706,26 +2601,6 @@ func requireCanonicalProcessingJSON(raw jsontext.Value, subject string) (jsontex
 		return nil, fmt.Errorf("%s JSON is not canonical", subject)
 	}
 	return canonical, nil
-}
-
-func processingMetadataSchemaPresent(ctx context.Context, tx metadataQuerier) (bool, error) {
-	var count int
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM sqlite_schema
-		WHERE type='table' AND name IN (
-			'processing_profiles','rendition_builds','rendition_artifacts',
-			'rendition_units','rendition_lexical_segments',
-			'rendition_attachments','rendition_heads'
-		)`).Scan(&count); err != nil {
-		return false, fmt.Errorf("detecting processing metadata schema: %w", err)
-	}
-	if count == 0 {
-		return false, nil
-	}
-	if count != 7 {
-		return false, fmt.Errorf("processing metadata schema is incomplete: found %d of 7 tables", count)
-	}
-	return true, nil
 }
 
 func loadProcessingMetadataIDs(

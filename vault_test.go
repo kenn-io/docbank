@@ -161,7 +161,7 @@ func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
 	var title string
 	for _, field := range metadata.Fields {
 		if field.Key == "title" {
-			title = field.Value.String
+			title = *field.Value.String
 		}
 	}
 	assert.Equal(t, "First event", title)
@@ -185,7 +185,7 @@ func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) 
 		ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{{
 			Key: "title", Namespace: "calendar", SourceField: "SUMMARY",
-			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Stale event"},
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Stale event")},
 		}},
 	})
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) 
 	var title string
 	for _, field := range metadata.Fields {
 		if field.Key == "title" {
-			title = field.Value.String
+			title = *field.Value.String
 		}
 	}
 	assert.Equal(t, "Current event", title)

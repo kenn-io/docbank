@@ -27,6 +27,11 @@ type SourceMetadataGeneration struct {
 	CreatedAt            string
 }
 
+// ErrSourceMetadataCorrupt means a stored source-metadata generation no
+// longer matches its own canonical checksum. Node reads omit the evidence
+// rather than fail; verification reports the corrupt row.
+var ErrSourceMetadataCorrupt = errors.New("stored source metadata failed canonical checksum validation")
+
 // SourceMetadataTarget is one retained original missing a generation from the
 // current extractor.
 type SourceMetadataTarget struct {
@@ -150,15 +155,10 @@ func activeSourceMetadata(
 	}
 	metadata, checksum, err := document.DecodeSourceMetadataV1(generation.CanonicalJSON)
 	if err != nil || checksum != generation.Checksum {
-		return SourceMetadataGeneration{}, document.SourceMetadataV1{}, errors.New("stored source metadata failed canonical checksum validation")
+		return SourceMetadataGeneration{}, document.SourceMetadataV1{}, fmt.Errorf(
+			"source metadata generation %s: %w", generation.GenerationID, ErrSourceMetadataCorrupt)
 	}
 	return generation, metadata, nil
-}
-
-// MissingSourceMetadataTargets returns a deterministic, resumable batch of
-// retained originals not processed by the named extractor.
-func (s *Store) MissingSourceMetadataTargets(ctx context.Context, fingerprint string, limit int) ([]SourceMetadataTarget, error) {
-	return s.MissingSourceMetadataTargetsAfter(ctx, fingerprint, "", limit)
 }
 
 // MissingSourceMetadataTargetsAfter returns the next ordered page after one
@@ -216,7 +216,7 @@ func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID stri
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
-	view, err := sourceMetadataViewForVersion(ctx, tx, version, node)
+	view, err := sourceMetadataViewForVersion(ctx, tx, version, node, "")
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
@@ -226,8 +226,12 @@ func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID stri
 	return view, nil
 }
 
+// sourceMetadataViewForVersion joins the active generation for the version's
+// bytes with attachment facts. livePath is the node's current path when the
+// caller already computed it; an empty value is computed here for a live
+// current version.
 func sourceMetadataViewForVersion(
-	ctx context.Context, q metadataQuerier, version ContentVersion, node Node,
+	ctx context.Context, q metadataQuerier, version ContentVersion, node Node, livePath string,
 ) (SourceMetadataView, error) {
 	generation, metadata, err := activeSourceMetadata(ctx, q, version.BlobHash)
 	if err != nil {
@@ -237,9 +241,12 @@ func sourceMetadataViewForVersion(
 	if version.ID == node.CurrentVersionID && node.TrashedAt == nil {
 		facts.Filename = node.Name
 		facts.Extension = strings.ToLower(filepath.Ext(node.Name))
-		facts.Path, err = pathOf(ctx, q, node.ID)
-		if err != nil {
-			return SourceMetadataView{}, err
+		facts.Path = livePath
+		if facts.Path == "" {
+			facts.Path, err = pathOf(ctx, q, node.ID)
+			if err != nil {
+				return SourceMetadataView{}, err
+			}
 		}
 		err = q.QueryRowContext(ctx, `SELECT p.original_path,COALESCE(p.original_mtime,''),i.started_at
 			FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=?
@@ -295,10 +302,10 @@ func (s *Store) nodeSourceMetadataView(
 		if versionErr != nil {
 			return NodeSourceMetadataView{}, versionErr
 		}
-		metadata, metadataErr := sourceMetadataViewForVersion(ctx, tx, version, node)
+		metadata, metadataErr := sourceMetadataViewForVersion(ctx, tx, version, node, nodeView.Path)
 		if metadataErr == nil {
 			view.SourceMetadata = &metadata
-		} else if !errors.Is(metadataErr, ErrNotFound) {
+		} else if !errors.Is(metadataErr, ErrNotFound) && !errors.Is(metadataErr, ErrSourceMetadataCorrupt) {
 			return NodeSourceMetadataView{}, metadataErr
 		}
 	}

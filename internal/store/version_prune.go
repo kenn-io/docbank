@@ -487,11 +487,7 @@ func versionPruneBlobStatsBatchTx(
 	rows, err := tx.Query(`
 			SELECT refs.blob_hash, COUNT(*), b.size
 			FROM (
-				SELECT blob_hash FROM content_versions
-				UNION ALL
-				SELECT output_blob_hash AS blob_hash
-				FROM visual_preview_generations
-				WHERE output_blob_hash IS NOT NULL
+			`+blobReferenceRowsSQL(blobRootReferences)+`
 			) refs
 			JOIN blobs b ON b.hash = refs.blob_hash
 			WHERE refs.blob_hash IN (`+placeholders(len(hashes))+`)

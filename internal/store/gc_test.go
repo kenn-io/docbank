@@ -60,7 +60,7 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 	assert.NotContains(t, exported.String(), "operational-backup")
 
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	require.NoError(t, restored.RebuildRenditionLexicalProjection(ctx))
 	rebuilt, err := restored.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
@@ -555,8 +555,9 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 	assert.Equal(t, 2, report.RemovedArtifacts)
 	assert.Equal(t, 2, report.RemovedUnits)
 	assert.Equal(t, 2, report.RemovedLexicalSegments)
-	assert.Equal(t, 2, report.RemovedLexicalGenerations)
-	assert.Equal(t, 3, report.RemovedLexicalRows)
+	assert.Equal(t, 1, report.RemovedLexicalGenerations,
+		"the generation superseded by the legacy migration was collected at that head flip")
+	assert.Equal(t, 2, report.RemovedLexicalRows, "one indexed row per purged build")
 	assert.Equal(t, 1, report.RemovedLegacyCacheRows)
 	assert.Equal(t, []string{catalogMarkdownBlobHash, catalogEvidenceBlobHash},
 		report.PhysicalDerivativeBlobsPendingGC)
@@ -566,7 +567,7 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 		"rendition_heads", "rendition_attachments", "rendition_builds",
 		"rendition_artifacts", "rendition_units", "rendition_lexical_segments",
 		"rendition_lexical_heads", "rendition_lexical_generations",
-		"rendition_lexical_generation_manifests", "rendition_lexical_fts",
+		"rendition_lexical_generation_manifests", "rendition_lexical_index",
 		"extracted_text", "content_fts",
 	} {
 		var count int
@@ -697,7 +698,7 @@ func TestLateLegacyExtractionCannotRecreatePurgedDerivativeAfterRestore(t *testi
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	pending, err := restored.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
 	assert.Empty(t, pending, "restore must not recreate suppressed extraction work")
@@ -753,7 +754,7 @@ func TestPurgeBeforeLegacyExtractionSuppressesQueuedAndRestoredWorkByVersion(t *
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	require.NoError(t, restored.SeedTextExtractionQueue(
 		ctx, legacyPlainTextExtractor, legacyPlainTextExtractorVersion))
 	pending, err := restored.PendingTextExtractions(ctx, 10)
@@ -1159,7 +1160,7 @@ func TestPurgeRootedBuildLeavesItPhysicalButRemovesItFromActiveLexicalHead(t *te
 	active, err := s.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
 	var selectedRows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_fts
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_generation_builds
 		WHERE generation_id=? AND build_id=?`, active.ID, selected.ID).Scan(&selectedRows))
 	assert.Zero(t, selectedRows, "a build-only pin must not preserve active search authority")
 	hits, _, err := s.SearchPage(ctx, "retained", 10)
@@ -1480,7 +1481,7 @@ func TestPurgeDerivativesRollsBackEveryAuthorityOnManifestFailure(t *testing.T) 
 		(SELECT COUNT(*) FROM rendition_attachments),
 		(SELECT COUNT(*) FROM rendition_heads),
 		(SELECT COUNT(*) FROM rendition_lexical_generations),
-		(SELECT COUNT(*) FROM rendition_lexical_fts)`).Scan(
+		(SELECT COUNT(*) FROM rendition_lexical_index)`).Scan(
 		&builds, &artifacts, &attachments, &heads, &generations, &lexicalRows))
 	assert.Equal(t, []int{1, 2, 1, 1, 1, 1},
 		[]int{builds, artifacts, attachments, heads, generations, lexicalRows})
@@ -1560,7 +1561,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadataForBackupRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	require.NoError(t, restored.ValidateMetadata(ctx))
 }
 
