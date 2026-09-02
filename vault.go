@@ -5,6 +5,7 @@
 package docbank
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -437,6 +438,114 @@ func (v *Vault) VisualPreview(ctx context.Context, versionID string) (VisualPrev
 		return VisualPreview{}, err
 	}
 	return fromStoreVisualPreview(view), nil
+}
+
+// EnsureVisualPreview returns the current built-in preview for one exact
+// immutable content version, producing and publishing it synchronously when
+// the current recipe has not processed those bytes.
+func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
+	if err := v.begin(); err != nil {
+		return VisualPreview{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return VisualPreview{}, err
+	}
+	version, err := v.metadata.ContentVersionByID(ctx, versionID)
+	if err != nil {
+		return VisualPreview{}, err
+	}
+	recipe := internalprocessing.CurrentVisualPreviewRecipe()
+	_, recipeFingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
+	if err != nil {
+		return VisualPreview{}, err
+	}
+	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)
+	if err == nil && view.Generation.RecipeFingerprint == recipeFingerprint {
+		return fromStoreVisualPreview(view), nil
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return VisualPreview{}, err
+	}
+	reader, size, err := v.blobs.OpenSeekableContext(ctx, version.BlobHash)
+	if err != nil {
+		return VisualPreview{}, fmt.Errorf(
+			"opening visual preview source version %q: %w: %w",
+			versionID, ErrContentUnavailable, err,
+		)
+	}
+	if size != version.Size {
+		closeErr := reader.Close()
+		return VisualPreview{}, errors.Join(fmt.Errorf(
+			"visual preview source size %d does not match version size %d: %w",
+			size, version.Size, ErrContentUnavailable,
+		), closeErr)
+	}
+	product, produceErr := internalprocessing.ProduceVisualPreview(ctx, reader,
+		internalprocessing.VisualPreviewTarget{
+			SourceSHA256: version.BlobHash, Size: version.Size, MediaType: version.MimeType,
+		})
+	closeErr := reader.Close()
+	if err := errors.Join(produceErr, closeErr); err != nil {
+		if internalprocessing.IsSourceContentUnavailable(err) || closeErr != nil {
+			return VisualPreview{}, fmt.Errorf(
+				"producing visual preview for content version %q: %w: %w",
+				versionID, ErrContentUnavailable, err,
+			)
+		}
+		return VisualPreview{}, fmt.Errorf("producing visual preview for content version %q: %w", versionID, err)
+	}
+	canonical, _, err := document.MarshalVisualPreviewV1(product.Preview)
+	if err != nil {
+		return VisualPreview{}, err
+	}
+	if product.Preview.State == document.VisualPreviewReady {
+		err = v.publishReadyVisualPreview(ctx, versionID, canonical, product)
+	} else {
+		_, err = v.metadata.PublishVisualPreview(ctx, versionID, canonical, nil)
+	}
+	if err != nil {
+		return VisualPreview{}, err
+	}
+	view, err = v.metadata.ContentVersionVisualPreview(ctx, versionID)
+	if err != nil {
+		return VisualPreview{}, err
+	}
+	return fromStoreVisualPreview(view), nil
+}
+
+func (v *Vault) publishReadyVisualPreview(
+	ctx context.Context, versionID string, canonical []byte,
+	product internalprocessing.VisualPreviewProduct,
+) error {
+	return v.blobs.WithMutation(ctx, func() (retErr error) {
+		written, err := v.blobs.WriteDetailedContext(ctx, bytes.NewReader(product.Output))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if retErr != nil {
+				retErr = errors.Join(retErr, v.removeUnrecordedLoose(written.Hash))
+				return
+			}
+			if authority, authorityErr := v.metadata.PhysicalContent(ctx, written.Hash); authorityErr == nil && authority.Kind == "packed" {
+				// Publication is durable. Redundant loose cleanup is maintenance
+				// and must not turn committed success into failure.
+				_ = v.blobs.Remove(written.Hash)
+			}
+		}()
+		if written.Hash != product.Preview.Output.BlobSHA256 || written.Size != product.Preview.Output.Size {
+			return errors.New("visual preview output identity changed before publication")
+		}
+		physical, err := blobPhysical(written)
+		if err != nil {
+			return err
+		}
+		_, err = v.metadata.PublishVisualPreview(ctx, versionID, canonical, &physical)
+		return err
+	})
 }
 
 // OpenVisualPreview opens verified canonical preview bytes for one exact

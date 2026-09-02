@@ -155,13 +155,13 @@ it may disclose to its own users and transports.
 
 ## Read canonical visual previews
 
-`VisualPreview` returns the active result for one immutable content version.
-Ready results identify exact preview bytes and dimensions; unsupported and
-failed results carry a stable failure code without pretending that content is
-available.
+`EnsureVisualPreview` synchronously produces or reuses the current built-in
+preview for one immutable content version. Ready results identify exact preview
+bytes and dimensions; unsupported and failed results carry a stable failure
+code without pretending that content is available.
 
 ```go
-preview, err := vault.VisualPreview(ctx, versionID)
+preview, err := vault.EnsureVisualPreview(ctx, versionID)
 if err != nil {
     return err
 }
@@ -177,9 +177,10 @@ if preview.State == document.VisualPreviewReady {
 
 `OpenVisualPreview` uses the same verified-reader contract as original
 content. It returns `ErrVisualPreviewUnavailable` for a cataloged unsupported
-or failed result and `ErrNotFound` when no preview result exists. Opening an
-embedded vault does not start a preview producer; applications can read results
-after a processing owner has published them.
+or failed result and `ErrNotFound` when no preview result exists.
+`VisualPreview` remains a read-only lookup. Opening an embedded vault does not
+start a preview worker; applications choose when to call the synchronous
+producer.
 
 Both write receipts include `Physical`, which distinguishes logical bytes from
 their current raw, zstd, or packed representation. Most applications should
