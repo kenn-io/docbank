@@ -367,7 +367,7 @@ func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
 
-	source := mediatest.JPEG(2050, 2, color.RGBA{R: 220, G: 40, B: 20, A: 255})
+	source := mediatest.JPEG(4100, 2, color.RGBA{R: 220, G: 40, B: 20, A: 255})
 	receipt, err := vault.Create(t.Context(), "/photo.jpg", bytes.NewReader(source), CreateOptions{
 		MediaType: "image/jpeg", Expected: contentIdentity(source),
 	})
@@ -378,7 +378,7 @@ func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
 	require.NotNil(t, preview.Output)
 	assert.Equal(t, document.VisualPreviewReady, preview.State)
 	assert.Equal(t, "image/jpeg", preview.Output.MediaType)
-	assert.Equal(t, 2048, preview.Output.Width)
+	assert.Equal(t, 4096, preview.Output.Width)
 	assert.Equal(t, 2, preview.Output.Height)
 	assert.Equal(t, receipt.Version.ID, preview.Version.ID)
 
@@ -393,7 +393,7 @@ func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
 	require.NoError(t, opened.Reader.Close())
 	decoded, err := jpeg.Decode(bytes.NewReader(encoded))
 	require.NoError(t, err)
-	assert.Equal(t, 2048, decoded.Bounds().Dx())
+	assert.Equal(t, 4096, decoded.Bounds().Dx())
 	assert.Equal(t, 2, decoded.Bounds().Dy())
 }
 

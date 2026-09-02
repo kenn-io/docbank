@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	visualPreviewMaxEdgePixels   = 2048
+	visualPreviewMaxEdgePixels   = 4096
 	visualPreviewMaxSourcePixels = 100_000_000
 	visualPreviewJPEGQuality     = 90
 	visualPreviewMaxJPEGSegments = 1024
@@ -42,7 +42,7 @@ var visualPreviewRecipe = document.VisualPreviewRecipeV1{
 	FramePolicy:       "primary",
 	ProcessorFingerprint: fingerprintVisualPreviewProcessor(
 		"docbank-visual-preview:jpeg+png-stdlib-" + runtime.Version() +
-			"+x-image-draw-v0.44.0:max-edge=2048:quality=90:alpha=white:v2"),
+			"+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v3"),
 }
 
 // VisualPreviewTarget identifies one exact immutable source to process.

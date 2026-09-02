@@ -44,6 +44,14 @@ func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
 	assert.Equal(t, 3, decoded.Bounds().Dy())
 }
 
+func TestVisualPreviewPreservesHighDensityDetail(t *testing.T) {
+	recipe := CurrentVisualPreviewRecipe()
+	assert.Equal(t, 4096, recipe.MaxEdgePixels)
+	width, height := boundedVisualPreviewDimensions(6000, 4000)
+	assert.Equal(t, 4096, width)
+	assert.Equal(t, 2731, height)
+}
+
 func TestProduceVisualPreviewRejectsEmbeddedICCProfile(t *testing.T) {
 	tiff := syntheticTIFF(42, nil, []syntheticTIFFEntry{tiffShort(0xa001, 1)})
 	source := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1,
