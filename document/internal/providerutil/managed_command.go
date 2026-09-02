@@ -8,8 +8,8 @@ import (
 	"sync"
 )
 
-// ManagedCommand runs a CommandContext in an isolated process tree and tears
-// down every process in that tree when the command exits or is canceled.
+// ManagedCommand gives a CommandContext the platform process scope used for
+// cancellation and cleanup.
 type ManagedCommand struct {
 	mu       sync.Mutex
 	command  *exec.Cmd
@@ -32,8 +32,7 @@ func NewManagedCommand(command *exec.Cmd) (*ManagedCommand, error) {
 	return managed, nil
 }
 
-// Run starts the command, attaches it to its process tree, waits for it, and
-// terminates any descendants that remain after the direct child exits.
+// Run starts the command, attaches its process scope, and waits for it.
 func (managed *ManagedCommand) Run() error {
 	managed.mu.Lock()
 	if managed.started {
@@ -61,7 +60,7 @@ func (managed *ManagedCommand) Run() error {
 	return errors.Join(attachErr, waitErr, cleanupErr)
 }
 
-// Kill terminates the command and every descendant in its managed process tree.
+// Kill terminates the command through its platform process scope.
 func (managed *ManagedCommand) Kill() error {
 	managed.mu.Lock()
 	defer managed.mu.Unlock()

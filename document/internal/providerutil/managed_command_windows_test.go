@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-func detachManagedCommandHelper() error {
-	return nil
-}
-
 func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "heartbeat")
 	executable, err := os.Executable()
@@ -21,7 +17,7 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command(executable,
-		"-test.run=^TestManagedCommandTerminatesDescendants$", "--", "child", marker)
+		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "process", marker)
 	tree, err := newManagedProcessTree(command)
 	if err != nil {
 		t.Fatal(err)
