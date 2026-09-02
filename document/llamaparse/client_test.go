@@ -277,6 +277,37 @@ func TestClientRejectsMultipartFilenameNewlinesBeforeSubmission(t *testing.T) {
 	}
 }
 
+func TestClientUsesSyntheticFilenameWhenDisclosureIsWithheld(t *testing.T) {
+	fixture := newFixture(t, []byte("%PDF-1.7\nwithheld filename\n%%EOF\n"))
+	fixture.authorization.DiscloseFilename = false
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case uploadPath:
+			_, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+			require.NoError(t, err)
+			part, err := multipart.NewReader(request.Body, parameters["boundary"]).NextPart()
+			require.NoError(t, err)
+			assert.Equal(t, "document.pdf", part.FileName())
+			return response(request, http.StatusOK,
+				`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+		case statusPath(testJobID):
+			return response(request, http.StatusOK,
+				`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+		case jsonResultPath(testJobID):
+			return response(request, http.StatusOK,
+				`{"pages":[{"page":1,"md":"Page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+		default:
+			t.Fatalf("unexpected route %s", request.URL.Path)
+			return nil, errors.New("unexpected route")
+		}
+	})
+
+	_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+		fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+
+	require.NoError(t, err)
+}
+
 func TestClientPreservesExplicitMiddleBlankPage(t *testing.T) {
 	fixture := newFixture(t, []byte("%PDF-1.7\nblank page\n%%EOF\n"))
 	transport := routeTransport(t, map[string]routeResponse{
@@ -901,6 +932,38 @@ func TestClientEnforcesUploadPollResultAndArtifactBounds(t *testing.T) {
 			func(document.RenditionResumeHandle) error { return nil })
 
 		assertCode(t, err, document.RenditionErrorMalformedEvidence)
+	})
+
+	t.Run("image with zero artifact byte limit", func(t *testing.T) {
+		fixture := newFixture(t, []byte("%PDF-1.7\nno artifact budget\n%%EOF\n"))
+		fixture.profile.RetainImages = true
+		fixture.profile.MaxArtifacts = 1
+		fixture.authorization.MaxProviderMarkdownBytes = 0
+		fixture.authorization.AllowedArtifactRoles = []document.EvidenceArtifactRole{document.EvidenceArtifactImage}
+		fixture.authorization.MaxArtifacts = 1
+		fixture.authorization.MaxArtifactBytes = 0
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case uploadPath, statusPath(testJobID):
+				return response(request, http.StatusOK,
+					`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+			case jsonResultPath(testJobID):
+				return response(request, http.StatusOK,
+					`{"pages":[{"page":1,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+			case imageResultPath(testJobID, "figure-1.png"):
+				t.Fatal("zero artifact byte limit reached image egress")
+				return nil, errors.New("unexpected egress")
+			default:
+				t.Fatalf("unexpected route %s", request.URL.Path)
+				return nil, errors.New("unexpected egress")
+			}
+		})
+
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil,
+			func(document.RenditionResumeHandle) error { return nil })
+
+		assertCode(t, err, document.RenditionErrorPolicyRejected)
 	})
 }
 

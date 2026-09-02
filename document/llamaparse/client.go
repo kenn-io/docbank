@@ -274,7 +274,11 @@ func (client *Client) submit(
 		return "", provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse upload exceeds profile limit", nil)
 	}
-	if err := providerutil.ValidateMultipartFilename(metadata.Filename); err != nil {
+	filename := metadata.Filename
+	if filename == "" {
+		filename = "document.pdf"
+	}
+	if err := providerutil.ValidateMultipartFilename(filename); err != nil {
 		return "", provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse upload filename contains a line break", err)
 	}
@@ -284,7 +288,7 @@ func (client *Client) submit(
 	}
 	defer clear(source)
 	body := &providerutil.MultipartUpload{
-		FieldName: "file", Filename: metadata.Filename, MediaType: metadata.MediaType,
+		FieldName: "file", Filename: filename, MediaType: metadata.MediaType,
 		Source: bytes.NewReader(source), Length: int64(len(source)), Fields: [][2]string{
 			{"model", client.profile.Model}, {"preset", client.profile.Preset},
 			{"page_error_tolerance", "0"}, {"save_images", strconv.FormatBool(client.profile.RetainImages)},
@@ -631,6 +635,10 @@ func (client *Client) fetchImage(
 	jobID, name string, authorization document.RenditionAuthorization,
 	budget int64, state *operationState,
 ) (document.RenditionArtifact, document.SourceEvidenceArtifactV1, error) {
+	if authorization.MaxArtifactBytes <= 0 {
+		return document.RenditionArtifact{}, document.SourceEvidenceArtifactV1{}, provider.Classified(
+			document.RenditionErrorPolicyRejected, "LlamaParse image artifact byte limit is invalid", nil)
+	}
 	if budget <= 0 {
 		return document.RenditionArtifact{}, document.SourceEvidenceArtifactV1{}, provider.Malformed(
 			"LlamaParse result exhausted the authorized byte budget", nil)
