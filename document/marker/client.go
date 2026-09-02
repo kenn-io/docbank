@@ -57,7 +57,10 @@ const (
 	pageSeparator           = "------------------------------------------------"
 )
 
-var _ document.RenditionProvider = (*Client)(nil)
+var (
+	_                       document.RenditionProvider = (*Client)(nil)
+	errMarkerRequestTimeout                            = errors.New("marker request timeout")
+)
 
 // SecretResolver resolves an optional operator-fronted Marker credential.
 type SecretResolver interface {
@@ -226,11 +229,16 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	}
 	operationCtx, cancel := operationContext(ctx, expiresAt, client.profile.RequestTimeout)
 	defer cancel()
-	if err := checkOperation(operationCtx, expiresAt); err != nil {
+	if err := checkOperation(ctx, operationCtx, expiresAt); err != nil {
 		return document.RenditionResult{}, err
 	}
+	stopInterrupt := context.AfterFunc(operationCtx, func() { _ = document.InterruptAuthorizedUpload(upload) })
 	source, err := providerutil.ReadAuthorizedUpload(operationCtx, upload, metadata, "Marker")
+	stopInterrupt()
 	if err != nil {
+		if operationErr := checkOperation(ctx, operationCtx, expiresAt); operationErr != nil {
+			return document.RenditionResult{}, operationErr
+		}
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
@@ -272,19 +280,19 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 	if err := client.authorize(request); err != nil {
 		return document.RenditionResult{}, err
 	}
-	if err := checkOperation(operationCtx, expiresAt); err != nil {
+	if err := checkOperation(ctx, operationCtx, expiresAt); err != nil {
 		return document.RenditionResult{}, err
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
-		if operationErr := checkOperation(operationCtx, expiresAt); operationErr != nil {
+		if operationErr := postSubmissionOperationError(ctx, operationCtx, expiresAt, err); operationErr != nil {
 			return document.RenditionResult{}, operationErr
 		}
 		return document.RenditionResult{}, providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	responseLimit := min(client.profile.MaxResponseBytes, int64(authorization.MaxTotalResultBytes))
-	responseBody, err := readBounded(operationCtx, expiresAt, response.Body, responseLimit)
+	responseBody, err := readBounded(ctx, operationCtx, expiresAt, response.Body, responseLimit)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -638,38 +646,47 @@ func filenameWithExtension(filename, extension, required string) (string, bool) 
 }
 
 func operationContext(ctx context.Context, expiresAt time.Time, timeout time.Duration) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(timeout)
-	if caller, ok := ctx.Deadline(); ok && caller.Before(deadline) {
-		deadline = caller
+	requestCtx, cancelRequest := context.WithTimeoutCause(ctx, timeout, errMarkerRequestTimeout)
+	operationCtx, cancelExpiry := context.WithDeadline(requestCtx, expiresAt)
+	return operationCtx, func() {
+		cancelExpiry()
+		cancelRequest()
 	}
-	if expiresAt.Before(deadline) {
-		deadline = expiresAt
-	}
-	return context.WithDeadline(ctx, deadline)
 }
 
-func checkOperation(ctx context.Context, expiresAt time.Time) error {
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return providerError(document.RenditionErrorCanceled, "Marker rendering canceled", ctx.Err())
+func checkOperation(callerCtx, operationCtx context.Context, expiresAt time.Time) error {
+	if err := callerCtx.Err(); err != nil {
+		return providerError(document.RenditionErrorCanceled, "Marker rendering canceled", err)
 	}
 	if !time.Now().Before(expiresAt) {
 		return expiredError()
 	}
-	if err := ctx.Err(); err != nil {
+	if errors.Is(context.Cause(operationCtx), errMarkerRequestTimeout) {
+		return providerError(document.RenditionErrorCapacity, "Marker request timeout reached", errMarkerRequestTimeout)
+	}
+	if err := operationCtx.Err(); err != nil {
 		return providerError(document.RenditionErrorCanceled, "Marker rendering canceled", err)
 	}
 	return nil
 }
 
-func readBounded(ctx context.Context, expiresAt time.Time, reader io.Reader, maximum int64) ([]byte, error) {
+func postSubmissionOperationError(callerCtx, operationCtx context.Context, expiresAt time.Time, cause error) error {
+	if callerCtx.Err() == nil && time.Now().Before(expiresAt) &&
+		errors.Is(context.Cause(operationCtx), errMarkerRequestTimeout) {
+		return providerError(document.RenditionErrorAmbiguousSubmission, "Marker submission outcome is unknown", cause)
+	}
+	return checkOperation(callerCtx, operationCtx, expiresAt)
+}
+
+func readBounded(callerCtx, operationCtx context.Context, expiresAt time.Time, reader io.Reader, maximum int64) ([]byte, error) {
 	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
-		if operationErr := checkOperation(ctx, expiresAt); operationErr != nil {
+		if operationErr := postSubmissionOperationError(callerCtx, operationCtx, expiresAt, err); operationErr != nil {
 			return nil, operationErr
 		}
 		return nil, providerError(document.RenditionErrorAmbiguousSubmission, "could not read Marker result", err)
 	}
-	if operationErr := checkOperation(ctx, expiresAt); operationErr != nil {
+	if operationErr := postSubmissionOperationError(callerCtx, operationCtx, expiresAt, operationCtx.Err()); operationErr != nil {
 		return nil, operationErr
 	}
 	if int64(len(value)) > maximum {

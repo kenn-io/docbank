@@ -25,12 +25,18 @@ import (
 )
 
 type testUpload struct {
-	*bytes.Reader
+	io.Reader
 
 	metadata document.AuthorizedUploadMetadata
+	close    func() error
 }
 
-func (*testUpload) Close() error                                       { return nil }
+func (upload *testUpload) Close() error {
+	if upload.close != nil {
+		return upload.close()
+	}
+	return nil
+}
 func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
 
 type testSecrets map[string]string
@@ -388,6 +394,67 @@ func TestClientRechecksExpiryAndCancellationWhileReadingResponse(t *testing.T) {
 		_, err := document.RenderRendition(ctx, client, fixture.upload(), fixture.authorization)
 
 		require.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestClientRequestTimeoutInterruptsBlockedUpload(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "blocked.pdf", testPDF(1))
+	fixture.profile.RequestTimeout = 10 * time.Millisecond
+	fixture.profile.Descriptor = descriptorFor(t, fixture.profile)
+	fixture = fixture.withDescriptor(fixture.profile.Descriptor)
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	entered := make(chan struct{})
+	upload := &testUpload{
+		Reader:   &callbackReadCloser{reader: reader, before: func() { close(entered) }},
+		metadata: fixture.metadata,
+		close:    reader.Close,
+	}
+	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK, `{}`))
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Render(t.Context(), upload, fixture.authorization)
+		done <- err
+	}()
+	<-entered
+	select {
+	case err := <-done:
+		assertProviderCode(t, err, document.RenditionErrorCapacity)
+	case <-time.After(250 * time.Millisecond):
+		require.NoError(t, upload.Close())
+		<-done
+		t.Fatal("Client.Render did not interrupt the blocked upload")
+	}
+}
+
+func TestClientDistinguishesRequestTimeoutFromCallerCancellationAfterSubmission(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
+
+	t.Run("request timeout", func(t *testing.T) {
+		fixture.profile.RequestTimeout = 20 * time.Millisecond
+		fixture.profile.Descriptor = descriptorFor(t, fixture.profile)
+		fixture = fixture.withDescriptor(fixture.profile.Descriptor)
+		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		}))
+
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+
+		assertProviderCode(t, err, document.RenditionErrorAmbiguousSubmission)
+	})
+
+	t.Run("caller cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			cancel()
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		}))
+
+		_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
+
+		assertProviderCode(t, err, document.RenditionErrorCanceled)
 	})
 }
 
