@@ -49,7 +49,7 @@ func (managed *ManagedCommand) Run() error {
 	}
 	attachErr := managed.tree.attach(managed.command.Process)
 	if attachErr != nil {
-		_ = managed.command.Process.Kill()
+		attachErr = errors.Join(attachErr, managed.killLocked())
 	}
 	managed.mu.Unlock()
 
@@ -65,6 +65,10 @@ func (managed *ManagedCommand) Run() error {
 func (managed *ManagedCommand) Kill() error {
 	managed.mu.Lock()
 	defer managed.mu.Unlock()
+	return managed.killLocked()
+}
+
+func (managed *ManagedCommand) killLocked() error {
 	if !managed.started || managed.finished || managed.command.Process == nil {
 		return os.ErrProcessDone
 	}

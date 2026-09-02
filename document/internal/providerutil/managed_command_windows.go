@@ -3,8 +3,11 @@
 package providerutil
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -15,7 +18,14 @@ type managedProcessTree struct {
 	attached bool
 }
 
-func newManagedProcessTree(_ *exec.Cmd) (*managedProcessTree, error) {
+func newManagedProcessTree(command *exec.Cmd) (*managedProcessTree, error) {
+	attributes := &syscall.SysProcAttr{}
+	if command.SysProcAttr != nil {
+		copied := *command.SysProcAttr
+		attributes = &copied
+	}
+	attributes.CreationFlags |= windows.CREATE_SUSPENDED
+	command.SysProcAttr = attributes
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, err
@@ -47,7 +57,54 @@ func (tree *managedProcessTree) attach(process *os.Process) error {
 		return assignErr
 	}
 	tree.attached = true
-	return nil
+	return resumeProcess(process.Pid)
+}
+
+func resumeProcess(pid int) (result error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return fmt.Errorf("snapshot suspended process threads: %w", err)
+	}
+	defer func() {
+		if err := windows.CloseHandle(snapshot); err != nil {
+			result = errors.Join(result, fmt.Errorf("close thread snapshot: %w", err))
+		}
+	}()
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	if err := windows.Thread32First(snapshot, &entry); err != nil {
+		return fmt.Errorf("read suspended process threads: %w", err)
+	}
+	for {
+		if entry.OwnerProcessID == uint32(pid) {
+			thread, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
+			if err != nil {
+				return fmt.Errorf("open suspended process thread: %w", err)
+			}
+			previousCount, resumeErr := windows.ResumeThread(thread)
+			closeErr := windows.CloseHandle(thread)
+			if resumeErr != nil || previousCount == 0 {
+				var suspendedErr error
+				if previousCount == 0 {
+					suspendedErr = errors.New("process thread was not suspended")
+				}
+				if closeErr != nil {
+					closeErr = fmt.Errorf("close suspended process thread: %w", closeErr)
+				}
+				return errors.Join(errors.New("resume suspended process thread"),
+					resumeErr, suspendedErr, closeErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close suspended process thread: %w", closeErr)
+			}
+			return nil
+		}
+		if err := windows.Thread32Next(snapshot, &entry); err != nil {
+			if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+				return errors.New("suspended process thread was not found")
+			}
+			return fmt.Errorf("read suspended process threads: %w", err)
+		}
+	}
 }
 
 func (tree *managedProcessTree) kill() error {

@@ -98,6 +98,9 @@ func runManagedCommandHelper(mode, marker string) {
 		}
 		time.Sleep(10 * time.Second)
 	case "child":
+		if err := detachManagedCommandHelper(); err != nil {
+			os.Exit(2)
+		}
 		file, err := os.OpenFile(marker, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			os.Exit(2)
