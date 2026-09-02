@@ -121,10 +121,17 @@ func (provider Provider) CanonicalDescriptor(
 	return CloneDescriptor(canonical), nil
 }
 
+// AllowsArtifact reports whether an authorization can retain at least one artifact with role.
+func AllowsArtifact(
+	authorization document.RenditionAuthorization, role document.EvidenceArtifactRole,
+) bool {
+	return slices.Contains(authorization.AllowedArtifactRoles, role) &&
+		authorization.MaxArtifacts > 0 && authorization.MaxArtifactBytes > 0
+}
+
 // AllowsStructured reports whether an authorization can retain one structured artifact.
 func AllowsStructured(authorization document.RenditionAuthorization) bool {
-	return slices.Contains(authorization.AllowedArtifactRoles, document.EvidenceArtifactStructured) &&
-		authorization.MaxArtifacts > 0 && authorization.MaxArtifactBytes > 0
+	return AllowsArtifact(authorization, document.EvidenceArtifactStructured)
 }
 
 // NaturalUnit maps a media family to the evidence unit its provider output

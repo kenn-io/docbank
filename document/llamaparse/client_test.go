@@ -129,6 +129,53 @@ func TestClientUploadsExactAuthorizedBytesAndMapsNaturalPages(t *testing.T) {
 	assert.Equal(t, 4, fixture.secrets.calls())
 }
 
+func TestClientDoesNotRequestOrRetainUnauthorizedImages(t *testing.T) {
+	fixture := newFixture(t, []byte("%PDF-1.7\nno images authorized\n%%EOF\n"))
+	fixture.profile.RetainImages = true
+	fixture.profile.MaxArtifacts = 1
+	var transport http.RoundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case uploadPath:
+			_, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+			require.NoError(t, err)
+			reader := multipart.NewReader(request.Body, parameters["boundary"])
+			fields := map[string]string{}
+			for {
+				part, nextErr := reader.NextPart()
+				if errors.Is(nextErr, io.EOF) {
+					break
+				}
+				require.NoError(t, nextErr)
+				payload, readErr := io.ReadAll(part)
+				require.NoError(t, readErr)
+				if part.FormName() != "file" {
+					fields[part.FormName()] = string(payload)
+				}
+			}
+			assert.Equal(t, "false", fields["save_images"])
+			assert.Equal(t, "true", fields["disable_image_extraction"])
+			return response(request, http.StatusOK,
+				`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+		case statusPath(testJobID):
+			return response(request, http.StatusOK,
+				`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+		case jsonResultPath(testJobID):
+			return response(request, http.StatusOK,
+				`{"pages":[{"page":1,"md":"Page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+		default:
+			t.Fatalf("unexpected route %s", request.URL.String())
+			return nil, errors.New("unexpected route")
+		}
+	})
+
+	result, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+		fixture.upload(), fixture.authorization, nil,
+		func(document.RenditionResumeHandle) error { return nil })
+	require.NoError(t, err)
+	assert.Empty(t, result.Artifacts)
+	assert.Empty(t, result.Evidence.Artifacts)
+}
+
 func TestClientResumesWithoutUploadingSource(t *testing.T) {
 	fixture := newFixture(t, []byte("%PDF-1.7\nresume\n%%EOF\n"))
 	var paths []string
@@ -999,11 +1046,13 @@ func TestClientEnforcesUploadPollResultAndArtifactBounds(t *testing.T) {
 			}
 		})
 
-		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+		result, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
 			fixture.upload(), fixture.authorization, nil,
 			func(document.RenditionResumeHandle) error { return nil })
 
-		assertCode(t, err, document.RenditionErrorPolicyRejected)
+		require.NoError(t, err)
+		assert.Empty(t, result.Artifacts)
+		assert.Empty(t, result.Evidence.Artifacts)
 	})
 }
 

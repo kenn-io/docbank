@@ -11,7 +11,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -174,7 +173,7 @@ func (client *Client) RenderResumable(
 		operation: operation}
 	var jobID string
 	if resume == nil {
-		job, submitErr := client.submit(upload, &state)
+		job, submitErr := client.submit(upload, authorization, &state)
 		if submitErr != nil {
 			return document.RenditionResult{}, submitErr
 		}
@@ -271,7 +270,7 @@ func (client *Client) validateInvocation(
 }
 
 func (client *Client) submit(
-	upload document.AuthorizedUpload, state *operationState,
+	upload document.AuthorizedUpload, authorization document.RenditionAuthorization, state *operationState,
 ) (jobResponse, error) {
 	metadata := upload.Metadata()
 	if metadata.ByteLength > client.profile.MaxUploadBytes {
@@ -291,12 +290,13 @@ func (client *Client) submit(
 		return jobResponse{}, err
 	}
 	defer clear(source)
+	retainImages := client.retainsImages(authorization)
 	body := &providerutil.MultipartUpload{
 		FieldName: "file", Filename: filename, MediaType: metadata.MediaType,
 		Source: bytes.NewReader(source), Length: int64(len(source)), Fields: [][2]string{
 			{"model", client.profile.Model}, {"preset", client.profile.Preset},
-			{"page_error_tolerance", "0"}, {"save_images", strconv.FormatBool(client.profile.RetainImages)},
-			{"disable_image_extraction", strconv.FormatBool(!client.profile.RetainImages)},
+			{"page_error_tolerance", "0"}, {"save_images", strconv.FormatBool(retainImages)},
+			{"disable_image_extraction", strconv.FormatBool(!retainImages)},
 			{"take_screenshot", "false"},
 		},
 	}
@@ -589,20 +589,24 @@ func (client *Client) pageEvidence(
 		evidence.Units = append(evidence.Units, unit)
 		markdown = append(markdown, text)
 		for _, image := range page.Images {
-			if !client.profile.RetainImages || imageName != "" || validateArtifactName(image.Name) != nil {
+			if !client.retainsImages(authorization) {
+				continue
+			}
+			if imageName != "" || validateArtifactName(image.Name) != nil {
 				return document.SourceEvidenceV1{}, nil, "", errors.New("provider images are unrepresentable")
 			}
 			imageName = image.Name
 		}
 	}
-	if imageName != "" && (client.profile.MaxArtifacts != 1 || authorization.MaxArtifacts < 1 ||
-		!slices.Contains(authorization.AllowedArtifactRoles, document.EvidenceArtifactImage)) {
-		return document.SourceEvidenceV1{}, nil, "", errors.New("provider image is not authorized")
-	}
 	if err := document.ValidateSourceEvidenceV1(evidence); err != nil {
 		return document.SourceEvidenceV1{}, nil, "", err
 	}
 	return evidence, []byte(strings.Join(markdown, markdownPageSeparator)), imageName, nil
+}
+
+func (client *Client) retainsImages(authorization document.RenditionAuthorization) bool {
+	return client.profile.RetainImages &&
+		providerutil.AllowsArtifact(authorization, document.EvidenceArtifactImage)
 }
 
 func (client *Client) validateJobMetadata(raw json.RawMessage) (int, error) {
