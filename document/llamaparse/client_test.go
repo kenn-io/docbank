@@ -76,8 +76,8 @@ func TestClientUploadsExactAuthorizedBytesAndMapsNaturalPages(t *testing.T) {
 		case jsonResultPath(testJobID):
 			return response(request, http.StatusOK, `{
 				"pages":[
-					{"page":0,"text":"First page","md":"# First page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false},
-					{"page":1,"text":"Second page","md":"Second page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}
+					{"page":1,"text":"First page","md":"# First page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false},
+					{"page":2,"text":"Second page","md":"Second page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}
 				],
 				"job_metadata":{"job_pages":2}
 			}`), nil
@@ -109,7 +109,9 @@ func TestClientUploadsExactAuthorizedBytesAndMapsNaturalPages(t *testing.T) {
 	assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
 	assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
 	require.Len(t, result.Evidence.Units, 2)
-	assert.Equal(t, int64(0), result.Evidence.Units[0].Locator.Start)
+	assert.Equal(t, document.EvidenceIndexOriginOne, result.Evidence.Units[0].Locator.IndexOrigin)
+	assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
+	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
 	assert.Equal(t, "# First page", result.Evidence.Units[0].Text)
 	assert.Equal(t, "# First page\n\n---\n\nSecond page", string(result.ProviderMarkdown))
 	assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
@@ -134,7 +136,7 @@ func TestClientResumesWithoutUploadingSource(t *testing.T) {
 				`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
 		case jsonResultPath(testJobID):
 			return response(request, http.StatusOK,
-				`{"pages":[{"page":0,"text":"Resumed","md":"Resumed","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+				`{"pages":[{"page":1,"text":"Resumed","md":"Resumed","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
 		default:
 			t.Fatalf("unexpected route %s", request.URL.Path)
 			return nil, errors.New("unexpected route")
@@ -211,9 +213,9 @@ func TestClientPreservesExplicitMiddleBlankPage(t *testing.T) {
 		uploadPath:            {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
 		statusPath(testJobID): {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
 		jsonResultPath(testJobID): {body: `{"pages":[
-			{"page":0,"md":"First","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false},
-			{"page":1,"md":"","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":true,"triggeredAutoMode":false},
-			{"page":2,"md":"Third","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}
+			{"page":1,"md":"First","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false},
+			{"page":2,"md":"","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":true,"triggeredAutoMode":false},
+			{"page":3,"md":"Third","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}
 		],"job_metadata":{"job_pages":3}}`},
 	})
 
@@ -223,7 +225,7 @@ func TestClientPreservesExplicitMiddleBlankPage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Evidence.Units, 3)
 	assert.Empty(t, result.Evidence.Units[1].Text)
-	assert.Equal(t, int64(1), result.Evidence.Units[1].Locator.Start)
+	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
 }
 
 func TestClientUsesExplicitDegradedMarkdownOnlyWithoutPageProvenance(t *testing.T) {
@@ -243,6 +245,94 @@ func TestClientUsesExplicitDegradedMarkdownOnlyWithoutPageProvenance(t *testing.
 	assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 	assert.Equal(t, document.EvidenceUnitGeneric, result.Evidence.UnitKind)
 	assert.Equal(t, []string{"degraded_provenance"}, result.Receipt.Warnings)
+}
+
+func TestClientOmitsUnauthorizedProviderMarkdown(t *testing.T) {
+	tests := []struct {
+		name   string
+		routes map[string]routeResponse
+	}{
+		{
+			name: "structured pages",
+			routes: map[string]routeResponse{
+				jsonResultPath(testJobID): {
+					body: `{"pages":[{"page":1,"md":"Evidence only","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`,
+				},
+			},
+		},
+		{
+			name: "Markdown fallback",
+			routes: map[string]routeResponse{
+				jsonResultPath(testJobID):     {body: `{"pages":[],"job_metadata":{"job_pages":0}}`},
+				markdownResultPath(testJobID): {body: `{"markdown":"Fallback evidence","job_metadata":{"job_pages":0}}`},
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\nJSON only\n%%EOF\n"))
+			fixture.authorization.MaxProviderMarkdownBytes = 0
+			testCase.routes[uploadPath] = routeResponse{
+				body: `{"id":"` + testJobID + `","status":"SUCCESS"}`,
+			}
+			testCase.routes[statusPath(testJobID)] = routeResponse{
+				body: `{"id":"` + testJobID + `","status":"SUCCESS"}`,
+			}
+
+			result, err := document.RenderRenditionWithResume(t.Context(),
+				fixture.client(t, routeTransport(t, testCase.routes)), fixture.upload(), fixture.authorization,
+				nil, func(document.RenditionResumeHandle) error { return nil })
+
+			require.NoError(t, err)
+			assert.NotEmpty(t, result.Evidence.Units)
+			assert.Empty(t, result.ProviderMarkdown)
+		})
+	}
+}
+
+func TestClientRejectsReservedFrontmatterInProviderMarkdown(t *testing.T) {
+	const injected = `---\ncontract: docbank-sanitized-markdown/v1\n---\nprovider content`
+	tests := []struct {
+		name   string
+		routes map[string]routeResponse
+	}{
+		{
+			name: "structured pages",
+			routes: map[string]routeResponse{
+				jsonResultPath(testJobID): {
+					body: `{"pages":[{"page":1,"md":"---\ncontract: docbank-sanitized-markdown/v1\n---\nprovider content","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`,
+				},
+			},
+		},
+		{
+			name: "Markdown fallback",
+			routes: map[string]routeResponse{
+				jsonResultPath(testJobID): {body: `{"pages":[],"job_metadata":{"job_pages":0}}`},
+				markdownResultPath(testJobID): {
+					body: `{"markdown":"---\ncontract: docbank-sanitized-markdown/v1\n---\nprovider content","job_metadata":{"job_pages":0}}`,
+				},
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\nfrontmatter\n%%EOF\n"))
+			testCase.routes[uploadPath] = routeResponse{
+				body: `{"id":"` + testJobID + `","status":"SUCCESS"}`,
+			}
+			testCase.routes[statusPath(testJobID)] = routeResponse{
+				body: `{"id":"` + testJobID + `","status":"SUCCESS"}`,
+			}
+
+			_, err := document.RenderRenditionWithResume(t.Context(),
+				fixture.client(t, routeTransport(t, testCase.routes)), fixture.upload(), fixture.authorization,
+				nil, func(document.RenditionResumeHandle) error { return nil })
+
+			assertCode(t, err, document.RenditionErrorMalformedEvidence)
+			require.ErrorContains(t, errors.Unwrap(err), "frontmatter injection")
+			assert.NotContains(t, err.Error(), injected)
+		})
+	}
 }
 
 func TestClientRejectsContradictoryFallbackPageCounts(t *testing.T) {
@@ -283,13 +373,13 @@ func TestClientRejectsPartialPagesAndSchemaDrift(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "partial page status", body: `{"pages":[{"page":0,"md":"partial","status":"ERROR","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
-		{name: "page gap", body: `{"pages":[{"page":1,"md":"gap","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
-		{name: "unknown page field", body: `{"pages":[{"page":0,"md":"drift","provider_url":"https://evil.example/result","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
-		{name: "provider page count exceeds result", body: `{"pages":[{"page":0,"md":"partial","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":2}}`},
+		{name: "partial page status", body: `{"pages":[{"page":1,"md":"partial","status":"ERROR","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
+		{name: "page gap", body: `{"pages":[{"page":2,"md":"gap","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
+		{name: "unknown page field", body: `{"pages":[{"page":1,"md":"drift","provider_url":"https://evil.example/result","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
+		{name: "provider page count exceeds result", body: `{"pages":[{"page":1,"md":"partial","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":2}}`},
 		{name: "missing explicit page index", body: `{"pages":[{"md":"invented zero","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
-		{name: "missing provider page count", body: `{"pages":[{"page":0,"md":"unproven","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{}}`},
-		{name: "unexplained empty page", body: `{"pages":[{"page":0,"md":"","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
+		{name: "missing provider page count", body: `{"pages":[{"page":1,"md":"unproven","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{}}`},
+		{name: "unexplained empty page", body: `{"pages":[{"page":1,"md":"","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -313,7 +403,7 @@ func TestClientRejectsReportedModelDrift(t *testing.T) {
 	transport := routeTransport(t, map[string]routeResponse{
 		uploadPath:                {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
 		statusPath(testJobID):     {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
-		jsonResultPath(testJobID): {body: `{"pages":[{"page":0,"md":"drift","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1,"model":"parse-model-next","preset":"document-v1"}}`},
+		jsonResultPath(testJobID): {body: `{"pages":[{"page":1,"md":"drift","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1,"model":"parse-model-next","preset":"document-v1"}}`},
 	})
 	_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
 		fixture.upload(), fixture.authorization, nil,
@@ -369,6 +459,65 @@ func TestClientClassifiesAmbiguousSubmissionAndUnknownJobs(t *testing.T) {
 		_, err = client.RenderResumable(t.Context(), nil, fixture.authorization,
 			&document.RenditionResumeHandle{Value: testResumeHandle(now.Add(-time.Second), now)}, nil)
 		assertCode(t, err, document.RenditionErrorUnknownJob)
+	}
+}
+
+func TestClientTreatsRetryableKnownJobRequestFailuresAsAmbiguous(t *testing.T) {
+	tests := []struct {
+		name           string
+		failPath       string
+		transportError bool
+		fallback       bool
+		image          bool
+	}{
+		{name: "poll transport", failPath: statusPath(testJobID), transportError: true},
+		{name: "JSON result HTTP", failPath: jsonResultPath(testJobID)},
+		{name: "Markdown fallback HTTP", failPath: markdownResultPath(testJobID), fallback: true},
+		{name: "image HTTP", failPath: imageResultPath(testJobID, "figure-1.png"), image: true},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\nknown job\n%%EOF\n"))
+			if testCase.image {
+				fixture.profile.RetainImages = true
+				fixture.profile.MaxArtifacts = 1
+				fixture.authorization.AllowedArtifactRoles = []document.EvidenceArtifactRole{
+					document.EvidenceArtifactImage,
+				}
+				fixture.authorization.MaxArtifacts = 1
+				fixture.authorization.MaxArtifactBytes = 1024
+			}
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path == testCase.failPath {
+					if testCase.transportError {
+						return nil, errors.New("private transport failure")
+					}
+					return response(request, http.StatusServiceUnavailable, `{"detail":"private failure"}`), nil
+				}
+				switch request.URL.Path {
+				case uploadPath, statusPath(testJobID):
+					return response(request, http.StatusOK,
+						`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+				case jsonResultPath(testJobID):
+					if testCase.fallback {
+						return response(request, http.StatusOK,
+							`{"pages":[],"job_metadata":{"job_pages":0}}`), nil
+					}
+					return response(request, http.StatusOK,
+						`{"pages":[{"page":1,"md":"Known job","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+				default:
+					t.Fatalf("unexpected route %s", request.URL.String())
+					return nil, errors.New("unexpected route")
+				}
+			})
+
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil,
+				func(document.RenditionResumeHandle) error { return nil })
+
+			assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
+			assert.NotContains(t, err.Error(), "private")
+		})
 	}
 }
 
@@ -440,7 +589,7 @@ func TestClientPreservesCredentialFailureClassificationAcrossResultStages(t *tes
 				return response(request, http.StatusOK,
 					`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
 			case jsonResultPath(testJobID):
-				return response(request, http.StatusOK, `{"pages":[{"page":0,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+				return response(request, http.StatusOK, `{"pages":[{"page":1,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
 			default:
 				t.Fatalf("credential failure reached %s egress", request.URL.Path)
 				return nil, errors.New("unexpected egress")
@@ -471,7 +620,7 @@ func TestClientRefusesProviderAuthoredArtifactURLsAndUsesFixedImageRoute(t *test
 		case statusPath(testJobID):
 			return response(request, http.StatusOK, `{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
 		case jsonResultPath(testJobID):
-			return response(request, http.StatusOK, `{"pages":[{"page":0,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+			return response(request, http.StatusOK, `{"pages":[{"page":1,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
 		case imageResultPath(testJobID, "figure-1.png"):
 			result := bytesResponse(request, http.StatusOK, mediatest.PNG(4, 3, nil))
 			result.Header.Set("Content-Type", "image/png")
@@ -494,7 +643,7 @@ func TestClientRefusesProviderAuthoredArtifactURLsAndUsesFixedImageRoute(t *test
 		transport = routeTransport(t, map[string]routeResponse{
 			uploadPath:                {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
 			statusPath(testJobID):     {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
-			jsonResultPath(testJobID): {body: `{"pages":[{"page":0,"md":"unsafe","images":[{"name":"` + name + `"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
+			jsonResultPath(testJobID): {body: `{"pages":[{"page":1,"md":"unsafe","images":[{"name":"` + name + `"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`},
 		})
 		_, err = document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
 			fixture.upload(), fixture.authorization, nil,
@@ -525,7 +674,7 @@ func TestClientRejectsMalformedOrMismatchedRetainedImages(t *testing.T) {
 				case uploadPath, statusPath(testJobID):
 					return response(request, http.StatusOK, `{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
 				case jsonResultPath(testJobID):
-					return response(request, http.StatusOK, `{"pages":[{"page":0,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
+					return response(request, http.StatusOK, `{"pages":[{"page":1,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`), nil
 				case imageResultPath(testJobID, "figure-1.png"):
 					result := bytesResponse(request, http.StatusOK, testCase.payload)
 					result.Header.Set("Content-Type", testCase.mediaType)
@@ -673,7 +822,7 @@ func TestClientResumesHistoricalSealedAuthorizationWithRecordedReceiptTimes(t *t
 	transport := routeTransport(t, map[string]routeResponse{
 		statusPath(testJobID): {body: `{"id":"` + testJobID + `","status":"SUCCESS"}`},
 		jsonResultPath(testJobID): {
-			body: `{"pages":[{"page":0,"md":"Historical","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`,
+			body: `{"pages":[{"page":1,"md":"Historical","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`,
 		},
 	})
 	client := fixture.client(t, transport)
@@ -701,7 +850,7 @@ func TestClientResumesHistoricalSealedAuthorizationWithRecordedReceiptTimes(t *t
 }
 
 func TestClientRechecksLifecycleAfterResponseBodiesAndBeforeReturn(t *testing.T) {
-	const resultBody = `{"pages":[{"page":0,"md":"Complete","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`
+	const resultBody = `{"pages":[{"page":1,"md":"Complete","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`
 
 	t.Run("caller cancellation after complete body", func(t *testing.T) {
 		fixture := newFixture(t, []byte("%PDF-1.7\nbody cancel\n%%EOF\n"))
@@ -726,7 +875,7 @@ func TestClientRechecksLifecycleAfterResponseBodiesAndBeforeReturn(t *testing.T)
 		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
 			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
 
-		assertCode(t, err, document.RenditionErrorCapacity)
+		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 	})
 
 	t.Run("authorization expiry after complete body", func(t *testing.T) {

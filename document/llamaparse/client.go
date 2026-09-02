@@ -323,10 +323,11 @@ func (client *Client) poll(
 			if operationErr := state.operation.Check(); operationErr != nil {
 				return provider.KnownJobError(operationErr)
 			}
-			return err
+			return provider.KnownJobError(err)
 		}
 		if !response.Success() {
-			return provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+			return provider.KnownJobError(
+				provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil))
 		}
 		var job jobResponse
 		if err := strictJSON(response.Body, &job); err != nil || job.ID != jobID {
@@ -372,11 +373,11 @@ func (client *Client) result(
 		MaxResponseBytes: budget,
 	})
 	if err != nil {
-		return document.RenditionResult{}, err
+		return document.RenditionResult{}, provider.KnownJobError(err)
 	}
 	if !response.Success() {
-		return document.RenditionResult{}, provider.StatusError(
-			providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		return document.RenditionResult{}, provider.KnownJobError(provider.StatusError(
+			providerutil.StageJob, response.Status, response.RetryAfter, nil))
 	}
 	budget -= int64(len(response.Body))
 	var envelope jsonResult
@@ -428,7 +429,13 @@ func (client *Client) result(
 		return document.RenditionResult{}, provider.Malformed(
 			"LlamaParse page output is incomplete", err)
 	}
-	if len(markdown) > authorization.MaxProviderMarkdownBytes {
+	if providerutil.InjectsDocbankFrontmatter(markdown) {
+		return document.RenditionResult{}, provider.Malformed(
+			"LlamaParse provider Markdown attempts Docbank frontmatter injection", nil)
+	}
+	if authorization.MaxProviderMarkdownBytes == 0 {
+		markdown = nil
+	} else if len(markdown) > authorization.MaxProviderMarkdownBytes {
 		return document.RenditionResult{}, provider.Malformed(
 			"LlamaParse Markdown exceeds authorization", nil)
 	}
@@ -457,11 +464,11 @@ func (client *Client) markdownFallback(
 		MaxResponseBytes: budget,
 	})
 	if err != nil {
-		return document.RenditionResult{}, err
+		return document.RenditionResult{}, provider.KnownJobError(err)
 	}
 	if !response.Success() {
-		return document.RenditionResult{}, provider.StatusError(
-			providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		return document.RenditionResult{}, provider.KnownJobError(provider.StatusError(
+			providerutil.StageJob, response.Status, response.RetryAfter, nil))
 	}
 	var envelope markdownResult
 	parseErr := strictJSON(response.Body, &envelope)
@@ -490,7 +497,13 @@ func (client *Client) markdownFallback(
 			"LlamaParse result page counts disagree", nil)
 	}
 	markdown := []byte(envelope.Markdown)
-	if len(markdown) > authorization.MaxProviderMarkdownBytes {
+	if providerutil.InjectsDocbankFrontmatter(markdown) {
+		return document.RenditionResult{}, provider.Malformed(
+			"LlamaParse provider Markdown attempts Docbank frontmatter injection", nil)
+	}
+	if authorization.MaxProviderMarkdownBytes == 0 {
+		markdown = nil
+	} else if len(markdown) > authorization.MaxProviderMarkdownBytes {
 		return document.RenditionResult{}, provider.Malformed(
 			"LlamaParse Markdown exceeds authorization", nil)
 	}
@@ -520,7 +533,8 @@ func (client *Client) pageEvidence(
 	markdown := make([]string, 0, len(pages))
 	imageName := ""
 	for order, page := range pages {
-		if page.Page == nil || *page.Page != order {
+		pageNumber := order + 1
+		if page.Page == nil || *page.Page != pageNumber {
 			return document.SourceEvidenceV1{}, nil, "", errors.New("page sequence is not complete")
 		}
 		if page.Status != nil && *page.Status != "" && *page.Status != "SUCCESS" {
@@ -540,10 +554,10 @@ func (client *Client) pageEvidence(
 			return document.SourceEvidenceV1{}, nil, "", errors.New("page confidence is invalid")
 		}
 		unit := document.SourceEvidenceUnitV1{
-			Order: order, ProviderID: fmt.Sprintf("llamaparse-page-%d", order), Text: text,
+			Order: order, ProviderID: fmt.Sprintf("llamaparse-page-%d", pageNumber), Text: text,
 			Locator: document.SourceEvidenceLocatorV1{
-				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginZero,
-				Start: int64(order), End: int64(order),
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+				Start: int64(pageNumber), End: int64(pageNumber),
 			},
 		}
 		if page.Confidence != nil {
@@ -610,11 +624,12 @@ func (client *Client) fetchImage(
 		MaxResponseBytes: limit, ResponseMediaType: "image/*",
 	})
 	if err != nil {
-		return document.RenditionArtifact{}, document.SourceEvidenceArtifactV1{}, err
+		return document.RenditionArtifact{}, document.SourceEvidenceArtifactV1{}, provider.KnownJobError(err)
 	}
 	if !response.Success() {
 		return document.RenditionArtifact{}, document.SourceEvidenceArtifactV1{},
-			provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+			provider.KnownJobError(
+				provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil))
 	}
 	canonical, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || (canonical != "image/png" && canonical != "image/jpeg" && canonical != "image/webp") {
