@@ -156,6 +156,34 @@ func TestProduceVisualPreviewRecordsTruncatedPNGFailure(t *testing.T) {
 	assert.Empty(t, product.Output)
 }
 
+func TestProduceVisualPreviewRecordsCorruptPNGCompressionFailure(t *testing.T) {
+	source := mediatest.PNG(4, 3, color.White)
+	corrupted := false
+	for offset := 8; offset+12 <= len(source); {
+		length := int(binary.BigEndian.Uint32(source[offset : offset+4]))
+		end := offset + 12 + length
+		require.LessOrEqual(t, end, len(source))
+		if string(source[offset+4:offset+8]) == "IDAT" {
+			require.GreaterOrEqual(t, length, 2)
+			source[offset+8], source[offset+9] = 0, 0
+			binary.BigEndian.PutUint32(source[end-4:end], crc32.ChecksumIEEE(source[offset+4:end-4]))
+			corrupted = true
+			break
+		}
+		offset = end
+	}
+	require.True(t, corrupted)
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
+}
+
 func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testing.T) {
 	source := mediatest.PNG(1, 1, color.White)
 	binary.BigEndian.PutUint32(source[16:20], 10001)
@@ -208,28 +236,40 @@ func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
 	assert.False(t, visualPreviewJPEGColorModelSupported(color.CMYKModel))
 }
 
-func TestProduceVisualPreviewKeepsJPEGReadErrorsRetryable(t *testing.T) {
-	source := mediatest.JPEG(3, 2, color.White)
-	digest := sha256.Sum256(source)
+func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	readErr := errors.New("injected read failure")
-	for _, test := range []struct {
+	sources := []struct {
+		name, mediaType string
+		data            []byte
+	}{
+		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White)},
+		{name: "png", mediaType: "image/png", data: mediatest.PNG(3, 2, color.White)},
+	}
+	phases := []struct {
 		name       string
 		failAtSeek int
 	}{
 		{name: "header", failAtSeek: 3},
 		{name: "pixels", failAtSeek: 4},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			reader := &failingVisualPreviewReadSeeker{
-				Reader: bytes.NewReader(source), failAtSeek: test.failAtSeek, err: readErr,
-			}
+	}
+	for _, source := range sources {
+		t.Run(source.name, func(t *testing.T) {
+			digest := sha256.Sum256(source.data)
+			for _, phase := range phases {
+				t.Run(phase.name, func(t *testing.T) {
+					reader := &failingVisualPreviewReadSeeker{
+						Reader: bytes.NewReader(source.data), failAtSeek: phase.failAtSeek, err: readErr,
+					}
 
-			_, err := ProduceVisualPreview(t.Context(), reader, VisualPreviewTarget{
-				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/jpeg",
-			})
-			require.Error(t, err)
-			assert.True(t, IsSourceContentUnavailable(err))
-			assert.ErrorIs(t, err, readErr)
+					_, err := ProduceVisualPreview(t.Context(), reader, VisualPreviewTarget{
+						SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source.data)),
+						MediaType: source.mediaType,
+					})
+					require.Error(t, err)
+					assert.True(t, IsSourceContentUnavailable(err))
+					assert.ErrorIs(t, err, readErr)
+				})
+			}
 		})
 	}
 }

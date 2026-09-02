@@ -2,6 +2,8 @@ package processing
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/zlib"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -445,7 +447,12 @@ func visualPreviewPNGDecodeResult(
 		return VisualPreviewProduct{Preview: base}, nil
 	}
 	if _, ok := errors.AsType[png.FormatError](err); ok ||
+		errors.Is(err, zlib.ErrHeader) || errors.Is(err, zlib.ErrDictionary) ||
+		errors.Is(err, zlib.ErrChecksum) ||
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return failedVisualPreview(base, "decode_failed", malformedDetail), nil
+	}
+	if _, ok := errors.AsType[flate.CorruptInputError](err); ok {
 		return failedVisualPreview(base, "decode_failed", malformedDetail), nil
 	}
 	return VisualPreviewProduct{}, sourceContentUnavailable(
