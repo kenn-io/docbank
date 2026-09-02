@@ -126,14 +126,15 @@ until the external-reference contract is implemented.
 whether those bytes are stored raw, zstd-compressed, or in a pack. SHA-256 is
 the canonical logical identity, not a digest of a physical storage file.
 
-## Read extracted source metadata
+## Extract and read source metadata
 
-`SourceMetadata` returns Docbank's typed metadata for one immutable content
-version. The result carries the complete `ContentVersion`, so callers can bind
-the facts to the exact SHA-256 and node version they describe:
+`EnsureSourceMetadata` verifies and processes one immutable content version
+with Docbank's current local extractor, then returns its typed metadata. The
+result carries the complete `ContentVersion`, so callers can bind the facts to
+the exact SHA-256 and node version they describe:
 
 ```go
-metadata, err := vault.SourceMetadata(ctx, receipt.Version.ID)
+metadata, err := vault.EnsureSourceMetadata(ctx, receipt.Version.ID)
 if err != nil {
     return err
 }
@@ -143,11 +144,14 @@ for _, field := range metadata.Fields {
 }
 ```
 
-If Docbank has not published metadata for the version's bytes, the method
-returns `ErrNotFound`. Opening an embedded vault does not start processing
-workers. The embedded API returns all local fields, including fields marked
-sensitive. The embedding application must decide what it may disclose to its
-own users and transports.
+The operation is synchronous, local, and scoped to the requested version. It
+reuses the current extractor generation when one already exists and does not
+start background workers or process other content. It returns
+`ErrContentUnavailable` when the cataloged source bytes cannot be opened or
+verified. `SourceMetadata` remains a read-only lookup and returns `ErrNotFound`
+when no generation has been published. Both methods return all local fields,
+including fields marked sensitive. The embedding application must decide what
+it may disclose to its own users and transports.
 
 ## Read canonical visual previews
 

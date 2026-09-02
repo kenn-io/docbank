@@ -24,6 +24,7 @@ import (
 	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -124,6 +125,9 @@ type Vault struct {
 	// testAfterWriteCommit exercises receipt completion after a Put or Create
 	// metadata mutation commits. Production constructors leave it nil.
 	testAfterWriteCommit func()
+	// testAfterSourceMetadataPublication exercises mutation ownership between
+	// metadata publication and the final exact-version read.
+	testAfterSourceMetadataPublication func()
 }
 
 // New creates or opens one embedded vault and holds its exclusive hierarchy
@@ -367,6 +371,54 @@ func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMet
 	}
 	defer v.lifecycle.RUnlock()
 	view, err := v.metadata.ContentVersionSourceMetadata(ctx, versionID)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	return fromStoreSourceMetadata(view), nil
+}
+
+// EnsureSourceMetadata returns current local metadata for one exact immutable
+// content version. When the current extractor has not processed those bytes,
+// it verifies and processes them synchronously before returning. Retrying the
+// same version and extractor generation is idempotent.
+func (v *Vault) EnsureSourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
+	if err := v.begin(); err != nil {
+		return SourceMetadata{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return SourceMetadata{}, err
+	}
+	version, err := v.metadata.ContentVersionByID(ctx, versionID)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	view, err := v.metadata.ContentVersionSourceMetadata(ctx, versionID)
+	if err == nil && view.Generation.ExtractorFingerprint == internalprocessing.SourceMetadataExtractorFingerprint {
+		return fromStoreSourceMetadata(view), nil
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return SourceMetadata{}, err
+	}
+	_, err = internalprocessing.BackfillSourceMetadataTargets(ctx, v.metadata, v.blobs, []store.SourceMetadataTarget{{
+		SourceSHA256: version.BlobHash,
+		Size:         version.Size,
+	}})
+	if err != nil {
+		if internalprocessing.IsSourceContentUnavailable(err) {
+			return SourceMetadata{}, fmt.Errorf(
+				"ensuring source metadata for content version %q: %w: %w",
+				versionID, ErrContentUnavailable, err,
+			)
+		}
+		return SourceMetadata{}, fmt.Errorf("ensuring source metadata for content version %q: %w", versionID, err)
+	}
+	if v.testAfterSourceMetadataPublication != nil {
+		v.testAfterSourceMetadataPublication()
+	}
+	view, err = v.metadata.ContentVersionSourceMetadata(ctx, versionID)
 	if err != nil {
 		return SourceMetadata{}, err
 	}

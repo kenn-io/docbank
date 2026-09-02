@@ -135,6 +135,188 @@ func TestVaultSourceMetadataReturnsExactVersionEvidence(t *testing.T) {
 	assert.Equal(t, "/photos/image.jpg", metadata.Attachment.Path)
 }
 
+func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	firstContent := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:First event\r\nDTSTART:20240102T030405Z\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	first, err := vault.Create(t.Context(), "/calendar.ics", bytes.NewReader(firstContent), CreateOptions{
+		MediaType: "text/calendar", Expected: contentIdentity(firstContent),
+	})
+	require.NoError(t, err)
+	secondContent := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Second event\r\nDTSTART:20240203T040506Z\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	_, err = vault.Put(t.Context(), "/calendar.ics", bytes.NewReader(secondContent), PutOptions{
+		MediaType: "text/calendar", Expected: new(contentIdentity(secondContent)),
+	})
+	require.NoError(t, err)
+
+	metadata, err := vault.EnsureSourceMetadata(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Version.ID, metadata.Version.ID)
+	assert.Empty(t, metadata.Attachment.Path)
+	var title string
+	for _, field := range metadata.Fields {
+		if field.Key == "title" {
+			title = field.Value.String
+		}
+	}
+	assert.Equal(t, "First event", title)
+
+	retry, err := vault.EnsureSourceMetadata(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, metadata, retry)
+}
+
+func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Current event\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	receipt, err := vault.Create(t.Context(), "/calendar.ics", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/calendar", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	staleCanonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{
+			Key: "title", Namespace: "calendar", SourceField: "SUMMARY",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Stale event"},
+		}},
+	})
+	require.NoError(t, err)
+	staleFingerprint := contentIdentity([]byte("old extractor")).SHA256
+	_, err = vault.metadata.PublishSourceMetadata(t.Context(), receipt.Version.BlobHash, staleFingerprint, staleCanonical)
+	require.NoError(t, err)
+
+	metadata, err := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, staleFingerprint, metadata.ExtractorFingerprint)
+	var title string
+	for _, field := range metadata.Fields {
+		if field.Key == "title" {
+			title = field.Value.String
+		}
+	}
+	assert.Equal(t, "Current event", title)
+}
+
+func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	_, err = vault.EnsureSourceMetadata(t.Context(), "00000000-0000-4000-8000-000000000000")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestVaultEnsureSourceMetadataWaitsForActiveMutation(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	source := []byte("source metadata bytes")
+	receipt, err := vault.Create(t.Context(), "/source.bin", bytes.NewReader(source), CreateOptions{
+		MediaType: "application/octet-stream", Expected: contentIdentity(source),
+	})
+	require.NoError(t, err)
+
+	mutationActive := make(chan struct{})
+	releaseMutation := make(chan struct{})
+	vault.testAfterWriteCommit = func() {
+		close(mutationActive)
+		<-releaseMutation
+	}
+	putDone := make(chan error, 1)
+	go func() {
+		other := []byte("other bytes")
+		_, putErr := vault.Put(t.Context(), "/other.bin", bytes.NewReader(other), PutOptions{
+			MediaType: "application/octet-stream", Expected: new(contentIdentity(other)),
+		})
+		putDone <- putErr
+	}()
+	<-mutationActive
+
+	ensureDone := make(chan error, 1)
+	go func() {
+		_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+		ensureDone <- ensureErr
+	}()
+	timer := time.NewTimer(100 * time.Millisecond)
+	var earlyErr error
+	returnedEarly := false
+	select {
+	case earlyErr = <-ensureDone:
+		returnedEarly = true
+	case <-timer.C:
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	close(releaseMutation)
+	require.NoError(t, <-putDone)
+	require.False(t, returnedEarly,
+		"source metadata processing returned during an active mutation: %v", earlyErr)
+	require.NoError(t, <-ensureDone)
+}
+
+func TestVaultEnsureSourceMetadataHoldsMutationThroughFinalRead(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	source := []byte("source metadata bytes")
+	receipt, err := vault.Create(t.Context(), "/source.bin", bytes.NewReader(source), CreateOptions{
+		MediaType: "application/octet-stream", Expected: contentIdentity(source),
+	})
+	require.NoError(t, err)
+
+	metadataPublished := make(chan struct{})
+	releaseEnsure := make(chan struct{})
+	vault.testAfterSourceMetadataPublication = func() {
+		close(metadataPublished)
+		<-releaseEnsure
+	}
+	ensureDone := make(chan error, 1)
+	go func() {
+		_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+		ensureDone <- ensureErr
+	}()
+	<-metadataPublished
+
+	putDone := make(chan error, 1)
+	go func() {
+		other := []byte("other bytes")
+		_, putErr := vault.Put(t.Context(), "/other.bin", bytes.NewReader(other), PutOptions{
+			MediaType: "application/octet-stream", Expected: new(contentIdentity(other)),
+		})
+		putDone <- putErr
+	}()
+	timer := time.NewTimer(100 * time.Millisecond)
+	var earlyErr error
+	returnedEarly := false
+	select {
+	case earlyErr = <-putDone:
+		returnedEarly = true
+	case <-timer.C:
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	close(releaseEnsure)
+	require.NoError(t, <-ensureDone)
+	require.False(t, returnedEarly,
+		"content write returned before source metadata's final read: %v", earlyErr)
+	require.NoError(t, <-putDone)
+}
+
 func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)

@@ -58,12 +58,19 @@ var (
 	// in verified bytes, which become durable warnings rather than retryable
 	// storage errors.
 	errSourceMetadataBMFFMalformed = errors.New("malformed ISO base media file structure")
+	errSourceContentUnavailable    = errors.New("source content unavailable")
 
 	sourceMetadataCanonUUID = [16]byte{
 		0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0,
 		0x81, 0x11, 0xf4, 0xce, 0x46, 0x2b, 0x6a, 0x48,
 	}
 )
+
+// IsSourceContentUnavailable reports whether source metadata processing could
+// not open or verify the catalog-authorized source bytes.
+func IsSourceContentUnavailable(err error) bool {
+	return errors.Is(err, errSourceContentUnavailable)
+}
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
 	digest := sha256.Sum256([]byte(descriptor))
@@ -127,19 +134,21 @@ func sourceMetadataForTarget(
 	if target.Size <= maxSourceMetadataOriginalBytes {
 		stream, size, err := blobs.OpenStreamContext(ctx, target.SourceSHA256)
 		if err != nil {
-			return document.SourceMetadataV1{}, fmt.Errorf("opening verified stream: %w", err)
+			return document.SourceMetadataV1{}, sourceContentUnavailable(
+				fmt.Errorf("opening verified stream: %w", err))
 		}
 		if size != target.Size {
-			return document.SourceMetadataV1{}, errors.Join(
-				fmt.Errorf("size changed: catalog=%d opened=%d", target.Size, size), stream.Close())
+			return document.SourceMetadataV1{}, sourceContentUnavailable(errors.Join(
+				fmt.Errorf("size changed: catalog=%d opened=%d", target.Size, size), stream.Close()))
 		}
 		data, readErr := io.ReadAll(io.LimitReader(stream, size+1))
 		if err := errors.Join(readErr, stream.Close()); err != nil {
-			return document.SourceMetadataV1{}, fmt.Errorf("verifying stream: %w", err)
+			return document.SourceMetadataV1{}, sourceContentUnavailable(
+				fmt.Errorf("verifying stream: %w", err))
 		}
 		if int64(len(data)) != size {
-			return document.SourceMetadataV1{}, fmt.Errorf(
-				"length changed: catalog=%d read=%d", size, len(data))
+			return document.SourceMetadataV1{}, sourceContentUnavailable(fmt.Errorf(
+				"length changed: catalog=%d read=%d", size, len(data)))
 		}
 		if size > maxSourceMetadataWindowBytes && boundedLargeMediaSignature(data) {
 			return extractLargeSourceMetadata(bytes.NewReader(data), size)
@@ -149,17 +158,23 @@ func sourceMetadataForTarget(
 
 	reader, size, err := blobs.OpenSeekableContext(ctx, target.SourceSHA256)
 	if err != nil {
-		return document.SourceMetadataV1{}, fmt.Errorf("opening seekable content: %w", err)
+		return document.SourceMetadataV1{}, sourceContentUnavailable(
+			fmt.Errorf("opening seekable content: %w", err))
 	}
 	if size != target.Size {
-		return document.SourceMetadataV1{}, errors.Join(
-			fmt.Errorf("size changed: catalog=%d opened=%d", target.Size, size), reader.Close())
+		return document.SourceMetadataV1{}, sourceContentUnavailable(errors.Join(
+			fmt.Errorf("size changed: catalog=%d opened=%d", target.Size, size), reader.Close()))
 	}
 	if err := verifySeekableSource(ctx, reader, target.SourceSHA256, size); err != nil {
-		return document.SourceMetadataV1{}, errors.Join(fmt.Errorf("verifying seekable content: %w", err), reader.Close())
+		return document.SourceMetadataV1{}, sourceContentUnavailable(errors.Join(
+			fmt.Errorf("verifying seekable content: %w", err), reader.Close()))
 	}
 	metadata, extractErr := extractLargeSourceMetadata(&seekReaderAt{seeker: reader}, size)
 	return metadata, errors.Join(extractErr, reader.Close())
+}
+
+func sourceContentUnavailable(err error) error {
+	return errors.Join(errSourceContentUnavailable, err)
 }
 
 func emptySourceMetadata() document.SourceMetadataV1 {

@@ -484,6 +484,43 @@ func TestOpenVersionContentClassifiesPhysicalContentFailures(t *testing.T) {
 	}
 }
 
+func TestEnsureSourceMetadataClassifiesPhysicalContentFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		corrupt func(*testing.T, string)
+	}{
+		{
+			name: "missing blob",
+			corrupt: func(t *testing.T, path string) {
+				t.Helper()
+				require.NoError(t, os.Remove(path))
+			},
+		},
+		{
+			name: "corrupt blob",
+			corrupt: func(t *testing.T, path string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(path, []byte("corrupt"), 0o600))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+			receipt := createRangeFixture(t, vault, "/source.bin", []byte("source metadata bytes"))
+			test.corrupt(t, looseBlobPath(root, receipt.Computed.SHA256))
+
+			_, err = vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+			require.ErrorIs(t, err, docbank.ErrContentUnavailable)
+		})
+	}
+}
+
 func TestContentMetadataErrorsRemainDistinctFromPhysicalUnavailability(t *testing.T) {
 	root := t.TempDir()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
