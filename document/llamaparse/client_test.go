@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -97,10 +98,13 @@ func TestClientUploadsExactAuthorizedBytesAndMapsNaturalPages(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	assert.True(t, strings.HasPrefix(checkpoint.Value, "lp1."+testJobID+"."))
+	assert.True(t, strings.HasPrefix(checkpoint.Value, "lp2."+testJobID+"."))
 	handleParts := strings.Split(checkpoint.Value, ".")
-	require.Len(t, handleParts, 4)
-	checkpointNanos, err := strconv.ParseInt(handleParts[3], 10, 64)
+	require.Len(t, handleParts, 5)
+	authorizationFingerprint, err := fixture.authorization.Fingerprint()
+	require.NoError(t, err)
+	assert.Equal(t, authorizationFingerprint, handleParts[2])
+	checkpointNanos, err := strconv.ParseInt(handleParts[4], 10, 64)
 	require.NoError(t, err)
 	completedAt, err := time.Parse(timeForm, result.Receipt.CompletedAt)
 	require.NoError(t, err)
@@ -145,7 +149,8 @@ func TestClientResumesWithoutUploadingSource(t *testing.T) {
 	client := fixture.client(t, transport)
 	now := time.Now().UTC()
 	result, err := client.RenderResumable(t.Context(), nil, fixture.authorization,
-		&document.RenditionResumeHandle{Value: testResumeHandle(now.Add(-time.Second), now)}, nil)
+		&document.RenditionResumeHandle{Value: testResumeHandle(
+			t, fixture.authorization, now.Add(-time.Second), now)}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{statusPath(testJobID), jsonResultPath(testJobID)}, paths)
 	assert.Equal(t, "Resumed", result.Evidence.Units[0].Text)
@@ -159,35 +164,42 @@ func TestClientRejectsInvalidResumeFactsWithoutEgress(t *testing.T) {
 	require.NoError(t, err)
 	validSubmittedAt := authorizedAt.Add(time.Nanosecond)
 	validCheckpointedAt := validSubmittedAt.Add(time.Nanosecond)
+	authorizationFingerprint, err := fixture.authorization.Fingerprint()
+	require.NoError(t, err)
 	tests := []struct {
 		name   string
 		handle string
 		want   document.RenditionErrorCode
 	}{
 		{
-			name:   "submitted before authorization",
-			handle: testResumeHandle(authorizedAt.Add(-time.Nanosecond), validCheckpointedAt),
-			want:   document.RenditionErrorPolicyRejected,
+			name: "submitted before authorization",
+			handle: testResumeHandle(t, fixture.authorization,
+				authorizedAt.Add(-time.Nanosecond), validCheckpointedAt),
+			want: document.RenditionErrorPolicyRejected,
 		},
 		{
-			name:   "checkpoint after expiry",
-			handle: testResumeHandle(validSubmittedAt, expiresAt.Add(time.Nanosecond)),
-			want:   document.RenditionErrorPolicyRejected,
+			name: "checkpoint after expiry",
+			handle: testResumeHandle(t, fixture.authorization,
+				validSubmittedAt, expiresAt.Add(time.Nanosecond)),
+			want: document.RenditionErrorPolicyRejected,
 		},
 		{
-			name:   "noncanonical timestamp",
-			handle: fmt.Sprintf("lp1.%s.0%d.%d", testJobID, validSubmittedAt.UnixNano(), validCheckpointedAt.UnixNano()),
-			want:   document.RenditionErrorUnknownJob,
+			name: "noncanonical timestamp",
+			handle: fmt.Sprintf("lp2.%s.%s.0%d.%d", testJobID, authorizationFingerprint,
+				validSubmittedAt.UnixNano(), validCheckpointedAt.UnixNano()),
+			want: document.RenditionErrorUnknownJob,
 		},
 		{
-			name:   "unparseable timestamp",
-			handle: fmt.Sprintf("lp1.%s.not-a-time.%d", testJobID, validCheckpointedAt.UnixNano()),
-			want:   document.RenditionErrorUnknownJob,
+			name: "unparseable timestamp",
+			handle: fmt.Sprintf("lp2.%s.%s.not-a-time.%d", testJobID,
+				authorizationFingerprint, validCheckpointedAt.UnixNano()),
+			want: document.RenditionErrorUnknownJob,
 		},
 		{
-			name:   "wrong version",
-			handle: strings.Replace(testResumeHandle(validSubmittedAt, validCheckpointedAt), "lp1.", "lp2.", 1),
-			want:   document.RenditionErrorUnknownJob,
+			name: "wrong version",
+			handle: strings.Replace(testResumeHandle(t, fixture.authorization,
+				validSubmittedAt, validCheckpointedAt), "lp2.", "lp3.", 1),
+			want: document.RenditionErrorUnknownJob,
 		},
 		{name: "legacy bare job ID", handle: testJobID, want: document.RenditionErrorUnknownJob},
 	}
@@ -202,6 +214,64 @@ func TestClientRejectsInvalidResumeFactsWithoutEgress(t *testing.T) {
 				&document.RenditionResumeHandle{Value: testCase.handle}, nil)
 
 			assertCode(t, err, testCase.want)
+			assert.Zero(t, fixture.secrets.calls())
+		})
+	}
+}
+
+func TestClientRejectsResumeHandleFromDifferentAuthorizationWithoutEgress(t *testing.T) {
+	fixture := newFixture(t, []byte("%PDF-1.7\nbound resume\n%%EOF\n"))
+	now := time.Now().UTC()
+	handle := testResumeHandle(t, fixture.authorization, now.Add(-time.Second), now)
+	tests := []struct {
+		name   string
+		mutate func(*document.RenditionAuthorization)
+	}{
+		{
+			name: "source",
+			mutate: func(authorization *document.RenditionAuthorization) {
+				authorization.SourceSHA256 = strings.Repeat("9", 64)
+			},
+		},
+		{
+			name: "request",
+			mutate: func(authorization *document.RenditionAuthorization) {
+				authorization.RenditionRequestFingerprint = strings.Repeat("8", 64)
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			authorization := fixture.authorization
+			testCase.mutate(&authorization)
+			client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Fatal("mismatched resume authority reached egress")
+				return nil, errors.New("unexpected egress")
+			}))
+
+			_, err := client.RenderResumable(t.Context(), nil, authorization,
+				&document.RenditionResumeHandle{Value: handle}, nil)
+
+			assertCode(t, err, document.RenditionErrorPolicyRejected)
+			assert.Zero(t, fixture.secrets.calls())
+		})
+	}
+}
+
+func TestClientRejectsMultipartFilenameNewlinesBeforeSubmission(t *testing.T) {
+	for _, filename := range []string{"report\r.pdf", "report\n.pdf"} {
+		t.Run(strconv.Quote(filename), func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\nfilename\n%%EOF\n"))
+			fixture.metadata.Filename = filename
+			client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Fatal("unsafe filename reached egress")
+				return nil, errors.New("unexpected egress")
+			}))
+
+			_, err := document.RenderRenditionWithResume(t.Context(), client, fixture.upload(),
+				fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+
+			assertCode(t, err, document.RenditionErrorPolicyRejected)
 			assert.Zero(t, fixture.secrets.calls())
 		})
 	}
@@ -441,6 +511,46 @@ func TestClientClassifiesHostedFailuresWithoutLeakingProviderBodies(t *testing.T
 	}
 }
 
+func TestClientClassifiesProviderJobErrorsByCode(t *testing.T) {
+	tests := []struct {
+		name string
+		code *string
+		want document.RenditionErrorCode
+	}{
+		{name: "unsupported file", code: new("UNSUPPORTED_FILE_TYPE"), want: document.RenditionErrorUnsupportedInput},
+		{name: "document too large", code: new("DOCUMENT_TOO_LARGE"), want: document.RenditionErrorPolicyRejected},
+		{name: "processing failure", code: new("ERROR_DURING_PROCESSING"), want: document.RenditionErrorTransient},
+		{name: "reconstruction failure", code: new("RECONSTRUCTION_ERROR"), want: document.RenditionErrorTransient},
+		{name: "Markdown failure", code: new("MARKDOWN_EXTRACTION_FAILED"), want: document.RenditionErrorTransient},
+		{name: "unknown code", code: new("NEW_PROVIDER_ERROR"), want: document.RenditionErrorMalformedEvidence},
+		{name: "missing code", want: document.RenditionErrorMalformedEvidence},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\njob error\n%%EOF\n"))
+			status := map[string]any{
+				"id": testJobID, "status": "ERROR", "error_message": "private provider detail",
+			}
+			if testCase.code != nil {
+				status["error_code"] = *testCase.code
+			}
+			statusBody, err := json.Marshal(status)
+			require.NoError(t, err)
+			transport := routeTransport(t, map[string]routeResponse{
+				uploadPath:            {body: `{"id":"` + testJobID + `","status":"PENDING"}`},
+				statusPath(testJobID): {body: string(statusBody)},
+			})
+
+			_, err = document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil,
+				func(document.RenditionResumeHandle) error { return nil })
+
+			assertCode(t, err, testCase.want)
+			assert.NotContains(t, err.Error(), "private provider detail")
+		})
+	}
+}
+
 func TestClientClassifiesAmbiguousSubmissionAndUnknownJobs(t *testing.T) {
 	fixture := newFixture(t, []byte("%PDF-1.7\nambiguous\n%%EOF\n"))
 	client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -457,7 +567,8 @@ func TestClientClassifiesAmbiguousSubmissionAndUnknownJobs(t *testing.T) {
 		}))
 		now := time.Now().UTC()
 		_, err = client.RenderResumable(t.Context(), nil, fixture.authorization,
-			&document.RenditionResumeHandle{Value: testResumeHandle(now.Add(-time.Second), now)}, nil)
+			&document.RenditionResumeHandle{Value: testResumeHandle(
+				t, fixture.authorization, now.Add(-time.Second), now)}, nil)
 		assertCode(t, err, document.RenditionErrorUnknownJob)
 	}
 }
@@ -730,6 +841,67 @@ func TestClientEnforcesUploadPollResultAndArtifactBounds(t *testing.T) {
 			func(document.RenditionResumeHandle) error { return nil })
 		assertCode(t, err, document.RenditionErrorMalformedEvidence)
 	})
+
+	t.Run("fallback after exact result budget", func(t *testing.T) {
+		const resultBody = `{"pages":[],"job_metadata":{"job_pages":0}}`
+		fixture := newFixture(t, []byte("%PDF-1.7\nno fallback budget\n%%EOF\n"))
+		fixture.authorization.MaxProviderMarkdownBytes = 0
+		fixture.authorization.MaxTotalResultBytes = len(resultBody)
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case uploadPath, statusPath(testJobID):
+				return response(request, http.StatusOK,
+					`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+			case jsonResultPath(testJobID):
+				return response(request, http.StatusOK, resultBody), nil
+			case markdownResultPath(testJobID):
+				t.Fatal("exhausted result budget reached fallback egress")
+				return nil, errors.New("unexpected egress")
+			default:
+				t.Fatalf("unexpected route %s", request.URL.Path)
+				return nil, errors.New("unexpected egress")
+			}
+		})
+
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil,
+			func(document.RenditionResumeHandle) error { return nil })
+
+		assertCode(t, err, document.RenditionErrorMalformedEvidence)
+	})
+
+	t.Run("image after exact result budget", func(t *testing.T) {
+		const resultBody = `{"pages":[{"page":1,"md":"Image page","images":[{"name":"figure-1.png"}],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}],"job_metadata":{"job_pages":1}}`
+		fixture := newFixture(t, []byte("%PDF-1.7\nno image budget\n%%EOF\n"))
+		fixture.profile.RetainImages = true
+		fixture.profile.MaxArtifacts = 1
+		fixture.authorization.MaxProviderMarkdownBytes = 0
+		fixture.authorization.AllowedArtifactRoles = []document.EvidenceArtifactRole{document.EvidenceArtifactImage}
+		fixture.authorization.MaxArtifacts = 1
+		fixture.authorization.MaxArtifactBytes = 128
+		fixture.authorization.MaxTotalResultBytes = len(resultBody)
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case uploadPath, statusPath(testJobID):
+				return response(request, http.StatusOK,
+					`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+			case jsonResultPath(testJobID):
+				return response(request, http.StatusOK, resultBody), nil
+			case imageResultPath(testJobID, "figure-1.png"):
+				t.Fatal("exhausted result budget reached image egress")
+				return nil, errors.New("unexpected egress")
+			default:
+				t.Fatalf("unexpected route %s", request.URL.Path)
+				return nil, errors.New("unexpected egress")
+			}
+		})
+
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil,
+			func(document.RenditionResumeHandle) error { return nil })
+
+		assertCode(t, err, document.RenditionErrorMalformedEvidence)
+	})
 }
 
 func TestClientClassifiesExactUploadReadLifecycle(t *testing.T) {
@@ -842,7 +1014,8 @@ func TestClientResumesHistoricalSealedAuthorizationWithRecordedReceiptTimes(t *t
 	require.NoError(t, err)
 
 	result, err := document.ResumeRendition(t.Context(), client, snapshot,
-		document.RenditionResumeHandle{Value: testResumeHandle(submittedAt, checkpointedAt)}, nil)
+		document.RenditionResumeHandle{Value: testResumeHandle(
+			t, fixture.authorization, submittedAt, checkpointedAt)}, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, submittedAt.Format(timeForm), result.Receipt.StartedAt)
@@ -1112,8 +1285,14 @@ func bytesResponse(request *http.Request, status int, body []byte) *http.Respons
 	}
 }
 
-func testResumeHandle(submittedAt, checkpointedAt time.Time) string {
-	return fmt.Sprintf("lp1.%s.%d.%d", testJobID, submittedAt.UnixNano(), checkpointedAt.UnixNano())
+func testResumeHandle(
+	t *testing.T, authorization document.RenditionAuthorization, submittedAt, checkpointedAt time.Time,
+) string {
+	t.Helper()
+	authorizationFingerprint, err := authorization.Fingerprint()
+	require.NoError(t, err)
+	return fmt.Sprintf("lp2.%s.%s.%d.%d", testJobID, authorizationFingerprint,
+		submittedAt.UnixNano(), checkpointedAt.UnixNano())
 }
 
 func assertCode(t *testing.T, err error, want document.RenditionErrorCode) {

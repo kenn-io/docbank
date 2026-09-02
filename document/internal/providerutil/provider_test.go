@@ -224,6 +224,14 @@ func TestExecutorDeliversMultipartFieldsAndCountsResponseBytes(t *testing.T) {
 	assert.Equal(t, int64(encoded.Len()), encodedLength)
 }
 
+func TestMultipartUploadRejectsFilenameLineBreaks(t *testing.T) {
+	for _, filename := range []string{"report\r.pdf", "report\n.pdf"} {
+		upload := MultipartUpload{FieldName: "file", Filename: filename, MediaType: "application/pdf"}
+		_, err := upload.EncodedLength()
+		require.ErrorContains(t, err, "line break")
+	}
+}
+
 func TestExecutorCountsPartialBodyAndClassifiesReadFailure(t *testing.T) {
 	payload := []byte("partial provider response")
 	executor := &Executor{

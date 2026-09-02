@@ -183,7 +183,8 @@ func (client *Client) RenderResumable(
 			return document.RenditionResult{}, err
 		}
 		handle := encodeResumeHandle(resumeStateV1{
-			jobID: jobID, submittedAt: state.startedAt, checkpointedAt: checkpointedAt,
+			jobID: jobID, authorizationFingerprint: resumeState.authorizationFingerprint,
+			submittedAt: state.startedAt, checkpointedAt: checkpointedAt,
 		})
 		if checkpoint != nil {
 			if err := checkpoint(document.RenditionResumeHandle{Value: handle}); err != nil {
@@ -229,6 +230,11 @@ func (client *Client) validateInvocation(
 		return resumeStateV1{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse authorization expiry is invalid", err)
 	}
+	authorizationFingerprint, err := authorization.Fingerprint()
+	if err != nil {
+		return resumeStateV1{}, provider.Classified(document.RenditionErrorPolicyRejected,
+			"LlamaParse authorization fingerprint is invalid", err)
+	}
 	if resume == nil {
 		if providerutil.IsNil(upload) {
 			return resumeStateV1{}, errors.New("LlamaParse authorized upload is required for submission")
@@ -242,7 +248,8 @@ func (client *Client) validateInvocation(
 			return resumeStateV1{}, provider.Classified(document.RenditionErrorUnknownJob,
 				"LlamaParse resume handle is invalid", parseErr)
 		}
-		if authorization.ProviderID != client.descriptor.ID ||
+		if parsed.authorizationFingerprint != authorizationFingerprint ||
+			authorization.ProviderID != client.descriptor.ID ||
 			authorization.DescriptorFingerprint != client.descriptor.Fingerprint ||
 			authorization.PolicyFingerprint != client.descriptor.PolicyFingerprint {
 			return resumeStateV1{}, provider.Classified(document.RenditionErrorPolicyRejected,
@@ -256,7 +263,7 @@ func (client *Client) validateInvocation(
 		}
 		return parsed, nil
 	}
-	return resumeStateV1{}, nil
+	return resumeStateV1{authorizationFingerprint: authorizationFingerprint}, nil
 }
 
 func (client *Client) submit(
@@ -266,6 +273,10 @@ func (client *Client) submit(
 	if metadata.ByteLength > client.profile.MaxUploadBytes {
 		return "", provider.Classified(document.RenditionErrorPolicyRejected,
 			"LlamaParse upload exceeds profile limit", nil)
+	}
+	if err := providerutil.ValidateMultipartFilename(metadata.Filename); err != nil {
+		return "", provider.Classified(document.RenditionErrorPolicyRejected,
+			"LlamaParse upload filename contains a line break", err)
 	}
 	source, err := state.operation.ReadUpload(upload)
 	if err != nil {
@@ -305,7 +316,7 @@ func (client *Client) submit(
 	if err := strictJSON(response.Body, &job); err != nil || validateJobID(job.ID) != nil {
 		return "", provider.AmbiguousSubmission(provider.Malformed("LlamaParse submission schema changed", err))
 	}
-	if err := validateInitialStatus(job.Status); err != nil {
+	if err := validateInitialStatus(job); err != nil {
 		return "", err
 	}
 	return job.ID, nil
@@ -347,8 +358,7 @@ func (client *Client) poll(
 			}
 			state.pollDelay += client.profile.PollInterval
 		case "ERROR":
-			return provider.Classified(document.RenditionErrorUnsupportedInput,
-				"LlamaParse could not parse the input", nil)
+			return jobError(job)
 		case "PARTIAL_SUCCESS":
 			return provider.Malformed(
 				"LlamaParse returned partial output", nil)
@@ -414,6 +424,10 @@ func (client *Client) result(
 		if jobPages != 0 {
 			return document.RenditionResult{}, provider.Malformed(
 				"LlamaParse page output is incomplete", nil)
+		}
+		if budget <= 0 {
+			return document.RenditionResult{}, provider.Malformed(
+				"LlamaParse result exhausted the authorized byte budget", nil)
 		}
 		return client.markdownFallback(jobID, authorization, jobPages, budget, state)
 	}
@@ -617,6 +631,10 @@ func (client *Client) fetchImage(
 	jobID, name string, authorization document.RenditionAuthorization,
 	budget int64, state *operationState,
 ) (document.RenditionArtifact, document.SourceEvidenceArtifactV1, error) {
+	if budget <= 0 {
+		return document.RenditionArtifact{}, document.SourceEvidenceArtifactV1{}, provider.Malformed(
+			"LlamaParse result exhausted the authorized byte budget", nil)
+	}
 	limit := min(client.profile.MaxArtifactBytes, int64(authorization.MaxArtifactBytes))
 	limit = min(limit, budget)
 	response, err := client.executor.Do(state.operation, &state.usage, providerutil.Request{
@@ -666,9 +684,10 @@ type operationState struct {
 }
 
 type resumeStateV1 struct {
-	jobID          string
-	submittedAt    time.Time
-	checkpointedAt time.Time
+	jobID                    string
+	authorizationFingerprint string
+	submittedAt              time.Time
+	checkpointedAt           time.Time
 }
 
 type jobResponse struct {
@@ -808,7 +827,7 @@ func validateJobID(value string) error {
 }
 
 func encodeResumeHandle(state resumeStateV1) string {
-	return fmt.Sprintf("lp1.%s.%d.%d", state.jobID,
+	return fmt.Sprintf("lp2.%s.%s.%d.%d", state.jobID, state.authorizationFingerprint,
 		state.submittedAt.UnixNano(), state.checkpointedAt.UnixNano())
 }
 
@@ -817,7 +836,7 @@ func parseResumeHandle(value string) (resumeStateV1, error) {
 		return resumeStateV1{}, errors.New("resume handle exceeds its bound")
 	}
 	parts := strings.Split(value, ".")
-	if len(parts) != 4 || parts[0] != "lp1" {
+	if len(parts) != 5 || parts[0] != "lp2" {
 		return resumeStateV1{}, errors.New("resume handle version is invalid")
 	}
 	if err := validateJobID(parts[1]); err != nil {
@@ -830,31 +849,51 @@ func parseResumeHandle(value string) (resumeStateV1, error) {
 		}
 		return time.Unix(0, nanoseconds).UTC(), nil
 	}
-	submittedAt, err := parseTime(parts[2])
+	submittedAt, err := parseTime(parts[3])
 	if err != nil {
 		return resumeStateV1{}, err
 	}
-	checkpointedAt, err := parseTime(parts[3])
+	checkpointedAt, err := parseTime(parts[4])
 	if err != nil || checkpointedAt.Before(submittedAt) {
 		return resumeStateV1{}, errors.New("resume handle checkpoint time is invalid")
 	}
 	return resumeStateV1{
-		jobID: parts[1], submittedAt: submittedAt, checkpointedAt: checkpointedAt,
+		jobID: parts[1], authorizationFingerprint: parts[2],
+		submittedAt: submittedAt, checkpointedAt: checkpointedAt,
 	}, nil
 }
 
-func validateInitialStatus(status string) error {
-	switch status {
+func validateInitialStatus(job jobResponse) error {
+	switch job.Status {
 	case "PENDING", "SUCCESS":
 		return nil
 	case "ERROR":
-		return provider.Classified(document.RenditionErrorUnsupportedInput, "LlamaParse could not parse the input", nil)
+		return jobError(job)
 	case "PARTIAL_SUCCESS":
 		return provider.Malformed("LlamaParse returned partial output", nil)
 	case "CANCELLED":
 		return provider.Classified(document.RenditionErrorCanceled, "LlamaParse job was canceled", nil)
 	default:
 		return provider.Classified(document.RenditionErrorPolicyRejected, "LlamaParse submission schema changed", nil)
+	}
+}
+
+func jobError(job jobResponse) error {
+	if job.ErrorCode == nil {
+		return provider.Malformed("LlamaParse failed without a recognized error code", nil)
+	}
+	switch *job.ErrorCode {
+	case "UNSUPPORTED_FILE_TYPE":
+		return provider.Classified(document.RenditionErrorUnsupportedInput,
+			"LlamaParse does not support the submitted input", nil)
+	case "DOCUMENT_TOO_LARGE":
+		return provider.Classified(document.RenditionErrorPolicyRejected,
+			"LlamaParse document exceeds the provider limit", nil)
+	case "ERROR_DURING_PROCESSING", "RECONSTRUCTION_ERROR", "MARKDOWN_EXTRACTION_FAILED":
+		return provider.Classified(document.RenditionErrorTransient,
+			"LlamaParse processing failed temporarily", nil)
+	default:
+		return provider.Malformed("LlamaParse returned an unknown job error code", nil)
 	}
 }
 
