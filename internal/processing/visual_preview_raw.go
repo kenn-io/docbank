@@ -12,12 +12,16 @@ import (
 )
 
 const (
-	visualPreviewRAWMaxIFDs        = 64
-	visualPreviewRAWMaxIFDEntries  = 1024
-	visualPreviewRAWSubIFDsTag     = 0x014a
-	visualPreviewRAWOffsetTag      = 0x0201
-	visualPreviewRAWLengthTag      = 0x0202
-	visualPreviewRAWOrientationTag = 0x0112
+	visualPreviewRAWMaxIFDs            = 64
+	visualPreviewRAWMaxIFDEntries      = 1024
+	visualPreviewRAWCompressionTag     = 0x0103
+	visualPreviewRAWJPEGCompression    = 7
+	visualPreviewRAWStripOffsetsTag    = 0x0111
+	visualPreviewRAWStripByteCountsTag = 0x0117
+	visualPreviewRAWSubIFDsTag         = 0x014a
+	visualPreviewRAWOffsetTag          = 0x0201
+	visualPreviewRAWLengthTag          = 0x0202
+	visualPreviewRAWOrientationTag     = 0x0112
 )
 
 type visualPreviewRAWLocation struct {
@@ -167,6 +171,20 @@ func inspectVisualPreviewTIFFRAW(
 				candidates = append(candidates, candidate)
 			}
 		}
+		stripOffset, hasStripOffset := entries[visualPreviewRAWStripOffsetsTag]
+		stripLength, hasStripLength := entries[visualPreviewRAWStripByteCountsTag]
+		if hasStripOffset != hasStripLength {
+			malformed = true
+		} else if hasStripOffset && entries[visualPreviewRAWCompressionTag] == visualPreviewRAWJPEGCompression {
+			candidate := visualPreviewRAWLocation{
+				offset: int64(stripOffset), length: int64(stripLength), orientation: candidateOrientation,
+			}
+			if !sourceMetadataRangeWithin(candidate.offset, candidate.length, sourceSize) {
+				malformed = true
+			} else {
+				candidates = append(candidates, candidate)
+			}
+		}
 		queue = append(queue, subIFDs...)
 		if next != 0 {
 			queue = append(queue, next)
@@ -203,8 +221,8 @@ func readVisualPreviewRAWIFD(
 	if err != nil {
 		return nil, 0, nil, false, err
 	}
-	values := make(map[uint16]uint32, 3)
-	seenValues := make(map[uint16]struct{}, 3)
+	values := make(map[uint16]uint32, 7)
+	seenValues := make(map[uint16]struct{}, 7)
 	var subIFDs []int64
 	for index := range count {
 		entry := table[index*12 : index*12+12]
@@ -223,7 +241,9 @@ func readVisualPreviewRAWIFD(
 			subIFDs = append(subIFDs, offsets...)
 			continue
 		}
-		if tag != visualPreviewRAWOffsetTag && tag != visualPreviewRAWLengthTag &&
+		if tag != visualPreviewRAWCompressionTag &&
+			tag != visualPreviewRAWStripOffsetsTag && tag != visualPreviewRAWStripByteCountsTag &&
+			tag != visualPreviewRAWOffsetTag && tag != visualPreviewRAWLengthTag &&
 			tag != visualPreviewRAWOrientationTag {
 			continue
 		}
@@ -233,6 +253,10 @@ func readVisualPreviewRAWIFD(
 		seenValues[tag] = struct{}{}
 		value, valid := visualPreviewRAWScalar(order, kind, items, entry[8:12])
 		if !valid {
+			if (tag == visualPreviewRAWStripOffsetsTag || tag == visualPreviewRAWStripByteCountsTag) &&
+				(kind == 3 || kind == 4) && items > 1 {
+				continue
+			}
 			return nil, 0, nil, false, nil
 		}
 		values[tag] = value

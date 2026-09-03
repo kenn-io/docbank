@@ -213,6 +213,23 @@ func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
 	}
 }
 
+func TestProduceVisualPreviewAcceptsSingleStripDNGPreview(t *testing.T) {
+	preview := mediatest.JPEG(3, 2, color.White)
+	source := syntheticRAWPreviewTIFFCandidates(1, syntheticRAWPreviewCandidate{
+		data: preview, singleStrip: true,
+	})
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-adobe-dng",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 3, product.Preview.Output.Width)
+	assert.Equal(t, 2, product.Preview.Output.Height)
+}
+
 func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing.T) {
 	preview := mediatest.JPEG(3, 2, color.White)
 	invalid := make([]byte, len(preview)+1)
@@ -545,6 +562,7 @@ func syntheticRAWPreviewTIFF(orientation uint16, previews ...[]byte) []byte {
 type syntheticRAWPreviewCandidate struct {
 	data        []byte
 	orientation uint16
+	singleStrip bool
 }
 
 func syntheticRAWPreviewTIFFCandidates(
@@ -561,6 +579,9 @@ func syntheticRAWPreviewTIFFCandidates(
 	for index, preview := range previews {
 		ifdOffsets[index] = previewOffset
 		entries := 2
+		if preview.singleStrip {
+			entries++
+		}
 		if preview.orientation != 0 {
 			entries++
 		}
@@ -582,10 +603,18 @@ func syntheticRAWPreviewTIFFCandidates(
 	}
 	for index, preview := range previews {
 		ifdOffset := ifdOffsets[index]
-		entries := []syntheticTIFFEntry{
-			tiffLong(visualPreviewRAWOffsetTag, uint32(previewOffset)),
-			tiffLong(visualPreviewRAWLengthTag, uint32(len(preview.data))),
+		offsetTag := uint16(visualPreviewRAWOffsetTag)
+		lengthTag := uint16(visualPreviewRAWLengthTag)
+		var entries []syntheticTIFFEntry
+		if preview.singleStrip {
+			offsetTag = visualPreviewRAWStripOffsetsTag
+			lengthTag = visualPreviewRAWStripByteCountsTag
+			entries = append(entries, tiffShort(visualPreviewRAWCompressionTag, visualPreviewRAWJPEGCompression))
 		}
+		entries = append(entries,
+			tiffLong(offsetTag, uint32(previewOffset)),
+			tiffLong(lengthTag, uint32(len(preview.data))),
+		)
 		if preview.orientation != 0 {
 			entries = append(entries, tiffShort(visualPreviewRAWOrientationTag, preview.orientation))
 		}
