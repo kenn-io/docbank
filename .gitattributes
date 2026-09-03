@@ -8,6 +8,7 @@ document/testdata/rendition-v1.golden.md -text
 document/testdata/profile-v1.golden.json -text
 # The source metadata golden bundle is a byte-for-byte oracle, not a text file.
 document/testdata/source-metadata-v1.golden.json -text
+document/testdata/vector-set-v1.golden.bin -text
 # The GLM-OCR deployment files are hashed byte-for-byte by the container and
 # by document/glmocr, so checkouts must never rewrite their line endings.
 deploy/glmocr/safe_server.py -text

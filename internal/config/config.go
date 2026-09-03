@@ -535,6 +535,9 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			return fmt.Errorf("%s %s is required", prefix, field)
 		}
 	}
+	if !document.IsValidVectorMetric(profile.Metric) {
+		return fmt.Errorf("%s metric is invalid", prefix)
+	}
 	for field, value := range map[string]string{
 		"authorization_fingerprint": profile.AuthorizationFingerprint, "descriptor_fingerprint": profile.DescriptorFingerprint,
 		"disclosure_fingerprint": profile.DisclosureFingerprint,
