@@ -1,10 +1,12 @@
 package processing
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"slices"
 
 	"go.kenn.io/docbank/document"
 )
@@ -32,13 +34,17 @@ func produceVisualPreviewCameraRAW(
 	base document.VisualPreviewV1,
 ) (VisualPreviewProduct, error) {
 	readerAt := &seekReaderAt{seeker: source}
-	var location visualPreviewRAWLocation
-	var found, malformed bool
+	var locations []visualPreviewRAWLocation
+	var malformed bool
 	var err error
 	if mediaType == "image/x-fuji-raf" {
-		location, found, malformed, err = inspectVisualPreviewRAF(readerAt, sourceSize)
+		location, found, invalid, inspectErr := inspectVisualPreviewRAF(readerAt, sourceSize)
+		if found {
+			locations = append(locations, location)
+		}
+		malformed, err = invalid, inspectErr
 	} else {
-		location, found, malformed, err = inspectVisualPreviewTIFFRAW(readerAt, sourceSize)
+		locations, malformed, err = inspectVisualPreviewTIFFRAW(readerAt, sourceSize)
 	}
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
@@ -48,7 +54,7 @@ func produceVisualPreviewCameraRAW(
 		return failedVisualPreview(base, "decode_failed",
 			"the verified camera RAW preview metadata is malformed"), nil
 	}
-	if !found {
+	if len(locations) == 0 {
 		base.State = document.VisualPreviewUnsupported
 		base.Failure = &document.VisualPreviewFailureV1{
 			Code:   "embedded_preview_unavailable",
@@ -56,8 +62,27 @@ func produceVisualPreviewCameraRAW(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	preview := io.NewSectionReader(readerAt, location.offset, location.length)
-	return produceVisualPreviewJPEGWithOrientation(ctx, preview, base, location.orientation)
+	slices.SortFunc(locations, func(left, right visualPreviewRAWLocation) int {
+		if byLength := cmp.Compare(right.length, left.length); byLength != 0 {
+			return byLength
+		}
+		return cmp.Compare(left.offset, right.offset)
+	})
+	var firstTerminal VisualPreviewProduct
+	for index, location := range locations {
+		preview := io.NewSectionReader(readerAt, location.offset, location.length)
+		product, produceErr := produceVisualPreviewJPEGWithOrientation(ctx, preview, base, location.orientation)
+		if produceErr != nil {
+			return VisualPreviewProduct{}, produceErr
+		}
+		if product.Preview.State == document.VisualPreviewReady {
+			return product, nil
+		}
+		if index == 0 {
+			firstTerminal = product
+		}
+	}
+	return firstTerminal, nil
 }
 
 func inspectVisualPreviewRAF(
@@ -80,24 +105,24 @@ func inspectVisualPreviewRAF(
 
 func inspectVisualPreviewTIFFRAW(
 	reader io.ReaderAt, sourceSize int64,
-) (visualPreviewRAWLocation, bool, bool, error) {
+) ([]visualPreviewRAWLocation, bool, error) {
 	header, err := readSourceMetadataRange(reader, 0, min(sourceSize, int64(8)))
 	if err != nil {
-		return visualPreviewRAWLocation{}, false, false, err
+		return nil, false, err
 	}
 	order, format, ok := exifTIFFHeader(header)
 	if !ok || format != "tiff" || len(header) < 8 {
-		return visualPreviewRAWLocation{}, false, true, nil
+		return nil, true, nil
 	}
 	rootOffset := int64(order.Uint32(header[4:8]))
 	if rootOffset < 8 || rootOffset >= sourceSize {
-		return visualPreviewRAWLocation{}, false, true, nil
+		return nil, true, nil
 	}
 
 	queue := []int64{rootOffset}
 	seen := make(map[int64]struct{}, visualPreviewRAWMaxIFDs)
 	orientation := 0
-	best := visualPreviewRAWLocation{}
+	var candidates []visualPreviewRAWLocation
 	malformed := false
 	for len(queue) > 0 {
 		offset := queue[0]
@@ -109,13 +134,13 @@ func inspectVisualPreviewTIFFRAW(
 			continue
 		}
 		if len(seen) >= visualPreviewRAWMaxIFDs {
-			return visualPreviewRAWLocation{}, false, true, nil
+			return nil, true, nil
 		}
 		seen[offset] = struct{}{}
 
 		entries, next, subIFDs, valid, readErr := readVisualPreviewRAWIFD(reader, sourceSize, order, offset)
 		if readErr != nil {
-			return visualPreviewRAWLocation{}, false, false, readErr
+			return nil, false, readErr
 		}
 		if !valid {
 			malformed = true
@@ -134,8 +159,8 @@ func inspectVisualPreviewTIFFRAW(
 			}
 			if !sourceMetadataRangeWithin(candidate.offset, candidate.length, sourceSize) {
 				malformed = true
-			} else if candidate.length > best.length {
-				best = candidate
+			} else {
+				candidates = append(candidates, candidate)
 			}
 		}
 		queue = append(queue, subIFDs...)
@@ -143,10 +168,10 @@ func inspectVisualPreviewTIFFRAW(
 			queue = append(queue, next)
 		}
 	}
-	if best.length > 0 {
-		return best, true, false, nil
+	if len(candidates) > 0 {
+		return candidates, false, nil
 	}
-	return visualPreviewRAWLocation{}, false, malformed, nil
+	return nil, malformed, nil
 }
 
 func readVisualPreviewRAWIFD(

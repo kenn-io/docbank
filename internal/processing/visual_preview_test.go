@@ -191,7 +191,7 @@ func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
 
 func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
 	preview := mediatest.JPEG(3, 2, color.White)
-	source := syntheticRAWPreviewTIFF(preview, 6)
+	source := syntheticRAWPreviewTIFF(6, preview)
 	digest := sha256.Sum256(source)
 
 	for _, mediaType := range []string{
@@ -211,6 +211,22 @@ func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
 			assert.Equal(t, 3, product.Preview.Output.Height)
 		})
 	}
+}
+
+func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing.T) {
+	preview := mediatest.JPEG(3, 2, color.White)
+	invalid := make([]byte, len(preview)+1)
+	source := syntheticRAWPreviewTIFF(1, preview, invalid)
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 3, product.Preview.Output.Width)
+	assert.Equal(t, 2, product.Preview.Output.Height)
 }
 
 func TestProduceVisualPreviewAcceptsRAF(t *testing.T) {
@@ -241,7 +257,7 @@ func TestProduceVisualPreviewRecordsMissingCameraRAWPreview(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsInvalidCameraRAWPreviewRange(t *testing.T) {
-	source := syntheticRAWPreviewTIFF(mediatest.JPEG(3, 2, color.White), 1)
+	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
 	previewIFD := int(binary.LittleEndian.Uint32(source[22:26]))
 	binary.LittleEndian.PutUint32(source[previewIFD+10:previewIFD+14], uint32(len(source)+1))
 	digest := sha256.Sum256(source)
@@ -465,7 +481,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 
 func TestProduceVisualPreviewKeepsCameraRAWReadErrorsRetryable(t *testing.T) {
 	readErr := errors.New("injected read failure")
-	source := syntheticRAWPreviewTIFF(mediatest.JPEG(3, 2, color.White), 1)
+	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
 	digest := sha256.Sum256(source)
 	reader := &failingVisualPreviewReadSeeker{
 		Reader: bytes.NewReader(source), failAtSeek: 2, err: readErr,
@@ -501,7 +517,7 @@ func syntheticJPEGSegment(t *testing.T, source []byte, marker byte, payload []by
 	return append(result, source[2:]...)
 }
 
-func syntheticRAWPreviewTIFF(preview []byte, orientation uint16) []byte {
+func syntheticRAWPreviewTIFF(orientation uint16, previews ...[]byte) []byte {
 	const (
 		headerSize       = 8
 		rootEntries      = 1
@@ -509,9 +525,13 @@ func syntheticRAWPreviewTIFF(preview []byte, orientation uint16) []byte {
 		rootIFDSize      = 2 + rootEntries*12 + 4
 		previewIFDSize   = 2 + previewEntries*12 + 4
 		previewIFDOffset = headerSize + rootIFDSize
-		previewOffset    = previewIFDOffset + previewIFDSize
 	)
-	source := make([]byte, previewOffset+len(preview))
+	previewOffset := previewIFDOffset + len(previews)*previewIFDSize
+	totalSize := previewOffset
+	for _, preview := range previews {
+		totalSize += len(preview)
+	}
+	source := make([]byte, totalSize)
 	copy(source, "II")
 	binary.LittleEndian.PutUint16(source[2:4], 42)
 	binary.LittleEndian.PutUint32(source[4:8], headerSize)
@@ -521,16 +541,23 @@ func syntheticRAWPreviewTIFF(preview []byte, orientation uint16) []byte {
 	binary.LittleEndian.PutUint32(source[14:18], 1)
 	binary.LittleEndian.PutUint16(source[18:20], orientation)
 	binary.LittleEndian.PutUint32(source[22:26], previewIFDOffset)
-	binary.LittleEndian.PutUint16(source[previewIFDOffset:previewIFDOffset+2], previewEntries)
-	binary.LittleEndian.PutUint16(source[previewIFDOffset+2:previewIFDOffset+4], visualPreviewRAWOffsetTag)
-	binary.LittleEndian.PutUint16(source[previewIFDOffset+4:previewIFDOffset+6], 4)
-	binary.LittleEndian.PutUint32(source[previewIFDOffset+6:previewIFDOffset+10], 1)
-	binary.LittleEndian.PutUint32(source[previewIFDOffset+10:previewIFDOffset+14], previewOffset)
-	binary.LittleEndian.PutUint16(source[previewIFDOffset+14:previewIFDOffset+16], visualPreviewRAWLengthTag)
-	binary.LittleEndian.PutUint16(source[previewIFDOffset+16:previewIFDOffset+18], 4)
-	binary.LittleEndian.PutUint32(source[previewIFDOffset+18:previewIFDOffset+22], 1)
-	binary.LittleEndian.PutUint32(source[previewIFDOffset+22:previewIFDOffset+26], uint32(len(preview)))
-	copy(source[previewOffset:], preview)
+	for index, preview := range previews {
+		ifdOffset := previewIFDOffset + index*previewIFDSize
+		binary.LittleEndian.PutUint16(source[ifdOffset:ifdOffset+2], previewEntries)
+		binary.LittleEndian.PutUint16(source[ifdOffset+2:ifdOffset+4], visualPreviewRAWOffsetTag)
+		binary.LittleEndian.PutUint16(source[ifdOffset+4:ifdOffset+6], 4)
+		binary.LittleEndian.PutUint32(source[ifdOffset+6:ifdOffset+10], 1)
+		binary.LittleEndian.PutUint32(source[ifdOffset+10:ifdOffset+14], uint32(previewOffset))
+		binary.LittleEndian.PutUint16(source[ifdOffset+14:ifdOffset+16], visualPreviewRAWLengthTag)
+		binary.LittleEndian.PutUint16(source[ifdOffset+16:ifdOffset+18], 4)
+		binary.LittleEndian.PutUint32(source[ifdOffset+18:ifdOffset+22], 1)
+		binary.LittleEndian.PutUint32(source[ifdOffset+22:ifdOffset+26], uint32(len(preview)))
+		if index+1 < len(previews) {
+			binary.LittleEndian.PutUint32(source[ifdOffset+26:ifdOffset+30], uint32(ifdOffset+previewIFDSize))
+		}
+		copy(source[previewOffset:], preview)
+		previewOffset += len(preview)
+	}
 	return source
 }
 
