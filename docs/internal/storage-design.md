@@ -233,10 +233,15 @@ problems converges without discarding prior progress. The destination directory
 is ID-based once resolved so a concurrent move cannot cause later files to
 recreate an old path.
 
-Preflight and import share one exclusion matcher and explicit-root-symlink
-model. Preflight stops at filesystem metadata: it never opens a regular file,
-hydrates cloud content, creates a destination, records an ingest, or writes a
-blob. It therefore predicts selection and size-policy outcomes, not future
+Preflight and import share one request-scoped source-selection compiler and
+explicit-root-symlink model. Include and exclude patterns use Go's
+`path.Match` grammar over slash-normalized source-relative paths; a pattern
+without `/` matches basenames at any depth, and exclusions win. Include rules
+filter regular files only, so a directory remains traversable when a descendant
+may match. Preflight stops at filesystem metadata: it never opens a regular
+file, hydrates cloud content, creates a destination, records an ingest, or
+writes a blob. Watched-inbox exclusions use a separate literal matcher. The
+report therefore predicts selection and size-policy outcomes, not future
 readability. Detailed findings and extension groups are bounded while their
 aggregate counts remain complete, preventing an adversarial tree from creating
 an unbounded API response.

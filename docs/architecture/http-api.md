@@ -298,7 +298,7 @@ transparency log are outside docbank's current trust model.
 
 ## Addendum: `POST /ingest`, `POST /ingest/stream`, and `POST /ingest/preflight`
 
-`POST /ingest/preflight` takes `{paths: [...], exclude: [...]}` and performs a
+`POST /ingest/preflight` takes `{paths: [...], include: [...], exclude: [...]}` and performs a
 metadata-only source inventory. It opens no regular-file content and writes no
 vault metadata or blobs. Its report includes file/directory/logical-byte totals,
 pack-eligible, loose-only, and rejected size classes, exclusion/skip/error
@@ -309,7 +309,7 @@ observations rather than a snapshot lock: sources can still change before
 ingest, and metadata-only scanning cannot prove later content readability.
 
 `POST /ingest` takes **server-side local paths** — `{paths: [...],
-dest: "/inbox", exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
+dest: "/inbox", include: [...], exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
 per-path `failed` entries), backing `docbank add`. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves `docbank
@@ -334,10 +334,15 @@ capability on this route: remote bytes use `POST /uploads`, while remote access
 to the loopback-bound daemon still terminates through the configured SSH/VPN
 tunnel.
 
-Each exclusion is either a bare entry name, matched at any depth, or a relative
-path containing `/`, matched within every supplied source. Matching a directory
-prunes its subtree. The preflight and ingest implementations share this matcher
-so reviewed selection and actual selection cannot drift.
+Each include or exclude pattern uses Go's `path.Match` grammar over a
+slash-normalized source-relative path. A pattern without `/` matches a basename
+at any depth; a pattern containing `/` matches the relative path. `*` and `?`
+do not cross `/`, and `**` has no recursive globstar behavior. An include filters
+regular files only, while a matching exclusion wins and prunes a directory's
+subtree. The preflight and ingest implementations share this compiler so
+reviewed selection and actual selection cannot drift. Patterns must be relative;
+invalid syntax and parent traversal are rejected before filesystem access.
+Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: `POST /uploads`
 

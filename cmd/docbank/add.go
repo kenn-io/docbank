@@ -17,6 +17,7 @@ import (
 
 var (
 	addDest      string
+	addInclude   []string
 	addExclude   []string
 	addPreflight bool
 	addJSON      bool
@@ -48,7 +49,7 @@ var addCmd = &cobra.Command{
 			return err
 		}
 		if addPreflight {
-			rep, err := c.PreflightIngest(cmd.Context(), abs, addExclude)
+			rep, err := c.PreflightIngest(cmd.Context(), abs, addInclude, addExclude)
 			if err != nil {
 				return err
 			}
@@ -68,7 +69,7 @@ var addCmd = &cobra.Command{
 		}
 		var rep api.IngestReport
 		if addJSON {
-			rep, err = c.IngestWithOptions(cmd.Context(), abs, addDest, addExclude)
+			rep, err = c.IngestWithOptions(cmd.Context(), abs, addDest, addInclude, addExclude)
 		} else {
 			mode, modeErr := progressModeFromFlag("add", addProgress)
 			if modeErr != nil {
@@ -76,7 +77,7 @@ var addCmd = &cobra.Command{
 			}
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
-			rep, err = c.IngestStream(cmd.Context(), abs, addDest, addExclude, renderer.handle)
+			rep, err = c.IngestStream(cmd.Context(), abs, addDest, addInclude, addExclude, renderer.handle)
 		}
 		if err != nil {
 			return err
@@ -102,8 +103,10 @@ var addCmd = &cobra.Command{
 
 func init() {
 	addCmd.Flags().StringVar(&addDest, "dest", "/inbox", "virtual destination directory")
+	addCmd.Flags().StringArrayVar(&addInclude, "include", nil,
+		"include files matching a basename or source-relative path pattern (repeatable)")
 	addCmd.Flags().StringArrayVar(&addExclude, "exclude", nil,
-		"exclude an entry name anywhere or a relative path within each source (repeatable)")
+		"exclude files or directories matching a basename or source-relative path pattern (repeatable)")
 	addCmd.Flags().BoolVar(&addPreflight, "preflight", false,
 		"inventory sources without opening content or changing the vault")
 	addCmd.Flags().BoolVar(&addJSON, "json", false,

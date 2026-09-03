@@ -381,7 +381,7 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 }
 
 // AddPathsWithOptions ingests the selected parts of files and directory trees
-// under the virtual destPath. Exclusions have the same semantics as Preflight.
+// under the virtual destPath. Selection has the same semantics as Preflight.
 func (ing *Ingester) AddPathsWithOptions(
 	ctx context.Context,
 	sources []string,
@@ -393,7 +393,7 @@ func (ing *Ingester) AddPathsWithOptions(
 	if err := ctx.Err(); err != nil {
 		return rep, err
 	}
-	excludes, err := compileExclusions(opts.Exclude)
+	selection, err := compileSourceSelection(opts)
 	if err != nil {
 		return rep, err
 	}
@@ -424,18 +424,23 @@ func (ing *Ingester) AddPathsWithOptions(
 			progress.report(rep, false)
 			continue
 		}
-		if excludes.match(src, src) {
+		if selection.excluded(src, src) {
 			rep.Excluded++
 			progress.report(rep, false)
 			continue
 		}
 		switch {
 		case info.Mode().IsRegular():
+			if !selection.included(src, src) {
+				rep.Excluded++
+				progress.report(rep, false)
+				continue
+			}
 			if err := ing.addOne(ctx, &rep, ingestID, dest.ID, src, src, progress); err != nil {
 				return rep, err
 			}
 		case info.IsDir():
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, excludes, progress); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, selection, progress); err != nil {
 				return rep, err
 			}
 		case info.Mode()&fs.ModeSymlink != 0:
@@ -459,7 +464,7 @@ func (ing *Ingester) AddPathsWithOptions(
 				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, excludes, progress); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, selection, progress); err != nil {
 				return rep, err
 			}
 		default:
@@ -489,7 +494,7 @@ func (ing *Ingester) addTree(
 	ingestRun store.IngestRun,
 	destDirID int64,
 	sourceRoot, walkRoot string,
-	excludes exclusions,
+	selection sourceSelection,
 	progress *progressTracker,
 ) error {
 	// Absolutize first. WalkDir hands back the root spelled exactly as given
@@ -533,7 +538,7 @@ func (ing *Ingester) addTree(
 			}
 			return nil
 		}
-		if excludes.match(sourceRoot, sourcePath) {
+		if selection.excluded(sourceRoot, sourcePath) {
 			rep.Excluded++
 			progress.report(*rep, false)
 			if d.IsDir() {
@@ -563,6 +568,11 @@ func (ing *Ingester) addTree(
 			}
 			dirIDs[p] = dir.ID
 		case d.Type().IsRegular():
+			if !selection.included(sourceRoot, sourcePath) {
+				rep.Excluded++
+				progress.report(*rep, false)
+				return nil
+			}
 			parentID, ok := dirIDs[filepath.Dir(p)]
 			if !ok {
 				return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))

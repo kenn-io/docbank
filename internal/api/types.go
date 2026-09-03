@@ -514,6 +514,22 @@ type IngestReport struct {
 	Failed   []IngestFailure `json:"failed,omitempty"`
 }
 
+// IngestPreflightRequest inventories server-side paths without opening
+// regular-file content or mutating the vault.
+type IngestPreflightRequest struct {
+	Paths   []string `json:"paths" minItems:"1"`
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+// IngestRequest imports server-side paths with optional source selection.
+type IngestRequest struct {
+	Paths   []string `json:"paths" minItems:"1"`
+	Dest    string   `json:"dest" default:"/inbox"`
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
 // IngestProgress is one structured update from a server-side import. Scan
 // establishes totals without opening content; ingest counts bytes actually
 // read and files whose individual import attempt has completed.

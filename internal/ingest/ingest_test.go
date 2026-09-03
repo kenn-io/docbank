@@ -590,7 +590,7 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}, nil))
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, sourceSelection{}, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 
@@ -682,6 +682,30 @@ func TestAddPathsHonorsPreflightExclusions(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = ing.Store.NodeByPath(t.Context(), top+"/project/cache")
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPreflightAndImportShareGlobSelection(t *testing.T) {
+	ing := newTestIngester(t)
+	src := writeTree(t, map[string]string{
+		"docs/keep.txt": "keep",
+		"docs/skip.txt": "skip",
+		"docs/skip.md":  "skip",
+		"root.txt":      "root",
+	})
+	opts := Options{Include: []string{"docs/*.txt"}, Exclude: []string{"docs/skip.txt"}}
+
+	preflight, err := Preflight(t.Context(), []string{src}, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), preflight.Files)
+	assert.Equal(t, int64(3), preflight.Excluded)
+
+	report, err := ing.AddPathsWithOptions(t.Context(), []string{src}, "/inbox", opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, 3, report.Excluded)
+	assert.Empty(t, report.Failed)
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/"+filepath.Base(src)+"/docs/keep.txt")
+	require.NoError(t, err)
 }
 
 func TestPreflightRejectsUnsafeExclusionRules(t *testing.T) {

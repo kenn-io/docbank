@@ -151,6 +151,53 @@ func TestIngestPreflightIsReadOnlyAndSharesExclusions(t *testing.T) {
 	assert.Contains(t, body, `"code":"validation"`)
 }
 
+func TestIngestRoutesCarryIncludeAndExcludeSelection(t *testing.T) {
+	source := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(source, "keep.txt"), []byte("keep"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "skip.txt"), []byte("skip"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "nested"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "nested", "note.md"), []byte("note"), 0o600))
+
+	for _, route := range []string{
+		"/api/v1/ingest/preflight", "/api/v1/ingest", "/api/v1/ingest/stream",
+	} {
+		t.Run(route, func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			request := map[string]any{
+				"paths": []string{source}, "include": []string{"*.txt"},
+				"exclude": []string{"skip.txt"},
+			}
+			if route != "/api/v1/ingest/preflight" {
+				request["dest"] = "/inbox"
+			}
+			resp, body := do(t, ts, http.MethodPost, route, nil, request)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			if route == "/api/v1/ingest/preflight" {
+				var report api.IngestPreflightReport
+				require.NoError(t, json.Unmarshal([]byte(body), &report))
+				assert.Equal(t, int64(1), report.Files)
+				assert.Equal(t, int64(2), report.Excluded)
+				_, err := s.NodeByPath(t.Context(), "/inbox")
+				require.ErrorIs(t, err, store.ErrNotFound)
+				return
+			}
+			if route == "/api/v1/ingest/stream" {
+				lines := strings.Split(strings.TrimSpace(body), "\n")
+				var event api.IngestEvent
+				require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &event))
+				require.NotNil(t, event.Report)
+				assert.Equal(t, 1, event.Report.Added)
+				assert.Equal(t, 2, event.Report.Excluded)
+				return
+			}
+			var report api.IngestReport
+			require.NoError(t, json.Unmarshal([]byte(body), &report))
+			assert.Equal(t, 1, report.Added)
+			assert.Equal(t, 2, report.Excluded)
+		})
+	}
+}
+
 func TestIngestRejectsNonLoopback(t *testing.T) {
 	// httptest.NewRequest-style direct handler invocation with a non-loopback
 	// RemoteAddr proves the middleware fence without real remote networking.

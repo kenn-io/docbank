@@ -97,15 +97,12 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "preflightIngest", Method: http.MethodPost, Path: "/api/v1/ingest/preflight",
 		Summary: "Inventory server-side files without opening content or mutating the vault",
 	}, func(ctx context.Context, in *struct {
-		Body struct {
-			Paths   []string `json:"paths" minItems:"1"`
-			Exclude []string `json:"exclude,omitempty"`
-		}
+		Body IngestPreflightRequest
 	}) (*ingestPreflightOutput, error) {
 		if err := validateIngestPaths(in.Body.Paths); err != nil {
 			return nil, err
 		}
-		opts := ingest.Options{Exclude: in.Body.Exclude}
+		opts := ingest.Options{Include: in.Body.Include, Exclude: in.Body.Exclude}
 		if err := ingest.ValidateOptions(opts); err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
@@ -120,7 +117,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "ingest", Method: http.MethodPost, Path: "/api/v1/ingest",
 		Summary: "Import server-side files or directory trees (loopback callers only)",
 	}, func(ctx context.Context, in *struct {
-		Body ingestRequest
+		Body IngestRequest
 	}) (*ingestOutput, error) {
 		dest, opts, err := ingestParams(in.Body)
 		if err != nil {
@@ -146,7 +143,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			},
 		},
 	}, func(_ context.Context, in *struct {
-		Body ingestRequest
+		Body IngestRequest
 	}) (*huma.StreamResponse, error) {
 		dest, opts, err := ingestParams(in.Body)
 		if err != nil {
@@ -303,17 +300,11 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	})
 }
 
-type ingestRequest struct {
-	Paths   []string `json:"paths" minItems:"1"`
-	Dest    string   `json:"dest" default:"/inbox"`
-	Exclude []string `json:"exclude,omitempty"`
-}
-
-func ingestParams(body ingestRequest) (string, ingest.Options, error) {
+func ingestParams(body IngestRequest) (string, ingest.Options, error) {
 	if err := validateIngestPaths(body.Paths); err != nil {
 		return "", ingest.Options{}, err
 	}
-	opts := ingest.Options{Exclude: body.Exclude}
+	opts := ingest.Options{Include: body.Include, Exclude: body.Exclude}
 	if err := ingest.ValidateOptions(opts); err != nil {
 		return "", ingest.Options{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	}

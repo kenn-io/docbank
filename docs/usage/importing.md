@@ -45,6 +45,7 @@ Inventory a source before Docbank opens any file content or changes the vault:
 
 ```bash
 docbank add ~/Dropbox --preflight \
+  --include '*.pdf' \
   --exclude .git \
   --exclude .Trash \
   --exclude project/cache
@@ -70,23 +71,24 @@ A provider may decline to hydrate a placeholder for the process that opens it â€
 a daemon started by launchd as a background job is the usual case, while an
 interactive session succeeds. Docbank reports that failure for the individual
 file, names the cause, and suggests opening the file once from a user session
-(or marking it available offline) before retrying the import. Re-run preflight after changing exclusions, then pass the exact same
-`--exclude` flags to the real `docbank add` command.
+(or marking it available offline) before retrying the import. Re-run preflight
+after changing selection, then pass the exact same `--include` and `--exclude`
+flags to the real `docbank add` command.
 
 Filesystem names and provenance paths must currently be valid UTF-8. On POSIX
 filesystems that permit other byte sequences, preflight and ingest report each
 such entry with an escaped, printable path; Docbank does not open or import it,
 continues with the rest of the tree, and never alters the source.
 
-A bare exclusion such as `.git` prunes that entry name wherever it occurs. A
-relative path such as `project/cache` prunes that path and its descendants
-within each supplied source. Exclusions do not use glob syntax. A pruned
-directory counts as one excluded entry because Docbank deliberately does not
-walk it to count hidden descendants. A trailing slash or leading `./` keeps a
-single-component rule path-shaped: `cache` matches that name anywhere, whereas
-`cache/` and `./cache` match only the source root's `cache` entry. Commas are
-literal filename characters, not rule separators; pass `--exclude` repeatedly
-for multiple rules.
+Include and exclude rules use Go's `path.Match` grammar over slash-normalized
+paths within each source. A rule without `/`, such as `*.pdf`, matches a
+basename at any depth; a rule with `/`, such as `reports/*.pdf`, matches that
+source-relative path. `*` and `?` do not cross `/`, and `**` is not a recursive
+globstar. Exclusions win, and matching directories prune their subtrees while
+include rules leave directories traversable. Rules must be relative and valid;
+empty rules, parent traversal, and malformed patterns are rejected before the
+walk. Commas are literal pattern characters, not separators; repeat each flag.
+Watched-inbox exclusions remain literal and do not use this glob syntax.
 
 ## Follow a long import
 

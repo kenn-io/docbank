@@ -143,7 +143,10 @@ must never enter logs or error strings.
 `POST /ingest` names absolute paths on the daemon host. Relative paths are
 meaningless to a long-lived process, and non-loopback callers are rejected even
 with a valid key because the capability reads daemon-host files. This is not a
-remote upload endpoint.
+remote upload endpoint. Its optional `include` and `exclude` arrays select
+source files with one compiled `path.Match`-based policy; exclusion wins and
+include rules never prune directories. The streamed and preflight routes carry
+the same fields and policy.
 
 The CLI resolves user arguments to absolute paths before sending the request,
 preserving shell-relative ergonomics. Partial source failures are returned in
