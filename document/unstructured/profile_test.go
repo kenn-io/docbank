@@ -111,6 +111,7 @@ func TestReferenceProfileBuildsStandardBridgeAndRejectsDrift(t *testing.T) {
 		bridgeProfile.PollInterval)
 	assert.Equal(t, profile.Limits.MaxPollAttempts, bridgeProfile.MaxPollAttempts)
 	assert.Equal(t, profile.Limits.MaxResponseBytes, bridgeProfile.MaxResponseBytes)
+	assert.Equal(t, profile.Limits.MaxDocumentBytes, bridgeProfile.MaxDocumentBytes)
 	_, err = bridge.New(bridgeProfile, staticSecretResolver{}, http.DefaultClient)
 	require.NoError(t, err)
 

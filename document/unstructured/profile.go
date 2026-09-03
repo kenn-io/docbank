@@ -168,6 +168,7 @@ func BridgeProfile(profile ProfileV1, origin string) (bridge.Profile, error) {
 		TotalTimeout:    time.Duration(profile.Limits.TotalTimeoutMillis) * time.Millisecond,
 		PollInterval:    time.Duration(profile.Limits.PollIntervalMillis) * time.Millisecond,
 		MaxPollAttempts: profile.Limits.MaxPollAttempts, MaxResponseBytes: profile.Limits.MaxResponseBytes,
+		MaxDocumentBytes: profile.Limits.MaxDocumentBytes,
 	}, nil
 }
 
