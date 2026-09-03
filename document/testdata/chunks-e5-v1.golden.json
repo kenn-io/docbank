@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "checksum": "95c35ff409111d7a58e5d79f5c916f78830be36be7a6cd20949ca63a9fa69ed4",
+  "policy_fingerprint": "6ad19ae56b5ff33f0bb756dd52c08aa9b3dec6931898252fd6983d65ee03059c",
+  "evidence_checksum": "be5eaa990540eb4b5c5512ef07b63333b29897716b01283017f46f1ac6ab8b04",
+  "tokenizer_identity": {
+    "name": "synthetic-pairs",
+    "revision": "v1",
+    "prefix_token_counts_monotonic": true
+  },
+  "lexical_evidence_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "formatter": "evidence-text/v1",
+  "model_input_fingerprint": "6ae96a49ec1dc2d2e9e2df1a63af01d5bd47980022e5128d16bc8ffe8ed95e7e",
+  "total_content_tokens": 12,
+  "total_rendered_tokens": 21,
+  "total_content_bytes": 23,
+  "total_rendered_bytes": 41,
+  "inputs": [
+    {
+      "key": "chunk-000000-266a1f658b28",
+      "content": "Alpha beta.",
+      "rendered": "passage: Alpha beta.",
+      "content_tokens": 6,
+      "rendered_tokens": 10,
+      "checksum": "266a1f658b286585d3f73b81025b643c25e87c7554960cf2cd4e0246772af1e7",
+      "heading_paths": [
+        [
+          "Intro"
+        ]
+      ],
+      "source_spans": [
+        {
+          "unit_index": 0,
+          "char_start": 0,
+          "char_end": 11
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "key": "chunk-000001-f72ba775cd56",
+      "content": "Gamma delta.",
+      "rendered": "passage: Gamma delta.",
+      "content_tokens": 6,
+      "rendered_tokens": 11,
+      "checksum": "f72ba775cd56fda7cad7a6c1e9ec43b907e3a2a5a3aa329c1b19d7e34bb1038f",
+      "heading_paths": [
+        [
+          "Details"
+        ]
+      ],
+      "source_spans": [
+        {
+          "unit_index": 1,
+          "char_start": 0,
+          "char_end": 12
+        }
+      ],
+      "truncated": false
+    }
+  ]
+}

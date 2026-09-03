@@ -196,20 +196,23 @@ func TestProviderFailsClosedWhenRunnerCannotEnforceIsolation(t *testing.T) {
 
 func TestProviderRequiresProcessTreeCleanupAttestationAfterRunnerCancellation(t *testing.T) {
 	executable := helperExecutable(t, "complete")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	runner := &recordingRunner{identity: testRunnerIdentity}
-	runner.run = func(ctx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error) {
-		<-ctx.Done()
+	runner.run = func(runCtx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error) {
+		cancel()
+		<-runCtx.Done()
 		result := isolatedResult(runner.identity, request, nil)
 		result.Attestation.ProcessTreeContained = false
-		return result, ctx.Err()
+		return result, runCtx.Err()
 	}
-	profile := testProfile(t, executable, 10*time.Millisecond, 1<<20)
+	profile := testProfile(t, executable, time.Second, 1<<20)
 	profile.Runner = runner
 	provider, err := New(profile)
 	require.NoError(t, err)
 	upload := newTestUpload(testHTML, "article.html", "text/html")
 
-	_, err = provider.Render(t.Context(), upload,
+	_, err = provider.Render(ctx, upload,
 		testAuthorization(provider.Descriptor(), upload.Metadata()))
 	assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
 }

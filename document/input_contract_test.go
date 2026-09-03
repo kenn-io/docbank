@@ -93,3 +93,38 @@ func TestEmbeddingContractRejectsForgedEmptyModelInput(t *testing.T) {
 	_, err = document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic-embedder", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: testFingerprint(), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "synthetic-model", ModelRevision: "r1", Dimension: 2, Metric: document.VectorMetricCosine, InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}, CompatibilityID: "forged", ModelInput: empty, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}, DocumentFormatter: "document/v1", QueryFormatter: "query/v1", Normalization: document.VectorNormalizationUnitLength, ScalarEncoding: "float32"})
 	require.ErrorContains(t, err, "empty model-input")
 }
+
+func TestEmbeddingContractReviewedRetrievalProfiles(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		config     document.ModelInputContractConfig
+		document   string
+		query      string
+		compatible string
+	}{
+		{"nomic", document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}, "search_document: passage", "search_query: question", "nomic/search/v1"},
+		{"e5", document.ModelInputContractConfig{Profile: document.ModelInputProfileE5}, "passage: passage", "query: question", "e5/asymmetric/v1"},
+		{"bge-m3", document.ModelInputContractConfig{Profile: document.ModelInputProfileBGEM3}, "passage", "question", "bge-m3/text/v1"},
+		{"gte", document.ModelInputContractConfig{Profile: document.ModelInputProfileGTE}, "passage", "question", "gte/text/v1"},
+		{"qwen3 plain", document.ModelInputContractConfig{Profile: document.ModelInputProfileQwen3}, "passage", "question", "qwen3/text/v1"},
+		{"qwen3 instructed query", document.ModelInputContractConfig{Profile: document.ModelInputProfileQwen3, QueryInstruction: "Retrieve legal evidence"}, "passage", "Instruct: Retrieve legal evidence\nQuery:question", "qwen3/text/v1"},
+		{"generic query instruction", document.ModelInputContractConfig{Profile: document.ModelInputProfileQueryInstruction, QueryInstruction: "Retrieve relevant passages"}, "passage", "Instruct: Retrieve relevant passages\nQuery:question", "query-instruction/text/v1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			contract, err := document.NewModelInputContract(testCase.config)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.document, contract.EncodeDocument("passage"))
+			assert.Equal(t, testCase.query, contract.EncodeQuery("question"))
+			assert.Equal(t, testCase.compatible, contract.CompatibilityID)
+		})
+	}
+}
+
+func TestEmbeddingContractRejectsImplicitOrUnboundedQueryInstructions(t *testing.T) {
+	_, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileOpenAICompatible, QueryInstruction: "infer this from a model name"})
+	require.ErrorContains(t, err, "cannot define a query instruction")
+	_, err = document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileQueryInstruction})
+	require.ErrorContains(t, err, "requires a query instruction")
+	_, err = document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileQwen3, QueryInstruction: string(make([]byte, 4097))})
+	require.ErrorContains(t, err, "bounded valid UTF-8")
+}
