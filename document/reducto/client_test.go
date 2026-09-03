@@ -637,6 +637,49 @@ func TestNaturalEvidencePreservesCompleteChunkContent(t *testing.T) {
 	assert.Equal(t, "Complete provider Markdown", string(markdown))
 }
 
+func TestNaturalEvidenceAllowsEmptyImageBlockContent(t *testing.T) {
+	chunks := []resultChunk{{
+		Content: "Complete provider Markdown",
+		Blocks: []resultBlock{
+			{
+				Content: "", Type: "Figure", ImageURL: new("https://example.invalid/figure.png"),
+				BBox: resultBoundingBox{
+					Height: new(0.5), Left: new(0.0), Page: new(int64(1)),
+					Top: new(0.0), Width: new(0.5), OriginalPage: new(int64(1)),
+				},
+			},
+			{
+				Content: "Complete provider Markdown", Type: "Text",
+				BBox: resultBoundingBox{
+					Height: new(0.5), Left: new(0.0), Page: new(int64(1)),
+					Top: new(0.5), Width: new(1.0), OriginalPage: new(int64(1)),
+				},
+			},
+		},
+	}}
+
+	evidence, markdown, err := naturalEvidence(chunks, "pdf", 1)
+	require.NoError(t, err)
+	assert.Equal(t, "Complete provider Markdown", evidence.Units[0].Text)
+	assert.Equal(t, "Complete provider Markdown", string(markdown))
+}
+
+func TestNaturalEvidenceRejectsInvalidBlockContentUTF8(t *testing.T) {
+	chunks := []resultChunk{{
+		Content: "Complete provider Markdown",
+		Blocks: []resultBlock{{
+			Content: string([]byte{0xff}), Type: "Text",
+			BBox: resultBoundingBox{
+				Height: new(1.0), Left: new(0.0), Page: new(int64(1)),
+				Top: new(0.0), Width: new(1.0), OriginalPage: new(int64(1)),
+			},
+		}},
+	}}
+
+	_, _, err := naturalEvidence(chunks, "pdf", 1)
+	require.ErrorContains(t, err, "block content is invalid")
+}
+
 func TestNaturalEvidenceRejectsBlockTypeOutsidePinnedSDK(t *testing.T) {
 	chunks := []resultChunk{{
 		Content: "Signed by Synthetic Person",

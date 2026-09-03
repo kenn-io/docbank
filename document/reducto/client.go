@@ -554,11 +554,11 @@ func naturalEvidence(
 			if err := validateBlockLocation(block); err != nil {
 				return document.SourceEvidenceV1{}, nil, err
 			}
+			if !utf8.ValidString(block.Content) {
+				return document.SourceEvidenceV1{}, nil, errors.New("block content is invalid")
+			}
 			if chunk.Content == "" && block.Content != "" {
 				return document.SourceEvidenceV1{}, nil, errors.New("contentless chunk contains unassigned block text")
-			}
-			if chunk.Content != "" && (block.Content == "" || !utf8.ValidString(block.Content)) {
-				return document.SourceEvidenceV1{}, nil, errors.New("block content is invalid")
 			}
 			page := *block.BBox.Page
 			if chunkPage == 0 {
