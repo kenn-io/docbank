@@ -600,6 +600,25 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
 }
 
+func TestAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"sub/a.txt": "x"})
+
+	dest, err := ing.Store.MkdirAll(ctx, "/inbox")
+	require.NoError(t, err)
+	_, _, err = ing.Store.Trash(ctx, dest.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
+	require.NoError(t, err)
+	var rep Report
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, sourceSelection{}, nil))
+	assert.NotEmpty(t, rep.Failed)
+	assert.Zero(t, rep.Added)
+	_, err = ing.Store.NodeByPath(ctx, "/inbox")
+	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
+}
+
 func TestPreflightInventoriesWithoutMutatingVault(t *testing.T) {
 	ing := newTestIngester(t)
 	src := writeTree(t, map[string]string{

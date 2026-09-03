@@ -92,7 +92,8 @@ Watched-inbox exclusions remain literal and do not use this glob syntax.
 Existing `--exclude` values on `docbank add` now use glob matching. Rules are
 slash-normalized for cross-platform parity, so backslash escaping is not
 available; match a literal `[`, `?`, or `*` with a bracket expression such as
-`report[[]1].txt`.
+`report[[]1].txt`. Matching is case-sensitive on every platform, including
+Windows.
 
 When the source argument is one explicit file, a basename rule such as `*.pdf`
 matches it; a path-form rule such as `reports/*.pdf` applies to a directory

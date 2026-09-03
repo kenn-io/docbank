@@ -520,6 +520,7 @@ func (ing *Ingester) addTree(
 	// destDirID — a concurrent move or trash of the destination would make
 	// that path re-create (even resurrect) a tree somewhere else.
 	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
+	dirErrs := map[string]error{} // source dir path -> reported creation failure
 	walkErr := filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -577,7 +578,7 @@ func (ing *Ingester) addTree(
 				return nil
 			}
 			parentID, err := ing.ensureSourceDir(
-				ctx, dirIDs, destDirID, topName, walkRoot, filepath.Dir(p),
+				ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(p),
 			)
 			if err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -585,6 +586,9 @@ func (ing *Ingester) addTree(
 				}
 				rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
 				progress.report(*rep, false)
+				if _, rootFailed := dirErrs[walkRoot]; rootFailed {
+					return fs.SkipAll
+				}
 				return fs.SkipDir
 			}
 			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, progress); err != nil {
@@ -601,25 +605,32 @@ func (ing *Ingester) addTree(
 }
 
 func (ing *Ingester) ensureSourceDir(
-	ctx context.Context, dirIDs map[string]int64, destDirID int64, topName, walkRoot, dirPath string,
+	ctx context.Context, dirIDs map[string]int64, dirErrs map[string]error,
+	destDirID int64, topName, walkRoot, dirPath string,
 ) (int64, error) {
 	if id, ok := dirIDs[dirPath]; ok {
 		return id, nil
+	}
+	if err, ok := dirErrs[dirPath]; ok {
+		return 0, err
 	}
 	parentID, name := destDirID, topName
 	if dirPath != walkRoot {
 		var err error
 		parentID, err = ing.ensureSourceDir(
-			ctx, dirIDs, destDirID, topName, walkRoot, filepath.Dir(dirPath),
+			ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(dirPath),
 		)
 		if err != nil {
+			dirErrs[dirPath] = err
 			return 0, err
 		}
 		name = filepath.Base(dirPath)
 	}
 	dir, err := ing.Store.EnsureDir(ctx, parentID, name)
 	if err != nil {
-		return 0, fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)
+		err = fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)
+		dirErrs[dirPath] = err
+		return 0, err
 	}
 	dirIDs[dirPath] = dir.ID
 	return dir.ID, nil

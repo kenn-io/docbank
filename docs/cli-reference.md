@@ -139,6 +139,7 @@ not prune directories. Exclusions win and matching directories prune their
 subtrees. Patterns must be relative and valid; absolute paths and `..` escapes
 are rejected. Commas are ordinary pattern characters; repeat each flag. Watch
 configuration keeps its separate literal exclusion rules.
+Patterns are case-sensitive on every platform, including Windows.
 
 An ordinary import first scans source metadata for file and byte totals, then
 shows ingest progress on stderr. `auto` uses a redrawable bar on a terminal and
