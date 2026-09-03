@@ -329,16 +329,6 @@ func wrapSpoolIOError(operation string, err error) error {
 	return fmt.Errorf("%w: %w", ErrSpoolUnavailable, operationError)
 }
 
-func countLocalUnits(format CandidateFormat, reader io.ReaderAt, size int64) (int, error) {
-	counter := localUnitCounters[format.ID]
-	if counter == nil {
-		return 0, nil
-	}
-	return counter(reader, size)
-}
-
-var localUnitCounters = map[string]func(io.ReaderAt, int64) (int, error){}
-
 // ScavengeSpoolDirectory removes stale package-created regular files. It
 // leaves unrelated regular files and fails closed on unsafe entries.
 func ScavengeSpoolDirectory(directory string, staleBefore time.Time) (int, error) {

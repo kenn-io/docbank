@@ -156,14 +156,18 @@ func (client *RenditionClient) Render(
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	providerResult, err := client.process(operation, source, metadata, candidate,
+	providerResult, err := client.process(operation, source, metadata, candidate, localUnits,
 		min(client.policy.values.MaxResponseBytes, int64(authorization.MaxTotalResultBytes)))
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if candidate.ID == formatIDPDF && int64(providerResult.UnitsProcessed) != localUnits {
+	if localUnits > 0 && int64(providerResult.UnitsProcessed) != localUnits {
+		message := "Mistral OCR unit count changed"
+		if candidate.ID == formatIDPDF {
+			message = "Mistral OCR page count changed"
+		}
 		return document.RenditionResult{}, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
-			"Mistral OCR page count changed", ErrCapabilityContract)
+			message, ErrCapabilityContract)
 	}
 	completedAt := time.Now().UTC()
 	if err := operation.Check(); err != nil {
@@ -199,8 +203,8 @@ func (client *RenditionClient) Render(
 	return document.RenditionResult{Evidence: evidence, ProviderMarkdown: markdown, Receipt: receipt}, nil
 }
 
-// verifySource re-detects the exact format and proves the PDF page count
-// before any byte leaves the process.
+// verifySource re-detects the exact format and proves any registered local
+// unit count before any byte leaves the process.
 func (client *RenditionClient) verifySource(
 	source []byte, metadata document.AuthorizedUploadMetadata,
 ) (CandidateFormat, int64, error) {
@@ -213,24 +217,32 @@ func (client *RenditionClient) verifySource(
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
 			"Mistral input identity does not match authorization", nil)
 	}
-	if candidate.ID != formatIDPDF {
+	if expectedUnitBound(candidate.ID) == UnitBoundNone {
 		return candidate, 0, nil
 	}
-	localUnits, err := formatdetect.CountPDFPages(source)
+	localUnits, err := countLocalUnits(candidate, bytes.NewReader(source), int64(len(source)))
 	if err != nil {
+		message := "Mistral OCR local unit count could not be verified"
+		if candidate.ID == formatIDPDF {
+			message = "Mistral PDF page count could not be verified"
+		}
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
-			"Mistral PDF page count could not be verified", err)
+			message, err)
 	}
-	if localUnits <= 0 || localUnits > int64(client.policy.values.MaxUnits) {
+	if localUnits <= 0 || int64(localUnits) > int64(client.policy.values.MaxUnits) {
+		message := "Mistral OCR exceeds the complete unit limit"
+		if candidate.ID == formatIDPDF {
+			message = "Mistral PDF exceeds the complete unit limit"
+		}
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
-			"Mistral PDF exceeds the complete unit limit", nil)
+			message, nil)
 	}
-	return candidate, localUnits, nil
+	return candidate, int64(localUnits), nil
 }
 
 func (client *RenditionClient) process(
 	operation *providerutil.Operation, source []byte, metadata document.AuthorizedUploadMetadata,
-	candidate CandidateFormat, maxResponseBytes int64,
+	candidate CandidateFormat, localUnits int64, maxResponseBytes int64,
 ) (Result, error) {
 	formatAuthorization, err := client.policy.Authorize(client.manifest, candidate.ID)
 	if err != nil {
@@ -239,7 +251,7 @@ func (client *RenditionClient) process(
 	}
 	snapshot := preparedSnapshot{
 		size: int64(len(source)), sha256: metadata.SHA256, format: candidate,
-		mediaType: metadata.MediaType,
+		mediaType: metadata.MediaType, localUnits: int(localUnits),
 	}
 	snapshotForAttempt := func() (preparedSnapshot, error) {
 		digest := sha256.Sum256(source)
