@@ -64,7 +64,9 @@ filter-only hits are ordered by current `modified_at` descending and identify
 their source with `match: "filter"`; `mime_type` and `under_node_id` can
 narrow an anchored page but cannot anchor an empty query alone. An empty
 unanchored query returns `422 validation`. The normal `limit` and `truncated`
-contract remains in force, without a cursor.
+contract remains in force, without a cursor. Filter-only selection may scan
+all live nodes before applying `limit`, so large-vault callers should use a
+narrow time or tag bound.
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
