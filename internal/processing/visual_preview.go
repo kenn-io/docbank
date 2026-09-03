@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -41,8 +42,8 @@ var visualPreviewRecipe = document.VisualPreviewRecipeV1{
 	ColorPolicy:       "srgb",
 	FramePolicy:       "primary",
 	ProcessorFingerprint: fingerprintVisualPreviewProcessor(
-		"docbank-visual-preview:jpeg+png-stdlib-" + runtime.Version() +
-			"+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v3"),
+		"docbank-visual-preview:jpeg+png+gif-stdlib-" + runtime.Version() +
+			"+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v4"),
 }
 
 // VisualPreviewTarget identifies one exact immutable source to process.
@@ -84,13 +85,46 @@ func ProduceVisualPreview(
 		return produceVisualPreviewJPEG(ctx, source, base)
 	case "image/png":
 		return produceVisualPreviewPNG(ctx, source, target.Size, base)
+	case "image/gif":
+		return produceVisualPreviewGIF(source, base)
 	default:
 		base.State = document.VisualPreviewUnsupported
 		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_media_type", Detail: "the built-in preview producer supports JPEG and PNG originals",
+			Code:   "unsupported_media_type",
+			Detail: "the built-in preview producer supports JPEG, PNG, and GIF originals",
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
+}
+
+func produceVisualPreviewGIF(
+	source io.ReadSeeker, base document.VisualPreviewV1,
+) (VisualPreviewProduct, error) {
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return VisualPreviewProduct{}, sourceContentUnavailable(
+			fmt.Errorf("seeking visual preview source: %w", err))
+	}
+	configReader := &visualPreviewReadErrorRecorder{reader: source}
+	config, err := gif.DecodeConfig(configReader)
+	if err != nil {
+		return visualPreviewGIFDecodeResult(base, "the verified GIF header is malformed", configReader.err)
+	}
+	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
+		return failedVisualPreview(base, "source_dimensions_exceed_limit",
+			"the GIF dimensions exceed the built-in preview limit"), nil
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return VisualPreviewProduct{}, sourceContentUnavailable(
+			fmt.Errorf("seeking visual preview source: %w", err))
+	}
+	pixelReader := &visualPreviewReadErrorRecorder{reader: source}
+	decoded, err := gif.Decode(pixelReader)
+	if err != nil {
+		return visualPreviewGIFDecodeResult(base, "the verified GIF cannot be decoded", pixelReader.err)
+	}
+	canvas := image.NewNRGBA(image.Rect(0, 0, config.Width, config.Height))
+	draw.Draw(canvas, decoded.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+	return encodeVisualPreview(base, canvas, config.Width, config.Height, 1)
 }
 
 func produceVisualPreviewJPEG(
@@ -457,6 +491,29 @@ func visualPreviewPNGDecodeResult(
 	}
 	return VisualPreviewProduct{}, sourceContentUnavailable(
 		fmt.Errorf("reading visual preview PNG: %w", err))
+}
+
+func visualPreviewGIFDecodeResult(
+	base document.VisualPreviewV1, malformedDetail string, readErr error,
+) (VisualPreviewProduct, error) {
+	if readErr != nil {
+		return VisualPreviewProduct{}, sourceContentUnavailable(
+			fmt.Errorf("reading visual preview GIF: %w", readErr))
+	}
+	return failedVisualPreview(base, "decode_failed", malformedDetail), nil
+}
+
+type visualPreviewReadErrorRecorder struct {
+	reader io.Reader
+	err    error
+}
+
+func (reader *visualPreviewReadErrorRecorder) Read(target []byte) (int, error) {
+	read, err := reader.reader.Read(target)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) && reader.err == nil {
+		reader.err = err
+	}
+	return read, err
 }
 
 func visualPreviewOrientationSwapsDimensions(orientation int) bool {

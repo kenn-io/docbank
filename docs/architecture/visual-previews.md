@@ -61,12 +61,13 @@ source before decoding and holds the vault mutation boundary through
 publication, so callers either observe a complete generation or a retryable
 error.
 
-The built-in producer currently accepts JPEG and PNG originals. JPEG inputs
+The built-in producer currently accepts JPEG, PNG, and GIF originals. JPEG inputs
 may be grayscale or three-component images; CMYK, YCCK, and embedded ICC
 profiles remain unsupported rather than receiving an unmanaged color
 conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
 profiles, and composite transparency onto white because the canonical output
-is JPEG. Accepted images scale without upscaling to a 4096-pixel maximum edge
+is JPEG. GIF inputs use their primary frame, including for animated sources.
+Accepted images scale without upscaling to a 4096-pixel maximum edge
 and encode as a quality-90 JPEG. Malformed source bytes become a durable
 `failed` result; unsupported media types, decoder features, and color profiles
 become a durable `unsupported` result. Read, verification, storage, and

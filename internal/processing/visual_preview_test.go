@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -136,6 +137,42 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	assert.Equal(t, 3, product.Preview.Output.Height)
 }
 
+func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
+	palette := color.Palette{color.Black, color.White}
+	primary := image.NewPaletted(image.Rect(16, 8, 48, 24), palette)
+	later := image.NewPaletted(image.Rect(0, 0, 64, 32), palette)
+	for index := range later.Pix {
+		later.Pix[index] = 1
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, gif.EncodeAll(&encoded, &gif.GIF{
+		Image: []*image.Paletted{primary, later}, Delay: []int{10, 10},
+		Config: image.Config{ColorModel: palette, Width: 64, Height: 32},
+	}))
+	source := encoded.Bytes()
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)),
+		MediaType: "IMAGE/GIF; charset=utf-8",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 64, product.Preview.Output.Width)
+	assert.Equal(t, 32, product.Preview.Output.Height)
+	preview, err := jpeg.Decode(bytes.NewReader(product.Output))
+	require.NoError(t, err)
+	primaryRed, primaryGreen, primaryBlue, _ := preview.At(32, 16).RGBA()
+	assert.Less(t, primaryRed, uint32(0x1000))
+	assert.Less(t, primaryGreen, uint32(0x1000))
+	assert.Less(t, primaryBlue, uint32(0x1000))
+	canvasRed, canvasGreen, canvasBlue, _ := preview.At(8, 4).RGBA()
+	assert.Greater(t, canvasRed, uint32(0xf000))
+	assert.Greater(t, canvasGreen, uint32(0xf000))
+	assert.Greater(t, canvasBlue, uint32(0xf000))
+}
+
 func TestProduceVisualPreviewRejectsPNGICCProfile(t *testing.T) {
 	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "iCCP", []byte("profile"))
 	digest := sha256.Sum256(source)
@@ -237,6 +274,20 @@ func TestProduceVisualPreviewRecordsTruncatedJPEGFailure(t *testing.T) {
 	assert.Empty(t, product.Output)
 }
 
+func TestProduceVisualPreviewRecordsMalformedGIFFailure(t *testing.T) {
+	source := []byte("GIF89a")
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/gif",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
+	assert.Empty(t, product.Output)
+}
+
 func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.GrayModel))
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.YCbCrModel))
@@ -249,24 +300,25 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	sources := []struct {
 		name, mediaType string
 		data            []byte
+		failAtSeeks     [2]int
 	}{
-		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White)},
-		{name: "png", mediaType: "image/png", data: mediatest.PNG(3, 2, color.White)},
+		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: [2]int{3, 4}},
+		{name: "png", mediaType: "image/png", data: mediatest.PNG(3, 2, color.White), failAtSeeks: [2]int{3, 4}},
+		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: [2]int{2, 3}},
 	}
 	phases := []struct {
-		name       string
-		failAtSeek int
+		name string
 	}{
-		{name: "header", failAtSeek: 3},
-		{name: "pixels", failAtSeek: 4},
+		{name: "header"},
+		{name: "pixels"},
 	}
 	for _, source := range sources {
 		t.Run(source.name, func(t *testing.T) {
 			digest := sha256.Sum256(source.data)
-			for _, phase := range phases {
+			for index, phase := range phases {
 				t.Run(phase.name, func(t *testing.T) {
 					reader := &failingVisualPreviewReadSeeker{
-						Reader: bytes.NewReader(source.data), failAtSeek: phase.failAtSeek, err: readErr,
+						Reader: bytes.NewReader(source.data), failAtSeek: source.failAtSeeks[index], err: readErr,
 					}
 
 					_, err := ProduceVisualPreview(t.Context(), reader, VisualPreviewTarget{
