@@ -1,11 +1,12 @@
-package unstructured
+package tika
 
 import (
 	"context"
+	"encoding/json/v2"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,56 +15,45 @@ import (
 	"go.kenn.io/docbank/document/bridge"
 )
 
-func TestReferenceProfileCanonicalizationPinsCompatibilityIdentity(t *testing.T) {
+func TestReferenceProfileCanonicalizesCompleteCompatibilityIdentity(t *testing.T) {
 	profile, err := NewProfile(Config{
-		DeploymentID:      "operator-unstructured-primary",
+		DeploymentID:      "operator-tika-primary",
 		RuntimeID:         "sha256:" + strings.Repeat("a", 64),
-		CredentialBinding: "unstructured-api",
+		CredentialBinding: "tika-api",
 	})
 	require.NoError(t, err)
 
 	canonical, fingerprint, err := CanonicalProfile(profile)
 	require.NoError(t, err)
-	assert.Equal(t, fingerprint, profile.PolicyFingerprint)
-	assert.JSONEq(t, `{
-		"artifact_policy":{"allowed_roles":["structured_evidence"],"max_artifact_bytes":67108864,"max_artifacts":1},
-		"bridge_contract":"docbank-rendition/v1",
-		"contract_version":"unstructured-bridge-profile/v1",
-		"credential_binding":"unstructured-api",
-		"deployment_id":"operator-unstructured-primary",
-		"disclosure":{"disclose_filename":true,"source":"exact_supplied_bytes"},
-		"evidence_policy":{"max_provider_markdown_bytes":33554432,"max_total_result_bytes":134217728,"max_units":100000,"source_evidence_contract":"source-evidence/v1"},
-		"input_kind":"original_file",
-		"limits":{"max_document_bytes":104857600,"max_poll_attempts":300,"max_response_bytes":134217728,"poll_interval_millis":1000,"request_timeout_millis":30000,"total_timeout_millis":600000},
-		"policy_fingerprint":"`+fingerprint+`",
-		"runtime_id":"sha256:`+strings.Repeat("a", 64)+`",
-			"supported_formats":[
-				{"media_family":"ebook","media_type":"application/epub+zip","input_kind":"original_file"},
-				{"media_family":"image","media_type":"image/jpeg","input_kind":"original_file"},
-				{"media_family":"image","media_type":"image/png","input_kind":"original_file"},
-				{"media_family":"mail","media_type":"message/rfc822","input_kind":"original_file"},
-				{"media_family":"pdf","media_type":"application/pdf","input_kind":"original_file"},
-				{"media_family":"presentation","media_type":"application/vnd.openxmlformats-officedocument.presentationml.presentation","input_kind":"original_file"},
-				{"media_family":"spreadsheet","media_type":"application/vnd.oasis.opendocument.spreadsheet","input_kind":"original_file"},
-				{"media_family":"spreadsheet","media_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","input_kind":"original_file"},
-				{"media_family":"spreadsheet","media_type":"text/csv","input_kind":"original_file"},
-				{"media_family":"structured","media_type":"application/xml","input_kind":"original_file"},
-				{"media_family":"text","media_type":"text/markdown","input_kind":"original_file"},
-				{"media_family":"text","media_type":"text/plain","input_kind":"original_file"}
-		],
-		"trust_boundary":"operator_network"
-	}`, string(canonical))
-
+	assert.Equal(t, profile.PolicyFingerprint, fingerprint)
 	parsed, err := ParseProfile(canonical)
 	require.NoError(t, err)
 	assert.Equal(t, profile, parsed)
+
+	reordered := profile
+	reordered.PolicyFingerprint = ""
+	reordered.SupportedFormats = slices.Clone(profile.SupportedFormats)
+	slices.Reverse(reordered.SupportedFormats)
+	reorderedJSON, reorderedFingerprint, err := CanonicalProfile(reordered)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(canonical), string(reorderedJSON))
+	assert.Equal(t, fingerprint, reorderedFingerprint)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(canonical, &wire))
+	assert.ElementsMatch(t, []string{
+		"artifact_policy", "bridge_contract", "contract_version", "credential_binding",
+		"deployment_id", "disclosure", "evidence_policy", "input_kind", "limits",
+		"policy_fingerprint", "reference_policy", "runtime_id", "supported_formats",
+		"trust_boundary",
+	}, mapKeys(wire))
 	_, err = ParseProfile(append(canonical, '\n'))
 	require.ErrorContains(t, err, "not canonical")
 }
 
-func TestReferenceProfileAdvertisesOnlyEnforceableBroadSuppliedByteFormats(t *testing.T) {
+func TestReferenceProfileRestrictsBroadFormatsToSuppliedBytesAndRefusesReferences(t *testing.T) {
 	profile, err := NewProfile(Config{
-		DeploymentID: "operator-unstructured-primary",
+		DeploymentID: "operator-tika-primary",
 		RuntimeID:    "sha256:" + strings.Repeat("b", 64),
 	})
 	require.NoError(t, err)
@@ -84,33 +74,31 @@ func TestReferenceProfileAdvertisesOnlyEnforceableBroadSuppliedByteFormats(t *te
 	}, profile.SupportedFormats)
 	assert.Equal(t, "exact_supplied_bytes", profile.Disclosure.Source)
 	assert.True(t, profile.Disclosure.DiscloseFilename)
+	assert.Equal(t, "refuse", profile.ReferencePolicy.EmbeddedReferenceFetch)
+	assert.Equal(t, "refuse", profile.ReferencePolicy.ExternalReferenceFetch)
+	assert.Equal(t, "pinned_audited_adapter_runtime", profile.ReferencePolicy.EnforcementBoundary)
 	assert.Equal(t, []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 		profile.ArtifactPolicy.AllowedRoles)
 }
 
-func TestReferenceProfileBuildsStandardBridgeAndRejectsDrift(t *testing.T) {
+func TestReferenceProfileBuildsStandardBridgeAndRejectsIdentityOrLimitDrift(t *testing.T) {
 	profile, err := NewProfile(Config{
-		DeploymentID:      "operator-unstructured-primary",
+		DeploymentID:      "operator-tika-primary",
 		RuntimeID:         "sha256:" + strings.Repeat("c", 64),
-		CredentialBinding: "unstructured-api",
+		CredentialBinding: "tika-api",
 	})
 	require.NoError(t, err)
 
-	bridgeProfile, err := BridgeProfile(profile, "http://127.0.0.1:8421")
+	bridgeProfile, err := BridgeProfile(profile, "http://127.0.0.1:9998")
 	require.NoError(t, err)
 	assert.Equal(t, bridge.ContractVersion, profile.BridgeContract)
 	assert.Equal(t, profile.CredentialBinding, bridgeProfile.SecretBinding)
 	assert.Equal(t, document.RenditionTrustOperatorNetwork, bridgeProfile.Descriptor.TrustBoundary)
 	assert.Equal(t, profile.PolicyFingerprint, bridgeProfile.Descriptor.PolicyFingerprint)
 	assert.Equal(t, profile.SupportedFormats, bridgeProfile.Descriptor.SupportedFormats)
-	assert.Equal(t, time.Duration(profile.Limits.RequestTimeoutMillis)*time.Millisecond,
-		bridgeProfile.RequestTimeout)
-	assert.Equal(t, time.Duration(profile.Limits.TotalTimeoutMillis)*time.Millisecond,
-		bridgeProfile.TotalTimeout)
-	assert.Equal(t, time.Duration(profile.Limits.PollIntervalMillis)*time.Millisecond,
-		bridgeProfile.PollInterval)
-	assert.Equal(t, profile.Limits.MaxPollAttempts, bridgeProfile.MaxPollAttempts)
-	assert.Equal(t, profile.Limits.MaxResponseBytes, bridgeProfile.MaxResponseBytes)
+	assert.True(t, bridgeProfile.Descriptor.ReturnsMarkdown)
+	assert.True(t, bridgeProfile.Descriptor.ReturnsStructured)
+	assert.Equal(t, profile.ArtifactPolicy.AllowedRoles, bridgeProfile.Descriptor.ArtifactRoles)
 	assert.Equal(t, profile.Limits.MaxDocumentBytes, bridgeProfile.MaxDocumentBytes)
 	assert.Equal(t, profile.EvidencePolicy.MaxProviderMarkdownBytes,
 		bridgeProfile.MaxProviderMarkdownBytes)
@@ -120,30 +108,40 @@ func TestReferenceProfileBuildsStandardBridgeAndRejectsDrift(t *testing.T) {
 	_, err = bridge.New(bridgeProfile, staticSecretResolver{}, http.DefaultClient)
 	require.NoError(t, err)
 
+	credentialless, err := NewProfile(Config{
+		DeploymentID: "operator-tika-no-auth", RuntimeID: "sha256:" + strings.Repeat("e", 64),
+	})
+	require.NoError(t, err)
+	credentiallessBridge, err := BridgeProfile(credentialless, "http://127.0.0.1:9998")
+	require.NoError(t, err)
+	_, err = bridge.New(credentiallessBridge, nil, http.DefaultClient)
+	require.NoError(t, err)
+
 	for _, test := range []struct {
 		mutate func(*ProfileV1)
 		want   string
 	}{
 		{mutate: func(value *ProfileV1) { value.RuntimeID = "sha256:" + strings.Repeat("d", 64) }, want: "policy fingerprint does not match"},
 		{mutate: func(value *ProfileV1) { value.Limits.MaxDocumentBytes++ }, want: "limits differ"},
+		{mutate: func(value *ProfileV1) { value.ReferencePolicy.ExternalReferenceFetch = "allow" }, want: "reference fetching must be refused"},
 	} {
 		drifted := profile
 		test.mutate(&drifted)
-		_, err := BridgeProfile(drifted, "http://127.0.0.1:8421")
+		_, err := BridgeProfile(drifted, "http://127.0.0.1:9998")
 		require.ErrorContains(t, err, test.want)
 	}
 }
 
-func TestReferenceProfileRejectsUnpinnedIdentityAndUnboundedLimits(t *testing.T) {
+func TestReferenceProfileRejectsUnpinnedIdentityAndRecanonicalizedPolicyDrift(t *testing.T) {
 	tests := []struct {
 		name   string
 		config Config
 		want   string
 	}{
-		{name: "deployment", config: Config{RuntimeID: "sha256:" + strings.Repeat("e", 64)}, want: "deployment ID"},
-		{name: "runtime", config: Config{DeploymentID: "operator-unstructured-primary"}, want: "runtime ID"},
-		{name: "credential", config: Config{DeploymentID: "operator-unstructured-primary", RuntimeID: "runtime-v1", CredentialBinding: "https://secret.invalid"}, want: "credential binding"},
-		{name: "credential length", config: Config{DeploymentID: "operator-unstructured-primary", RuntimeID: "runtime-v1", CredentialBinding: strings.Repeat("c", 129)}, want: "credential binding"},
+		{name: "deployment", config: Config{RuntimeID: "runtime-v1"}, want: "deployment ID"},
+		{name: "runtime", config: Config{DeploymentID: "operator-tika-primary"}, want: "runtime ID"},
+		{name: "credential", config: Config{DeploymentID: "operator-tika-primary", RuntimeID: "runtime-v1", CredentialBinding: "https://secret.invalid"}, want: "credential binding"},
+		{name: "credential exceeds bridge bound", config: Config{DeploymentID: "operator-tika-primary", RuntimeID: "runtime-v1", CredentialBinding: strings.Repeat("a", 129)}, want: "credential binding"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -152,18 +150,43 @@ func TestReferenceProfileRejectsUnpinnedIdentityAndUnboundedLimits(t *testing.T)
 		})
 	}
 
-	profile, err := NewProfile(Config{DeploymentID: "operator-unstructured-primary", RuntimeID: "runtime-v1"})
+	profile, err := NewProfile(Config{DeploymentID: "operator-tika-primary", RuntimeID: "runtime-v1"})
 	require.NoError(t, err)
-	profile.Limits.MaxResponseBytes++
 	profile.PolicyFingerprint = ""
+	profile.Limits.MaxResponseBytes++
 	_, _, err = CanonicalProfile(profile)
-	require.ErrorContains(t, err, "limits")
+	require.ErrorContains(t, err, "limits differ")
+
+	profile, err = NewProfile(Config{DeploymentID: "operator-tika-primary", RuntimeID: "runtime-v1"})
+	require.NoError(t, err)
+	profile.PolicyFingerprint = ""
+	profile.ReferencePolicy.EmbeddedReferenceFetch = "allow"
+	_, _, err = CanonicalProfile(profile)
+	require.ErrorContains(t, err, "reference fetching must be refused")
+
+	boundary, err := NewProfile(Config{
+		DeploymentID: "operator-tika-primary", RuntimeID: "runtime-v1",
+		CredentialBinding: strings.Repeat("a", 128),
+	})
+	require.NoError(t, err)
+	bridgeProfile, err := BridgeProfile(boundary, "http://127.0.0.1:9998")
+	require.NoError(t, err)
+	_, err = bridge.New(bridgeProfile, staticSecretResolver{}, http.DefaultClient)
+	require.NoError(t, err, "profile and bridge credential bounds must stay aligned")
 }
 
 type staticSecretResolver struct{}
 
 func (staticSecretResolver) ResolveSecret(context.Context, string) (string, error) {
 	return "synthetic-secret", nil
+}
+
+func mapKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 var _ bridge.SecretResolver = staticSecretResolver{}

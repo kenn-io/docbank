@@ -32,6 +32,10 @@ const (
 	maxBridgePollAttempts   = 10_000
 	maxBridgeResponseBytes  = int64(512 << 20)
 	maxBridgeDocumentBytes  = int64(1 << 40)
+	maxBridgeMarkdownBytes  = 64 << 20
+	maxBridgeArtifactBytes  = 256 << 20
+	maxBridgeArtifacts      = 64
+	maxBridgeTotalBytes     = 512 << 20
 	maxBridgeErrorMessage   = 1024
 	maxBridgeCleanupTimeout = 5 * time.Second
 )
@@ -72,6 +76,13 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		profile.MaxDocumentBytes < 0 || profile.MaxDocumentBytes > maxBridgeDocumentBytes {
 		return nil, errors.New("bridge: execution bounds are invalid")
 	}
+	if profile.MaxProviderMarkdownBytes < 0 ||
+		profile.MaxProviderMarkdownBytes > maxBridgeMarkdownBytes ||
+		profile.MaxArtifactBytes < 0 || profile.MaxArtifactBytes > maxBridgeArtifactBytes ||
+		profile.MaxArtifacts < 0 || profile.MaxArtifacts > maxBridgeArtifacts ||
+		profile.MaxTotalResultBytes < 0 || profile.MaxTotalResultBytes > maxBridgeTotalBytes {
+		return nil, errors.New("bridge: provider profile ceilings are invalid")
+	}
 	return &Client{
 		executor: providerutil.Executor{
 			Provider: provider, HTTP: providerhttp.IsolateClient(httpClient), Origin: origin,
@@ -80,7 +91,11 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		},
 		descriptor: descriptor, totalTimeout: profile.TotalTimeout,
 		pollInterval: profile.PollInterval, maxPollAttempts: profile.MaxPollAttempts,
-		maxDocumentBytes: profile.MaxDocumentBytes,
+		maxDocumentBytes:         profile.MaxDocumentBytes,
+		maxProviderMarkdownBytes: profile.MaxProviderMarkdownBytes,
+		maxArtifactBytes:         profile.MaxArtifactBytes,
+		maxArtifacts:             profile.MaxArtifacts,
+		maxTotalResultBytes:      profile.MaxTotalResultBytes,
 	}, nil
 }
 
@@ -101,10 +116,8 @@ func (client *Client) Render(
 		return document.RenditionResult{}, errors.New("bridge: client is required")
 	}
 	metadata := upload.Metadata()
-	if client.maxDocumentBytes > 0 && (metadata.ByteLength > client.maxDocumentBytes ||
-		authorization.SourceBytes > client.maxDocumentBytes) {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
-			"bridge input exceeds the document byte limit", nil)
+	if err := client.validateProfileAuthorization(metadata, authorization); err != nil {
+		return document.RenditionResult{}, err
 	}
 	if strings.ContainsAny(metadata.Filename, "\r\n") {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
@@ -129,6 +142,22 @@ func (client *Client) Render(
 		return document.RenditionResult{}, err
 	}
 	return client.awaitJob(run, envelope)
+}
+
+func (client *Client) validateProfileAuthorization(
+	metadata document.AuthorizedUploadMetadata, authorization document.RenditionAuthorization,
+) error {
+	if client.maxDocumentBytes > 0 && (metadata.ByteLength > client.maxDocumentBytes ||
+		authorization.SourceBytes > client.maxDocumentBytes) ||
+		client.maxProviderMarkdownBytes > 0 &&
+			authorization.MaxProviderMarkdownBytes > client.maxProviderMarkdownBytes ||
+		client.maxArtifactBytes > 0 && authorization.MaxArtifactBytes > client.maxArtifactBytes ||
+		client.maxArtifacts > 0 && authorization.MaxArtifacts > client.maxArtifacts ||
+		client.maxTotalResultBytes > 0 && authorization.MaxTotalResultBytes > client.maxTotalResultBytes {
+		return provider.Classified(document.RenditionErrorPolicyRejected,
+			"bridge authorization exceeds provider profile ceilings", nil)
+	}
+	return nil
 }
 
 // cleanup cancels a job the bridge still considers live after Render fails.

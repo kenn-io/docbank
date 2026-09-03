@@ -1,6 +1,6 @@
-// Package unstructured defines the fixed compatibility profile used when an
-// operator deploys an Unstructured adapter behind docbank-rendition/v1.
-package unstructured
+// Package tika defines the fixed compatibility profile used when an operator
+// deploys an Apache Tika adapter behind docbank-rendition/v1.
+package tika
 
 import (
 	"errors"
@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	// ProfileContractV1 identifies the canonical Unstructured bridge profile.
-	ProfileContractV1 = "unstructured-bridge-profile/v1"
-	descriptorID      = "unstructured.bridge.v1"
+	// ProfileContractV1 identifies the canonical Apache Tika bridge profile.
+	ProfileContractV1 = "tika-bridge-profile/v1"
+	descriptorID      = "tika.bridge.v1"
 )
 
-var provider = providerutil.Provider("Unstructured")
+var provider = providerutil.Provider("Tika")
 
 var profileCodec = bridgeprofile.Codec[ProfileV1]{
-	Prefix: "unstructured",
+	Prefix: "tika",
 	Clone:  cloneProfile,
 	Normalize: func(profile *ProfileV1) {
 		slices.SortFunc(profile.SupportedFormats, bridgeprofile.CompareFormats)
@@ -34,7 +34,7 @@ var profileCodec = bridgeprofile.Codec[ProfileV1]{
 }
 
 // Config supplies the only operator-specific profile values. It deliberately
-// has no routes, URLs, fetch controls, or provider options.
+// has no routes, URLs, headers, parser options, or fetch controls.
 type Config struct {
 	DeploymentID      string
 	RuntimeID         string
@@ -51,11 +51,20 @@ type LimitsV1 struct {
 	TotalTimeoutMillis   int64 `json:"total_timeout_millis"`
 }
 
-// DisclosurePolicyV1 permits only the exact supplied bytes and records the
+// DisclosurePolicyV1 permits only exact supplied bytes and records the
 // bridge's safe-basename disclosure. Authorization binds every byte and tuple.
 type DisclosurePolicyV1 struct {
 	DiscloseFilename bool   `json:"disclose_filename"`
 	Source           string `json:"source"`
+}
+
+// ReferencePolicyV1 refuses both embedded and external reference fetching.
+// The generic bridge cannot inspect parser internals, so compatibility requires
+// an operator-pinned adapter runtime audited to enforce both refusals.
+type ReferencePolicyV1 struct {
+	EmbeddedReferenceFetch string `json:"embedded_reference_fetch"`
+	EnforcementBoundary    string `json:"enforcement_boundary"`
+	ExternalReferenceFetch string `json:"external_reference_fetch"`
 }
 
 // EvidencePolicyV1 fixes bounded provider-neutral evidence and Markdown.
@@ -74,7 +83,7 @@ type ArtifactPolicyV1 struct {
 }
 
 // ProfileV1 is the immutable compatibility identity expected from an
-// operator-network Unstructured bridge deployment.
+// operator-network Apache Tika bridge deployment.
 type ProfileV1 struct {
 	ArtifactPolicy    ArtifactPolicyV1                     `json:"artifact_policy"`
 	BridgeContract    string                               `json:"bridge_contract"`
@@ -86,6 +95,7 @@ type ProfileV1 struct {
 	InputKind         document.RenditionInputKind          `json:"input_kind"`
 	Limits            LimitsV1                             `json:"limits"`
 	PolicyFingerprint string                               `json:"policy_fingerprint"`
+	ReferencePolicy   ReferencePolicyV1                    `json:"reference_policy"`
 	RuntimeID         string                               `json:"runtime_id"`
 	SupportedFormats  []document.RenditionFormatCapability `json:"supported_formats"`
 	TrustBoundary     document.RenditionTrustBoundary      `json:"trust_boundary"`
@@ -98,11 +108,12 @@ func NewProfile(config Config) (ProfileV1, error) {
 		ArtifactPolicy: standardArtifactPolicy(),
 		BridgeContract: bridge.ContractVersion, ContractVersion: ProfileContractV1,
 		CredentialBinding: config.CredentialBinding, DeploymentID: config.DeploymentID,
-		Disclosure:     standardDisclosurePolicy(),
-		EvidencePolicy: standardEvidencePolicy(),
-		InputKind:      document.RenditionInputOriginalFile,
-		Limits:         standardLimits(),
-		RuntimeID:      config.RuntimeID, SupportedFormats: standardFormats(),
+		Disclosure:      standardDisclosurePolicy(),
+		EvidencePolicy:  standardEvidencePolicy(),
+		InputKind:       document.RenditionInputOriginalFile,
+		Limits:          standardLimits(),
+		ReferencePolicy: standardReferencePolicy(),
+		RuntimeID:       config.RuntimeID, SupportedFormats: standardFormats(),
 		TrustBoundary: document.RenditionTrustOperatorNetwork,
 	}
 	_, fingerprint, err := CanonicalProfile(profile)
@@ -126,8 +137,6 @@ func ParseProfile(raw []byte) (ProfileV1, error) {
 
 // BridgeProfile projects the compatibility identity into the generic hardened
 // bridge. Origin remains generic bridge configuration, not profile schema.
-// Per-result limits stay in the signed authorization; the bridge applies them
-// while decoding each response and artifact.
 func BridgeProfile(profile ProfileV1, origin string) (bridge.Profile, error) {
 	_, fingerprint, err := CanonicalProfile(profile)
 	if err != nil {
@@ -141,7 +150,7 @@ func BridgeProfile(profile ProfileV1, origin string) (bridge.Profile, error) {
 		ArtifactRoles:     slices.Clone(profile.ArtifactPolicy.AllowedRoles),
 	})
 	if err != nil {
-		return bridge.Profile{}, fmt.Errorf("unstructured: construct bridge descriptor: %w", err)
+		return bridge.Profile{}, fmt.Errorf("tika: construct bridge descriptor: %w", err)
 	}
 	return bridge.Profile{
 		Origin: origin, Descriptor: descriptor, SecretBinding: profile.CredentialBinding,
@@ -177,6 +186,9 @@ func validateProfile(profile ProfileV1) error {
 		profile.Disclosure != standardDisclosurePolicy() {
 		return errors.New("disclosure or execution boundary is invalid")
 	}
+	if profile.ReferencePolicy != standardReferencePolicy() {
+		return errors.New("embedded and external reference fetching must be refused")
+	}
 	if !slices.Equal(profile.SupportedFormats, standardFormats()) {
 		return errors.New("supported formats differ from the standard profile")
 	}
@@ -202,6 +214,13 @@ func standardLimits() LimitsV1 {
 
 func standardDisclosurePolicy() DisclosurePolicyV1 {
 	return DisclosurePolicyV1{DiscloseFilename: true, Source: "exact_supplied_bytes"}
+}
+
+func standardReferencePolicy() ReferencePolicyV1 {
+	return ReferencePolicyV1{
+		EmbeddedReferenceFetch: "refuse", EnforcementBoundary: "pinned_audited_adapter_runtime",
+		ExternalReferenceFetch: "refuse",
+	}
 }
 
 func standardEvidencePolicy() EvidencePolicyV1 {
