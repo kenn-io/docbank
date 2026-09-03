@@ -43,7 +43,7 @@ var searchCmd = &cobra.Command{
 		if err != nil {
 			return usageError(err)
 		}
-		if searchTag == "" && searchUnder == "" && store.SearchNeedsQuery(strings.Join(args, " "), store.SearchOptions{
+		if searchTag == "" && store.SearchNeedsQuery(strings.Join(args, " "), store.SearchOptions{
 			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}) {
 			return usageError(store.ErrSearchQueryRequired)
