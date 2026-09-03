@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -173,6 +174,54 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 	assert.Greater(t, canvasBlue, uint32(0xf000))
 }
 
+func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
+	source := mustDecodeWebP(t)
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)),
+		MediaType: "IMAGE/WEBP; charset=utf-8",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 75, product.Preview.Output.Width)
+	assert.Equal(t, 100, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewAppliesWebPEXIFOrientation(t *testing.T) {
+	source := mustDecodeWebP(t)
+	source = syntheticExtendedWebP(t, source, 75, 100, visualPreviewWebPEXIF, "EXIF",
+		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/webp",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 100, product.Preview.Output.Width)
+	assert.Equal(t, 75, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewRejectsWebPICCProfile(t *testing.T) {
+	source, err := base64.StdEncoding.DecodeString(
+		"UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
+	)
+	require.NoError(t, err)
+	source = syntheticExtendedWebP(t, source, 1, 1, visualPreviewWebPICCProfile, "ICCP", []byte("profile"))
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/webp",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "unsupported_color_profile", product.Preview.Failure.Code)
+}
+
 func TestProduceVisualPreviewRejectsPNGICCProfile(t *testing.T) {
 	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "iCCP", []byte("profile"))
 	digest := sha256.Sum256(source)
@@ -288,6 +337,19 @@ func TestProduceVisualPreviewRecordsMalformedGIFFailure(t *testing.T) {
 	assert.Empty(t, product.Output)
 }
 
+func TestProduceVisualPreviewRecordsMalformedWebPFailure(t *testing.T) {
+	source := []byte("RIFF\x04\x00\x00\x00WEBP")
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/webp",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
+}
+
 func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.GrayModel))
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.YCbCrModel))
@@ -305,6 +367,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: [2]int{3, 4}},
 		{name: "png", mediaType: "image/png", data: mediatest.PNG(3, 2, color.White), failAtSeeks: [2]int{3, 4}},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: [2]int{2, 3}},
+		{name: "webp", mediaType: "image/webp", data: mustDecodeWebP(t), failAtSeeks: [2]int{3, 4}},
 	}
 	phases := []struct {
 		name string
@@ -368,6 +431,46 @@ func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []
 	result := append([]byte{}, source[:33]...)
 	result = append(result, chunk...)
 	return append(result, source[33:]...)
+}
+
+func mustDecodeWebP(t *testing.T) []byte {
+	t.Helper()
+	source, err := base64.StdEncoding.DecodeString(
+		"UklGRrIBAABXRUJQVlA4TKUBAAAvSsAYAA8w//M///MfeJAkbXvaSG7m8Q3GfYSBJekwQztm/IcZlgwnmWImn2BK7aFmBtnVir6q//8VOkFE/xm4baTIu8c48ArEo6+B3zFKYln3pqClSCKX0begFTAXFOLXHSyF8cCNcZEG4OywuA4KVVfJCiArU7GAgJI8+lJP/OKMT/fBAjevg1cYB7YVkFuWga2lyPi5I0HFy5YTpWIHg0RZpkniRVW9odHAKOwosWuOGdxIyn2OvaCDvhg/we6TwadPBPbqBV58MsLmMJ8yZnOWk8SRz4N+QoyPL+MnamzMvcE1rHNEr91F9GKZPVUcS9w7PhhH36suB9qPeYb/oLk6cuTiJ0wOK3m5h1cKjW6EVZCYMK7dxcKCBdgP9HkKr9gkAO2P8GKZGWVdIAatQa+1IDpt6qyorVwdy01xdW8Jkfk6xjEXmVQQ+HQdFr6OKhIN34dXWq0+0qr6EJSCeeVLH9+gvGTLyqM65PQ44ihzlTXxQKjKbAvshXgir7Lil9w4L2bvMycmjQcqXaMCO6BlY28i+FOLzbfI1vEqxAhotocAAA==",
+	)
+	require.NoError(t, err)
+	return source
+}
+
+func syntheticExtendedWebP(
+	t *testing.T, source []byte, width, height int, flags byte, chunkType string, payload []byte,
+) []byte {
+	t.Helper()
+	require.GreaterOrEqual(t, len(source), 12)
+	require.Equal(t, "RIFF", string(source[:4]))
+	require.Equal(t, "WEBP", string(source[8:12]))
+	require.Len(t, chunkType, 4)
+
+	vp8x := make([]byte, 18)
+	copy(vp8x[:4], "VP8X")
+	binary.LittleEndian.PutUint32(vp8x[4:8], 10)
+	vp8x[8] = flags
+	w, h := width-1, height-1
+	vp8x[12], vp8x[13], vp8x[14] = byte(w), byte(w>>8), byte(w>>16)
+	vp8x[15], vp8x[16], vp8x[17] = byte(h), byte(h>>8), byte(h>>16)
+	chunk := make([]byte, 8+len(payload)+len(payload)%2)
+	copy(chunk[:4], chunkType)
+	binary.LittleEndian.PutUint32(chunk[4:8], uint32(len(payload)))
+	copy(chunk[8:], payload)
+	body := make([]byte, 0, len(vp8x)+len(source)-12+len(chunk))
+	body = append(body, vp8x...)
+	body = append(body, source[12:]...)
+	body = append(body, chunk...)
+	result := make([]byte, 12, 12+len(body))
+	copy(result[:4], "RIFF")
+	binary.LittleEndian.PutUint32(result[4:8], uint32(4+len(body)))
+	copy(result[8:12], "WEBP")
+	return append(result, body...)
 }
 
 type failingVisualPreviewReadSeeker struct {
