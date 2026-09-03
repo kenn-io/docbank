@@ -636,6 +636,12 @@ func TestIncludeSkipsNonRegularEntries(t *testing.T) {
 	assert.Equal(t, 1, report.Added)
 	assert.Equal(t, 2, report.Excluded)
 	assert.Empty(t, report.Failed)
+
+	explicit, err := Preflight(ctx, []string{filepath.Join(src, "target.bin")}, Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), explicit.Excluded)
+	require.Len(t, explicit.Findings, 1)
+	assert.Equal(t, "excluded", explicit.Findings[0].Kind)
 }
 
 func TestPreflightInventoriesWithoutMutatingVault(t *testing.T) {
