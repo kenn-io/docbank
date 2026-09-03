@@ -189,6 +189,122 @@ func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
 	assert.Equal(t, 100, product.Preview.Output.Height)
 }
 
+func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
+	preview := mediatest.JPEG(3, 2, color.White)
+	source := syntheticRAWPreviewTIFF(6, preview)
+	digest := sha256.Sum256(source)
+
+	for _, mediaType := range []string{
+		"image/x-sony-arw",
+		"image/x-adobe-dng",
+		"image/x-canon-cr2",
+		"image/x-nikon-nef",
+	} {
+		t.Run(mediaType, func(t *testing.T) {
+			product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: mediaType,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+			require.NotNil(t, product.Preview.Output)
+			assert.Equal(t, 2, product.Preview.Output.Width)
+			assert.Equal(t, 3, product.Preview.Output.Height)
+		})
+	}
+}
+
+func TestProduceVisualPreviewAcceptsSingleStripDNGPreview(t *testing.T) {
+	preview := mediatest.JPEG(3, 2, color.White)
+	source := syntheticRAWPreviewTIFFCandidates(1, syntheticRAWPreviewCandidate{
+		data: preview, singleStrip: true,
+	})
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-adobe-dng",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 3, product.Preview.Output.Width)
+	assert.Equal(t, 2, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing.T) {
+	preview := mediatest.JPEG(3, 2, color.White)
+	invalid := make([]byte, len(preview)+1)
+	source := syntheticRAWPreviewTIFF(1, preview, invalid)
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 3, product.Preview.Output.Width)
+	assert.Equal(t, 2, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewUsesCandidateCameraRAWOrientation(t *testing.T) {
+	preview := mediatest.JPEG(4, 3, color.White)
+	source := syntheticRAWPreviewTIFFCandidates(6, syntheticRAWPreviewCandidate{
+		data: preview, orientation: 1,
+	})
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 4, product.Preview.Output.Width)
+	assert.Equal(t, 3, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewAcceptsRAF(t *testing.T) {
+	source := syntheticRAF()
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-fuji-raf",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 30, product.Preview.Output.Width)
+	assert.Equal(t, 40, product.Preview.Output.Height)
+}
+
+func TestProduceVisualPreviewRecordsMissingCameraRAWPreview(t *testing.T) {
+	source := syntheticTIFFRoot([]syntheticTIFFEntry{tiffShort(0x0112, 1)})
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "embedded_preview_unavailable", product.Preview.Failure.Code)
+}
+
+func TestProduceVisualPreviewRecordsInvalidCameraRAWPreviewRange(t *testing.T) {
+	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
+	previewIFD := int(binary.LittleEndian.Uint32(source[22:26]))
+	binary.LittleEndian.PutUint32(source[previewIFD+10:previewIFD+14], uint32(len(source)+1))
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+	require.NotNil(t, product.Preview.Failure)
+	assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
+}
+
 func TestProduceVisualPreviewAppliesWebPEXIFOrientation(t *testing.T) {
 	source := mustDecodeWebP(t)
 	source = syntheticExtendedWebP(t, source, 75, 100, visualPreviewWebPEXIF, "EXIF",
@@ -397,6 +513,22 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	}
 }
 
+func TestProduceVisualPreviewKeepsCameraRAWReadErrorsRetryable(t *testing.T) {
+	readErr := errors.New("injected read failure")
+	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
+	digest := sha256.Sum256(source)
+	reader := &failingVisualPreviewReadSeeker{
+		Reader: bytes.NewReader(source), failAtSeek: 2, err: readErr,
+	}
+
+	_, err := ProduceVisualPreview(t.Context(), reader, VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.Error(t, err)
+	assert.True(t, IsSourceContentUnavailable(err))
+	assert.ErrorIs(t, err, readErr)
+}
+
 func TestVisualPreviewJPEGUnsupportedFeatureIsTerminal(t *testing.T) {
 	product, err := visualPreviewJPEGDecodeResult(
 		document.VisualPreviewV1{}, "malformed", jpeg.UnsupportedError("test feature"),
@@ -417,6 +549,84 @@ func syntheticJPEGSegment(t *testing.T, source []byte, marker byte, payload []by
 	result = append(result, header...)
 	result = append(result, payload...)
 	return append(result, source[2:]...)
+}
+
+func syntheticRAWPreviewTIFF(orientation uint16, previews ...[]byte) []byte {
+	candidates := make([]syntheticRAWPreviewCandidate, len(previews))
+	for index, preview := range previews {
+		candidates[index].data = preview
+	}
+	return syntheticRAWPreviewTIFFCandidates(orientation, candidates...)
+}
+
+type syntheticRAWPreviewCandidate struct {
+	data        []byte
+	orientation uint16
+	singleStrip bool
+}
+
+func syntheticRAWPreviewTIFFCandidates(
+	rootOrientation uint16, previews ...syntheticRAWPreviewCandidate,
+) []byte {
+	const (
+		headerSize     = 8
+		rootEntries    = 1
+		rootIFDSize    = 2 + rootEntries*12 + 4
+		firstIFDOffset = headerSize + rootIFDSize
+	)
+	ifdOffsets := make([]int, len(previews))
+	previewOffset := firstIFDOffset
+	for index, preview := range previews {
+		ifdOffsets[index] = previewOffset
+		entries := 2
+		if preview.singleStrip {
+			entries++
+		}
+		if preview.orientation != 0 {
+			entries++
+		}
+		previewOffset += 2 + entries*12 + 4
+	}
+	totalSize := previewOffset
+	for _, preview := range previews {
+		totalSize += len(preview.data)
+	}
+	source := make([]byte, totalSize)
+	copy(source, "II")
+	binary.LittleEndian.PutUint16(source[2:4], 42)
+	binary.LittleEndian.PutUint32(source[4:8], headerSize)
+	externalOffset := totalSize
+	writeSyntheticTIFFIFD(source, headerSize,
+		[]syntheticTIFFEntry{tiffShort(visualPreviewRAWOrientationTag, rootOrientation)}, &externalOffset)
+	if len(ifdOffsets) > 0 {
+		binary.LittleEndian.PutUint32(source[22:26], uint32(ifdOffsets[0]))
+	}
+	for index, preview := range previews {
+		ifdOffset := ifdOffsets[index]
+		offsetTag := uint16(visualPreviewRAWOffsetTag)
+		lengthTag := uint16(visualPreviewRAWLengthTag)
+		var entries []syntheticTIFFEntry
+		if preview.singleStrip {
+			offsetTag = visualPreviewRAWStripOffsetsTag
+			lengthTag = visualPreviewRAWStripByteCountsTag
+			entries = append(entries, tiffShort(visualPreviewRAWCompressionTag, visualPreviewRAWJPEGCompression))
+		}
+		entries = append(entries,
+			tiffLong(offsetTag, uint32(previewOffset)),
+			tiffLong(lengthTag, uint32(len(preview.data))),
+		)
+		if preview.orientation != 0 {
+			entries = append(entries, tiffShort(visualPreviewRAWOrientationTag, preview.orientation))
+		}
+		writeSyntheticTIFFIFD(source, ifdOffset, entries, &externalOffset)
+		if index+1 < len(previews) {
+			nextOffset := ifdOffset + 2 + len(entries)*12
+			binary.LittleEndian.PutUint32(source[nextOffset:nextOffset+4], uint32(ifdOffsets[index+1]))
+		}
+		copy(source[previewOffset:], preview.data)
+		previewOffset += len(preview.data)
+	}
+	return source
 }
 
 func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []byte) []byte {
