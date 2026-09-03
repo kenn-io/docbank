@@ -289,6 +289,15 @@ func TestValidateJobIDFitsReceiptTokens(t *testing.T) {
 	require.Error(t, testProvider.ValidatePathIdentifier("..", "job ID"))
 }
 
+func TestValidOptionalFilename(t *testing.T) {
+	for _, filename := range []string{"", "article.html", "ARTICLE.HTML"} {
+		assert.True(t, ValidOptionalFilename(filename, ".html"), filename)
+	}
+	for _, filename := range []string{"article.xhtml", " article.html", "path/article.html", "article.html\x00"} {
+		assert.False(t, ValidOptionalFilename(filename, ".html"), filename)
+	}
+}
+
 func newTestExecutor(server *httptest.Server) *Executor {
 	return &Executor{
 		Provider: testProvider, HTTP: server.Client(), Origin: server.URL,
