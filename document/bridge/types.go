@@ -44,15 +44,17 @@ type Profile struct {
 	PollInterval     time.Duration
 	MaxPollAttempts  int
 	MaxResponseBytes int64
+	MaxDocumentBytes int64
 }
 
 // Client implements document.RenditionProvider through docbank-rendition/v1.
 type Client struct {
-	executor        providerutil.Executor
-	descriptor      document.RenditionDescriptor
-	totalTimeout    time.Duration
-	pollInterval    time.Duration
-	maxPollAttempts int
+	executor         providerutil.Executor
+	descriptor       document.RenditionDescriptor
+	totalTimeout     time.Duration
+	pollInterval     time.Duration
+	maxPollAttempts  int
+	maxDocumentBytes int64
 }
 
 // AuthorizationManifest is the canonical multipart policy part sent beside

@@ -169,6 +169,27 @@ func TestBridgeContractRejectsMultilineFilenameBeforeSubmission(t *testing.T) {
 	assert.Zero(t, requests.Load())
 }
 
+func TestBridgeContractRejectsDocumentAboveProfileLimitBeforeSubmission(t *testing.T) {
+	fixture := newBridgeFixture(t)
+	fixture.source = bytes.Repeat([]byte("x"), (1<<20)+1)
+	fixture.metadata.ByteLength = int64(len(fixture.source))
+	fixture.metadata.SHA256 = sha256String(fixture.source)
+	fixture.authorization.SourceBytes = fixture.metadata.ByteLength
+	fixture.authorization.SourceSHA256 = fixture.metadata.SHA256
+	var requests atomic.Int64
+	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return nil, errors.New("unexpected bridge request")
+		})})
+
+	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	assert.Equal(t, document.RenditionErrorPolicyRejected, providerError.Code())
+	assert.Zero(t, requests.Load())
+}
+
 func TestBridgeContractIdempotencyReplayAndForwardCompatibleEnvelope(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	var keys []string
@@ -1198,6 +1219,7 @@ func newTestBridgeClientWithHTTP(
 		Origin: origin, Descriptor: descriptor, SecretBinding: secretBinding,
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
 		PollInterval: time.Millisecond, MaxPollAttempts: 4, MaxResponseBytes: 1 << 20,
+		MaxDocumentBytes: 1 << 20,
 	}, secrets, httpClient)
 	require.NoError(t, err)
 	return client

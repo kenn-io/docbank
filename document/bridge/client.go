@@ -31,6 +31,7 @@ const (
 	maxBridgeTimeout        = 24 * time.Hour
 	maxBridgePollAttempts   = 10_000
 	maxBridgeResponseBytes  = int64(512 << 20)
+	maxBridgeDocumentBytes  = int64(1 << 40)
 	maxBridgeErrorMessage   = 1024
 	maxBridgeCleanupTimeout = 5 * time.Second
 )
@@ -67,7 +68,8 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		!providerutil.Bounded(&profile.TotalTimeout, defaultTotalTimeout, maxBridgeTimeout) ||
 		!providerutil.Bounded(&profile.PollInterval, defaultPollInterval, profile.TotalTimeout) ||
 		!providerutil.Bounded(&profile.MaxPollAttempts, defaultMaxPollAttempts, maxBridgePollAttempts) ||
-		!providerutil.Bounded(&profile.MaxResponseBytes, defaultMaxResponseBytes, maxBridgeResponseBytes) {
+		!providerutil.Bounded(&profile.MaxResponseBytes, defaultMaxResponseBytes, maxBridgeResponseBytes) ||
+		profile.MaxDocumentBytes < 0 || profile.MaxDocumentBytes > maxBridgeDocumentBytes {
 		return nil, errors.New("bridge: execution bounds are invalid")
 	}
 	return &Client{
@@ -78,6 +80,7 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		},
 		descriptor: descriptor, totalTimeout: profile.TotalTimeout,
 		pollInterval: profile.PollInterval, maxPollAttempts: profile.MaxPollAttempts,
+		maxDocumentBytes: profile.MaxDocumentBytes,
 	}, nil
 }
 
@@ -98,6 +101,11 @@ func (client *Client) Render(
 		return document.RenditionResult{}, errors.New("bridge: client is required")
 	}
 	metadata := upload.Metadata()
+	if client.maxDocumentBytes > 0 && (metadata.ByteLength > client.maxDocumentBytes ||
+		authorization.SourceBytes > client.maxDocumentBytes) {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
+			"bridge input exceeds the document byte limit", nil)
+	}
 	if strings.ContainsAny(metadata.Filename, "\r\n") {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"bridge filename contains unsupported line breaks", nil)
