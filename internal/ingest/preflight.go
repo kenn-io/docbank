@@ -294,11 +294,6 @@ func preflightTree(
 				report.Excluded++
 				return nil
 			}
-			info, err := entry.Info()
-			if err != nil {
-				report.addFinding(sourcePath, "error", err.Error())
-				return nil
-			}
 			if len(selection.include) > 0 {
 				for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
 					if _, seen := materializedDirs[dir]; !seen {
@@ -313,6 +308,11 @@ func preflightTree(
 						break
 					}
 				}
+			}
+			info, err := entry.Info()
+			if err != nil {
+				report.addFinding(sourcePath, "error", err.Error())
+				return nil
 			}
 			report.addFile(sourcePath, info.Size(), isCloudPlaceholder(info), types)
 		default:
