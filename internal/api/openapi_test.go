@@ -47,6 +47,19 @@ func TestOpenAPIDeclaresSecurity(t *testing.T) {
 	assert.Contains(t, doc, "security:", "document-level security requirement missing")
 }
 
+func TestOpenAPISearchQueryIsOptional(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	op := doc.Paths["/api/v1/search"].Get
+	require.NotNil(t, op)
+	for _, param := range op.Parameters {
+		if param.Name == "q" {
+			assert.False(t, param.Required)
+			return
+		}
+	}
+	t.Fatal("search q parameter missing")
+}
+
 func TestLongRunningBackupRoutesClearBodyReadDeadline(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, operation := range []*huma.Operation{

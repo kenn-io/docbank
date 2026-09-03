@@ -27,9 +27,8 @@ var (
 )
 
 var searchCmd = &cobra.Command{
-	Use:   "search <query>...",
+	Use:   "search [<query>...]",
 	Short: "Search document names and extracted text",
-	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if searchLimit < 1 || searchLimit > maxSearchLimit {
 			return usageError(fmt.Errorf("--limit must be between 1 and %d", maxSearchLimit))
@@ -43,6 +42,11 @@ var searchCmd = &cobra.Command{
 		)
 		if err != nil {
 			return usageError(err)
+		}
+		if searchTag == "" && searchUnder == "" && store.SearchNeedsQuery(strings.Join(args, " "), store.SearchOptions{
+			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+		}) {
+			return usageError(store.ErrSearchQueryRequired)
 		}
 		var underSelector nodeSelector
 		if searchUnder != "" {

@@ -209,6 +209,13 @@ func TestSearchWithOptionsUsesStableTagIdentity(t *testing.T) {
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, tagged.ID, report.Hits[0].Node.ID)
 
+	filterReport, err := c.SearchWithOptions(ctx, "", 10, client.SearchOptions{TagID: tag.ID})
+	require.NoError(t, err)
+	require.Len(t, filterReport.Hits, 1)
+	assert.Equal(t, "filter", filterReport.Hits[0].Match)
+	_, err = c.SearchWithOptions(ctx, "", 10, client.SearchOptions{})
+	require.ErrorIs(t, err, store.ErrSearchQueryRequired)
+
 	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{TagID: "bad"})
 	require.ErrorContains(t, err, "canonical UUIDv4")
 	_, err = c.SearchWithOptions(ctx, "insurance", 10, client.SearchOptions{

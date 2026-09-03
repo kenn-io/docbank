@@ -485,7 +485,7 @@ type ContentReversionReceipt struct {
 type SearchHit struct {
 	Node  Node   `json:"node"`
 	Path  string `json:"path"`
-	Match string `json:"match" enum:"name,content"`
+	Match string `json:"match" enum:"name,content,filter"`
 }
 
 // SearchReport is one bounded search result page.

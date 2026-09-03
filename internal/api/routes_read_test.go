@@ -413,6 +413,19 @@ func TestSearch(t *testing.T) {
 		"modified_since=2100-01-01T00:00:00Z&modified_before=2000-01-01T00:00:00Z", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"validation"`)
+	resp, body = get(t, ts, "/api/v1/search?limit=10&modified_since=2000-01-01T00:00:00Z", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 2)
+	for _, hit := range rep.Hits {
+		assert.Equal(t, "filter", hit.Match)
+	}
+	resp, body = get(t, ts, "/api/v1/search?limit=10", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
+	resp, body = get(t, ts, "/api/v1/search?limit=10&mime_type=application%2Fpdf", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"validation"`)
 
 	tag, err := s.CreateTag(t.Context(), "renewal")
 	require.NoError(t, err)
@@ -426,6 +439,11 @@ func TestSearch(t *testing.T) {
 	require.Len(t, rep.Hits, 1)
 	assert.Equal(t, insuranceNodes[1].ID, rep.Hits[0].Node.ID)
 	assert.Equal(t, tag.ID, rep.TagID)
+	resp, body = get(t, ts, "/api/v1/search?limit=10&tag_id="+tag.ID, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &rep))
+	require.Len(t, rep.Hits, 1)
+	assert.Equal(t, "filter", rep.Hits[0].Match)
 
 	resp, body = get(t, ts,
 		"/api/v1/search?q=insurance&limit=10&tag_id=11111111-1111-4111-8111-111111111111", nil)

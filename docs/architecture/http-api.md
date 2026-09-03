@@ -58,6 +58,14 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
+Search accepts an optional `q` query. Omitting it is valid only when `tag_id`,
+`modified_since`, or `modified_before` bounds the page. The resulting
+filter-only hits are ordered by current `modified_at` descending and identify
+their source with `match: "filter"`; `mime_type` and `under_node_id` can
+narrow an anchored page but cannot anchor an empty query alone. An empty
+unanchored query returns `422 validation`. The normal `limit` and `truncated`
+contract remains in force, without a cursor.
+
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hidden `POST

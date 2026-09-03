@@ -367,6 +367,54 @@ func TestSearchPageFiltersByModificationTime(t *testing.T) {
 	require.ErrorContains(t, err, "must be earlier")
 }
 
+func TestSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "briefing")
+	require.NoError(t, err)
+	old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("queryless-old"), 1, "text/plain")
+	require.NoError(t, err)
+	newer, err := s.CreateFile(ctx, s.RootID(), "new.txt", fakeHash("queryless-new"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "outside.txt", fakeHash("queryless-outside"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, newer.ID, newer.Revision)
+	require.NoError(t, err)
+	for id, stamp := range map[int64]string{
+		old.ID:   "2026-01-01T00:00:00.000000000Z",
+		newer.ID: "2026-01-03T00:00:00.000000000Z",
+	} {
+		_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=? WHERE id=?`, stamp, id)
+		require.NoError(t, err)
+	}
+	hits, truncated, err := s.SearchPageWithOptions(ctx, "", 10, SearchOptions{TagID: tag.ID})
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Len(t, hits, 1)
+	assert.Equal(t, newer.ID, hits[0].Node.ID)
+	assert.Equal(t, SearchMatchFilter, hits[0].Match)
+
+	hits, truncated, err = s.SearchPageWithOptions(ctx, " ", 1, SearchOptions{
+		ModifiedSince: "2026-01-01T00:00:00Z", ModifiedBefore: "2026-01-04T00:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	require.Len(t, hits, 1)
+	assert.Equal(t, newer.ID, hits[0].Node.ID)
+	assert.Equal(t, SearchMatchFilter, hits[0].Match)
+
+	for _, opts := range []SearchOptions{
+		{}, {MIMEType: "text/plain"}, {UnderNodeID: s.RootID()},
+	} {
+		_, _, err = s.SearchPageWithOptions(ctx, "", 10, opts)
+		require.ErrorIs(t, err, ErrSearchQueryRequired)
+	}
+	_, _, err = s.SearchPageWithOptions(ctx, "", 10, SearchOptions{MIMEType: "not a media type"})
+	require.ErrorContains(t, err, "is invalid")
+	_, _, err = s.SearchPageWithOptions(ctx, "", 10, SearchOptions{ModifiedSince: "yesterday"})
+	require.ErrorContains(t, err, "absolute RFC3339 timestamp")
+}
+
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

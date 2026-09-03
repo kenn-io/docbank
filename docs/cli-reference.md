@@ -641,7 +641,7 @@ returns the complete restored node with its resulting path and revision.
 ## docbank search
 
 ```
-docbank search <query>... [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--limit <n>] [--json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--limit <n>] [--json]
 ```
 
 Full-text search over live node names and verified extracted text (FTS5).
@@ -669,6 +669,13 @@ and filter the live node's current modification time. The lower bound is
 inclusive and the upper bound is exclusive. Either may be used alone; when
 both are present, the lower bound must be earlier. Inputs are normalized to
 canonical UTC before the request.
+
+The query can be omitted for a bounded filter page when `--tag`,
+`--modified-since`, or `--modified-before` is supplied. These results are
+ordered newest-first by current modification time and show `filter` in the
+`MATCH` column. `--mime-type` and `--under` narrow a query or an anchored
+filter page, but neither is an anchor by itself, so a blank search with only
+one of those options is rejected.
 
 `--json` emits the typed search report with `hits`, the applied `limit`, and
 an explicit `truncated` boolean. A filtered report also echoes the stable
