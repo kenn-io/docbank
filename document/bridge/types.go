@@ -34,27 +34,37 @@ const (
 // used for the fixed Authorization header and never enter manifests or receipts.
 type SecretResolver = providerutil.SecretResolver
 
-// Profile fixes one bridge origin, provider identity, and execution bounds.
+// Profile fixes one bridge origin, provider identity, execution bounds, and
+// optional provider ceilings. A zero provider ceiling leaves the generic
+// authorization contract unchanged.
 type Profile struct {
-	Origin           string
-	Descriptor       document.RenditionDescriptor
-	SecretBinding    string
-	RequestTimeout   time.Duration
-	TotalTimeout     time.Duration
-	PollInterval     time.Duration
-	MaxPollAttempts  int
-	MaxResponseBytes int64
-	MaxDocumentBytes int64
+	Origin                   string
+	Descriptor               document.RenditionDescriptor
+	SecretBinding            string
+	RequestTimeout           time.Duration
+	TotalTimeout             time.Duration
+	PollInterval             time.Duration
+	MaxPollAttempts          int
+	MaxResponseBytes         int64
+	MaxDocumentBytes         int64
+	MaxProviderMarkdownBytes int
+	MaxArtifactBytes         int
+	MaxArtifacts             int
+	MaxTotalResultBytes      int
 }
 
 // Client implements document.RenditionProvider through docbank-rendition/v1.
 type Client struct {
-	executor         providerutil.Executor
-	descriptor       document.RenditionDescriptor
-	totalTimeout     time.Duration
-	pollInterval     time.Duration
-	maxPollAttempts  int
-	maxDocumentBytes int64
+	executor                 providerutil.Executor
+	descriptor               document.RenditionDescriptor
+	totalTimeout             time.Duration
+	pollInterval             time.Duration
+	maxPollAttempts          int
+	maxDocumentBytes         int64
+	maxProviderMarkdownBytes int
+	maxArtifactBytes         int
+	maxArtifacts             int
+	maxTotalResultBytes      int
 }
 
 // AuthorizationManifest is the canonical multipart policy part sent beside

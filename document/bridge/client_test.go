@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -188,6 +189,78 @@ func TestBridgeContractRejectsDocumentAboveProfileLimitBeforeSubmission(t *testi
 	require.ErrorAs(t, err, &providerError)
 	assert.Equal(t, document.RenditionErrorPolicyRejected, providerError.Code())
 	assert.Zero(t, requests.Load())
+}
+
+func TestBridgeProfileOutputCeilingsRejectAuthorizationBeforeSubmission(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*bridgeFixture)
+		limit   func(*Profile)
+	}{
+		{
+			name:  "provider Markdown",
+			limit: func(profile *Profile) { profile.MaxProviderMarkdownBytes = 4095 },
+		},
+		{
+			name:    "artifact bytes",
+			prepare: func(fixture *bridgeFixture) { *fixture = fixture.withStructuredArtifact(t) },
+			limit:   func(profile *Profile) { profile.MaxArtifactBytes = 4095 },
+		},
+		{
+			name: "artifact count",
+			prepare: func(fixture *bridgeFixture) {
+				descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+					ID: fixture.descriptor.ID, ContractVersion: document.RenditionProviderContractVersion,
+					PolicyFingerprint: fixture.descriptor.PolicyFingerprint,
+					TrustBoundary:     fixture.descriptor.TrustBoundary,
+					SupportedFormats:  fixture.descriptor.SupportedFormats,
+					ReturnsMarkdown:   true, ReturnsStructured: true,
+					ArtifactRoles: []document.EvidenceArtifactRole{
+						document.EvidenceArtifactImage, document.EvidenceArtifactStructured,
+					},
+				})
+				require.NoError(t, err)
+				fixture.descriptor = descriptor
+				fixture.authorization.DescriptorFingerprint = descriptor.Fingerprint
+				fixture.authorization.AllowedArtifactRoles = slices.Clone(descriptor.ArtifactRoles)
+				fixture.authorization.MaxArtifacts = 2
+			},
+			limit: func(profile *Profile) { profile.MaxArtifacts = 1 },
+		},
+		{
+			name:  "total result bytes",
+			limit: func(profile *Profile) { profile.MaxTotalResultBytes = 16383 },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBridgeFixture(t)
+			if test.prepare != nil {
+				test.prepare(&fixture)
+			}
+			var requests atomic.Int64
+			profile := Profile{
+				Origin: "https://bridge.invalid", Descriptor: fixture.descriptor,
+				RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
+				PollInterval: time.Millisecond, MaxPollAttempts: 4, MaxResponseBytes: 1 << 20,
+				MaxDocumentBytes: 1 << 20,
+			}
+			test.limit(&profile)
+			client, err := New(profile, nil, &http.Client{Transport: roundTripFunc(
+				func(*http.Request) (*http.Response, error) {
+					requests.Add(1)
+					return nil, errors.New("profile ceiling violation reached submission")
+				},
+			)})
+			require.NoError(t, err)
+
+			_, err = client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			var providerError *document.RenditionProviderError
+			require.ErrorAs(t, err, &providerError)
+			assert.Equal(t, document.RenditionErrorPolicyRejected, providerError.Code())
+			assert.Zero(t, requests.Load())
+		})
+	}
 }
 
 func TestBridgeContractIdempotencyReplayAndForwardCompatibleEnvelope(t *testing.T) {
