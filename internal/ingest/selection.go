@@ -15,6 +15,14 @@ type sourceSelection struct {
 	exclude []sourceRule
 }
 
+// Selection is the request-scoped compiled include and exclude matcher.
+type Selection = sourceSelection
+
+// CompileSelection validates and compiles one request's selection rules.
+func CompileSelection(opts Options) (Selection, error) {
+	return compileSourceSelection(opts)
+}
+
 type sourceRule struct {
 	pattern  string
 	basename bool

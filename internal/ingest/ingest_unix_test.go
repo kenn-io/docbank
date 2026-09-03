@@ -131,6 +131,23 @@ func TestExcludedBrokenRootSymlinkDoesNotResolve(t *testing.T) {
 	assert.Empty(t, rep.Failed)
 }
 
+func TestIncludeSkipsBrokenRootSymlink(t *testing.T) {
+	ing := newTestIngester(t)
+	alias := filepath.Join(t.TempDir(), "skip.link")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "missing"), alias))
+	opts := Options{Include: []string{"*.pdf"}}
+
+	report, err := Preflight(t.Context(), []string{alias}, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), report.Excluded)
+	assert.Zero(t, report.Errors)
+
+	rep, err := ing.AddPathsWithOptions(t.Context(), []string{alias}, "/archive", opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Excluded)
+	assert.Empty(t, rep.Failed)
+}
+
 func TestIncludeSkipsExplicitNonRegularSource(t *testing.T) {
 	ing := newTestIngester(t)
 	root := t.TempDir()

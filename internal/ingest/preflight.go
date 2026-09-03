@@ -159,11 +159,17 @@ func ValidateOptions(opts Options) error {
 // semantics as AddPathsWithOptions. It uses directory metadata only: cloud
 // placeholders are not opened or hydrated merely to estimate an import.
 func Preflight(ctx context.Context, sources []string, opts Options) (PreflightReport, error) {
-	var report PreflightReport
-	selection, err := compileSourceSelection(opts)
+	selection, err := CompileSelection(opts)
 	if err != nil {
-		return report, err
+		return PreflightReport{}, err
 	}
+	return PreflightWithSelection(ctx, sources, selection)
+}
+
+// PreflightWithSelection inventories sources using a previously compiled
+// request selection, so callers can share it with the real import.
+func PreflightWithSelection(ctx context.Context, sources []string, selection Selection) (PreflightReport, error) {
+	var report PreflightReport
 	types := make(map[string]FileType)
 	for _, rawSource := range sources {
 		if err := ctx.Err(); err != nil {
@@ -187,11 +193,19 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 		if info.Mode()&fs.ModeSymlink != 0 {
 			walkRoot, err = filepath.EvalSymlinks(source)
 			if err != nil {
+				if !selection.included(source, source) {
+					report.addFinding(source, "excluded", "did not match an include pattern")
+					continue
+				}
 				report.addFinding(source, "error", "resolving explicitly named directory symlink: "+err.Error())
 				continue
 			}
 			info, err = os.Stat(walkRoot)
 			if err != nil {
+				if !selection.included(source, source) {
+					report.addFinding(source, "excluded", "did not match an include pattern")
+					continue
+				}
 				report.addFinding(source, "error", "checking explicitly named directory symlink: "+err.Error())
 				continue
 			}

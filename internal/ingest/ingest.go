@@ -388,13 +388,25 @@ func (ing *Ingester) AddPathsWithOptions(
 	destPath string,
 	opts Options,
 ) (rep Report, err error) {
+	selection, err := CompileSelection(opts)
+	if err != nil {
+		return rep, err
+	}
+	return ing.AddPathsWithSelection(ctx, sources, destPath, opts, selection)
+}
+
+// AddPathsWithSelection imports sources using a previously compiled request
+// selection shared with preflight.
+func (ing *Ingester) AddPathsWithSelection(
+	ctx context.Context,
+	sources []string,
+	destPath string,
+	opts Options,
+	selection Selection,
+) (rep Report, err error) {
 	progress := newProgressTracker(opts.Progress)
 	progress.report(rep, false)
 	if err := ctx.Err(); err != nil {
-		return rep, err
-	}
-	selection, err := compileSourceSelection(opts)
-	if err != nil {
 		return rep, err
 	}
 	dest, err := ing.Store.MkdirAll(ctx, destPath)
@@ -446,6 +458,11 @@ func (ing *Ingester) AddPathsWithOptions(
 		case info.Mode()&fs.ModeSymlink != 0:
 			walkRoot, err := filepath.EvalSymlinks(src)
 			if err != nil {
+				if !selection.included(src, src) {
+					rep.Excluded++
+					progress.report(rep, false)
+					continue
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: fmt.Errorf("resolving explicitly named directory symlink: %w", err)})
 				progress.report(rep, false)
@@ -453,6 +470,11 @@ func (ing *Ingester) AddPathsWithOptions(
 			}
 			target, err := os.Stat(walkRoot)
 			if err != nil {
+				if !selection.included(src, src) {
+					rep.Excluded++
+					progress.report(rep, false)
+					continue
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: fmt.Errorf("checking explicitly named directory symlink: %w", err)})
 				progress.report(rep, false)

@@ -623,7 +623,9 @@ func TestIncludeSkipsNonRegularEntries(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"keep.txt": "keep", "target.bin": "target"})
-	require.NoError(t, os.Symlink(filepath.Join(src, "keep.txt"), filepath.Join(src, "skip.link")))
+	if err := os.Symlink(filepath.Join(src, "keep.txt"), filepath.Join(src, "skip.link")); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
 
 	preflight, err := Preflight(ctx, []string{src}, Options{Include: []string{"*.txt"}})
 	require.NoError(t, err)
