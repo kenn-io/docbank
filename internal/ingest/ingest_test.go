@@ -716,7 +716,7 @@ func TestPreflightAndImportShareGlobSelection(t *testing.T) {
 
 func TestPreflightIncludeDoesNotHideLaterErrors(t *testing.T) {
 	root := t.TempDir()
-	for i := 0; i < maxPreflightFindings+10; i++ {
+	for i := range maxPreflightFindings + 10 {
 		path := filepath.Join(root, fmt.Sprintf("skip-%03d.txt", i))
 		require.NoError(t, os.WriteFile(path, []byte("skip"), 0o600))
 	}
