@@ -202,7 +202,7 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 		}
 		if info.Mode().IsRegular() {
 			if !selection.included(source, source) {
-				report.Excluded++
+				report.addFinding(source, "excluded", "did not match an include pattern")
 				continue
 			}
 			report.addFile(source, info.Size(), isCloudPlaceholder(info), types)
@@ -294,6 +294,10 @@ func preflightTree(
 			}
 			report.addFile(sourcePath, info.Size(), isCloudPlaceholder(info), types)
 		default:
+			if !selection.included(sourceRoot, sourcePath) {
+				report.Excluded++
+				return nil
+			}
 			report.addFinding(sourcePath, "skipped", "not a regular file (symlinks are skipped)")
 		}
 		return nil

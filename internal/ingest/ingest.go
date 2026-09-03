@@ -519,7 +519,7 @@ func (ing *Ingester) addTree(
 	// the resolved id of its parent, never by re-deriving a path from
 	// destDirID — a concurrent move or trash of the destination would make
 	// that path re-create (even resurrect) a tree somewhere else.
-	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
+	dirIDs := map[string]int64{}  // source dir path -> virtual dir node id
 	dirErrs := map[string]error{} // source dir path -> reported creation failure
 	walkErr := filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -595,6 +595,11 @@ func (ing *Ingester) addTree(
 				return err
 			}
 		default:
+			if !selection.included(sourceRoot, sourcePath) {
+				rep.Excluded++
+				progress.report(*rep, false)
+				return nil
+			}
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath,
 				Err: errors.New("not a regular file (symlinks are skipped)")})
 			progress.report(*rep, false)

@@ -38,6 +38,11 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		block := openAPISchemaBlock(t, doc, schema)
 		assert.Contains(t, block, "        include:")
 		assert.Contains(t, block, "        exclude:")
+		if schema == "IngestRequest" {
+			assert.Contains(t, block, "        dest:")
+		} else {
+			assert.NotContains(t, block, "        dest:")
+		}
 	}
 }
 
@@ -49,6 +54,10 @@ func openAPISchemaBlock(t *testing.T, doc, schema string) string {
 	block := doc[start+len(marker):]
 	for offset := strings.Index(block, "\n"); offset >= 0; {
 		line := block[offset+1:]
+		if line != "" && !strings.HasPrefix(line, "      ") {
+			block = block[:offset]
+			break
+		}
 		if strings.HasPrefix(line, "    ") && len(line) > 4 && line[4] != ' ' {
 			block = block[:offset]
 			break

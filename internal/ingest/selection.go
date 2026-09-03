@@ -39,8 +39,7 @@ func compileSourceRules(kind string, values []string) ([]sourceRule, error) {
 			return nil, fmt.Errorf("%s rule must not be empty", kind)
 		}
 		normalized := filepath.ToSlash(raw)
-		if path.IsAbs(normalized) || filepath.IsAbs(filepath.FromSlash(normalized)) ||
-			!filepath.IsLocal(filepath.FromSlash(normalized)) {
+		if !filepath.IsLocal(filepath.FromSlash(normalized)) {
 			return nil, fmt.Errorf("%s rule %q must be relative", kind, raw)
 		}
 		segments := strings.Split(normalized, "/")

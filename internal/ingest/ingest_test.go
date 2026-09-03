@@ -619,6 +619,25 @@ func TestAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
 }
 
+func TestIncludeSkipsNonRegularEntries(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"keep.txt": "keep", "target.bin": "target"})
+	require.NoError(t, os.Symlink(filepath.Join(src, "keep.txt"), filepath.Join(src, "skip.link")))
+
+	preflight, err := Preflight(ctx, []string{src}, Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), preflight.Files)
+	assert.Equal(t, int64(2), preflight.Excluded)
+	assert.Zero(t, preflight.Skipped)
+
+	report, err := ing.AddPathsWithOptions(ctx, []string{src}, "/inbox", Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, 2, report.Excluded)
+	assert.Empty(t, report.Failed)
+}
+
 func TestPreflightInventoriesWithoutMutatingVault(t *testing.T) {
 	ing := newTestIngester(t)
 	src := writeTree(t, map[string]string{
