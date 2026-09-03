@@ -7,7 +7,17 @@ import (
 	"io"
 	"mime/multipart"
 	"net/textproto"
+	"strings"
 )
+
+// ValidateMultipartFilename rejects line breaks before a filename is placed in
+// a multipart Content-Disposition header.
+func ValidateMultipartFilename(filename string) error {
+	if strings.ContainsAny(filename, "\r\n") {
+		return errors.New("multipart filename contains a line break")
+	}
+	return nil
+}
 
 // MultipartUpload streams one file and its form fields as multipart/form-data
 // without buffering the body: the request reads from a pipe while a goroutine
@@ -50,6 +60,9 @@ func (writer *countingWriter) Write(value []byte) (int, error) {
 }
 
 func (upload MultipartUpload) write(writer *multipart.Writer) error {
+	if err := ValidateMultipartFilename(upload.Filename); err != nil {
+		return err
+	}
 	if upload.Prologue != nil {
 		if err := upload.Prologue(writer); err != nil {
 			return err

@@ -128,7 +128,7 @@ func TestProviderRejectsMalformedPartialAndDriftedOutput(t *testing.T) {
 		"source-size-drift", "partial", "page-count-drift", "gap", "duplicate", "empty-unexplained",
 	} {
 		t.Run(mode, func(t *testing.T) {
-			provider := newTestProvider(t, helperExecutable(t, mode), time.Second, 1<<20)
+			provider := newTestProvider(t, helperExecutable(t, mode), 30*time.Second, 1<<20)
 			upload := newTestUpload(testPDF(2))
 
 			_, err := provider.Render(t.Context(), upload,

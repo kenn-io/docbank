@@ -16,11 +16,12 @@ var ErrTotalTimeout = errors.New("provider total timeout")
 // Operation bounds one Render call by the caller context, the authorization
 // expiry, and the adapter's total timeout.
 type Operation struct {
-	provider  Provider
-	caller    context.Context
-	ctx       context.Context
-	cancel    context.CancelFunc
-	expiresAt time.Time
+	provider      Provider
+	caller        context.Context
+	ctx           context.Context
+	cancel        context.CancelFunc
+	expiresAt     time.Time
+	enforceExpiry bool
 }
 
 // NewOperation parses the authorization expiry and derives a context bounded
@@ -34,19 +35,36 @@ func NewOperation(
 		return nil, provider.Classified(document.RenditionErrorPolicyRejected,
 			string(provider)+" authorization expiry is invalid", nil)
 	}
+	return newOperation(ctx, provider, expiry, totalTimeout, true), nil
+}
+
+// NewResumedOperation bounds a durable resume by the caller and adapter total
+// timeout without reopening the historical authorization interval. The caller
+// must validate the sealed resume authority before constructing the operation.
+func NewResumedOperation(ctx context.Context, provider Provider, totalTimeout time.Duration) *Operation {
+	return newOperation(ctx, provider, time.Time{}, totalTimeout, false)
+}
+
+func newOperation(
+	ctx context.Context, provider Provider, expiresAt time.Time, totalTimeout time.Duration, enforceExpiry bool,
+) *Operation {
 	bounded := ctx
 	cancelTotal := context.CancelFunc(func() {})
 	if totalTimeout > 0 {
 		bounded, cancelTotal = context.WithTimeoutCause(ctx, totalTimeout, ErrTotalTimeout)
 	}
-	operationCtx, cancelExpiry := context.WithDeadline(bounded, expiry)
+	operationCtx := bounded
+	cancelExpiry := context.CancelFunc(func() {})
+	if enforceExpiry {
+		operationCtx, cancelExpiry = context.WithDeadline(bounded, expiresAt)
+	}
 	return &Operation{
-		provider: provider, caller: ctx, ctx: operationCtx, expiresAt: expiry,
+		provider: provider, caller: ctx, ctx: operationCtx, expiresAt: expiresAt, enforceExpiry: enforceExpiry,
 		cancel: func() {
 			cancelExpiry()
 			cancelTotal()
 		},
-	}, nil
+	}
 }
 
 // Context returns the bounded operation context.
@@ -65,7 +83,7 @@ func (operation *Operation) Check() error {
 	if err := operation.caller.Err(); err != nil {
 		return operation.provider.Canceled(err)
 	}
-	if !time.Now().Before(operation.expiresAt) {
+	if operation.enforceExpiry && !time.Now().Before(operation.expiresAt) {
 		return operation.provider.Expired()
 	}
 	if errors.Is(context.Cause(operation.ctx), ErrTotalTimeout) {
