@@ -251,6 +251,47 @@ func TestExecuteEmbeddingSealsOriginalFileUpload(t *testing.T) {
 	}
 }
 
+// This test fails if an original-file provider can read the source filename
+// without an explicit disclosure grant in the authorization.
+func TestExecuteEmbeddingWithholdsFilenameUnlessDisclosed(t *testing.T) {
+	descriptor := testEmbeddingDescriptor(t)
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile}
+	descriptor.Fingerprint = ""
+	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	source := []byte("source")
+	for _, testCase := range []struct {
+		name     string
+		disclose bool
+		want     string
+	}{
+		{"withheld", false, ""},
+		{"disclosed", true, "source.pdf"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadata := testEmbeddingUploadMetadata(int64(len(source)))
+			metadata.SHA256 = fmt.Sprintf("%x", sha256.Sum256(source))
+			upload := &trackingEmbeddingUpload{Reader: bytes.NewReader(source), metadata: metadata}
+			var providerFilename string
+			provider := embeddingProviderFunc{descriptor: descriptor, embed: func(_ context.Context, inputs []document.EmbeddingInput, _ document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+				providerFilename = inputs[0].Source.Metadata().Filename
+				_, readErr := io.ReadAll(inputs[0].Source)
+				require.NoError(t, readErr)
+				return document.EmbeddingResult{Vectors: []document.EmbeddingVector{{Key: "source", Values: []float32{1, 2}}}}, nil
+			}}
+			authorization := testEmbeddingAuthorization(descriptor)
+			authorization.DiscloseFilename = testCase.disclose
+
+			_, err := document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{
+				Key: "source", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: upload,
+			}}, authorization)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, providerFilename)
+			assert.Equal(t, "source.pdf", upload.metadata.Filename, "caller metadata must stay intact")
+		})
+	}
+}
+
 // This test fails if provider-owned result buffers remain mutable after a
 // successful embedding call returns.
 func TestExecuteEmbeddingOwnsProviderResult(t *testing.T) {

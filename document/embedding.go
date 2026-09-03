@@ -124,6 +124,8 @@ type EmbeddingInput struct {
 // EmbeddingAuthorization bounds one embedding invocation and pins its provider identity.
 // MaxResponseBytes is the exact sum of every result key's UTF-8 bytes plus four
 // bytes for every float32 scalar; adapters must independently bound raw transport bytes.
+// Original-file uploads reach the provider without their filename unless
+// DiscloseFilename grants it, matching the rendition authorization boundary.
 type EmbeddingAuthorization struct {
 	ProviderID            string `json:"provider_id"`
 	DescriptorFingerprint string `json:"descriptor_fingerprint"`
@@ -131,6 +133,7 @@ type EmbeddingAuthorization struct {
 	MaxBatchItems         int    `json:"max_batch_items"`
 	MaxInputBytes         int64  `json:"max_input_bytes"`
 	MaxResponseBytes      int64  `json:"max_response_bytes"`
+	DiscloseFilename      bool   `json:"disclose_filename"`
 }
 
 // EmbeddingVector is one provider result. Index is required only when results
@@ -289,7 +292,11 @@ func ExecuteEmbedding(
 		if !ok {
 			continue
 		}
-		sealed := newSealedAuthorizedUpload(ctx, owned, metadata[index])
+		providerMetadata := metadata[index]
+		if !authorization.DiscloseFilename {
+			providerMetadata.Filename = ""
+		}
+		sealed := newSealedAuthorizedUpload(ctx, owned, providerMetadata)
 		sealedUploads = append(sealedUploads, sealed)
 		authorized[index].Source = sealed
 		providerInputs[index].Source = sealed
