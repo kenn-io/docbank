@@ -161,7 +161,7 @@ func (client *RenditionClient) Render(
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if localUnits > 0 && int64(providerResult.UnitsProcessed) != localUnits {
+	if (candidate.ID == formatIDPDF || localUnits > 0) && int64(providerResult.UnitsProcessed) != localUnits {
 		message := "Mistral OCR unit count changed"
 		if candidate.ID == formatIDPDF {
 			message = "Mistral OCR page count changed"
@@ -217,25 +217,29 @@ func (client *RenditionClient) verifySource(
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
 			"Mistral input identity does not match authorization", nil)
 	}
-	if expectedUnitBound(candidate.ID) == UnitBoundNone {
+	if candidate.ID == formatIDPDF {
+		localUnits, err := formatdetect.CountPDFPages(source)
+		if err != nil {
+			return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
+				"Mistral PDF page count could not be verified", err)
+		}
+		if localUnits <= 0 || localUnits > int64(client.policy.values.MaxUnits) {
+			return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
+				"Mistral PDF exceeds the complete unit limit", nil)
+		}
+		return candidate, localUnits, nil
+	}
+	if expectedUnitBound(candidate.ID) != UnitBoundLocalExact {
 		return candidate, 0, nil
 	}
 	localUnits, err := countLocalUnits(candidate, bytes.NewReader(source), int64(len(source)))
 	if err != nil {
-		message := "Mistral OCR local unit count could not be verified"
-		if candidate.ID == formatIDPDF {
-			message = "Mistral PDF page count could not be verified"
-		}
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
-			message, err)
+			"Mistral OCR local unit count could not be verified", err)
 	}
 	if localUnits <= 0 || int64(localUnits) > int64(client.policy.values.MaxUnits) {
-		message := "Mistral OCR exceeds the complete unit limit"
-		if candidate.ID == formatIDPDF {
-			message = "Mistral PDF exceeds the complete unit limit"
-		}
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
-			message, nil)
+			"Mistral OCR exceeds the complete unit limit", nil)
 	}
 	return candidate, int64(localUnits), nil
 }

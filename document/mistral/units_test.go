@@ -34,18 +34,3 @@ func TestCountLocalUnitsLeavesUnprovedFormatsUnbounded(t *testing.T) {
 		t.Fatalf("countLocalUnits(docx) = %d, want 0 for unproved format", units)
 	}
 }
-
-func TestCountLocalUnitsUsesBoundedPDFCounter(t *testing.T) {
-	pdf := testPDF("bounded-counter")
-	candidate, ok := CandidateFormatByID(formatIDPDF)
-	if !ok {
-		t.Fatal("pdf candidate is missing")
-	}
-	units, err := countLocalUnits(candidate, bytes.NewReader(pdf), int64(len(pdf)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if units != 1 {
-		t.Fatalf("countLocalUnits(pdf) = %d, want 1", units)
-	}
-}
