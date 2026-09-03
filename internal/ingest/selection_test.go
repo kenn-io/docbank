@@ -20,7 +20,7 @@ func TestCompileSourceSelectionMatchesBasenamesAndRelativePaths(t *testing.T) {
 
 func TestSourceSelectionUsesPathMatchEscapingAndLimits(t *testing.T) {
 	root := filepath.FromSlash("/source")
-	escaped, err := compileSourceSelection(Options{Include: []string{`report\[1\].txt`}})
+	escaped, err := compileSourceSelection(Options{Include: []string{"report[[]1].txt"}})
 	require.NoError(t, err)
 	assert.True(t, escaped.included(root, filepath.Join(root, "report[1].txt")))
 	assert.False(t, escaped.included(root, filepath.Join(root, "report1.txt")))
@@ -29,6 +29,21 @@ func TestSourceSelectionUsesPathMatchEscapingAndLimits(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, doubleStar.included(root, filepath.Join(root, "file.txt")))
 	assert.True(t, doubleStar.included(root, filepath.Join(root, "nested", "file.txt")))
+	explicit, err := compileSourceSelection(Options{Include: []string{"docs/*.txt"}})
+	require.NoError(t, err)
+	assert.False(t, explicit.included(root, filepath.Join(root, "report.txt")),
+		"path-form rules do not match an explicitly named file's empty relative path")
+}
+
+func TestSourceSelectionNormalizesWindowsSeparators(t *testing.T) {
+	if filepath.Separator != '\\' {
+		t.Skip("Windows path separator behavior")
+	}
+	slash, err := compileSourceSelection(Options{Include: []string{"project/cache"}})
+	require.NoError(t, err)
+	backslash, err := compileSourceSelection(Options{Include: []string{`project\cache`}})
+	require.NoError(t, err)
+	assert.Equal(t, slash, backslash)
 }
 
 func TestSourceSelectionRejectsUnsafeAndInvalidRules(t *testing.T) {

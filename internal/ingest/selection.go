@@ -38,16 +38,16 @@ func compileSourceRules(kind string, values []string) ([]sourceRule, error) {
 		if raw == "" {
 			return nil, fmt.Errorf("%s rule must not be empty", kind)
 		}
-		if path.IsAbs(raw) || filepath.IsAbs(raw) || !filepath.IsLocal(filepath.FromSlash(raw)) {
+		normalized := filepath.ToSlash(raw)
+		if path.IsAbs(normalized) || filepath.IsAbs(filepath.FromSlash(normalized)) ||
+			!filepath.IsLocal(filepath.FromSlash(normalized)) {
 			return nil, fmt.Errorf("%s rule %q must be relative", kind, raw)
 		}
-		segments := strings.FieldsFunc(raw, func(r rune) bool {
-			return r == '/' || r == '\\'
-		})
+		segments := strings.Split(normalized, "/")
 		if slices.Contains(segments, "..") {
 			return nil, fmt.Errorf("%s rule %q must not contain parent traversal", kind, raw)
 		}
-		pattern := path.Clean(raw)
+		pattern := path.Clean(normalized)
 		if pattern == "." {
 			return nil, fmt.Errorf("%s rule %q must name an entry within each source", kind, raw)
 		}
@@ -56,7 +56,7 @@ func compileSourceRules(kind string, values []string) ([]sourceRule, error) {
 		}
 		rules = append(rules, sourceRule{
 			pattern:  pattern,
-			basename: !strings.ContainsRune(raw, '/'),
+			basename: !strings.ContainsRune(normalized, '/'),
 		})
 	}
 	return rules, nil

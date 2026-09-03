@@ -33,6 +33,8 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	assert.Contains(t, doc, api.ContentVersionHeader)
 	assert.Contains(t, doc, "Content-Digest")
 	assert.Contains(t, doc, "computed_hash")
+	assert.Contains(t, doc, "include")
+	assert.Contains(t, doc, "exclude")
 }
 
 func TestOpenAPIDeclaresSecurity(t *testing.T) {

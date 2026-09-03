@@ -548,6 +548,9 @@ func (ing *Ingester) addTree(
 		}
 		switch {
 		case d.IsDir():
+			if len(selection.include) > 0 {
+				return nil
+			}
 			parentID, name := destDirID, topName
 			if p != walkRoot {
 				pid, ok := dirIDs[filepath.Dir(p)]
@@ -573,9 +576,11 @@ func (ing *Ingester) addTree(
 				progress.report(*rep, false)
 				return nil
 			}
-			parentID, ok := dirIDs[filepath.Dir(p)]
-			if !ok {
-				return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
+			parentID, err := ing.ensureSourceDir(
+				ctx, dirIDs, destDirID, topName, walkRoot, filepath.Dir(p),
+			)
+			if err != nil {
+				return err
 			}
 			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, progress); err != nil {
 				return err
@@ -588,6 +593,31 @@ func (ing *Ingester) addTree(
 		return nil
 	})
 	return walkErr
+}
+
+func (ing *Ingester) ensureSourceDir(
+	ctx context.Context, dirIDs map[string]int64, destDirID int64, topName, walkRoot, dirPath string,
+) (int64, error) {
+	if id, ok := dirIDs[dirPath]; ok {
+		return id, nil
+	}
+	parentID, name := destDirID, topName
+	if dirPath != walkRoot {
+		var err error
+		parentID, err = ing.ensureSourceDir(
+			ctx, dirIDs, destDirID, topName, walkRoot, filepath.Dir(dirPath),
+		)
+		if err != nil {
+			return 0, err
+		}
+		name = filepath.Base(dirPath)
+	}
+	dir, err := ing.Store.EnsureDir(ctx, parentID, name)
+	if err != nil {
+		return 0, fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)
+	}
+	dirIDs[dirPath] = dir.ID
+	return dir.ID, nil
 }
 
 func sourceTreePath(sourceRoot, walkRoot, walkPath string) string {

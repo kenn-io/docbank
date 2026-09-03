@@ -152,6 +152,10 @@ added: 12  skipped: 3  excluded: 2  failed: 1
 failed: /src/broken.pdf: opening /src/broken.pdf: permission denied
 ```
 
+The `added` count includes a changed local source reconciled onto an existing
+node, because the operation adds a new immutable content version rather than a
+new node.
+
 Exit is non-zero if any file failed. A missing or unreadable top-level
 source is reported as a failure and the command continues with remaining
 source arguments, just as it does for failures inside a directory tree.

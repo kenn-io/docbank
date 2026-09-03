@@ -83,6 +83,8 @@ type PreflightReport struct {
 	FindingsTruncated  bool
 }
 
+// exclusionRule is retained for watched-inbox configuration, whose patterns
+// are literal by contract and must not use request-scoped glob selection.
 type exclusionRule struct {
 	name string
 	path string
@@ -200,7 +202,7 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 		}
 		if info.Mode().IsRegular() {
 			if !selection.included(source, source) {
-				report.addFinding(source, "excluded", "did not match an include rule")
+				report.Excluded++
 				continue
 			}
 			report.addFile(source, info.Size(), isCloudPlaceholder(info), types)
@@ -264,7 +266,7 @@ func preflightTree(
 			report.Directories++
 		case entry.Type().IsRegular():
 			if !selection.included(sourceRoot, sourcePath) {
-				report.addFinding(sourcePath, "excluded", "did not match an include rule")
+				report.Excluded++
 				return nil
 			}
 			info, err := entry.Info()

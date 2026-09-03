@@ -687,25 +687,44 @@ func TestAddPathsHonorsPreflightExclusions(t *testing.T) {
 func TestPreflightAndImportShareGlobSelection(t *testing.T) {
 	ing := newTestIngester(t)
 	src := writeTree(t, map[string]string{
-		"docs/keep.txt": "keep",
-		"docs/skip.txt": "skip",
-		"docs/skip.md":  "skip",
-		"root.txt":      "root",
+		"docs/keep.txt":  "keep",
+		"docs/skip.txt":  "skip",
+		"docs/skip.md":   "skip",
+		"empty/skip.bin": "skip",
+		"root.txt":       "root",
 	})
 	opts := Options{Include: []string{"docs/*.txt"}, Exclude: []string{"docs/skip.txt"}}
 
 	preflight, err := Preflight(t.Context(), []string{src}, opts)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), preflight.Files)
-	assert.Equal(t, int64(3), preflight.Excluded)
+	assert.Equal(t, int64(4), preflight.Excluded)
 
 	report, err := ing.AddPathsWithOptions(t.Context(), []string{src}, "/inbox", opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
-	assert.Equal(t, 3, report.Excluded)
+	assert.Equal(t, 4, report.Excluded)
 	assert.Empty(t, report.Failed)
 	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/"+filepath.Base(src)+"/docs/keep.txt")
 	require.NoError(t, err)
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/"+filepath.Base(src)+"/empty")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPreflightIncludeDoesNotHideLaterErrors(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < maxPreflightFindings+10; i++ {
+		path := filepath.Join(root, fmt.Sprintf("skip-%03d.txt", i))
+		require.NoError(t, os.WriteFile(path, []byte("skip"), 0o600))
+	}
+	report, err := Preflight(t.Context(), []string{root, filepath.Join(root, "missing")}, Options{
+		Include: []string{"*.pdf"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(maxPreflightFindings+10), report.Excluded)
+	assert.Equal(t, int64(1), report.Errors)
+	require.Len(t, report.Findings, 1)
+	assert.Equal(t, "error", report.Findings[0].Kind)
 }
 
 func TestPreflightRejectsUnsafeExclusionRules(t *testing.T) {
