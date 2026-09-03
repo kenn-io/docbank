@@ -121,7 +121,7 @@ func inspectVisualPreviewTIFFRAW(
 
 	queue := []int64{rootOffset}
 	seen := make(map[int64]struct{}, visualPreviewRAWMaxIFDs)
-	orientation := 0
+	rootOrientation := 0
 	var candidates []visualPreviewRAWLocation
 	malformed := false
 	for len(queue) > 0 {
@@ -146,8 +146,12 @@ func inspectVisualPreviewTIFFRAW(
 			malformed = true
 			continue
 		}
-		if value, found := entries[visualPreviewRAWOrientationTag]; orientation == 0 && found && value >= 1 && value <= 8 {
-			orientation = int(value)
+		if value, found := entries[visualPreviewRAWOrientationTag]; offset == rootOffset && found && value >= 1 && value <= 8 {
+			rootOrientation = int(value)
+		}
+		candidateOrientation := rootOrientation
+		if value, found := entries[visualPreviewRAWOrientationTag]; found && value >= 1 && value <= 8 {
+			candidateOrientation = int(value)
 		}
 		previewOffset, hasOffset := entries[visualPreviewRAWOffsetTag]
 		previewLength, hasLength := entries[visualPreviewRAWLengthTag]
@@ -155,7 +159,7 @@ func inspectVisualPreviewTIFFRAW(
 			malformed = true
 		} else if hasOffset {
 			candidate := visualPreviewRAWLocation{
-				offset: int64(previewOffset), length: int64(previewLength), orientation: orientation,
+				offset: int64(previewOffset), length: int64(previewLength), orientation: candidateOrientation,
 			}
 			if !sourceMetadataRangeWithin(candidate.offset, candidate.length, sourceSize) {
 				malformed = true

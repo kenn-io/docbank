@@ -229,6 +229,23 @@ func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing
 	assert.Equal(t, 2, product.Preview.Output.Height)
 }
 
+func TestProduceVisualPreviewUsesCandidateCameraRAWOrientation(t *testing.T) {
+	preview := mediatest.JPEG(4, 3, color.White)
+	source := syntheticRAWPreviewTIFFCandidates(6, syntheticRAWPreviewCandidate{
+		data: preview, orientation: 1,
+	})
+	digest := sha256.Sum256(source)
+
+	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/x-nikon-nef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+	require.NotNil(t, product.Preview.Output)
+	assert.Equal(t, 4, product.Preview.Output.Width)
+	assert.Equal(t, 3, product.Preview.Output.Height)
+}
+
 func TestProduceVisualPreviewAcceptsRAF(t *testing.T) {
 	source := syntheticRAF()
 	digest := sha256.Sum256(source)
@@ -518,45 +535,67 @@ func syntheticJPEGSegment(t *testing.T, source []byte, marker byte, payload []by
 }
 
 func syntheticRAWPreviewTIFF(orientation uint16, previews ...[]byte) []byte {
+	candidates := make([]syntheticRAWPreviewCandidate, len(previews))
+	for index, preview := range previews {
+		candidates[index].data = preview
+	}
+	return syntheticRAWPreviewTIFFCandidates(orientation, candidates...)
+}
+
+type syntheticRAWPreviewCandidate struct {
+	data        []byte
+	orientation uint16
+}
+
+func syntheticRAWPreviewTIFFCandidates(
+	rootOrientation uint16, previews ...syntheticRAWPreviewCandidate,
+) []byte {
 	const (
-		headerSize       = 8
-		rootEntries      = 1
-		previewEntries   = 2
-		rootIFDSize      = 2 + rootEntries*12 + 4
-		previewIFDSize   = 2 + previewEntries*12 + 4
-		previewIFDOffset = headerSize + rootIFDSize
+		headerSize     = 8
+		rootEntries    = 1
+		rootIFDSize    = 2 + rootEntries*12 + 4
+		firstIFDOffset = headerSize + rootIFDSize
 	)
-	previewOffset := previewIFDOffset + len(previews)*previewIFDSize
+	ifdOffsets := make([]int, len(previews))
+	previewOffset := firstIFDOffset
+	for index, preview := range previews {
+		ifdOffsets[index] = previewOffset
+		entries := 2
+		if preview.orientation != 0 {
+			entries++
+		}
+		previewOffset += 2 + entries*12 + 4
+	}
 	totalSize := previewOffset
 	for _, preview := range previews {
-		totalSize += len(preview)
+		totalSize += len(preview.data)
 	}
 	source := make([]byte, totalSize)
 	copy(source, "II")
 	binary.LittleEndian.PutUint16(source[2:4], 42)
 	binary.LittleEndian.PutUint32(source[4:8], headerSize)
-	binary.LittleEndian.PutUint16(source[8:10], rootEntries)
-	binary.LittleEndian.PutUint16(source[10:12], visualPreviewRAWOrientationTag)
-	binary.LittleEndian.PutUint16(source[12:14], 3)
-	binary.LittleEndian.PutUint32(source[14:18], 1)
-	binary.LittleEndian.PutUint16(source[18:20], orientation)
-	binary.LittleEndian.PutUint32(source[22:26], previewIFDOffset)
+	externalOffset := totalSize
+	writeSyntheticTIFFIFD(source, headerSize,
+		[]syntheticTIFFEntry{tiffShort(visualPreviewRAWOrientationTag, rootOrientation)}, &externalOffset)
+	if len(ifdOffsets) > 0 {
+		binary.LittleEndian.PutUint32(source[22:26], uint32(ifdOffsets[0]))
+	}
 	for index, preview := range previews {
-		ifdOffset := previewIFDOffset + index*previewIFDSize
-		binary.LittleEndian.PutUint16(source[ifdOffset:ifdOffset+2], previewEntries)
-		binary.LittleEndian.PutUint16(source[ifdOffset+2:ifdOffset+4], visualPreviewRAWOffsetTag)
-		binary.LittleEndian.PutUint16(source[ifdOffset+4:ifdOffset+6], 4)
-		binary.LittleEndian.PutUint32(source[ifdOffset+6:ifdOffset+10], 1)
-		binary.LittleEndian.PutUint32(source[ifdOffset+10:ifdOffset+14], uint32(previewOffset))
-		binary.LittleEndian.PutUint16(source[ifdOffset+14:ifdOffset+16], visualPreviewRAWLengthTag)
-		binary.LittleEndian.PutUint16(source[ifdOffset+16:ifdOffset+18], 4)
-		binary.LittleEndian.PutUint32(source[ifdOffset+18:ifdOffset+22], 1)
-		binary.LittleEndian.PutUint32(source[ifdOffset+22:ifdOffset+26], uint32(len(preview)))
-		if index+1 < len(previews) {
-			binary.LittleEndian.PutUint32(source[ifdOffset+26:ifdOffset+30], uint32(ifdOffset+previewIFDSize))
+		ifdOffset := ifdOffsets[index]
+		entries := []syntheticTIFFEntry{
+			tiffLong(visualPreviewRAWOffsetTag, uint32(previewOffset)),
+			tiffLong(visualPreviewRAWLengthTag, uint32(len(preview.data))),
 		}
-		copy(source[previewOffset:], preview)
-		previewOffset += len(preview)
+		if preview.orientation != 0 {
+			entries = append(entries, tiffShort(visualPreviewRAWOrientationTag, preview.orientation))
+		}
+		writeSyntheticTIFFIFD(source, ifdOffset, entries, &externalOffset)
+		if index+1 < len(previews) {
+			nextOffset := ifdOffset + 2 + len(entries)*12
+			binary.LittleEndian.PutUint32(source[nextOffset:nextOffset+4], uint32(ifdOffsets[index+1]))
+		}
+		copy(source[previewOffset:], preview.data)
+		previewOffset += len(preview.data)
 	}
 	return source
 }
