@@ -580,7 +580,12 @@ func (ing *Ingester) addTree(
 				ctx, dirIDs, destDirID, topName, walkRoot, filepath.Dir(p),
 			)
 			if err != nil {
-				return err
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
+				progress.report(*rep, false)
+				return fs.SkipDir
 			}
 			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, progress); err != nil {
 				return err

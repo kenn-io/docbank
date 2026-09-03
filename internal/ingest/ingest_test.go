@@ -590,7 +590,9 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, sourceSelection{}, nil))
+	selection, err := compileSourceSelection(Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, selection, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 
@@ -699,6 +701,7 @@ func TestPreflightAndImportShareGlobSelection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), preflight.Files)
 	assert.Equal(t, int64(4), preflight.Excluded)
+	assert.Equal(t, int64(2), preflight.Directories)
 
 	report, err := ing.AddPathsWithOptions(t.Context(), []string{src}, "/inbox", opts)
 	require.NoError(t, err)

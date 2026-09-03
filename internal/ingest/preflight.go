@@ -238,6 +238,7 @@ func preflightTree(
 	if filepath.Base(sourceRoot) == string(filepath.Separator) || filepath.Base(walkRoot) == string(filepath.Separator) {
 		return fmt.Errorf("cannot scan filesystem root %q", sourceRoot)
 	}
+	materializedDirs := make(map[string]struct{})
 	return filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -263,7 +264,9 @@ func preflightTree(
 		}
 		switch {
 		case entry.IsDir():
-			report.Directories++
+			if len(selection.include) == 0 {
+				report.Directories++
+			}
 		case entry.Type().IsRegular():
 			if !selection.included(sourceRoot, sourcePath) {
 				report.Excluded++
@@ -273,6 +276,21 @@ func preflightTree(
 			if err != nil {
 				report.addFinding(sourcePath, "error", err.Error())
 				return nil
+			}
+			if len(selection.include) > 0 {
+				for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+					if _, seen := materializedDirs[dir]; !seen {
+						materializedDirs[dir] = struct{}{}
+						report.Directories++
+					}
+					if dir == walkRoot {
+						break
+					}
+					parent := filepath.Dir(dir)
+					if parent == dir {
+						break
+					}
+				}
 			}
 			report.addFile(sourcePath, info.Size(), isCloudPlaceholder(info), types)
 		default:

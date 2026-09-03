@@ -89,9 +89,10 @@ include rules leave directories traversable. Rules must be relative and valid;
 empty rules, parent traversal, and malformed patterns are rejected before the
 walk. Commas are literal pattern characters, not separators; repeat each flag.
 Watched-inbox exclusions remain literal and do not use this glob syntax.
-Existing `--exclude` values on `docbank add` now use glob matching, so a
-literal filename containing `[`, `?`, or `*` needs an escaped pattern to
-preserve the old match.
+Existing `--exclude` values on `docbank add` now use glob matching. Rules are
+slash-normalized for cross-platform parity, so backslash escaping is not
+available; match a literal `[`, `?`, or `*` with a bracket expression such as
+`report[[]1].txt`.
 
 When the source argument is one explicit file, a basename rule such as `*.pdf`
 matches it; a path-form rule such as `reports/*.pdf` applies to a directory

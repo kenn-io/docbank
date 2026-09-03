@@ -341,7 +341,9 @@ do not cross `/`, and `**` has no recursive globstar behavior. An include filter
 regular files only, while a matching exclusion wins and prunes a directory's
 subtree. The preflight and ingest implementations share this compiler so
 reviewed selection and actual selection cannot drift. Patterns must be relative;
-invalid syntax and parent traversal are rejected before filesystem access.
+invalid syntax and parent traversal are rejected before filesystem access. Rules
+are slash-normalized, so use bracket expressions such as `report[[]1].txt` for
+literal metacharacters instead of backslash escaping.
 Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: `POST /uploads`
