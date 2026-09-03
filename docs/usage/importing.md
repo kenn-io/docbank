@@ -37,7 +37,8 @@ ordinary platform layouts such as `~/Dropbox` on macOS: docbank resolves that
 one root link, retains `Dropbox` as the virtual directory name, and records
 provenance using the path the user supplied. Symlinks encountered *inside* the
 tree remain skipped and reported, and an explicitly named symlink to a file is
-not imported.
+not imported. Entries filtered by an include or exclude rule are excluded
+without failure; selected non-regular entries are reported as failures.
 
 ## Preflight a large tree
 
@@ -89,9 +90,9 @@ include rules leave directories traversable. Rules must be relative and valid;
 empty rules, parent traversal, and malformed patterns are rejected before the
 walk. Commas are literal pattern characters, not separators; repeat each flag.
 Watched-inbox exclusions remain literal and do not use this glob syntax.
-Existing `--exclude` values on `docbank add` now use glob matching. Rules are
-slash-normalized for cross-platform parity, so backslash escaping is not
-available; match a literal `[`, `?`, or `*` with a bracket expression such as
+Existing `--exclude` values on `docbank add` now use glob matching. Rules must
+use `/` separators on every platform; backslashes are rejected, so backslash
+escaping is not available; match a literal `[`, `?`, or `*` with a bracket expression such as
 `report[[]1].txt`. Matching is case-sensitive on every platform, including
 Windows.
 

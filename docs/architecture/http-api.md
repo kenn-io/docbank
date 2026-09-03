@@ -307,6 +307,9 @@ absolute-path validation, explicit root-directory-symlink behavior, exclusion
 rules, loopback fence, and timeout exemption as the real ingest. Findings are
 observations rather than a snapshot lock: sources can still change before
 ingest, and metadata-only scanning cannot prove later content readability.
+Include and exclude patterns use `/` separators on every platform; a backslash
+in a pattern is rejected. Entries filtered by a rule are excluded without
+failure, while selected non-regular entries are reported as skipped findings.
 
 `POST /ingest` takes **server-side local paths** — `{paths: [...],
 dest: "/inbox", include: [...], exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,

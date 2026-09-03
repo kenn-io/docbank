@@ -112,8 +112,11 @@ never modified or deleted.
   directory under `--dest` and relative structure is preserved.
 - An explicitly named symlink to a directory is followed as the import root;
   its supplied basename and provenance spelling are retained. Symlinks inside
-  that tree, symlinks to files, and other non-regular files are skipped and
-  reported as failures; they do not abort the run.
+  that tree, symlinks to files, and other selected non-regular files are skipped
+  and reported as failures; include-filtered entries are excluded without
+  failure, and neither case aborts the run.
+- Include and exclude patterns use `/` separators on every platform; a
+  backslash in a pattern is rejected.
 - Name collisions with different content auto-suffix:
   `report.pdf` → `report (2).pdf`.
 - Re-running an import converges: a file whose content already exists

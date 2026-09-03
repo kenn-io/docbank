@@ -38,6 +38,9 @@ func compileSourceRules(kind string, values []string) ([]sourceRule, error) {
 		if raw == "" {
 			return nil, fmt.Errorf("%s rule must not be empty", kind)
 		}
+		if strings.ContainsRune(raw, '\\') {
+			return nil, fmt.Errorf("%s rule %q must use '/' separators", kind, raw)
+		}
 		normalized := filepath.ToSlash(raw)
 		if !filepath.IsLocal(filepath.FromSlash(normalized)) {
 			return nil, fmt.Errorf("%s rule %q must be relative", kind, raw)

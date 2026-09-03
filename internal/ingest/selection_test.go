@@ -35,15 +35,9 @@ func TestSourceSelectionUsesPathMatchEscapingAndLimits(t *testing.T) {
 		"path-form rules do not match an explicitly named file's empty relative path")
 }
 
-func TestSourceSelectionNormalizesWindowsSeparators(t *testing.T) {
-	if filepath.Separator != '\\' {
-		t.Skip("Windows path separator behavior")
-	}
-	slash, err := compileSourceSelection(Options{Include: []string{"project/cache"}})
-	require.NoError(t, err)
-	backslash, err := compileSourceSelection(Options{Include: []string{`project\cache`}})
-	require.NoError(t, err)
-	assert.Equal(t, slash, backslash)
+func TestSourceSelectionRequiresSlashSeparators(t *testing.T) {
+	_, err := compileSourceSelection(Options{Include: []string{`project\cache`}})
+	assert.Error(t, err)
 }
 
 func TestSourceSelectionRejectsUnsafeAndInvalidRules(t *testing.T) {
