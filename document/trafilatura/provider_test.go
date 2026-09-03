@@ -137,7 +137,7 @@ func TestInspectHTMLBoundsNaturalSectionsAndPreservesSiblingOrdinals(t *testing.
 		<section><h2>Two</h2><p>Second</p></section>
 		<section><h3>Three</h3><p>Third</p></section>
 	</body></html>`)
-	authority, err := inspectHTML(source, "text/html", 3)
+	authority, err := inspectHTML(t.Context(), source, "text/html", 3)
 	require.NoError(t, err)
 	require.Len(t, authority.sections, 3)
 	assert.Equal(t, []string{
@@ -146,9 +146,17 @@ func TestInspectHTMLBoundsNaturalSectionsAndPreservesSiblingOrdinals(t *testing.
 		"/html[1]/body[1]/section[3]",
 	}, []string{authority.sections[0].path, authority.sections[1].path, authority.sections[2].path})
 
-	authority, err = inspectHTML(source, "text/html", 2)
+	authority, err = inspectHTML(t.Context(), source, "text/html", 2)
 	require.NoError(t, err)
 	assert.Nil(t, authority.sections, "over-bound structure must use degraded provenance")
+}
+
+func TestInspectHTMLHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := inspectHTML(ctx, testHTML, "text/html", 10)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestProviderRejectsOutputNotDerivableFromSuppliedBytes(t *testing.T) {

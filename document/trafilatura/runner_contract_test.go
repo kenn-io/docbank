@@ -37,6 +37,14 @@ func TestNewRequiresPinnedIsolatedRunnerAndExecutableDigest(t *testing.T) {
 	require.NoError(t, err)
 
 	profile.Runner = nil
+	if runtime.GOOS == "linux" {
+		profile.Executable, err = os.Executable()
+		require.NoError(t, err)
+		executableBytes, err = os.ReadFile(profile.Executable)
+		require.NoError(t, err)
+		digest = sha256.Sum256(executableBytes)
+		profile.ExecutableSHA256 = hex.EncodeToString(digest[:])
+	}
 	provider, err := New(profile)
 	if runtime.GOOS == "linux" {
 		require.NoError(t, err)

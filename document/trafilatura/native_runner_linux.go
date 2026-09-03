@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,6 +30,15 @@ const (
 )
 
 type nativeRunner struct{}
+
+func validateNativeExecutable(path string) error {
+	executable, err := elf.Open(path)
+	if err != nil {
+		return errors.New("trafilatura: native runner requires an ELF executable")
+	}
+	_ = executable.Close()
+	return nil
+}
 
 func newNativeRunner() (IsolatedRunner, error) {
 	return nativeRunner{}, nil

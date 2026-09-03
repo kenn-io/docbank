@@ -165,6 +165,9 @@ func New(profile Profile) (*Provider, error) {
 		if err != nil {
 			return nil, fmt.Errorf("trafilatura: native isolated runner: %w", err)
 		}
+		if err := validateNativeExecutable(profile.Executable); err != nil {
+			return nil, err
+		}
 	}
 	runnerIdentity := runner.Identity()
 	if err := validateImmutableIdentity(runnerIdentity, "runner identity"); err != nil {
@@ -252,8 +255,11 @@ func (provider *Provider) Render(
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
-	authority, err := inspectHTML(source, metadata.MediaType, provider.maxUnits)
+	authority, err := inspectHTML(operation.Context(), source, metadata.MediaType, provider.maxUnits)
 	if err != nil {
+		if operationErr := operation.Check(); operationErr != nil {
+			return document.RenditionResult{}, operationErr
+		}
 		return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput,
 			"Trafilatura input is not locally verified HTML", err)
 	}
@@ -519,29 +525,42 @@ func evidenceFromResponse(wire response) document.SourceEvidenceV1 {
 	}
 }
 
-func inspectHTML(source []byte, mediaType string, maxSections int) (htmlAuthority, error) {
+func inspectHTML(ctx context.Context, source []byte, mediaType string, maxSections int) (htmlAuthority, error) {
+	if err := ctx.Err(); err != nil {
+		return htmlAuthority{}, err
+	}
 	if len(source) == 0 || !utf8.Valid(source) || bytes.IndexByte(source, 0) >= 0 {
 		return htmlAuthority{}, errors.New("HTML must be nonempty safe UTF-8")
 	}
 	if mediaType == "application/xhtml+xml" {
-		if err := validateXHTML(source); err != nil {
+		if err := validateXHTML(ctx, source); err != nil {
 			return htmlAuthority{}, err
 		}
-	} else if mediaType != "text/html" || !hasHTMLStructure(source) {
+	} else if mediaType != "text/html" {
+		return htmlAuthority{}, errors.New("HTML structure is missing")
+	} else if structured, err := hasHTMLStructure(ctx, source); err != nil {
+		return htmlAuthority{}, err
+	} else if !structured {
 		return htmlAuthority{}, errors.New("HTML structure is missing")
 	}
-	node, err := html.Parse(bytes.NewReader(source))
+	node, err := html.Parse(contextReader{ctx: ctx, reader: bytes.NewReader(source)})
 	if err != nil {
 		return htmlAuthority{}, fmt.Errorf("parse supplied HTML: %w", err)
 	}
-	if err := validateVisibleText(node); err != nil {
+	if err := validateVisibleText(ctx, node); err != nil {
 		return htmlAuthority{}, err
 	}
-	visible := visibleTokens(node)
+	visible, err := visibleTokens(ctx, node)
+	if err != nil {
+		return htmlAuthority{}, err
+	}
 	if len(visible) == 0 {
 		return htmlAuthority{}, errors.New("HTML has no visible supplied text")
 	}
-	sections := naturalSections(node, maxSections)
+	sections, err := naturalSections(ctx, node, maxSections)
+	if err != nil {
+		return htmlAuthority{}, err
+	}
 	sectionTokens := make([]string, 0, len(visible))
 	for _, section := range sections {
 		sectionTokens = append(sectionTokens, section.tokens...)
@@ -552,9 +571,12 @@ func inspectHTML(source []byte, mediaType string, maxSections int) (htmlAuthorit
 	return htmlAuthority{visibleTokens: visible, sections: sections}, nil
 }
 
-func validateVisibleText(node *html.Node) error {
+func validateVisibleText(ctx context.Context, node *html.Node) error {
 	var walk func(*html.Node, bool) error
 	walk = func(current *html.Node, hidden bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if current.Type == html.ElementNode {
 			hidden = hidden || hiddenElement(strings.ToLower(current.Data))
 		}
@@ -575,10 +597,13 @@ func validateVisibleText(node *html.Node) error {
 	return walk(node, false)
 }
 
-func visibleTokens(node *html.Node) []string {
+func visibleTokens(ctx context.Context, node *html.Node) ([]string, error) {
 	var tokens []string
-	var walk func(*html.Node, bool)
-	walk = func(current *html.Node, hidden bool) {
+	var walk func(*html.Node, bool) error
+	walk = func(current *html.Node, hidden bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if current.Type == html.ElementNode {
 			hidden = hidden || hiddenElement(strings.ToLower(current.Data))
 		}
@@ -586,11 +611,16 @@ func visibleTokens(node *html.Node) []string {
 			tokens = append(tokens, strings.Fields(current.Data)...)
 		}
 		for child := current.FirstChild; child != nil; child = child.NextSibling {
-			walk(child, hidden)
+			if err := walk(child, hidden); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	walk(node, false)
-	return tokens
+	if err := walk(node, false); err != nil {
+		return nil, err
+	}
+	return tokens, nil
 }
 
 func hiddenElement(tag string) bool {
@@ -598,18 +628,33 @@ func hiddenElement(tag string) bool {
 		tag == "noscript" || tag == "template" || tag == "svg"
 }
 
-func naturalSections(root *html.Node, maxSections int) []htmlSectionAuthority {
+func naturalSections(ctx context.Context, root *html.Node, maxSections int) ([]htmlSectionAuthority, error) {
 	var sections []htmlSectionAuthority
 	var path []string
+	var walkErr error
 	var walk func(*html.Node) bool
 	walk = func(current *html.Node) bool {
+		if err := ctx.Err(); err != nil {
+			walkErr = err
+			return false
+		}
 		isSection := current.Type == html.ElementNode && strings.EqualFold(current.Data, "section")
 		if isSection {
 			if len(sections) >= maxSections {
 				return false
 			}
+			heading, err := firstSectionHeading(ctx, current)
+			if err != nil {
+				walkErr = err
+				return false
+			}
+			tokens, err := visibleTokens(ctx, current)
+			if err != nil {
+				walkErr = err
+				return false
+			}
 			sections = append(sections, htmlSectionAuthority{
-				path: "/" + strings.Join(path, "/"), heading: firstSectionHeading(current), tokens: visibleTokens(current),
+				path: "/" + strings.Join(path, "/"), heading: heading, tokens: tokens,
 			})
 			return true
 		}
@@ -633,56 +678,73 @@ func naturalSections(root *html.Node, maxSections int) []htmlSectionAuthority {
 		return true
 	}
 	if !walk(root) {
-		return nil
+		return nil, walkErr
 	}
-	return sections
+	return sections, nil
 }
 
-func firstSectionHeading(section *html.Node) string {
-	var find func(*html.Node) *html.Node
-	find = func(current *html.Node) *html.Node {
+func firstSectionHeading(ctx context.Context, section *html.Node) (string, error) {
+	var heading *html.Node
+	var find func(*html.Node) error
+	find = func(current *html.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if current.Type == html.ElementNode {
 			tag := strings.ToLower(current.Data)
 			if len(tag) == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6' {
-				return current
+				heading = current
+				return nil
 			}
 		}
 		for child := current.FirstChild; child != nil; child = child.NextSibling {
-			if found := find(child); found != nil {
-				return found
+			if err := find(child); err != nil || heading != nil {
+				return err
 			}
 		}
 		return nil
 	}
-	heading := find(section)
-	if heading == nil {
-		return ""
+	if err := find(section); err != nil {
+		return "", err
 	}
-	return strings.Join(visibleTokens(heading), " ")
+	if heading == nil {
+		return "", nil
+	}
+	tokens, err := visibleTokens(ctx, heading)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(tokens, " "), nil
 }
 
-func hasHTMLStructure(source []byte) bool {
-	tokenizer := html.NewTokenizer(bytes.NewReader(source))
+func hasHTMLStructure(ctx context.Context, source []byte) (bool, error) {
+	tokenizer := html.NewTokenizer(contextReader{ctx: ctx, reader: bytes.NewReader(source)})
 	for {
 		switch tokenizer.Next() {
 		case html.ErrorToken:
-			return false
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return false, nil
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, _ := tokenizer.TagName()
 			if strings.EqualFold(string(name), "html") || strings.EqualFold(string(name), "body") {
-				return true
+				return true, nil
 			}
 		default:
 		}
 	}
 }
 
-func validateXHTML(source []byte) error {
-	decoder := xml.NewDecoder(bytes.NewReader(source))
+func validateXHTML(ctx context.Context, source []byte) error {
+	decoder := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(source)})
 	depth := 0
 	roots := 0
 	for {
 		token, err := decoder.Token()
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if errors.Is(err, io.EOF) {
 			if roots == 1 && depth == 0 {
 				return nil

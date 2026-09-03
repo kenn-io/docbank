@@ -29,6 +29,16 @@ type nativeRunOutcome struct {
 	err    error
 }
 
+func TestNewRejectsScriptWithNativeRunner(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "trafilatura-bridge")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	profile := testProfile(t, executable, time.Second, 1<<20)
+	profile.Runner = nil
+
+	_, err := New(profile)
+	require.ErrorContains(t, err, "native runner requires an ELF executable")
+}
+
 func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	executable := buildIsolatedHelper(t, "echo", "")
 	runner, err := newNativeRunner()
@@ -343,7 +353,7 @@ func TestVerifiedExecutableContentCannotChangeAfterDigestVerification(t *testing
 }
 
 func TestNewUsesNativeRunnerWhenNoneIsInjected(t *testing.T) {
-	profile := testProfile(t, helperExecutable(t, "complete"), time.Second, 1<<20)
+	profile := testProfile(t, buildIsolatedHelper(t, "echo", ""), time.Second, 1<<20)
 	profile.Runner = nil
 
 	provider, err := New(profile)
