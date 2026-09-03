@@ -66,7 +66,7 @@ may be grayscale or three-component images; CMYK, YCCK, and embedded ICC
 profiles remain unsupported rather than receiving an unmanaged color
 conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
 profiles, and composite transparency onto white because the canonical output
-is JPEG. Accepted images scale without upscaling to a 2048-pixel maximum edge
+is JPEG. Accepted images scale without upscaling to a 4096-pixel maximum edge
 and encode as a quality-90 JPEG. Malformed source bytes become a durable
 `failed` result; unsupported media types, decoder features, and color profiles
 become a durable `unsupported` result. Read, verification, storage, and
