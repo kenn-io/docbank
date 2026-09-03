@@ -131,6 +131,27 @@ func TestExcludedBrokenRootSymlinkDoesNotResolve(t *testing.T) {
 	assert.Empty(t, rep.Failed)
 }
 
+func TestIncludeSkipsExplicitNonRegularSource(t *testing.T) {
+	ing := newTestIngester(t)
+	root := t.TempDir()
+	file := filepath.Join(root, "real.txt")
+	link := filepath.Join(root, "skip.link")
+	require.NoError(t, os.WriteFile(file, []byte("content"), 0o600))
+	require.NoError(t, os.Symlink(file, link))
+	opts := Options{Include: []string{"*.pdf"}}
+
+	preflight, err := Preflight(t.Context(), []string{link}, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), preflight.Excluded)
+	assert.Zero(t, preflight.Skipped)
+	assert.Empty(t, preflight.Errors)
+
+	rep, err := ing.AddPathsWithOptions(t.Context(), []string{link}, "/archive", opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Excluded)
+	assert.Empty(t, rep.Failed)
+}
+
 func TestPreflightExplicitDirectorySymlinkUsesAliasAndSkipsNestedLinks(t *testing.T) {
 	target := writeTree(t, map[string]string{"nested/session.jsonl": "{\"ok\":true}\n"})
 	alias := filepath.Join(t.TempDir(), "Agent Sessions")

@@ -338,15 +338,16 @@ to the loopback-bound daemon still terminates through the configured SSH/VPN
 tunnel.
 
 Each include or exclude pattern uses Go's `path.Match` grammar over a
-slash-normalized source-relative path. A pattern without `/` matches a basename
+slash-separated source-relative path. Use `/` separators on every platform;
+backslashes are rejected. A pattern without `/` matches a basename
 at any depth; a pattern containing `/` matches the relative path. `*` and `?`
 do not cross `/`, and `**` has no recursive globstar behavior. An include filters
 regular files only, while a matching exclusion wins and prunes a directory's
 subtree. The preflight and ingest implementations share this compiler so
 reviewed selection and actual selection cannot drift. Patterns must be relative;
-invalid syntax and parent traversal are rejected before filesystem access. Rules
-are slash-normalized, so use bracket expressions such as `report[[]1].txt` for
-literal metacharacters instead of backslash escaping.
+invalid syntax and parent traversal are rejected before filesystem access. Use
+bracket expressions such as `report[[]1].txt` for literal metacharacters instead
+of backslash escaping.
 Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: `POST /uploads`

@@ -459,6 +459,11 @@ func (ing *Ingester) AddPathsWithOptions(
 				continue
 			}
 			if !target.IsDir() {
+				if !selection.included(src, src) {
+					rep.Excluded++
+					progress.report(rep, false)
+					continue
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: errors.New("explicit symlink source does not resolve to a directory")})
 				progress.report(rep, false)
@@ -468,6 +473,11 @@ func (ing *Ingester) AddPathsWithOptions(
 				return rep, err
 			}
 		default:
+			if !selection.included(src, src) {
+				rep.Excluded++
+				progress.report(rep, false)
+				continue
+			}
 			rep.Failed = append(rep.Failed, FileError{Path: src,
 				Err: errors.New("not a regular file or directory (symlinks are skipped)")})
 			progress.report(rep, false)

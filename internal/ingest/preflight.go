@@ -196,6 +196,10 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 				continue
 			}
 			if !info.IsDir() {
+				if !selection.included(source, source) {
+					report.addFinding(source, "excluded", "did not match an include pattern")
+					continue
+				}
 				report.addFinding(source, "skipped", "explicit symlink source does not resolve to a directory")
 				continue
 			}
@@ -209,6 +213,10 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 			continue
 		}
 		if !info.IsDir() {
+			if !selection.included(source, source) {
+				report.addFinding(source, "excluded", "did not match an include pattern")
+				continue
+			}
 			report.addFinding(source, "skipped", "not a regular file or directory")
 			continue
 		}

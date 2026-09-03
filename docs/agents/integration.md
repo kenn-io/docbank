@@ -599,12 +599,13 @@ Inspect `added`, `skipped`, `excluded`, and every member of `failed`. Repeating 
 ingest after fixing a partial failure is safe; successful content converges to
 `skipped` rather than another copy.
 
-Include and exclude values use Go's `path.Match` grammar on slash-normalized
-source-relative paths. A pattern without `/` matches basenames at any depth;
+Include and exclude values use Go's `path.Match` grammar on slash-separated
+source-relative paths. Use `/` separators on every platform; backslashes are
+rejected. A pattern without `/` matches basenames at any depth;
 exclusions win, and include patterns do not prune directories. Invalid patterns
-are rejected before traversal. Rules are slash-normalized, so use bracket
-expressions such as `report[[]1].txt` for literal metacharacters instead of
-backslash escaping. Watched-inbox exclusions remain literal.
+are rejected before traversal. Use bracket expressions such as
+`report[[]1].txt` for literal metacharacters instead of backslash escaping.
+Watched-inbox exclusions remain literal.
 
 For an interactive or long-running local integration, send the same body to
 `POST /api/v1/ingest/stream` with `Accept: application/x-ndjson`. Read every
