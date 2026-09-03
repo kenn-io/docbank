@@ -48,7 +48,7 @@ var visualPreviewRecipe = document.VisualPreviewRecipeV1{
 	FramePolicy:       "primary",
 	ProcessorFingerprint: fingerprintVisualPreviewProcessor(
 		"docbank-visual-preview:jpeg+png+gif-stdlib-" + runtime.Version() +
-			"+webp+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v5"),
+			"+webp+embedded-camera-raw+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v6"),
 }
 
 // VisualPreviewTarget identifies one exact immutable source to process.
@@ -94,11 +94,14 @@ func ProduceVisualPreview(
 		return produceVisualPreviewGIF(source, base)
 	case "image/webp":
 		return produceVisualPreviewWebP(ctx, source, target.Size, base)
+	case "image/x-sony-arw", "image/x-adobe-dng", "image/x-canon-cr2", "image/x-nikon-nef",
+		"image/x-fuji-raf":
+		return produceVisualPreviewCameraRAW(ctx, source, target.Size, mediaType, base)
 	default:
 		base.State = document.VisualPreviewUnsupported
 		base.Failure = &document.VisualPreviewFailureV1{
 			Code:   "unsupported_media_type",
-			Detail: "the built-in preview producer supports JPEG, PNG, GIF, and WebP originals",
+			Detail: "the built-in preview producer does not support this original's media type",
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
@@ -198,6 +201,12 @@ func produceVisualPreviewWebP(
 func produceVisualPreviewJPEG(
 	ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1,
 ) (VisualPreviewProduct, error) {
+	return produceVisualPreviewJPEGWithOrientation(ctx, source, base, 0)
+}
+
+func produceVisualPreviewJPEGWithOrientation(
+	ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, containerOrientation int,
+) (VisualPreviewProduct, error) {
 	orientation, unsupportedColor, malformed, err := inspectVisualPreviewJPEG(ctx, source)
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
@@ -212,6 +221,9 @@ func produceVisualPreviewJPEG(
 			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB JPEG originals",
 		}
 		return VisualPreviewProduct{Preview: base}, nil
+	}
+	if containerOrientation >= 1 && containerOrientation <= 8 {
+		orientation = containerOrientation
 	}
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(

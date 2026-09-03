@@ -61,10 +61,16 @@ source before decoding and holds the vault mutation boundary through
 publication, so callers either observe a complete generation or a retryable
 error.
 
-The built-in producer currently accepts JPEG, PNG, GIF, and still WebP originals. JPEG inputs
-may be grayscale or three-component images; CMYK, YCCK, and embedded ICC
-profiles remain unsupported rather than receiving an unmanaged color
-conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
+The built-in producer accepts JPEG, PNG, GIF, still WebP, and camera RAW
+originals that contain a supported embedded JPEG preview. Camera RAW support
+covers Fujifilm RAF and TIFF-family Sony ARW, Adobe DNG, Canon CR2, and Nikon
+NEF files. It reads only bounded container metadata and the embedded preview;
+the complete original is still verified before decoding. A well-formed RAW file
+without a supported embedded preview records an `unsupported` result.
+
+JPEG inputs may be grayscale or three-component images; CMYK, YCCK, and
+embedded ICC profiles remain unsupported rather than receiving an unmanaged
+color conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
 profiles, and composite transparency onto white because the canonical output
 is JPEG. GIF inputs use their primary frame, including for animated sources.
 WebP inputs apply bounded EXIF orientation and reject embedded ICC profiles;
@@ -76,6 +82,6 @@ become a durable `unsupported` result. Read, verification, storage, and
 cancellation failures are retryable.
 
 Preview production is application-driven: opening a vault does not start a
-worker. Other still-image formats, camera RAW files, video frames, and managed
-color conversion require additional producers, but they use the same
-generation, retention, backup, and read contracts.
+worker. Other still-image formats, RAW containers without a supported embedded
+JPEG, video frames, and managed color conversion require additional producers,
+but they use the same generation, retention, backup, and read contracts.
