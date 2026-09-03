@@ -32,9 +32,30 @@ func TestVectorSetV1EncodesCanonicalGoldenBytes(t *testing.T) {
 	assert.Equal(t, uint32(0), math.Float32bits(set.Vectors[0][0]))
 	assert.Equal(t, uint32(0x3f800000), math.Float32bits(set.Vectors[0][1]))
 	assert.Equal(t, uint32(0x3f800002), math.Float32bits(set.Vectors[1][0]))
-	decoded, err := document.DecodeVectorSetV1(got, document.VectorBounds{MaxRows: 2, MaxDimension: 2, MaxBytes: len(got)})
+	decoded, decodedChecksum, err := document.DecodeVectorSetV1(got, document.VectorBounds{MaxRows: 2, MaxDimension: 2, MaxBytes: len(got)})
 	require.NoError(t, err)
 	assert.False(t, math.Signbit(float64(decoded.Vectors[0][0])))
+	assert.Equal(t, checksum, decodedChecksum)
+}
+
+// This test fails if a stored payload whose scalars were altered after
+// encoding can decode without giving the caller a checksum that exposes it.
+func TestVectorSetV1DecodeReportsChecksumOfAlteredPayload(t *testing.T) {
+	set, err := document.NewVectorSetV1(document.VectorSetV1Input{
+		VectorSpaceFingerprint: testFingerprint(), Metric: document.VectorMetricCosine,
+		Normalization: document.VectorNormalizationNone, Dimension: 1,
+		InputKeys: []string{"chunk-a"}, InputChecksums: []string{testFingerprint()}, Values: [][]float64{{1}},
+	})
+	require.NoError(t, err)
+	encoded, checksum, err := document.EncodeVectorSetV1(set)
+	require.NoError(t, err)
+	altered := append([]byte(nil), encoded...)
+	binary.LittleEndian.PutUint32(altered[len(altered)-4:], math.Float32bits(2))
+
+	decoded, alteredChecksum, err := document.DecodeVectorSetV1(altered, document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(altered)})
+	require.NoError(t, err)
+	assert.Equal(t, [][]float32{{2}}, decoded.Vectors)
+	assert.NotEqual(t, checksum, alteredChecksum)
 }
 
 // This test fails if untrusted vector bytes can allocate beyond caller policy,
@@ -48,9 +69,9 @@ func TestVectorSetV1RejectsMalformedOrUnboundedBytes(t *testing.T) {
 	encoded, _, err := document.EncodeVectorSetV1(set)
 	require.NoError(t, err)
 
-	_, err = document.DecodeVectorSetV1(encoded, document.VectorBounds{MaxRows: 0, MaxDimension: 1, MaxBytes: len(encoded)})
+	_, _, err = document.DecodeVectorSetV1(encoded, document.VectorBounds{MaxRows: 0, MaxDimension: 1, MaxBytes: len(encoded)})
 	require.ErrorContains(t, err, "rows")
-	_, err = document.DecodeVectorSetV1(append(encoded, 0), document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(encoded) + 1})
+	_, _, err = document.DecodeVectorSetV1(append(encoded, 0), document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(encoded) + 1})
 	require.ErrorContains(t, err, "scalar bytes")
 }
 
@@ -81,7 +102,7 @@ func TestVectorSetV1RejectsEveryTruncatedFixedWidthField(t *testing.T) {
 	encoded, _, err := document.EncodeVectorSetV1(set)
 	require.NoError(t, err)
 	for _, payload := range [][]byte{encoded[:3], encoded[:len(encoded)-1]} {
-		_, err := document.DecodeVectorSetV1(payload, document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(encoded)})
+		_, _, err := document.DecodeVectorSetV1(payload, document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(encoded)})
 		require.Error(t, err)
 	}
 }
@@ -96,12 +117,12 @@ func TestVectorSetV1PreflightsUntrustedFrameBeforeAllocatingRows(t *testing.T) {
 	rowsOffset := 14 + 4 + 4 + 64 + 4 + len(document.VectorMetricCosine) + 4 + len(document.VectorNormalizationNone)
 	oversizedRows := append([]byte(nil), encoded...)
 	binary.LittleEndian.PutUint32(oversizedRows[rowsOffset:], ^uint32(0))
-	_, err = document.DecodeVectorSetV1(oversizedRows, document.VectorBounds{MaxRows: int(^uint32(0)), MaxDimension: 1, MaxBytes: len(oversizedRows)})
+	_, _, err = document.DecodeVectorSetV1(oversizedRows, document.VectorBounds{MaxRows: int(^uint32(0)), MaxDimension: 1, MaxBytes: len(oversizedRows)})
 	require.ErrorContains(t, err, "rows exceed bounds")
 
 	invalidHeader := append([]byte(nil), encoded...)
 	invalidHeader[14+4+4] = 'x'
-	_, err = document.DecodeVectorSetV1(invalidHeader, document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(invalidHeader)})
+	_, _, err = document.DecodeVectorSetV1(invalidHeader, document.VectorBounds{MaxRows: 1, MaxDimension: 1, MaxBytes: len(invalidHeader)})
 	require.ErrorContains(t, err, "fingerprint")
 
 	_, err = document.NewVectorSetV1(document.VectorSetV1Input{VectorSpaceFingerprint: testFingerprint(), Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone, Dimension: 1, InputKeys: make([]string, 10_001), InputChecksums: make([]string, 10_001), Values: make([][]float64, 10_001)})
@@ -120,6 +141,6 @@ func TestVectorSetV1RejectsDuplicateMetadataKeysBeforeScalarAllocation(t *testin
 	require.GreaterOrEqual(t, secondKey, 0)
 	duplicate[secondKey+len("chunk-")] = 'a'
 	binary.LittleEndian.PutUint32(duplicate[len(duplicate)-4:], math.Float32bits(float32(math.NaN())))
-	_, err = document.DecodeVectorSetV1(duplicate, document.VectorBounds{MaxRows: 2, MaxDimension: 1, MaxBytes: len(duplicate)})
+	_, _, err = document.DecodeVectorSetV1(duplicate, document.VectorBounds{MaxRows: 2, MaxDimension: 1, MaxBytes: len(duplicate)})
 	require.ErrorContains(t, err, "keys must be unique")
 }

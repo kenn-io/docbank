@@ -275,6 +275,23 @@ func TestExecuteEmbeddingOwnsProviderResult(t *testing.T) {
 	assert.Equal(t, []float32{1, 2}, result.Vectors[0].Values)
 }
 
+// This test fails if a provider can rewrite the request slice it was handed
+// and have its result accepted against that rewritten request.
+func TestExecuteEmbeddingValidatesResultAgainstAuthorizedInputs(t *testing.T) {
+	descriptor := testEmbeddingDescriptor(t)
+	inputs := []document.EmbeddingInput{{
+		Key: "chunk-a", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "alpha",
+	}}
+	provider := embeddingProviderFunc{descriptor: descriptor, embed: func(_ context.Context, providerInputs []document.EmbeddingInput, _ document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+		providerInputs[0].Key = "renamed"
+		return document.EmbeddingResult{Vectors: []document.EmbeddingVector{{Key: "renamed", Values: []float32{1, 2}}}}, nil
+	}}
+
+	_, err := document.ExecuteEmbedding(t.Context(), provider, inputs, testEmbeddingAuthorization(descriptor))
+	require.ErrorContains(t, err, "unexpected vector key")
+	assert.Equal(t, "chunk-a", inputs[0].Key)
+}
+
 func TestEmbeddingContractRejectsInvalidDocumentAuxiliaryFields(t *testing.T) {
 	descriptor := testEmbeddingDescriptor(t)
 	provider := testEmbeddingProvider{descriptor: descriptor}

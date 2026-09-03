@@ -166,14 +166,25 @@ func EncodeVectorSetV1(set VectorSetV1) ([]byte, string, error) {
 	return encoded, checksum, nil
 }
 
-// DecodeVectorSetV1 validates and reads one exactly framed vector-set/v1 payload.
-func DecodeVectorSetV1(encoded []byte, bounds VectorBounds) (VectorSetV1, error) {
+// DecodeVectorSetV1 validates and reads one exactly framed vector-set/v1
+// payload and returns the checksum EncodeVectorSetV1 produced for those exact
+// bytes. Callers holding a stored checksum must compare it; a syntactically
+// valid payload with altered scalars still decodes.
+func DecodeVectorSetV1(encoded []byte, bounds VectorBounds) (VectorSetV1, string, error) {
 	if bounds.MaxRows < 1 || bounds.MaxDimension < 1 || bounds.MaxBytes < 1 {
-		return VectorSetV1{}, errors.New("vector bounds must permit positive rows, dimension, and bytes")
+		return VectorSetV1{}, "", errors.New("vector bounds must permit positive rows, dimension, and bytes")
 	}
 	if len(encoded) > bounds.MaxBytes {
-		return VectorSetV1{}, errors.New("vector payload exceeds byte bounds")
+		return VectorSetV1{}, "", errors.New("vector payload exceeds byte bounds")
 	}
+	set, err := decodeVectorSetV1(encoded, bounds)
+	if err != nil {
+		return VectorSetV1{}, "", err
+	}
+	return set, vectorSetChecksum(encoded), nil
+}
+
+func decodeVectorSetV1(encoded []byte, bounds VectorBounds) (VectorSetV1, error) {
 	reader := bytes.NewReader(encoded)
 	magic := make([]byte, len(vectorSetV1Magic))
 	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != vectorSetV1Magic {
@@ -208,10 +219,10 @@ func DecodeVectorSetV1(encoded []byte, bounds VectorBounds) (VectorSetV1, error)
 	if err != nil {
 		return VectorSetV1{}, err
 	}
-	if rows == 0 || uint64(rows) > uint64(bounds.MaxRows) || rows > maxEmbeddingBatchItems {
+	if rows == 0 || int64(rows) > int64(bounds.MaxRows) || rows > maxEmbeddingBatchItems {
 		return VectorSetV1{}, errors.New("vector payload rows exceed bounds")
 	}
-	if dimension == 0 || uint64(dimension) > uint64(bounds.MaxDimension) || dimension > maxEmbeddingDimensions {
+	if dimension == 0 || int64(dimension) > int64(bounds.MaxDimension) || dimension > maxEmbeddingDimensions {
 		return VectorSetV1{}, errors.New("vector payload dimension exceeds bounds")
 	}
 	scalars := uint64(rows) * uint64(dimension)

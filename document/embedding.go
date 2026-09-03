@@ -248,19 +248,21 @@ func ValidateEmbeddingProviderResult(descriptor EmbeddingDescriptor, inputs []Em
 
 // ExecuteEmbedding is the validated execution entry point for core callers.
 // It takes ownership of original-file uploads and closes them before returning.
+// The provider receives its own copy of the validated inputs; the result is
+// checked against the retained authorized snapshot the provider never sees.
 func ExecuteEmbedding(
 	ctx context.Context, provider EmbeddingProvider, inputs []EmbeddingInput, authorization EmbeddingAuthorization,
 ) (result EmbeddingResult, err error) {
-	providerInputs := cloneEmbeddingInputs(inputs)
+	authorized := cloneEmbeddingInputs(inputs)
 	ownedUploads := make([]*ownedAuthorizedUpload, 0, len(inputs))
 	stopCloses := make([]func() bool, 0, len(inputs))
-	for index := range providerInputs {
-		if nilInterface(providerInputs[index].Source) {
+	for index := range authorized {
+		if nilInterface(authorized[index].Source) {
 			continue
 		}
-		owned := &ownedAuthorizedUpload{upload: providerInputs[index].Source}
+		owned := &ownedAuthorizedUpload{upload: authorized[index].Source}
 		ownedUploads = append(ownedUploads, owned)
-		providerInputs[index].Source = owned
+		authorized[index].Source = owned
 		stopCloses = append(stopCloses, context.AfterFunc(ctx, func() { _ = owned.Close() }))
 	}
 	defer func() {
@@ -276,18 +278,20 @@ func ExecuteEmbedding(
 	if err := ctx.Err(); err != nil {
 		return EmbeddingResult{}, err
 	}
-	descriptor, metadata, err := validateEmbeddingProviderRequest(provider, providerInputs, authorization)
+	descriptor, metadata, err := validateEmbeddingProviderRequest(provider, authorized, authorization)
 	if err != nil {
 		return EmbeddingResult{}, err
 	}
+	providerInputs := cloneEmbeddingInputs(authorized)
 	sealedUploads := make([]*sealedAuthorizedUpload, 0, len(ownedUploads))
-	for index := range providerInputs {
-		owned, ok := providerInputs[index].Source.(*ownedAuthorizedUpload)
+	for index := range authorized {
+		owned, ok := authorized[index].Source.(*ownedAuthorizedUpload)
 		if !ok {
 			continue
 		}
 		sealed := newSealedAuthorizedUpload(ctx, owned, metadata[index])
 		sealedUploads = append(sealedUploads, sealed)
+		authorized[index].Source = sealed
 		providerInputs[index].Source = sealed
 	}
 	result, err = provider.Embed(ctx, providerInputs, authorization)
@@ -300,7 +304,7 @@ func ExecuteEmbedding(
 	if err != nil {
 		return EmbeddingResult{}, err
 	}
-	if err := ValidateEmbeddingProviderResult(descriptor, providerInputs, authorization, result); err != nil {
+	if err := ValidateEmbeddingProviderResult(descriptor, authorized, authorization, result); err != nil {
 		return EmbeddingResult{}, err
 	}
 	result = cloneEmbeddingResult(result)
@@ -443,9 +447,6 @@ func validateEmbeddingDescriptorFields(descriptor EmbeddingDescriptor) error {
 		if !slices.Contains(descriptor.SupportedRequestModes, mode) {
 			return errors.New("embedding descriptor does not support a model-input request mode")
 		}
-	}
-	if descriptor.SupportsTextQuery && !slices.Contains(descriptor.SupportedRequestModes, descriptor.ModelInput.Query.Mode) {
-		return errors.New("embedding descriptor query request mode is unsupported")
 	}
 	return nil
 }
