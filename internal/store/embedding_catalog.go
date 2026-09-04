@@ -898,6 +898,9 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 			generation.MaxInputBytes != binding.MaxInputBytes {
 			return errors.New("E2 generation does not match exact processing profile embedding binding")
 		}
+		if _, err := generation.ToEmbeddingInputs(binding.ModelInput); err != nil {
+			return fmt.Errorf("E2 generation model-input contract: %w", err)
+		}
 		for _, input := range generation.Inputs {
 			if input.ContentTokens > binding.Chunk.MaxTokens {
 				return errors.New("E2 generation exceeds processing profile chunk token bound")

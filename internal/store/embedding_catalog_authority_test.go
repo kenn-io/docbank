@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 // Mutation caught: accepting a store-local input-kind vocabulary lets a caller
@@ -133,6 +134,77 @@ func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T)
 		return s.EnsureBlobTx(tx, record.InputGeneration.GenerationBlobHash, int64(len(encoded)))
 	}))
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "exact processing profile")
+}
+
+func TestEmbeddingCatalogRejectsGenerationRenderedOutsideModelInputContract(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	generation, err := document.DecodeEmbeddingInputGeneration(
+		record.InputGeneration.GenerationJSON,
+		document.EmbeddingInputGenerationDecodeBounds{
+			MaxEncodedBytes: int64(len(record.InputGeneration.GenerationJSON)), MaxInputs: 128,
+		},
+	)
+	require.NoError(t, err)
+
+	input := &generation.Inputs[0]
+	mutatedRendered := strings.Repeat("x", len(input.Rendered))
+	require.NotEqual(t, input.Rendered, mutatedRendered)
+	input.Rendered = mutatedRendered
+	input.Checksum = testSHA256([]byte(input.Rendered))
+	input.Key = fmt.Sprintf("chunk-%06d-%s", 0, input.Checksum[:12])
+	generation.Checksum = ""
+	checksumInput, err := canonical.Marshal(generation)
+	require.NoError(t, err)
+	generation.Checksum = testSHA256(checksumInput)
+	encodedGeneration, err := document.MarshalEmbeddingInputGeneration(generation)
+	require.NoError(t, err)
+	record.InputGeneration.GenerationJSON = encodedGeneration
+	record.InputGeneration.GenerationBlobHash = testSHA256(encodedGeneration)
+	record.InputGeneration.GenerationEncodedSize = int64(len(encodedGeneration))
+	record.InputGeneration.GenerationChecksum = generation.Checksum
+	record.InputGeneration.ID = testSHA256([]byte(
+		"embedding-generation-attachment/v1\x00" + generation.Checksum + "\x00" + attachmentID,
+	))
+
+	decodedVectors, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
+		MaxRows: 128, MaxDimension: record.VectorSpace.Descriptor.Dimension, MaxBytes: len(record.VectorSet.Payload),
+	})
+	require.NoError(t, err)
+	decodedVectors.InputKeys[0] = input.Key
+	decodedVectors.InputChecksums[0] = input.Checksum
+	values := make([][]float64, len(decodedVectors.Vectors))
+	for row := range decodedVectors.Vectors {
+		values[row] = make([]float64, len(decodedVectors.Vectors[row]))
+		for column, value := range decodedVectors.Vectors[row] {
+			values[row][column] = float64(value)
+		}
+	}
+	mutatedVectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
+		VectorSpaceFingerprint: decodedVectors.VectorSpaceFingerprint,
+		Metric:                 decodedVectors.Metric,
+		Normalization:          decodedVectors.Normalization,
+		Dimension:              decodedVectors.Dimension,
+		InputKeys:              decodedVectors.InputKeys,
+		InputChecksums:         decodedVectors.InputChecksums,
+		Values:                 values,
+	})
+	require.NoError(t, err)
+	encodedVectors, vectorChecksum, err := document.EncodeVectorSetV1(mutatedVectors)
+	require.NoError(t, err)
+	record.VectorSet.Payload = encodedVectors
+	record.VectorSet.ID = vectorChecksum
+	record.VectorSet.PayloadChecksum = vectorChecksum
+	record.VectorSet.PayloadBlobHash = testSHA256(encodedVectors)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		if err := s.EnsureBlobTx(tx, record.InputGeneration.GenerationBlobHash, int64(len(encodedGeneration))); err != nil {
+			return err
+		}
+		return s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(encodedVectors)))
+	}))
+
+	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "model-input contract")
 }
 
 func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
