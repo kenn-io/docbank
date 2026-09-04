@@ -93,14 +93,33 @@ type EvidenceLexicalPolicyV1 struct {
 	SourceEvidenceContract      string `json:"source_evidence_contract"`
 }
 
-// EmbeddingChunkPolicyV1 pins exact model input generation from a rendition.
+// TruncationPolicy declares what happens when one tokenizer token cannot fit
+// the provider's complete rendered request boundary.
+type TruncationPolicy string
+
+const (
+	TruncationPolicyReject              TruncationPolicy = "reject_indivisible"
+	TruncationPolicyTruncateIndivisible TruncationPolicy = "truncate_indivisible"
+)
+
+// IsValidTruncationPolicy reports whether policy is part of the chunk policy vocabulary.
+func IsValidTruncationPolicy(policy TruncationPolicy) bool {
+	return policy == TruncationPolicyReject || policy == TruncationPolicyTruncateIndivisible
+}
+
+// EmbeddingChunkPolicyV1 is the identity-bearing operator declaration for
+// rendition-chunk input generation. Tokenizer and TokenizerRevision together
+// name the exact vocabulary and segmentation revision the runtime tokenizer
+// must prove. ContextFingerprint seals the profile-level rules that govern
+// attachment context; the per-attachment value is sealed by each generation.
 type EmbeddingChunkPolicyV1 struct {
-	ContextFingerprint string `json:"context_fingerprint"`
-	Formatter          string `json:"formatter"`
-	MaxTokens          int    `json:"max_tokens"`
-	OverlapTokens      int    `json:"overlap_tokens"`
-	Tokenizer          string `json:"tokenizer"`
-	TruncationPolicy   string `json:"truncation_policy"`
+	ContextFingerprint string           `json:"context_fingerprint"`
+	Formatter          string           `json:"formatter"`
+	MaxTokens          int              `json:"max_tokens"`
+	OverlapTokens      int              `json:"overlap_tokens"`
+	Tokenizer          string           `json:"tokenizer"`
+	TokenizerRevision  string           `json:"tokenizer_revision"`
+	TruncationPolicy   TruncationPolicy `json:"truncation_policy"`
 }
 
 // EmbeddingBindingV1 binds one named input plan, vector compatibility space,
@@ -118,6 +137,7 @@ type EmbeddingBindingV1 struct {
 	InputKind                EmbeddingInputKind      `json:"input_kind"`
 	MaxBatchItems            int                     `json:"max_batch_items"`
 	MaxInputBytes            int64                   `json:"max_input_bytes"`
+	MaxInputTokens           int                     `json:"max_input_tokens"`
 	MaxResponseBytes         int64                   `json:"max_response_bytes"`
 	Metric                   string                  `json:"metric"`
 	ModelInput               ModelInputContract      `json:"model_input"`
@@ -387,7 +407,7 @@ func normalizeProfileStrings(profile *ProcessingProfileV1) error {
 				subject string
 			}{
 				{&binding.Chunk.Formatter, "chunk formatter"}, {&binding.Chunk.Tokenizer, "chunk tokenizer"},
-				{&binding.Chunk.TruncationPolicy, "chunk truncation policy"},
+				{&binding.Chunk.TokenizerRevision, "chunk tokenizer revision"},
 			}
 			for _, item := range chunkValues {
 				if err := normalizeProfileString(item.value, item.subject); err != nil {
@@ -560,6 +580,9 @@ func validateEmbeddingBinding(binding EmbeddingBindingV1, hasRendition bool) err
 		if binding.Chunk != nil {
 			return errors.New("original_file input must not define chunk policy")
 		}
+		if binding.MaxInputTokens != 0 {
+			return errors.New("original_file input must not define max input tokens")
+		}
 	case EmbeddingInputRenditionChunk:
 		if !hasRendition {
 			return errors.New("rendition_chunk input requires a rendition binding")
@@ -569,6 +592,9 @@ func validateEmbeddingBinding(binding EmbeddingBindingV1, hasRendition bool) err
 		}
 		if err := validateChunkPolicy(*binding.Chunk); err != nil {
 			return err
+		}
+		if binding.MaxInputTokens <= 0 || binding.MaxInputTokens > maxEmbeddingChunkTokens {
+			return fmt.Errorf("max input tokens must be between 1 and %d", maxEmbeddingChunkTokens)
 		}
 	default:
 		return fmt.Errorf("input kind %q must be original_file or rendition_chunk", binding.InputKind)
@@ -597,6 +623,15 @@ func validateChunkPolicy(policy EmbeddingChunkPolicyV1) error {
 	}
 	if policy.OverlapTokens < 0 || policy.OverlapTokens >= policy.MaxTokens {
 		return errors.New("chunk overlap tokens must be non-negative and less than max tokens")
+	}
+	if err := validateCompatibilityID(policy.Formatter); err != nil {
+		return fmt.Errorf("chunk formatter: %w", err)
+	}
+	if err := validateTokenizerIdentity(TokenizerIdentity{Name: policy.Tokenizer, Revision: policy.TokenizerRevision}); err != nil {
+		return fmt.Errorf("chunk %w", err)
+	}
+	if !IsValidTruncationPolicy(policy.TruncationPolicy) {
+		return fmt.Errorf("chunk truncation policy %q must be %s or %s", policy.TruncationPolicy, TruncationPolicyReject, TruncationPolicyTruncateIndivisible)
 	}
 	return validateFingerprint(policy.ContextFingerprint, "chunk context fingerprint")
 }

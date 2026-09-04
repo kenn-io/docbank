@@ -27,12 +27,12 @@ func TestCanonicalProfileMatchesGoldenAndCanonicalizesInput(t *testing.T) {
 	want = bytes.TrimSuffix(want, []byte("\n"))
 	assert.Equal(t, want, encoded)
 	assert.Equal(t, original, profile, "canonicalization must not mutate caller-owned policy")
-	assert.Equal(t, "a4a2e096e0de8a1c7b17b432602f06758ba0b392c46fa0191bbb6cf979bf7490", fingerprints.Profile)
+	assert.Equal(t, "46298392ac8758618d0455af2d7f3cb9094eabc53418c43d45e8ed958c073d61", fingerprints.Profile)
 	assert.Equal(t, "9d0a202be29b43e16684f74b540a41778443fe2f4757d4b1815d85994f5b2522", fingerprints.RenditionRequest)
 	assert.Equal(t, "1a79d280a3eefc9b8e6402e6f9a491783db7c2804ae00ac03160a963a48aa7d7", fingerprints.EvidenceLexical)
 	assert.Equal(t, map[string]string{
 		"direct":   "6d0ee0f814c74992f6bcedfcab8b52f07c0024077526919ff5c2c336d9f353b2",
-		"semantic": "43467c475b7aefd73fea66973da9fdf4baf22566165a1a1d97ac547dc8193419",
+		"semantic": "75bbd99ee87cbb73e7ec9becdefbcf3ad882b3066037bd271aa57aeee81b7c3d",
 	}, fingerprints.EmbeddingInput)
 	assert.Equal(t, map[string]string{
 		"direct":   "f731443d0c91d8b4a548ebf821090522fb3dbe772a4d3985ef9336f60c8f801e",
@@ -140,11 +140,16 @@ func TestCanonicalProfileFingerprintsTrackExactLayerFields(t *testing.T) {
 			p.Embeddings[0].InputKind = document.EmbeddingInputRenditionChunk
 			chunk := *p.Embeddings[1].Chunk
 			p.Embeddings[0].Chunk = &chunk
+			p.Embeddings[0].MaxInputTokens = p.Embeddings[1].MaxInputTokens
 		}, layers("profile", "input:direct", "retention")},
 		{"chunk tokenizer", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.Tokenizer = "voyage-4" }, layers("profile", "input:semantic")},
+		{"chunk tokenizer revision", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.TokenizerRevision = "2024.2" }, layers("profile", "input:semantic")},
+		{"embedding token limit", func(p *document.ProcessingProfileV1) { p.Embeddings[1].MaxInputTokens++ }, layers("profile")},
 		{"chunk maximum", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.MaxTokens++ }, layers("profile", "input:semantic")},
 		{"chunk overlap", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.OverlapTokens++ }, layers("profile", "input:semantic")},
-		{"chunk truncation", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.TruncationPolicy = "truncate_end" }, layers("profile", "input:semantic")},
+		{"chunk truncation", func(p *document.ProcessingProfileV1) {
+			p.Embeddings[1].Chunk.TruncationPolicy = document.TruncationPolicyTruncateIndivisible
+		}, layers("profile", "input:semantic")},
 		{"chunk formatter", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.Formatter = "rendition-chunk/v2" }, layers("profile", "input:semantic")},
 		{"chunk context", func(p *document.ProcessingProfileV1) { p.Embeddings[1].Chunk.ContextFingerprint = fingerprint("c") }, layers("profile", "input:semantic")},
 		{"attachment policy", func(p *document.ProcessingProfileV1) {
@@ -246,6 +251,7 @@ func TestCanonicalProfileEnforcesPortableBounds(t *testing.T) {
 		{"embedding input bytes", 1 << 30, func(p *document.ProcessingProfileV1, v int64) { p.Embeddings[0].MaxInputBytes = v }, "max input bytes"},
 		{"embedding response bytes", 1 << 30, func(p *document.ProcessingProfileV1, v int64) { p.Embeddings[0].MaxResponseBytes = v }, "max response bytes"},
 		{"chunk tokens", 1_000_000, func(p *document.ProcessingProfileV1, v int64) { p.Embeddings[1].Chunk.MaxTokens = int(v) }, "max tokens"},
+		{"embedding input tokens", 1_000_000, func(p *document.ProcessingProfileV1, v int64) { p.Embeddings[1].MaxInputTokens = int(v) }, "max input tokens"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -346,11 +352,11 @@ func syntheticProcessingProfileV1() document.ProcessingProfileV1 {
 				Normalization: "unit_length", QueryFormatter: "query/v1", ScalarEncoding: "float32", TrustBoundary: "processor-primary"},
 			{Activation: document.EmbeddingRequired, AuthorizationFingerprint: fingerprint("a"),
 				Chunk: &document.EmbeddingChunkPolicyV1{ContextFingerprint: fingerprint("b"), Formatter: "rendition-chunk/v1", MaxTokens: 800,
-					OverlapTokens: 80, Tokenizer: "voyage-3", TruncationPolicy: "reject"},
+					OverlapTokens: 80, Tokenizer: "voyage-3", TokenizerRevision: "2024.1", TruncationPolicy: document.TruncationPolicyReject},
 				CompatibilityID: "voyage-3-large/1024", CredentialBinding: "credential:embedding-primary",
 				Descriptor: document.ProviderDescriptorV1{ID: "voyage-text-v1", Fingerprint: fingerprint("c")}, Dimensions: 1024,
 				DisclosureFingerprint: fingerprint("d"), DocumentFormatter: "document/v1", InputKind: document.EmbeddingInputRenditionChunk,
-				MaxBatchItems: 32, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: "cosine", Model: "voyage-3-large", Name: "semantic",
+				MaxBatchItems: 32, MaxInputBytes: 1 << 20, MaxInputTokens: 8192, MaxResponseBytes: 1 << 20, Metric: "cosine", Model: "voyage-3-large", Name: "semantic",
 				Normalization: "unit_length", QueryFormatter: "query/v1", ScalarEncoding: "float32", TrustBoundary: "processor-primary"},
 		},
 		RetentionDisclosure: document.RetentionDisclosurePolicyV1{AttachmentPolicyFingerprint: fingerprint("a"), ConsentFingerprint: fingerprint("b"),

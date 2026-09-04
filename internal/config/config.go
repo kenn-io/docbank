@@ -127,6 +127,7 @@ type EmbeddingChunkConfig struct {
 	MaxTokens          int    `toml:"max_tokens"`
 	OverlapTokens      int    `toml:"overlap_tokens"`
 	Tokenizer          string `toml:"tokenizer"`
+	TokenizerRevision  string `toml:"tokenizer_revision"`
 	TruncationPolicy   string `toml:"truncation_policy"`
 }
 
@@ -146,6 +147,7 @@ type EmbeddingProfileConfig struct {
 	InputKind                string               `toml:"input_kind"`
 	MaxBatchItems            int                  `toml:"max_batch_items"`
 	MaxInputBytes            int64                `toml:"max_input_bytes"`
+	MaxInputTokens           int                  `toml:"max_input_tokens"`
 	MaxResponseBytes         int64                `toml:"max_response_bytes"`
 	Metric                   string               `toml:"metric"`
 	Model                    string               `toml:"model"`
@@ -568,14 +570,20 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))
 	}
 	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
+		if profile.MaxInputTokens <= 0 || profile.MaxInputTokens > 1_000_000 {
+			return fmt.Errorf("%s max input tokens must be between 1 and 1000000", prefix)
+		}
 		if profile.Chunk.MaxTokens <= 0 || profile.Chunk.MaxTokens > 1_000_000 ||
 			profile.Chunk.OverlapTokens < 0 || profile.Chunk.OverlapTokens >= profile.Chunk.MaxTokens ||
-			profile.Chunk.Tokenizer == "" || profile.Chunk.Formatter == "" || profile.Chunk.TruncationPolicy == "" ||
+			profile.Chunk.Tokenizer == "" || profile.Chunk.TokenizerRevision == "" || profile.Chunk.Formatter == "" ||
 			!lowercaseSHA256Pattern.MatchString(profile.Chunk.ContextFingerprint) {
 			return fmt.Errorf("%s chunk policy is invalid", prefix)
 		}
-	} else if profile.Chunk != (EmbeddingChunkConfig{}) {
-		return fmt.Errorf("%s original_file input must not define chunk policy", prefix)
+		if !document.IsValidTruncationPolicy(document.TruncationPolicy(profile.Chunk.TruncationPolicy)) {
+			return fmt.Errorf("%s chunk truncation_policy must be %s or %s", prefix, document.TruncationPolicyReject, document.TruncationPolicyTruncateIndivisible)
+		}
+	} else if profile.Chunk != (EmbeddingChunkConfig{}) || profile.MaxInputTokens != 0 {
+		return fmt.Errorf("%s original_file input must not define chunk policy or max input tokens", prefix)
 	}
 	return nil
 }
@@ -695,15 +703,17 @@ func embeddingDocumentBinding(name string, profile EmbeddingProfileConfig) docum
 		Descriptor: document.ProviderDescriptorV1{ID: profile.DescriptorID, Fingerprint: profile.DescriptorFingerprint},
 		Dimensions: profile.Dimensions, DisclosureFingerprint: profile.DisclosureFingerprint,
 		DocumentFormatter: profile.DocumentFormatter, InputKind: document.EmbeddingInputKind(profile.InputKind),
-		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes, MaxResponseBytes: profile.MaxResponseBytes,
-		Metric: profile.Metric, Model: profile.Model, Name: name, Normalization: profile.Normalization,
+		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes, MaxInputTokens: profile.MaxInputTokens,
+		MaxResponseBytes: profile.MaxResponseBytes,
+		Metric:           profile.Metric, Model: profile.Model, Name: name, Normalization: profile.Normalization,
 		QueryFormatter: profile.QueryFormatter, ScalarEncoding: profile.ScalarEncoding, TrustBoundary: profile.TrustBoundary,
 	}
 	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
 		result.Chunk = &document.EmbeddingChunkPolicyV1{
 			ContextFingerprint: profile.Chunk.ContextFingerprint, Formatter: profile.Chunk.Formatter,
 			MaxTokens: profile.Chunk.MaxTokens, OverlapTokens: profile.Chunk.OverlapTokens,
-			Tokenizer: profile.Chunk.Tokenizer, TruncationPolicy: profile.Chunk.TruncationPolicy,
+			Tokenizer: profile.Chunk.Tokenizer, TokenizerRevision: profile.Chunk.TokenizerRevision,
+			TruncationPolicy: document.TruncationPolicy(profile.Chunk.TruncationPolicy),
 		}
 	}
 	return result

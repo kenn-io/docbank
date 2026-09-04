@@ -15,13 +15,11 @@ const (
 var ErrTokenizerLimit = errors.New("tokenizer token limit exceeded")
 
 // TokenizerIdentity pins the exact tokenizer vocabulary and segmentation
-// revision. PrefixTokenCountsMonotonic is an explicit contract that a longer
-// prefix can never have fewer tokens; fitting may use binary search only when
-// it is true. Model names are deliberately not tokenizer identities.
+// revision. It must equal the Tokenizer and TokenizerRevision declared by the
+// profile chunk policy. Model names are deliberately not tokenizer identities.
 type TokenizerIdentity struct {
-	Name                       string `json:"name"`
-	Revision                   string `json:"revision"`
-	PrefixTokenCountsMonotonic bool   `json:"prefix_token_counts_monotonic"`
+	Name     string `json:"name"`
+	Revision string `json:"revision"`
 }
 
 // TokenBoundary is one half-open rune range. A canonical tokenization is a
@@ -32,9 +30,14 @@ type TokenBoundary struct {
 }
 
 // Tokenizer returns exact rune boundaries and must honor limit before growing
-// its result beyond that many entries.
+// its result beyond that many entries. PrefixTokenCountsMonotonic is an
+// implementation contract that a longer prefix never has fewer tokens; fitting
+// uses binary search only when it is true. It is a search strategy, not part
+// of the tokenizer's identity, because an honest tokenizer yields the same
+// inputs under either search.
 type Tokenizer interface {
 	Identity() TokenizerIdentity
+	PrefixTokenCountsMonotonic() bool
 	Tokenize(text string, limit int) ([]TokenBoundary, error)
 }
 
@@ -42,10 +45,7 @@ func validateTokenizerIdentity(identity TokenizerIdentity) error {
 	if err := validateStableToken(identity.Name, "tokenizer name", maxTokenizerIdentityBytes); err != nil {
 		return err
 	}
-	if err := validateStableToken(identity.Revision, "tokenizer revision", maxTokenizerIdentityBytes); err != nil {
-		return err
-	}
-	return nil
+	return validateStableToken(identity.Revision, "tokenizer revision", maxTokenizerIdentityBytes)
 }
 
 func validateTokenBoundaries(tokens []TokenBoundary, runeCount, limit int) error {

@@ -79,87 +79,41 @@ type ModelInputContractConfig struct {
 	QueryInstruction string
 }
 
+// builtinModelInputProfile is one reviewed model-family contract. Profiles
+// that allow a query instruction render it through queryInstructionTemplate;
+// every other profile rejects one so model names never imply hidden prompts.
+type builtinModelInputProfile struct {
+	compatibilityID     string
+	documentMode        ModelInputMode
+	documentPrefix      string
+	queryMode           ModelInputMode
+	queryPrefix         string
+	queryInstruction    bool
+	requiresInstruction bool
+}
+
+var builtinModelInputProfiles = map[ModelInputProfile]builtinModelInputProfile{
+	ModelInputProfileOpenAICompatible: {compatibilityID: "openai-compatible/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileVoyage:           {compatibilityID: "voyage/document-query/v1", documentMode: ModelInputModeDocument, queryMode: ModelInputModeQuery},
+	ModelInputProfileMistral:          {compatibilityID: "mistral/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileNomic:            {compatibilityID: "nomic/search/v1", documentMode: ModelInputModeText, documentPrefix: "search_document: ", queryMode: ModelInputModeText, queryPrefix: "search_query: "},
+	ModelInputProfileE5:               {compatibilityID: "e5/asymmetric/v1", documentMode: ModelInputModeText, documentPrefix: "passage: ", queryMode: ModelInputModeText, queryPrefix: "query: "},
+	ModelInputProfileBGEM3:            {compatibilityID: "bge-m3/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileGTE:              {compatibilityID: "gte/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileQwen3:            {compatibilityID: "qwen3/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText, queryInstruction: true},
+	ModelInputProfileQueryInstruction: {compatibilityID: "query-instruction/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText, queryInstruction: true, requiresInstruction: true},
+}
+
 // NewModelInputContract resolves a reviewed built-in profile or one explicit
 // custom contract. An empty config is intentional and has its own fingerprint.
 func NewModelInputContract(config ModelInputContractConfig) (ModelInputContract, error) {
 	contract := ModelInputContract{Version: modelInputContractVersion, Profile: config.Profile, QueryInstruction: config.QueryInstruction}
+	hasEncoderOverrides := config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{})
 	switch config.Profile {
 	case "":
-		if hasModelInputOverrides(config) {
+		if hasEncoderOverrides || config.QueryInstruction != "" {
 			return ModelInputContract{}, errors.New("empty model-input contract cannot define encoders")
 		}
-	case ModelInputProfileOpenAICompatible:
-		if config.QueryInstruction != "" {
-			return ModelInputContract{}, errors.New("openai-compatible profile cannot define a query instruction")
-		}
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "openai-compatible/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-	case ModelInputProfileVoyage:
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "voyage/document-query/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeDocument, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeQuery, Template: modelInputContentSlot}
-	case ModelInputProfileMistral:
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "mistral/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-	case ModelInputProfileNomic:
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "nomic/search/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: "search_document: " + modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: "search_query: " + modelInputContentSlot}
-	case ModelInputProfileE5:
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "e5/asymmetric/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: "passage: " + modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: "query: " + modelInputContentSlot}
-	case ModelInputProfileBGEM3:
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "bge-m3/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-	case ModelInputProfileGTE:
-		if hasModelInputOverrides(config) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "gte/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-	case ModelInputProfileQwen3:
-		if config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		if err := validateQueryInstruction(config.QueryInstruction, false); err != nil {
-			return ModelInputContract{}, err
-		}
-		contract.CompatibilityID = "qwen3/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: queryInstructionTemplate(config.QueryInstruction)}
-	case ModelInputProfileQueryInstruction:
-		if config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		if err := validateQueryInstruction(config.QueryInstruction, true); err != nil {
-			return ModelInputContract{}, err
-		}
-		contract.CompatibilityID = "query-instruction/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: queryInstructionTemplate(config.QueryInstruction)}
 	case ModelInputProfileCustom:
 		if config.QueryInstruction != "" {
 			return ModelInputContract{}, errors.New("custom model-input contracts must encode instructions in their explicit query template")
@@ -168,10 +122,25 @@ func NewModelInputContract(config ModelInputContractConfig) (ModelInputContract,
 		contract.Document = config.Document
 		contract.Query = config.Query
 	default:
-		if strings.HasPrefix(string(config.Profile), "alias:") {
-			return ModelInputContract{}, errors.New("opaque model-input aliases require an explicit compatibility contract")
+		builtin, ok := builtinModelInputProfiles[config.Profile]
+		if !ok {
+			if strings.HasPrefix(string(config.Profile), "alias:") {
+				return ModelInputContract{}, errors.New("opaque model-input aliases require an explicit compatibility contract")
+			}
+			return ModelInputContract{}, fmt.Errorf("unknown built-in model-input profile %q", config.Profile)
 		}
-		return ModelInputContract{}, fmt.Errorf("unknown built-in model-input profile %q", config.Profile)
+		if hasEncoderOverrides {
+			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
+		}
+		if !builtin.queryInstruction && config.QueryInstruction != "" {
+			return ModelInputContract{}, fmt.Errorf("%s profile cannot define a query instruction", config.Profile)
+		}
+		if err := validateQueryInstruction(config.QueryInstruction, builtin.requiresInstruction); err != nil {
+			return ModelInputContract{}, err
+		}
+		contract.CompatibilityID = builtin.compatibilityID
+		contract.Document = ModelInputEncoder{Mode: builtin.documentMode, Template: builtin.documentPrefix + modelInputContentSlot}
+		contract.Query = ModelInputEncoder{Mode: builtin.queryMode, Template: builtin.queryPrefix + queryInstructionTemplate(config.QueryInstruction)}
 	}
 	if err := validateModelInputContractFields(contract); err != nil {
 		return ModelInputContract{}, err
@@ -262,10 +231,6 @@ func validateModelInputContractFields(contract ModelInputContract) error {
 		return err
 	}
 	return validateModelInputEncoder("query", contract.Query)
-}
-
-func hasModelInputOverrides(config ModelInputContractConfig) bool {
-	return config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) || config.QueryInstruction != ""
 }
 
 func validateQueryInstruction(instruction string, required bool) error {
