@@ -116,9 +116,10 @@ type Vault struct {
 	metadata *store.Store
 	blobs    *blob.Store
 
-	lifecycle sync.RWMutex
-	mutation  sync.Mutex
-	closed    bool
+	lifecycle    sync.RWMutex
+	mutation     sync.Mutex
+	preservation sync.RWMutex
+	closed       bool
 
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
 	// after durable physical publication. Production constructors leave it nil.
@@ -805,6 +806,8 @@ func (v *Vault) EmptyTrash(
 	if maxRoots == 0 {
 		maxRoots = DefaultTrashEmptyMaxRoots
 	}
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -843,6 +846,8 @@ func (v *Vault) RepairContent(
 		return RepairReceipt{}, errors.New("repair content size must not be negative")
 	}
 
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	var receipt RepairReceipt
@@ -1394,6 +1399,8 @@ func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) 
 		return PackReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Pack(ctx, v.metadata, v.blobs, opts.MaxBytes)

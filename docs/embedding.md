@@ -369,6 +369,47 @@ final tree; an existing directory does not mean “move into.” The complete fi
 tree is validated before any change, so embedded applications can express file
 or directory swaps and nested moves without temporary names or partial completion.
 
+## Back up and restore an embedded vault
+
+An application that owns a vault in-process can use the same portable,
+topology-independent backup format as the daemon:
+
+```go
+repository, err := docbank.InitBackupRepository(backupRoot)
+if err != nil {
+    return err
+}
+snapshot, err := vault.CreateBackup(ctx, repository, docbank.BackupOptions{
+    Tag: "before-import",
+})
+if err != nil {
+    return err
+}
+proof, err := repository.Verify(ctx, docbank.BackupVerifyOptions{
+    SnapshotID: snapshot.ID,
+})
+if err != nil {
+	return err
+}
+if len(proof.Problems) != 0 {
+	return fmt.Errorf("backup verification found %d problems", len(proof.Problems))
+}
+_, err = vault.RestoreBackup(ctx, repository, docbank.BackupRestoreOptions{
+    SnapshotID: snapshot.ID,
+    Target:     restoreRoot,
+})
+return err
+```
+
+Use `OpenBackupRepository` after process restart. `Snapshots` lists immutable
+recovery points in chronological order. Capture holds a preservation lease for
+the complete snapshot, but ordinary appends resume after Docbank pins the short
+SQLite metadata view. Physical maintenance waits until the manifest is
+published. Restore always targets a separate root, rejects overlap with the
+live vault or repository, and proves content, SQLite integrity, and manifest
+statistics before publication. The embedded restore path reconstructs a fresh
+fixed primary; deployment-specific secondary-store placement is not restored.
+
 ## Maintain physical storage
 
 Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the
