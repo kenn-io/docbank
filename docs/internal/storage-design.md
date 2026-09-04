@@ -22,6 +22,11 @@ These layers must not be collapsed. Node reachability is product policy; blob
 membership is docbank's physical authority boundary; offsets, reader caches,
 and repacking are storage mechanics.
 
+Visual-preview generations use the canonical recipe fingerprint. The local
+processor descriptor names byte-producing choices without treating the ambient
+Go runtime version as identity; a descriptor revision is the deliberate
+re-render signal.
+
 Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.

@@ -381,6 +381,10 @@ func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
 	assert.Equal(t, 4096, preview.Output.Width)
 	assert.Equal(t, 2, preview.Output.Height)
 	assert.Equal(t, receipt.Version.ID, preview.Version.ID)
+	assert.Equal(t, "6391e667d07b0aab1622d2b4167ffe66496fe7d336beb603401d96cd8a11a641",
+		preview.Recipe.ProcessorFingerprint)
+	assert.Equal(t, "03f89b744cc013004c89b1babe6d779ee043652519c586453bcde761bd7a4b04",
+		preview.RecipeFingerprint)
 
 	retry, err := vault.EnsureVisualPreview(t.Context(), receipt.Version.ID)
 	require.NoError(t, err)
