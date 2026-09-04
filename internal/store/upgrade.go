@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"go.kenn.io/kit/pack"
 
@@ -70,17 +69,6 @@ var (
 	renameUpgradeFile         = os.Rename
 	removeInvalidUpgradeStage = removeUpgradeFileSet
 )
-
-type currentSchemaColumnsCacheKey struct {
-	driverName string
-	schemaSQL  string
-}
-
-var currentSchemaColumnsCache = struct {
-	sync.Mutex
-
-	values map[currentSchemaColumnsCacheKey]map[string][]string
-}{values: make(map[currentSchemaColumnsCacheKey]map[string][]string)}
 
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
@@ -261,26 +249,7 @@ func validateCurrentSchemaColumns(
 }
 
 func canonicalCurrentSchemaColumns(driver docsqlite.Driver) (map[string][]string, error) {
-	key := currentSchemaColumnsCacheKey{driverName: driver.Name(), schemaSQL: schemaSQL}
-	currentSchemaColumnsCache.Lock()
-	columns, ok := currentSchemaColumnsCache.values[key]
-	currentSchemaColumnsCache.Unlock()
-	if ok {
-		return cloneSchemaColumns(columns), nil
-	}
-
-	columns, err := deriveCurrentSchemaColumns(driver)
-	if err != nil {
-		return nil, err
-	}
-	currentSchemaColumnsCache.Lock()
-	if cached, ok := currentSchemaColumnsCache.values[key]; ok {
-		currentSchemaColumnsCache.Unlock()
-		return cloneSchemaColumns(cached), nil
-	}
-	currentSchemaColumnsCache.values[key] = cloneSchemaColumns(columns)
-	currentSchemaColumnsCache.Unlock()
-	return cloneSchemaColumns(columns), nil
+	return deriveCurrentSchemaColumns(driver)
 }
 
 func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]string, err error) {
@@ -319,14 +288,6 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 		slices.Sort(columns[table])
 	}
 	return columns, nil
-}
-
-func cloneSchemaColumns(columns map[string][]string) map[string][]string {
-	clone := make(map[string][]string, len(columns))
-	for table, names := range columns {
-		clone[table] = slices.Clone(names)
-	}
-	return clone
 }
 
 func validateV2Schema(db *sql.DB, blobs, packs []string) error {

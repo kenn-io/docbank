@@ -243,6 +243,21 @@ func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) {
 	assert.Contains(t, columns["blobs"], "synthetic_derivation_retry_269")
 }
 
+func TestCanonicalCurrentSchemaDerivationSeparatesSameNamedDrivers(t *testing.T) {
+	const extraColumn = "synthetic_driver_variant_269"
+	base := DefaultSQLiteDriver()
+	plain := &schemaVariantDriver{Driver: base}
+	variant := &schemaVariantDriver{Driver: base, extraColumn: extraColumn}
+
+	columns, err := canonicalCurrentSchemaColumns(plain)
+	require.NoError(t, err)
+	assert.NotContains(t, columns["blobs"], extraColumn)
+
+	columns, err = canonicalCurrentSchemaColumns(variant)
+	require.NoError(t, err)
+	assert.Contains(t, columns["blobs"], extraColumn)
+}
+
 type flakySchemaDriver struct {
 	docsqlite.Driver
 
@@ -255,6 +270,23 @@ func (d *flakySchemaDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.
 		return nil, errors.New("synthetic derivation failure")
 	}
 	return d.Driver.Open(path, opts)
+}
+
+type schemaVariantDriver struct {
+	docsqlite.Driver
+	extraColumn string
+}
+
+func (d *schemaVariantDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
+	db, err := d.Driver.Open(path, opts)
+	if err != nil || d.extraColumn == "" || opts.Access != docsqlite.Create {
+		return db, err
+	}
+	if _, err := db.Exec(schemaSQL + "\nALTER TABLE blobs ADD COLUMN " + d.extraColumn + " TEXT"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 func schemaSQLWithAddedColumn(t *testing.T, original, table, column string) string {
