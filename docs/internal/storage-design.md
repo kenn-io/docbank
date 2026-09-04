@@ -513,4 +513,4 @@ Unreleased development layouts are disposable; there is no speculative
 - Standalone pack and repack commands remain daemon/API operations; no CLI path
   may open the physical store directly. An application that exclusively owns
   an embedded vault may enter the same coordinated pack maintenance through
-  `pkg.Vault.Pack`.
+  `docbank.Vault.Pack`.
