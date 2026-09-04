@@ -44,12 +44,12 @@
       "type": "object", "additionalProperties": false,
       "required": ["coordinate_origin", "coordinate_space", "height", "orientation", "scale", "unit", "width"],
       "properties": {
-        "boxes": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/box"}},
+        "boxes": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/box"}},
         "coordinate_origin": {"enum": ["bottom_left", "top_left"]},
         "coordinate_space": {"enum": ["image", "page", "unit"]},
         "height": {"type": "integer", "minimum": 0},
         "orientation": {"type": "integer"},
-        "polygons": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/polygon"}},
+        "polygons": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/polygon"}},
         "scale": {"type": "integer", "minimum": 1},
         "unit": {"enum": ["normalized", "pixel", "point"]},
         "width": {"type": "integer", "minimum": 0}
@@ -141,7 +141,7 @@
       "required": ["locator", "order", "text"],
       "properties": {
         "confidence": {"$ref": "#/$defs/confidence"},
-        "heading_path": {"type": "array", "maxItems": 256, "items": {"type": "string", "minLength": 1}},
+        "heading_path": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1}},
         "locator": {"$ref": "#/$defs/locator"},
         "omissions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/omission"}},
         "order": {"type": "integer", "minimum": 0},
