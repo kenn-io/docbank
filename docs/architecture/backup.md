@@ -111,6 +111,11 @@ held for the complete capture. Maintenance takes that side exclusively, so GC,
 trash empty, verification, pack, and repack cannot remove or replace content
 authority still named by the pinned snapshot. The repository's exclusive lock
 independently prevents concurrent writers to the same snapshot repository.
+Embedded owners may run one host preparation callback inside the same short
+mutation freeze and declare immutable host files for Kit to capture as extras.
+This lets one manifest bind an application's catalog snapshot to Docbank's
+logical snapshot without extending the freeze across repository preparation or
+content streaming.
 
 Kit's structured progress events remain structured across the daemon boundary.
 The streaming create endpoint emits NDJSON stage updates followed by one

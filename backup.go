@@ -30,6 +30,13 @@ type BackupRepository struct {
 	repo *backup.Repo
 }
 
+// BackupExtraFile is one host-owned file captured in the snapshot and
+// restored beneath the target root at RecordAs.
+type BackupExtraFile struct {
+	Path     string
+	RecordAs string
+}
+
 // BackupOptions controls one embedded vault snapshot.
 type BackupOptions struct {
 	Tag         string
@@ -37,6 +44,11 @@ type BackupOptions struct {
 	Jobs        int
 	ForceUnlock bool
 	Progress    func(BackupProgress)
+	// Prepare runs while Docbank holds its short metadata freeze. It may
+	// create immutable host-owned files named by ExtraFiles; those files must
+	// remain unchanged until CreateBackup returns.
+	Prepare    func(context.Context) error
+	ExtraFiles []BackupExtraFile
 }
 
 // BackupVerifyOptions controls repository verification. SnapshotID selects
@@ -209,7 +221,8 @@ func (v *Vault) CreateBackup(
 		backup.CreateOptions{
 			Tag: opts.Tag, ZstdLevel: opts.ZstdLevel, Jobs: opts.Jobs,
 			ForceUnlock: opts.ForceUnlock, Progress: backupProgressCallback(opts.Progress),
-			Freezer: &vaultBackupFreezer{vault: v},
+			Freezer: &vaultBackupFreezer{vault: v, prepare: opts.Prepare},
+			Extras:  backup.ExtrasSpec{Files: backupExtraFiles(opts.ExtraFiles)},
 		})
 	if err != nil {
 		return BackupSnapshot{}, fmt.Errorf("creating backup snapshot: %w", err)
@@ -304,8 +317,9 @@ func (v *Vault) RestoreBackup(
 }
 
 type vaultBackupFreezer struct {
-	vault *Vault
-	held  bool
+	vault   *Vault
+	prepare func(context.Context) error
+	held    bool
 }
 
 func (f *vaultBackupFreezer) Begin(ctx context.Context) error {
@@ -317,6 +331,13 @@ func (f *vaultBackupFreezer) Begin(ctx context.Context) error {
 	}
 	f.vault.mutation.Lock()
 	f.held = true
+	if f.prepare != nil {
+		if err := f.prepare(ctx); err != nil {
+			f.held = false
+			f.vault.mutation.Unlock()
+			return fmt.Errorf("preparing host backup files: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -339,6 +360,17 @@ func backupProgressCallback(callback func(BackupProgress)) func(backup.ProgressE
 			BytesDone: event.BytesDone, BytesTotal: event.BytesTotal, Final: event.Final,
 		})
 	}
+}
+
+func backupExtraFiles(files []BackupExtraFile) []backup.ExtrasFileSpec {
+	if len(files) == 0 {
+		return nil
+	}
+	extraFiles := make([]backup.ExtrasFileSpec, len(files))
+	for i, file := range files {
+		extraFiles[i] = backup.ExtrasFileSpec{Path: file.Path, RecordAs: file.RecordAs}
+	}
+	return extraFiles
 }
 
 func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {

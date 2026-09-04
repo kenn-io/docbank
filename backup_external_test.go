@@ -2,6 +2,8 @@ package docbank_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +15,106 @@ import (
 
 	docbank "go.kenn.io/docbank"
 )
+
+func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+
+	extraPath := filepath.Join(t.TempDir(), "catalog.sqlite")
+	prepared := make(chan struct{})
+	resume := make(chan struct{})
+	var resumeOnce sync.Once
+	t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
+	type backupResult struct {
+		snapshot docbank.BackupSnapshot
+		err      error
+	}
+	backupDone := make(chan backupResult, 1)
+	go func() {
+		snapshot, createErr := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+			Prepare: func(ctx context.Context) error {
+				close(prepared)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-resume:
+				}
+				return os.WriteFile(extraPath, []byte("host catalog\n"), 0o600)
+			},
+			ExtraFiles: []docbank.BackupExtraFile{{
+				Path: extraPath, RecordAs: "host/catalog.sqlite",
+			}},
+		})
+		backupDone <- backupResult{snapshot: snapshot, err: createErr}
+	}()
+	select {
+	case <-prepared:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "backup preparation did not begin")
+	}
+
+	putDone := make(chan error, 1)
+	go func() {
+		_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+			MediaType: "text/plain",
+		})
+		putDone <- putErr
+	}()
+	select {
+	case putErr := <-putDone:
+		require.FailNow(t, "content mutation completed during host preparation", "error: %v", putErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	resumeOnce.Do(func() { close(resume) })
+	result := <-backupDone
+	require.NoError(t, result.err)
+	require.NoError(t, <-putDone)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	restored, err := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+		SnapshotID: result.snapshot.ID,
+		Target:     target,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, restored.ExtrasFiles)
+	got, err := os.ReadFile(filepath.Join(target, "host", "catalog.sqlite"))
+	require.NoError(t, err)
+	require.Equal(t, "host catalog\n", string(got))
+}
+
+func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+
+	prepareErr := errors.New("prepare host snapshot")
+	_, err = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+		Prepare: func(context.Context) error { return prepareErr },
+	})
+	require.ErrorIs(t, err, prepareErr)
+
+	putDone := make(chan error, 1)
+	go func() {
+		_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+			MediaType: "text/plain",
+		})
+		putDone <- putErr
+	}()
+	select {
+	case putErr := <-putDone:
+		require.NoError(t, putErr)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "content mutation remained blocked after preparation failed")
+	}
+}
 
 func TestEmbeddedBackupRoundTrip(t *testing.T) {
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})

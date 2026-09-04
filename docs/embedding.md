@@ -381,6 +381,12 @@ if err != nil {
 }
 snapshot, err := vault.CreateBackup(ctx, repository, docbank.BackupOptions{
     Tag: "before-import",
+	Prepare: func(ctx context.Context) error {
+		return snapshotApplicationCatalog(ctx, catalogSnapshot)
+	},
+	ExtraFiles: []docbank.BackupExtraFile{{
+		Path: catalogSnapshot, RecordAs: "application/catalog.sqlite",
+	}},
 })
 if err != nil {
     return err
@@ -405,14 +411,17 @@ return err
 Use `OpenBackupRepository` after process restart. `Snapshots` lists immutable
 recovery points in chronological order. Capture holds a preservation lease for
 the complete snapshot, but ordinary appends resume after Docbank pins the short
-SQLite metadata view. Physical maintenance waits until the manifest is
-published. Restore always targets a separate root, rejects overlap with the
-live vault or repository, and proves content, SQLite integrity, and manifest
-statistics before publication. An embedding application supplies any additional
-storage it owns through `ProtectedRoots`; Docbank applies the same canonical,
-filesystem-aware exclusion before restore cleanup. The embedded restore path
-reconstructs a fresh fixed primary; deployment-specific secondary-store
-placement is not restored.
+SQLite metadata view. An embedding application may use `Prepare` to create an
+immutable snapshot of its own catalog while that freeze is held, then declare
+the file in `ExtraFiles` so the same manifest covers both authorities. Prepared
+files must remain unchanged until `CreateBackup` returns. Physical maintenance
+waits until the manifest is published. Restore always targets a separate root,
+rejects overlap with the live vault or repository, and proves content, SQLite
+integrity, and manifest statistics before publication. An embedding application
+supplies any additional storage it owns through `ProtectedRoots`; Docbank
+applies the same canonical, filesystem-aware exclusion before restore cleanup.
+The embedded restore path reconstructs a fresh fixed primary;
+deployment-specific secondary-store placement is not restored.
 
 ## Maintain physical storage
 
