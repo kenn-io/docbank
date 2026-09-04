@@ -52,7 +52,7 @@ func newRestoreTargetCoordinator(
 	target, repoRoot, vaultRoot string, overwrite bool,
 ) restoreTargetCoordinator {
 	return &platformRestoreTargetCoordinator{
-		inner: backupapp.NewRestoreTargetCoordinator(target, repoRoot, vaultRoot, overwrite),
+		inner: backupapp.NewRestoreTargetCoordinator(target, repoRoot, vaultRoot, nil, overwrite),
 	}
 }
 

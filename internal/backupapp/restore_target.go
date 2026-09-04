@@ -29,17 +29,18 @@ type RestoreTargetCoordinator struct {
 	target         string
 	repositoryRoot string
 	vaultRoot      string
+	protectedRoots []string
 	overwrite      bool
 	launch         *home.Lock
 	ancestors      *home.Lock
 }
 
 func NewRestoreTargetCoordinator(
-	target, repositoryRoot, vaultRoot string, overwrite bool,
+	target, repositoryRoot, vaultRoot string, protectedRoots []string, overwrite bool,
 ) *RestoreTargetCoordinator {
 	return &RestoreTargetCoordinator{
 		target: target, repositoryRoot: repositoryRoot, vaultRoot: vaultRoot,
-		overwrite: overwrite,
+		protectedRoots: append([]string(nil), protectedRoots...), overwrite: overwrite,
 	}
 }
 
@@ -135,7 +136,8 @@ func (c *RestoreTargetCoordinator) validate(root *os.Root) error {
 		return fmt.Errorf("backup restore target was replaced while acquiring coordination: %w",
 			ErrRestoreTargetChanged)
 	}
-	if err := ValidateDisjointRoots(c.target, c.repositoryRoot, c.vaultRoot); err != nil {
+	protectedRoots := append([]string{c.repositoryRoot, c.vaultRoot}, c.protectedRoots...)
+	if err := ValidateDisjointRoots(c.target, protectedRoots...); err != nil {
 		return err
 	}
 	if !c.overwrite {

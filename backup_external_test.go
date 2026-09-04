@@ -3,6 +3,7 @@ package docbank_test
 import (
 	"bytes"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -174,4 +175,43 @@ func TestEmbeddedRestoreRejectsLiveVaultOverlap(t *testing.T) {
 		Target:     filepath.Join(liveRoot, "restore"),
 	})
 	require.ErrorIs(t, err, docbank.ErrBackupRestoreTargetOverlap)
+}
+
+func TestEmbeddedRestoreRejectsHostProtectedRoot(t *testing.T) {
+	liveRoot := filepath.Join(t.TempDir(), "live")
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: liveRoot})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("protected content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+	snapshot, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{})
+	require.NoError(t, err)
+
+	protectedRoot := t.TempDir()
+	t.Run("direct missing target", func(t *testing.T) {
+		target := filepath.Join(protectedRoot, "missing-restore-target")
+		_, restoreErr := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+			SnapshotID:     snapshot.ID,
+			Target:         target,
+			ProtectedRoots: []string{protectedRoot},
+		})
+		require.ErrorIs(t, restoreErr, docbank.ErrBackupRestoreTargetOverlap)
+		require.NoDirExists(t, target)
+	})
+
+	t.Run("symlink alias with missing target", func(t *testing.T) {
+		alias := filepath.Join(t.TempDir(), "protected-alias")
+		if err := os.Symlink(protectedRoot, alias); err != nil {
+			t.Skipf("symlink creation unavailable: %v", err)
+		}
+		target := filepath.Join(alias, "missing-restore-target")
+		_, restoreErr := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+			SnapshotID:     snapshot.ID,
+			Target:         target,
+			ProtectedRoots: []string{protectedRoot},
+		})
+		require.ErrorIs(t, restoreErr, docbank.ErrBackupRestoreTargetOverlap)
+		require.NoDirExists(t, filepath.Join(protectedRoot, "missing-restore-target"))
+	})
 }

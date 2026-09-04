@@ -52,12 +52,15 @@ type BackupVerifyOptions struct {
 
 // BackupRestoreOptions controls restore into a separate vault root.
 type BackupRestoreOptions struct {
-	SnapshotID  string
-	Target      string
-	Overwrite   bool
-	Jobs        int
-	ForceUnlock bool
-	Progress    func(BackupProgress)
+	SnapshotID string
+	Target     string
+	// ProtectedRoots are host-owned storage trees that the restore target must
+	// not equal, contain, or be contained by.
+	ProtectedRoots []string
+	Overwrite      bool
+	Jobs           int
+	ForceUnlock    bool
+	Progress       func(BackupProgress)
 }
 
 // BackupProgress reports one structured stage update.
@@ -264,11 +267,12 @@ func (v *Vault) RestoreBackup(
 	if err != nil {
 		return BackupRestoreReport{}, fmt.Errorf("resolving backup restore target: %w", err)
 	}
-	if err := backupapp.ValidateDisjointRoots(target, repository.repo.Root(), v.root.Name()); err != nil {
+	protectedRoots := append([]string{repository.repo.Root(), v.root.Name()}, opts.ProtectedRoots...)
+	if err := backupapp.ValidateDisjointRoots(target, protectedRoots...); err != nil {
 		return BackupRestoreReport{}, err
 	}
 	coordinator := backupapp.NewRestoreTargetCoordinator(
-		target, repository.repo.Root(), v.root.Name(), opts.Overwrite,
+		target, repository.repo.Root(), v.root.Name(), opts.ProtectedRoots, opts.Overwrite,
 	)
 	if err := coordinator.Prepare(ctx); err != nil {
 		return BackupRestoreReport{}, fmt.Errorf("preparing backup restore target: %w", err)
