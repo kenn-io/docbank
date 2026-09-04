@@ -476,6 +476,7 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		return fmt.Errorf("listing embedding failures for validation: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, failureRows.Close()) }()
+	var failures []EmbeddingFailureRecord
 	for failureRows.Next() {
 		var record EmbeddingFailureRecord
 		if err := failureRows.Scan(&record.ContentVersionID,
@@ -486,12 +487,18 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		if err := validateEmbeddingFailureRecord(record); err != nil {
 			return fmt.Errorf("validating embedding failure: %w", err)
 		}
+		failures = append(failures, record)
 	}
 	if err := failureRows.Err(); err != nil {
 		return fmt.Errorf("iterating embedding failures for validation: %w", err)
 	}
 	if err := failureRows.Close(); err != nil {
 		return fmt.Errorf("closing embedding failures after validation: %w", err)
+	}
+	for _, record := range failures {
+		if err := validateEmbeddingFailureBinding(ctx, tx, record); err != nil {
+			return fmt.Errorf("validating embedding failure profile binding: %w", err)
+		}
 	}
 
 	var invalid int

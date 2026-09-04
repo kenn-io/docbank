@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -163,6 +164,77 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 				require.NoError(t, err)
 			}
 			_, err := s.db.Exec(testCase.mutation)
+			require.NoError(t, err)
+			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
+		})
+	}
+}
+
+func TestEmbeddingCatalogMetadataRejectsFailureOutsideProfile(t *testing.T) {
+	for _, testCase := range []struct {
+		name, bindingID string
+		inputKind       EmbeddingInputKind
+		want            string
+	}{
+		{name: "missing binding", bindingID: "missing", inputKind: document.EmbeddingInputOriginalFile,
+			want: "processing profile binding"},
+		{name: "wrong input kind", bindingID: "chunk", inputKind: document.EmbeddingInputOriginalFile,
+			want: "does not match processing profile binding kind"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+				BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
+				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+			}))
+			_, err := s.db.Exec(`UPDATE embedding_failures SET binding_id=?,input_kind=?`,
+				testCase.bindingID, testCase.inputKind)
+			require.NoError(t, err)
+			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
+		})
+	}
+}
+
+func TestEmbeddingCatalogPolicyLimitsAreValidatedOutsideSQLite(t *testing.T) {
+	for _, testCase := range []struct {
+		name, table, mutation, want string
+		args                        []any
+	}{
+		{
+			name: "descriptor bytes", table: "embedding_vector_spaces",
+			mutation: `UPDATE embedding_vector_spaces SET descriptor_json=?`,
+			args:     []any{strings.Repeat("x", (64<<10)+1)}, want: "descriptor JSON exceeds bounds",
+		},
+		{
+			name: "projected text", table: "embedding_vector_spaces",
+			mutation: `UPDATE embedding_vector_spaces SET provider_descriptor=?`,
+			args:     []any{strings.Repeat("x", maxEmbeddingCatalogIDBytes+1)}, want: "provider descriptor",
+		},
+		{
+			name: "dimensions", table: "embedding_vector_spaces",
+			mutation: `UPDATE embedding_vector_spaces SET dimensions=?`,
+			args:     []any{maxEmbeddingDimensions + 1}, want: "dimensions are invalid",
+		},
+		{
+			name: "payload bytes", table: "embedding_vector_sets",
+			mutation: `UPDATE embedding_vector_sets SET payload_size=?`,
+			args:     []any{(64 << 20) + 1}, want: "payload size is invalid",
+		},
+		{
+			name: "row count", table: "embedding_vector_sets",
+			mutation: `UPDATE embedding_vector_sets SET row_count=?`,
+			args:     []any{maxEmbeddingCatalogRows + 1}, want: "count or head authority is corrupt",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+				document.EmbeddingInputOriginalFile, "optional", "")
+			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+			_, err := s.db.Exec(`DROP TRIGGER embedding_` + strings.TrimPrefix(testCase.table, "embedding_") + `_immutable_update`)
+			require.NoError(t, err)
+			_, err = s.db.Exec(testCase.mutation, testCase.args...)
 			require.NoError(t, err)
 			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
 		})

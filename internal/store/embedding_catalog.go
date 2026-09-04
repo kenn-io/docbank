@@ -494,12 +494,8 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		binding, _, err := embeddingProfileBindingAuthority(ctx, tx, record.ProcessingProfileFingerprint, record.BindingID)
-		if err != nil {
+		if err := validateEmbeddingFailureBinding(ctx, tx, record); err != nil {
 			return err
-		}
-		if binding.InputKind != record.InputKind {
-			return errors.New("embedding failure does not match processing profile binding kind")
 		}
 		var count int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
@@ -510,7 +506,7 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 		if count != 1 {
 			return ErrNotFound
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_failures(
+		_, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
 			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at
 		) VALUES(?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
 		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at`, record.ContentVersionID,
@@ -518,6 +514,17 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 			record.FailureCode, record.FailedAt)
 		return err
 	})
+}
+
+func validateEmbeddingFailureBinding(ctx context.Context, query metadataQuerier, record EmbeddingFailureRecord) error {
+	binding, _, err := embeddingProfileBindingAuthority(ctx, query, record.ProcessingProfileFingerprint, record.BindingID)
+	if err != nil {
+		return err
+	}
+	if binding.InputKind != record.InputKind {
+		return errors.New("embedding failure does not match processing profile binding kind")
+	}
+	return nil
 }
 
 func embeddingProfileBindingAuthority(ctx context.Context, query metadataQuerier, profileFingerprint, bindingID string) (document.EmbeddingBindingV1, document.FingerprintSet, error) {
