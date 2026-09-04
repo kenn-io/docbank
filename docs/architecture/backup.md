@@ -133,7 +133,8 @@ Standalone restore is daemon-mediated; embedded restore is invoked through the
 open vault but never mutates that running store. Before Kit receives a target,
 Docbank canonicalizes its existing path prefix and
 rejects any parent, descendant, or symlink alias overlapping the live vault or
-repository. Filesystem identity supplements those lexical checks for case- or
+repository, plus any additional roots protected by an embedding application.
+Filesystem identity supplements those lexical checks for case- or
 normalization-equivalent aliases. Kit then opens the target without following a
 final symlink and passes that same held `os.Root` to Docbank's coordinator
 before cleanup or publication. The coordinator repeats the identity, overlap,

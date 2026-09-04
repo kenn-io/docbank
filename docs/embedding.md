@@ -395,8 +395,9 @@ if len(proof.Problems) != 0 {
 	return fmt.Errorf("backup verification found %d problems", len(proof.Problems))
 }
 _, err = vault.RestoreBackup(ctx, repository, docbank.BackupRestoreOptions{
-    SnapshotID: snapshot.ID,
-    Target:     restoreRoot,
+	SnapshotID:    snapshot.ID,
+	Target:        restoreRoot,
+	ProtectedRoots: applicationStorageRoots,
 })
 return err
 ```
@@ -407,8 +408,11 @@ the complete snapshot, but ordinary appends resume after Docbank pins the short
 SQLite metadata view. Physical maintenance waits until the manifest is
 published. Restore always targets a separate root, rejects overlap with the
 live vault or repository, and proves content, SQLite integrity, and manifest
-statistics before publication. The embedded restore path reconstructs a fresh
-fixed primary; deployment-specific secondary-store placement is not restored.
+statistics before publication. An embedding application supplies any additional
+storage it owns through `ProtectedRoots`; Docbank applies the same canonical,
+filesystem-aware exclusion before restore cleanup. The embedded restore path
+reconstructs a fresh fixed primary; deployment-specific secondary-store
+placement is not restored.
 
 ## Maintain physical storage
 
