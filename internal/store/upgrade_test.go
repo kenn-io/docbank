@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -206,6 +207,95 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
+	originalSchema := schemaSQL
+	t.Cleanup(func() { schemaSQL = originalSchema })
+
+	for _, table := range currentSchemaTables {
+		for _, test := range v090UpgradeDrivers() {
+			t.Run(table+"/"+test.name, func(t *testing.T) {
+				schemaSQL = schemaSQLWithAddedColumn(t, originalSchema, table, "synthetic_schema_269")
+
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+
+				reopened, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				require.NoError(t, reopened.Close())
+			})
+		}
+	}
+}
+
+func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) {
+	originalSchema := schemaSQL
+	t.Cleanup(func() { schemaSQL = originalSchema })
+	schemaSQL = schemaSQLWithAddedColumn(t, originalSchema, "blobs", "synthetic_derivation_retry_269")
+	driver := &flakySchemaDriver{Driver: DefaultSQLiteDriver()}
+
+	_, err := canonicalCurrentSchemaColumns(driver)
+	require.ErrorContains(t, err, "synthetic derivation failure")
+
+	columns, err := canonicalCurrentSchemaColumns(driver)
+	require.NoError(t, err)
+	assert.Contains(t, columns["blobs"], "synthetic_derivation_retry_269")
+}
+
+type flakySchemaDriver struct {
+	docsqlite.Driver
+
+	failed bool
+}
+
+func (d *flakySchemaDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
+	if !d.failed {
+		d.failed = true
+		return nil, errors.New("synthetic derivation failure")
+	}
+	return d.Driver.Open(path, opts)
+}
+
+func schemaSQLWithAddedColumn(t *testing.T, original, table, column string) string {
+	t.Helper()
+	lineEnding := "\n"
+	if strings.Contains(original, "\r\n") {
+		lineEnding = "\r\n"
+	}
+	result := strings.Replace(
+		original,
+		"CREATE TABLE IF NOT EXISTS "+table+" ("+lineEnding,
+		"CREATE TABLE IF NOT EXISTS "+table+" ("+lineEnding+
+			"    "+column+" TEXT,"+lineEnding,
+		1,
+	)
+	require.NotEqual(t, original, result)
+	return result
+}
+
+func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(`ALTER TABLE blobs ADD COLUMN synthetic_unexpected_269 TEXT`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			_, err = Open(dbPath, test.driver)
+			require.ErrorContains(t, err, "schema version 4 has an unexpected layout")
+		})
+	}
+}
+
 func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 	layouts := []struct {
 		name     string
@@ -261,7 +351,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 				})
 				require.NoError(t, err)
-				kind, err := classifyDatabaseSchema(backup)
+				kind, err := classifyDatabaseSchema(driver.driver, backup)
 				require.NoError(t, err)
 				assert.Equal(t, 2, kind.version)
 				assert.NotNil(t, kind.source)
@@ -300,7 +390,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 			})
 			require.NoError(t, err)
-			kind, err := classifyDatabaseSchema(backup)
+			kind, err := classifyDatabaseSchema(test.driver, backup)
 			require.NoError(t, err)
 			assert.Equal(t, 3, kind.version)
 			assert.NotNil(t, kind.source)
@@ -622,7 +712,7 @@ func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) {
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	require.NoError(t, err)
-	kind, err := classifyDatabaseSchema(db)
+	kind, err := classifyDatabaseSchema(driver, db)
 	require.NoError(t, err)
 	assert.Equal(t, 1, kind.version, "the released source is restored after publication fails")
 	assert.NotNil(t, kind.source)

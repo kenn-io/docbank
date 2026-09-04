@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"go.kenn.io/kit/pack"
 
@@ -70,6 +71,21 @@ var (
 	removeInvalidUpgradeStage = removeUpgradeFileSet
 )
 
+type currentSchemaColumnsCacheKey struct {
+	driverName string
+	schemaSQL  string
+}
+
+var currentSchemaColumnsCache = struct {
+	sync.Mutex
+
+	values map[currentSchemaColumnsCacheKey]map[string][]string
+}{values: make(map[currentSchemaColumnsCacheKey]map[string][]string)}
+
+var currentSchemaTables = [...]string{
+	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
+}
+
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in
 // a public release. Older layouts rebuild through the same deterministic JSONL
 // authority used by backup and restore; released schemas are never mutated in
@@ -103,7 +119,7 @@ func prepareReleasedSchemaUpgrade(path string, driver docsqlite.Driver) error {
 	if err != nil {
 		return fmt.Errorf("inspecting database schema with %s: %w", driver.Name(), err)
 	}
-	kind, classifyErr := classifyDatabaseSchema(db)
+	kind, classifyErr := classifyDatabaseSchema(driver, db)
 	closeErr := db.Close()
 	if classifyErr != nil || closeErr != nil {
 		return errors.Join(classifyErr, closeErr)
@@ -146,7 +162,7 @@ func validateReleasedStorageSchemas() error {
 	return nil
 }
 
-func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
+func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema, error) {
 	blobs, err := tableColumns(db, "blobs")
 	if err != nil {
 		return databaseSchema{}, err
@@ -175,7 +191,7 @@ func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
 			)
 		}
 		if version == currentStorageSchemaVersion {
-			if err := validateCurrentSchemaColumns(db, blobs, packs, vaultMetadata); err != nil {
+			if err := validateCurrentSchemaColumns(driver, db, blobs, packs, vaultMetadata); err != nil {
 				return databaseSchema{}, err
 			}
 			return databaseSchema{version: version, current: true}, nil
@@ -214,45 +230,27 @@ func classifyDatabaseSchema(db *sql.DB) (databaseSchema, error) {
 }
 
 func validateCurrentSchemaColumns(
-	db *sql.DB,
+	driver docsqlite.Driver, db *sql.DB,
 	blobs, packs, vaultMetadata []string,
 ) error {
-	currentBlobColumns := []string{
-		metadataCreatedAtField, "hash", metadataSizeField,
+	wantTables, err := canonicalCurrentSchemaColumns(driver)
+	if err != nil {
+		return fmt.Errorf("deriving current schema columns: %w", err)
 	}
-	currentPackColumns := []string{
-		metadataCreatedAtField, "entry_count", "live_entries", "live_raw_bytes", "live_stored_bytes",
-		"max_live_raw_len", "max_live_stored_len", "pack_id", "scan_hash", "store_id", "stored_bytes",
-	}
-	currentVaultColumns := []string{"schema_version", "singleton", "vault_uid"}
-	if !slices.Equal(blobs, currentBlobColumns) || !slices.Equal(packs, currentPackColumns) ||
-		!slices.Equal(vaultMetadata, currentVaultColumns) {
+	if !slices.Equal(blobs, wantTables["blobs"]) || !slices.Equal(packs, wantTables["blob_packs"]) ||
+		!slices.Equal(vaultMetadata, wantTables["vault_metadata"]) {
 		return fmt.Errorf(
 			"opening database: schema version %d has an unexpected layout (blobs=%s blob_packs=%s vault_metadata=%s)",
 			currentStorageSchemaVersion,
 			strings.Join(blobs, ","), strings.Join(packs, ","), strings.Join(vaultMetadata, ","),
 		)
 	}
-	wantTables := map[string][]string{
-		"blob_stores": {
-			"binding", metadataCreatedAtField, "kind", "lifecycle", "name",
-			"ownership_epoch", "role", "store_id",
-		},
-		"blob_locations": {
-			columnBlobHash, "encoding", "generation", "kind", "pack_eligible",
-			"store_id", "stored_size",
-		},
-		"blob_pack_entries": {
-			columnBlobHash, "crc32c", "flags", "pack_id", "pack_offset",
-			"raw_len", "store_id", "stored_len",
-		},
-	}
-	for table, want := range wantTables {
+	for _, table := range []string{"blob_stores", "blob_locations", "blob_pack_entries"} {
 		got, err := tableColumns(db, table)
 		if err != nil {
 			return err
 		}
-		if !slices.Equal(got, want) {
+		if !slices.Equal(got, wantTables[table]) {
 			return fmt.Errorf(
 				"opening database: schema version %d has an unexpected %s layout (%s)",
 				currentStorageSchemaVersion, table, strings.Join(got, ","),
@@ -260,6 +258,75 @@ func validateCurrentSchemaColumns(
 		}
 	}
 	return nil
+}
+
+func canonicalCurrentSchemaColumns(driver docsqlite.Driver) (map[string][]string, error) {
+	key := currentSchemaColumnsCacheKey{driverName: driver.Name(), schemaSQL: schemaSQL}
+	currentSchemaColumnsCache.Lock()
+	columns, ok := currentSchemaColumnsCache.values[key]
+	currentSchemaColumnsCache.Unlock()
+	if ok {
+		return cloneSchemaColumns(columns), nil
+	}
+
+	columns, err := deriveCurrentSchemaColumns(driver)
+	if err != nil {
+		return nil, err
+	}
+	currentSchemaColumnsCache.Lock()
+	if cached, ok := currentSchemaColumnsCache.values[key]; ok {
+		currentSchemaColumnsCache.Unlock()
+		return cloneSchemaColumns(cached), nil
+	}
+	currentSchemaColumnsCache.values[key] = cloneSchemaColumns(columns)
+	currentSchemaColumnsCache.Unlock()
+	return cloneSchemaColumns(columns), nil
+}
+
+func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]string, err error) {
+	tempFile, err := os.CreateTemp("", "docbank-current-schema-*.db")
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary database: %w", err)
+	}
+	tempPath := tempFile.Name()
+	var db *sql.DB
+	defer func() {
+		var closeErr error
+		if db != nil {
+			closeErr = db.Close()
+		}
+		err = errors.Join(err, closeErr, os.Remove(tempPath))
+	}()
+	if err := tempFile.Close(); err != nil {
+		return nil, fmt.Errorf("closing temporary database file: %w", err)
+	}
+
+	db, err = driver.Open(tempPath, docsqlite.OpenOptions{
+		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("opening temporary database with %s: %w", driver.Name(), err)
+	}
+	if _, err := db.Exec(schemaSQL); err != nil {
+		return nil, fmt.Errorf("applying current schema to temporary database: %w", err)
+	}
+	columns = make(map[string][]string, len(currentSchemaTables))
+	for _, table := range currentSchemaTables {
+		columns[table], err = tableColumns(db, table)
+		if err != nil {
+			return nil, err
+		}
+		slices.Sort(columns[table])
+	}
+	return columns, nil
+}
+
+func cloneSchemaColumns(columns map[string][]string) map[string][]string {
+	clone := make(map[string][]string, len(columns))
+	for table, names := range columns {
+		clone[table] = slices.Clone(names)
+	}
+	return clone
 }
 
 func validateV2Schema(db *sql.DB, blobs, packs []string) error {
@@ -1004,7 +1071,7 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging database: %w", err)
 	}
-	kind, classifyErr := classifyDatabaseSchema(db)
+	kind, classifyErr := classifyDatabaseSchema(driver, db)
 	closeErr := db.Close()
 	if classifyErr != nil || closeErr != nil {
 		return errors.Join(classifyErr, closeErr)
