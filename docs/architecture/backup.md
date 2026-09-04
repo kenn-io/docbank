@@ -24,7 +24,7 @@ runtime records are not archive state. A restored copy is not trusted until
 ## Kit integration status
 
 The internal `backupapp` adapter supplies Kit with Docbank's frozen logical
-view: every authoritative `blobs` row, representation-neutral fidelity stats,
+view: the backup-authorized blob closure, representation-neutral fidelity stats,
 and mixed loose/packed content reads. A short daemon freeze opens and pins one
 deferred SQLite read transaction; the freeze then ends, writers resume into the
 WAL, and metadata, content membership, and fidelity statistics continue to see
@@ -148,10 +148,10 @@ terminal typed proof, with the SQLite scan and manifest-stat comparison
 reported separately; the non-streaming endpoint keeps agent output to one JSON
 document.
 
-Backup reachability is intentionally broader than GC reachability: every
-`blobs` row is captured, including a row that has become a GC candidate but has
-not yet been reclaimed. This preserves the deletion pipeline's regret window
-inside the snapshot.
+Backup captures every blob still referenced by a retained content version,
+rendition artifact, visual preview, or staged rendition source. A blob with no
+remaining reference is a GC candidate, and the snapshot excludes it rather than
+preserving it.
 
 The current JSONL authority round-trips the node allocator high-water mark,
 blobs, tree and trash state, content versions and current pointers, ingests,
