@@ -1,0 +1,72 @@
+package document
+
+import (
+	"errors"
+	"fmt"
+)
+
+const (
+	maxEmbeddingTokensPerGeneration = 1_000_000
+	maxTokenizerIdentityBytes       = 128
+)
+
+// ErrTokenizerLimit lets a tokenizer reject an input before allocating more
+// than the caller-authorized number of token boundaries.
+var ErrTokenizerLimit = errors.New("tokenizer token limit exceeded")
+
+// TokenizerIdentity pins the exact tokenizer vocabulary and segmentation
+// revision. It must equal the Tokenizer and TokenizerRevision declared by the
+// profile chunk policy. Model names are deliberately not tokenizer identities.
+type TokenizerIdentity struct {
+	Name     string `json:"name"`
+	Revision string `json:"revision"`
+}
+
+// TokenBoundary is one half-open rune range. A canonical tokenization is a
+// non-empty contiguous partition of the complete input string.
+type TokenBoundary struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+// Tokenizer returns exact rune boundaries and must honor limit before growing
+// its result beyond that many entries. PrefixTokenCountsMonotonic is an
+// implementation contract that a longer prefix never has fewer tokens; fitting
+// uses binary search only when it is true. It is a search strategy, not part
+// of the tokenizer's identity, because an honest tokenizer yields the same
+// inputs under either search.
+type Tokenizer interface {
+	Identity() TokenizerIdentity
+	PrefixTokenCountsMonotonic() bool
+	Tokenize(text string, limit int) ([]TokenBoundary, error)
+}
+
+func validateTokenizerIdentity(identity TokenizerIdentity) error {
+	if err := validateStableToken(identity.Name, "tokenizer name", maxTokenizerIdentityBytes); err != nil {
+		return err
+	}
+	return validateStableToken(identity.Revision, "tokenizer revision", maxTokenizerIdentityBytes)
+}
+
+func validateTokenBoundaries(tokens []TokenBoundary, runeCount, limit int) error {
+	if len(tokens) == 0 {
+		return errors.New("tokenizer must return at least one token for non-empty evidence")
+	}
+	if len(tokens) > limit {
+		return ErrTokenizerLimit
+	}
+	expectedStart := 0
+	for index, token := range tokens {
+		if token.Start != expectedStart {
+			return fmt.Errorf("tokenizer boundaries must be contiguous at token %d", index)
+		}
+		if token.End <= token.Start || token.End > runeCount {
+			return fmt.Errorf("tokenizer boundary %d leaves input bounds", index)
+		}
+		expectedStart = token.End
+	}
+	if expectedStart != runeCount {
+		return errors.New("tokenizer boundaries must cover the complete input contiguously")
+	}
+	return nil
+}
