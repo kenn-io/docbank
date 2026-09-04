@@ -143,6 +143,22 @@ func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
 		SetID: chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
+	for _, root := range []CurrentRenditionRoot{
+		{ID: "embedding-roundtrip-set", Kind: RenditionRootRetention,
+			TargetKind: RenditionRootEmbeddingSet, TargetID: chunk.ID,
+			FencingToken: 1, RecordedAt: embeddingCatalogTime},
+		{ID: "embedding-roundtrip-generation", Kind: RenditionRootRetention,
+			TargetKind: RenditionRootEmbeddingGeneration, TargetID: chunk.InputGeneration.ID,
+			FencingToken: 1, RecordedAt: embeddingCatalogTime},
+		{ID: "embedding-roundtrip-vector-set", Kind: RenditionRootRetention,
+			TargetKind: RenditionRootEmbeddingVectorSet, TargetID: chunk.VectorSet.ID,
+			FencingToken: 1, RecordedAt: embeddingCatalogTime},
+		{ID: "embedding-roundtrip-payload", Kind: RenditionRootRetention,
+			TargetKind: RenditionRootEmbeddingPayload, TargetID: chunk.VectorSet.PayloadBlobHash,
+			FencingToken: 1, RecordedAt: embeddingCatalogTime},
+	} {
+		require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), root))
+	}
 
 	var first, second bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &first))
@@ -160,6 +176,10 @@ func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
 		"optional", document.EmbeddingInputOriginalFile))
 	assert.Equal(t, chunk.ID, embeddingHeadSetIDForTest(t, restored, versionID, profile.Fingerprint,
 		"chunk", document.EmbeddingInputRenditionChunk))
+	var restoredRoots int
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots
+		WHERE root_id LIKE 'embedding-roundtrip-%' AND active=1`).Scan(&restoredRoots))
+	assert.Equal(t, 4, restoredRoots)
 }
 
 func TestEmbeddingCatalogDerivativePurgeAndGCLeaveOriginalAuthority(t *testing.T) {

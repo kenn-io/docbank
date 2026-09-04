@@ -360,13 +360,7 @@ func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write met
 	if err := exportRenditionJobs(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportRenditionJobWaiters(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
-		return err
-	}
-	return exportDerivativePurgeSuppressions(ctx, tx, write)
+	return exportRenditionJobWaiters(ctx, tx, write)
 }
 
 func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {

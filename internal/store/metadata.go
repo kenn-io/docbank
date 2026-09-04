@@ -446,7 +446,13 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportProcessingMetadata(ctx, tx, write); err != nil {
 		return err
 	}
-	return exportEmbeddingMetadata(ctx, tx, write)
+	if err := exportEmbeddingMetadata(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
 
 type metadataWrite func(any) error
