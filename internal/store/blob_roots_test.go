@@ -87,18 +87,6 @@ func TestBlobReachabilityRuleAgreesAcrossConsumers(t *testing.T) {
 		assert.Zero(t, references[unrooted], "%s must not count as referenced", unrooted)
 	}
 
-	canonical := make(map[string]struct{})
-	canonicalRows, err := s.db.QueryContext(ctx, `WITH canonical(hash) AS (`+
-		blobReferenceSetSQL(blobRootReferences)+`) SELECT hash FROM canonical`)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, canonicalRows.Close()) }()
-	for canonicalRows.Next() {
-		var hash string
-		require.NoError(t, canonicalRows.Scan(&hash))
-		canonical[hash] = struct{}{}
-	}
-	require.NoError(t, canonicalRows.Err())
-
 	authorized := make(map[string]struct{})
 	authorizedRows, err := s.db.QueryContext(ctx, BackupBlobAuthorityCTE()+
 		`SELECT hash FROM backup_authorized_blobs`)
@@ -110,7 +98,14 @@ func TestBlobReachabilityRuleAgreesAcrossConsumers(t *testing.T) {
 		authorized[hash] = struct{}{}
 	}
 	require.NoError(t, authorizedRows.Err())
-	assert.Equal(t, canonical, authorized)
+	expected := make(map[string]struct{}, len(references))
+	for hash := range references {
+		expected[hash] = struct{}{}
+	}
+	assert.Equal(t, expected, authorized)
+	for _, excluded := range []string{staged, orphan, purgePending} {
+		assert.NotContains(t, authorized, excluded, "%s must not enter backup authority", excluded)
+	}
 
 	purgeTargets, err := s.UnreachableDerivativePurgeBlobs(ctx)
 	require.NoError(t, err)
