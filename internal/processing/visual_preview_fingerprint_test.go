@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"image/color"
 	"runtime/debug"
 	"testing"
@@ -62,6 +63,8 @@ func TestVisualPreviewDescriptorTracksLinkedDependenciesAndPolicy(t *testing.T) 
 		}
 	}
 	assert.Equal(t, "v0.44.0", xImageVersion)
-	assert.Contains(t, visualPreviewProcessorDescriptor, "max-edge=4096")
-	assert.Contains(t, visualPreviewProcessorDescriptor, "quality=90")
+	assert.Contains(t, visualPreviewProcessorDescriptor,
+		fmt.Sprintf("max-edge=%d", visualPreviewMaxEdgePixels))
+	assert.Contains(t, visualPreviewProcessorDescriptor,
+		fmt.Sprintf("quality=%d", visualPreviewJPEGQuality))
 }

@@ -26,16 +26,17 @@ import (
 )
 
 const (
-	visualPreviewMaxEdgePixels       = 4096
-	visualPreviewMaxSourcePixels     = 100_000_000
-	visualPreviewJPEGQuality         = 90
-	visualPreviewMaxJPEGSegments     = 1024
-	visualPreviewMaxPNGChunks        = 1024
-	visualPreviewMaxWebPChunks       = 1024
-	visualPreviewMaxEXIFBytes        = 1 << 20
-	visualPreviewWebPAnimation       = 1 << 1
-	visualPreviewWebPEXIF            = 1 << 3
-	visualPreviewWebPICCProfile      = 1 << 5
+	visualPreviewMaxEdgePixels   = 4096
+	visualPreviewMaxSourcePixels = 100_000_000
+	visualPreviewJPEGQuality     = 90
+	visualPreviewMaxJPEGSegments = 1024
+	visualPreviewMaxPNGChunks    = 1024
+	visualPreviewMaxWebPChunks   = 1024
+	visualPreviewMaxEXIFBytes    = 1 << 20
+	visualPreviewWebPAnimation   = 1 << 1
+	visualPreviewWebPEXIF        = 1 << 3
+	visualPreviewWebPICCProfile  = 1 << 5
+	// Bump the descriptor revision when any byte-producing choice changes.
 	visualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v7"
 )
 
