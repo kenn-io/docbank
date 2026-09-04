@@ -281,6 +281,7 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 	})
 	deferredTx, err := deferredOne.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = deferredTx.Rollback() })
 	_, err = deferredTwo.ExecContext(t.Context(), `UPDATE contract SET value = 'deferred' WHERE id = 1`)
 	deferredWriterAllowed = err == nil
 	require.NoError(t, deferredTx.Rollback())
@@ -297,6 +298,7 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 	})
 	immediateTx, err := immediateOne.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = immediateTx.Rollback() })
 	_, err = immediateTwo.ExecContext(t.Context(), `UPDATE contract SET value = 'blocked' WHERE id = 1`)
 	immediateBusy = err != nil && driver.IsBusy(err)
 	realBusy = immediateBusy
