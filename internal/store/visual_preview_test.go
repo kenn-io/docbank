@@ -94,6 +94,44 @@ func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) 
 	assert.Equal(t, first.GenerationID, view.Generation.GenerationID)
 }
 
+func TestVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state document.VisualPreviewState
+		code  string
+	}{
+		{name: "unsupported", state: document.VisualPreviewUnsupported, code: "unsupported_media_type"},
+		{name: "failed", state: document.VisualPreviewFailed, code: "decode_failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("97"), 12, "image/x-raw")
+			require.NoError(t, err)
+
+			recipeA := visualPreviewRecipe()
+			previewA := terminalVisualPreviewWithRecipe(t, node.BlobHash, recipeA, test.state, test.code)
+			first, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewA, nil)
+			require.NoError(t, err)
+
+			recipeB := recipeA
+			recipeB.ProcessorFingerprint = fakeHash("98")
+			previewB := terminalVisualPreviewWithRecipe(t, node.BlobHash, recipeB, test.state, test.code)
+			second, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewB, nil)
+			require.NoError(t, err)
+			assert.NotEqual(t, first.GenerationID, second.GenerationID)
+
+			replayed, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewA, nil)
+			require.NoError(t, err)
+			assert.Equal(t, first.GenerationID, replayed.GenerationID)
+
+			view, err := s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+			require.NoError(t, err)
+			assert.Equal(t, second.GenerationID, view.Generation.GenerationID)
+			assert.Equal(t, test.state, view.Generation.Preview.State)
+		})
+	}
+}
+
 func TestVisualPreviewMetadataRoundTrip(t *testing.T) {
 	source := newTestStore(t)
 	node, err := source.CreateFile(t.Context(), source.RootID(), "image.jpg", fakeHash("31"), 12, "image/jpeg")
@@ -225,6 +263,20 @@ func readyVisualPreviewWithRecipe(
 		Recipe: recipe, State: document.VisualPreviewReady,
 		Output: &document.VisualPreviewOutputV1{BlobSHA256: output, Size: size,
 			MediaType: "image/jpeg", Width: 1600, Height: 900},
+	})
+	require.NoError(t, err)
+	return canonical
+}
+
+func terminalVisualPreviewWithRecipe(
+	t *testing.T, source string, recipe document.VisualPreviewRecipeV1,
+	state document.VisualPreviewState, code string,
+) []byte {
+	t.Helper()
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+		ContractVersion: document.VisualPreviewContractV1, SourceSHA256: source,
+		Recipe: recipe, State: state,
+		Failure: &document.VisualPreviewFailureV1{Code: code, Detail: "deterministic preview outcome"},
 	})
 	require.NoError(t, err)
 	return canonical
