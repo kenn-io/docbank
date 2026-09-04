@@ -201,10 +201,14 @@ func policyChunkLimits(policy InputPolicy) chunkLimits {
 	}
 }
 
+// embeddingToken is one pre-tokenized range of a unit in both rune and byte
+// offsets, so fitting probes never rescan the unit text from its start.
 type embeddingToken struct {
 	unitIndex int
 	start     int
 	end       int
+	byteStart int
+	byteEnd   int
 	unitEnd   int
 }
 
@@ -242,6 +246,16 @@ func tokenizeEvidence(evidence NormalizedEvidenceV1, tokenizer Tokenizer) ([]emb
 			naturalEnds[base+localIndex+1] = natural
 		}
 		naturalEnds[unitEnd] = true
+		runeIndex, cursor := 0, base
+		for byteIndex := range unit.Text {
+			if runeIndex == tokens[cursor].end {
+				tokens[cursor].byteEnd = byteIndex
+				cursor++
+				tokens[cursor].byteStart = byteIndex
+			}
+			runeIndex++
+		}
+		tokens[unitEnd-1].byteEnd = len(unit.Text)
 	}
 	return tokens, naturalEnds, nil
 }
@@ -388,8 +402,34 @@ func (fitter *inputFitter) advance(start int, fitted fittedInput) (int, error) {
 	if next == fitted.end {
 		return 0, errors.New("exact token overlap does not advance within the source unit")
 	}
-	fitter.tokens[next].start = desiredRuneStart
+	fitter.tokens[next] = fitter.tokenFrom(fitter.tokens[next], desiredRuneStart)
 	return next, nil
+}
+
+// tokenFrom moves a token's start forward to runeStart, scanning only the
+// bytes inside that token.
+func (fitter *inputFitter) tokenFrom(token embeddingToken, runeStart int) embeddingToken {
+	text := fitter.evidence.Units[token.unitIndex].Text
+	token.byteStart = advanceRunes(text, token.byteStart, runeStart-token.start)
+	token.start = runeStart
+	return token
+}
+
+// tokenUntil shortens a token to end at runeEnd, scanning only the bytes
+// inside that token.
+func (fitter *inputFitter) tokenUntil(token embeddingToken, runeEnd int) embeddingToken {
+	text := fitter.evidence.Units[token.unitIndex].Text
+	token.byteEnd = advanceRunes(text, token.byteStart, runeEnd-token.start)
+	token.end = runeEnd
+	return token
+}
+
+func advanceRunes(text string, byteOffset, runes int) int {
+	for range runes {
+		_, size := utf8.DecodeRuneInString(text[byteOffset:])
+		byteOffset += size
+	}
+	return byteOffset
 }
 
 func (fitter *inputFitter) maximalByteFit(start, end int, limits chunkLimits) (int, error) {
@@ -412,14 +452,11 @@ func (fitter *inputFitter) maximalByteFit(start, end int, limits chunkLimits) (i
 }
 
 func (fitter *inputFitter) fitsByteLimits(tokens []embeddingToken, limits chunkLimits) (bool, error) {
-	span, _, err := fitter.tokenMetadata(tokens)
+	_, content, _, err := fitter.tokenMetadata(tokens)
 	if err != nil {
 		return false, err
 	}
-	contentBytes, err := fitter.contentByteLength(span, math.MaxInt64)
-	if err != nil {
-		return false, err
-	}
+	contentBytes := int64(len(content))
 	contentRunes := int64(tokens[len(tokens)-1].end - tokens[0].start)
 	if err := fitter.work.consume([]int64{contentBytes}, []int64{contentRunes}); err != nil {
 		return false, err
@@ -491,9 +528,7 @@ func (fitter *inputFitter) truncate(token embeddingToken, limits chunkLimits, or
 		return GeneratedEmbeddingInput{}, nil, errors.New("provider or aggregate limits cannot hold attachment context and one source rune")
 	}
 	prefix := func(end int) []embeddingToken {
-		candidate := token
-		candidate.end = end
-		return []embeddingToken{candidate}
+		return []embeddingToken{fitter.tokenUntil(token, end)}
 	}
 	input, contentBoundaries, err := fitter.make(prefix(byteEnd), limits, ordinal)
 	if err == nil {
@@ -551,9 +586,7 @@ func (fitter *inputFitter) maximalTruncatedByteFit(token embeddingToken, limits 
 	bestEnd := 0
 	for low <= high {
 		candidateEnd := low + (high-low)/2
-		candidate := token
-		candidate.end = candidateEnd
-		fits, err := fitter.fitsByteLimits([]embeddingToken{candidate}, limits)
+		fits, err := fitter.fitsByteLimits([]embeddingToken{fitter.tokenUntil(token, candidateEnd)}, limits)
 		if err != nil {
 			return 0, err
 		}
@@ -571,13 +604,13 @@ func (fitter *inputFitter) maximalTruncatedByteFit(token embeddingToken, limits 
 // from source runes, re-tokenizes it against the content budget, renders the
 // document envelope, and re-counts the rendered input against provider limits.
 func (fitter *inputFitter) make(tokens []embeddingToken, limits chunkLimits, ordinal int) (GeneratedEmbeddingInput, []TokenBoundary, error) {
-	span, heading, err := fitter.tokenMetadata(tokens)
+	span, content, heading, err := fitter.tokenMetadata(tokens)
 	if err != nil {
 		return GeneratedEmbeddingInput{}, nil, err
 	}
 	encoder := fitter.policy.ModelInput.Document
-	contentBytes, err := fitter.contentByteLength(span, limits.contentBytes)
-	if err != nil || renderedDocumentByteLength(encoder, fitter.attachment, contentBytes) > limits.renderedBytes {
+	contentBytes := int64(len(content))
+	if contentBytes > limits.contentBytes || renderedDocumentByteLength(encoder, fitter.attachment, contentBytes) > limits.renderedBytes {
 		return GeneratedEmbeddingInput{}, nil, errProviderInputLimit
 	}
 	contentRunes := int64(tokens[len(tokens)-1].end - tokens[0].start)
@@ -587,7 +620,6 @@ func (fitter *inputFitter) make(tokens []embeddingToken, limits chunkLimits, ord
 	); err != nil {
 		return GeneratedEmbeddingInput{}, nil, err
 	}
-	content, _ := runeRange(fitter.evidence.Units[span.UnitIndex].Text, span.CharStart, span.CharEnd)
 	contentBoundaries, err := fitter.policy.Tokenizer.Tokenize(content, limits.contentTokens)
 	if errors.Is(err, ErrTokenizerLimit) {
 		return GeneratedEmbeddingInput{}, nil, errContentTokenLimit
@@ -617,24 +649,22 @@ func (fitter *inputFitter) make(tokens []embeddingToken, limits chunkLimits, ord
 	}, contentBoundaries, nil
 }
 
-func (fitter *inputFitter) tokenMetadata(tokens []embeddingToken) (ChunkSpan, []string, error) {
+// tokenMetadata resolves a token range to its source span, the exact content
+// substring, and the unit heading path.
+func (fitter *inputFitter) tokenMetadata(tokens []embeddingToken) (ChunkSpan, string, []string, error) {
 	if len(tokens) == 0 {
-		return ChunkSpan{}, nil, errors.New("embedding input requires at least one token")
+		return ChunkSpan{}, "", nil, errors.New("embedding input requires at least one token")
 	}
 	first, last := tokens[0], tokens[len(tokens)-1]
 	if first.unitIndex != last.unitIndex || first.unitIndex < 0 || first.unitIndex >= len(fitter.evidence.Units) || first.start < 0 || last.end <= first.start {
-		return ChunkSpan{}, nil, errors.New("embedding input tokens cross natural units")
+		return ChunkSpan{}, "", nil, errors.New("embedding input tokens cross natural units")
+	}
+	unit := fitter.evidence.Units[first.unitIndex]
+	if first.byteStart < 0 || last.byteEnd <= first.byteStart || last.byteEnd > len(unit.Text) {
+		return ChunkSpan{}, "", nil, errors.New("embedding input token byte offsets leave the unit")
 	}
 	span := ChunkSpan{UnitIndex: first.unitIndex, CharStart: first.start, CharEnd: last.end}
-	return span, slices.Clone(fitter.evidence.Units[first.unitIndex].HeadingPath), nil
-}
-
-func (fitter *inputFitter) contentByteLength(span ChunkSpan, limit int64) (int64, error) {
-	part, ok := runeRange(fitter.evidence.Units[span.UnitIndex].Text, span.CharStart, span.CharEnd)
-	if !ok || int64(len(part)) > limit {
-		return 0, errProviderInputLimit
-	}
-	return int64(len(part)), nil
+	return span, unit.Text[first.byteStart:last.byteEnd], slices.Clone(unit.HeadingPath), nil
 }
 
 func (budget *fittingWorkBudget) consume(byteParts, tokenParts []int64) error {
@@ -660,31 +690,6 @@ func boundedWorkTotal(parts []int64, limit int64) (int64, bool) {
 		total += part
 	}
 	return total, true
-}
-
-func runeRange(value string, runeStart, runeEnd int) (string, bool) {
-	byteStart, byteEnd := -1, -1
-	runeIndex := 0
-	for byteIndex := range value {
-		if runeIndex == runeStart {
-			byteStart = byteIndex
-		}
-		if runeIndex == runeEnd {
-			byteEnd = byteIndex
-			break
-		}
-		runeIndex++
-	}
-	if runeStart == runeIndex && byteStart < 0 {
-		byteStart = len(value)
-	}
-	if runeEnd == runeIndex && byteEnd < 0 {
-		byteEnd = len(value)
-	}
-	if byteStart < 0 || byteEnd < byteStart {
-		return "", false
-	}
-	return value[byteStart:byteEnd], true
 }
 
 func renderedDocumentByteLength(encoder ModelInputEncoder, attachment AttachmentContextSnapshot, contentBytes int64) int64 {
