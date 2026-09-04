@@ -34,7 +34,7 @@ curl -fsSL https://docbank.ai/install.sh | sh
   <a class="md-button" href="agents/">Build agent workflows</a>
 </p>
 
-![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-vault-browser.png)
+![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
 <p class="image-caption">A real synthetic vault in the local web application. <a href="tour/">See the visual tour.</a></p>
 

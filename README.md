@@ -16,7 +16,7 @@ recoverable deletion, verified backup, and optional permanent audited history.
 The vault catalog stays under your control instead of inside a provider
 account.
 
-![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-vault-browser.png)
+![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
 The standalone CLI, web application, TUI, scripts, and agents all use the same
 authenticated daemon contract. Go applications can instead embed independently

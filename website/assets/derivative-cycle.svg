@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 600" role="img" aria-labelledby="title desc">
+  <title id="title">Docbank derivative cycle</title>
+  <desc id="desc">Consent, derivation, retrieval, and purge cycle around a source that stays exact.</desc>
+  <defs>
+    <pattern id="cycle-grid" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.2" fill="#12312a"/>
+    </pattern>
+  </defs>
+  <rect width="760" height="600" fill="#071411"/>
+  <rect width="760" height="600" fill="url(#cycle-grid)"/>
+  <circle cx="380" cy="300" r="210" fill="none" stroke="#2e574c" stroke-width="2" stroke-dasharray="3 7"/>
+  <g fill="#41d7bd">
+    <path transform="translate(528.5 151.5) rotate(45)" d="M0 -6L10 0L0 6z"/>
+    <path transform="translate(528.5 448.5) rotate(135)" d="M0 -6L10 0L0 6z"/>
+    <path transform="translate(231.5 448.5) rotate(225)" d="M0 -6L10 0L0 6z"/>
+    <path transform="translate(231.5 151.5) rotate(315)" d="M0 -6L10 0L0 6z"/>
+  </g>
+  <g fill="#0c1e1a" stroke="#25473f" stroke-width="1.5">
+    <rect x="305" y="68" width="150" height="56" rx="6"/>
+    <rect x="565" y="272" width="150" height="56" rx="6"/>
+    <rect x="305" y="476" width="150" height="56" rx="6"/>
+    <rect x="45" y="272" width="150" height="56" rx="6"/>
+  </g>
+  <rect x="260" y="248" width="240" height="104" rx="8" fill="#102822" stroke="#2e574c" stroke-width="1.5"/>
+  <g fill="none" stroke="#41d7bd" stroke-width="2.5" stroke-linecap="round">
+    <path d="M260 268v-12q0-8 8-8h12"/>
+    <path d="M480 248h12q8 0 8 8v12"/>
+    <path d="M260 332v12q0 8 8 8h12"/>
+    <path d="M480 352h12q8 0 8-8v-12"/>
+  </g>
+  <g font-family="JetBrains Mono, ui-monospace, monospace" text-anchor="middle">
+    <text x="380" y="290" fill="#41d7bd" font-size="12" letter-spacing="3">THE RECORD</text>
+    <text x="380" y="322" fill="#edf8f4" font-size="18">source stays exact</text>
+    <g fill="#edf8f4" font-size="15" letter-spacing="2">
+      <text x="380" y="92">CONSENT</text>
+      <text x="640" y="296">DERIVE</text>
+      <text x="380" y="500">RETRIEVE</text>
+      <text x="120" y="296">PURGE</text>
+    </g>
+    <g fill="#a7c1ba" font-size="10" letter-spacing="1">
+      <text x="380" y="112">durable · revocable</text>
+      <text x="640" y="316">rendition · embedding</text>
+      <text x="380" y="520">evidence-backed</text>
+      <text x="120" y="316">originals untouched</text>
+    </g>
+  </g>
+</svg>

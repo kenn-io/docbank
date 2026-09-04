@@ -10,72 +10,25 @@ const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..", "..");
 const binary = path.join(repositoryRoot, "docbank");
-const screenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-trash-confirmation.png",
-);
-const restoreScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
+const screenshotDirectory = process.env.DOCBANK_SCREENSHOT_DIR;
+if (!screenshotDirectory) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
+const screenshotPathFor = (name: string): string =>
+  path.join(screenshotDirectory, name);
+const screenshotPath = screenshotPathFor("web-trash-confirmation.png");
+const restoreScreenshotPath = screenshotPathFor(
   "web-trash-restore-confirmation.png",
 );
-const tagAssignmentScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-tag-assignment.png",
-);
-const tagCatalogScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-tag-catalog.png",
-);
-const auditEvidenceScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-audit-evidence.png",
-);
-const storageScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-multi-store-storage.png",
-);
-const tuiStorageScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "tui-multi-store-storage.png",
-);
-const vaultBrowserScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-vault-browser.png",
-);
-const searchResultsScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-search-results.png",
-);
-const retainedVersionScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
+const tagAssignmentScreenshotPath = screenshotPathFor("web-tag-assignment.png");
+const tagCatalogScreenshotPath = screenshotPathFor("web-tag-catalog.png");
+const auditEvidenceScreenshotPath = screenshotPathFor("web-audit-evidence.png");
+const storageScreenshotPath = screenshotPathFor("web-multi-store-storage.png");
+const tuiStorageScreenshotPath = screenshotPathFor("tui-multi-store-storage.png");
+const vaultBrowserScreenshotPath = screenshotPathFor("web-vault-browser.png");
+const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
+const retainedVersionScreenshotPath = screenshotPathFor(
   "web-retained-version-download.png",
 );
-const packedStorageScreenshotPath = path.join(
-  repositoryRoot,
-  ".superpowers",
-  "screenshots",
-  "web-storage-status.png",
-);
+const packedStorageScreenshotPath = screenshotPathFor("web-storage-status.png");
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -155,11 +108,13 @@ test.describe("Docbank web screenshots", () => {
     await rm(retainedVersionScreenshotPath, { force: true });
     await rm(packedStorageScreenshotPath, { force: true });
     const archive = path.join(workspace, "archive-store");
+    const backup = path.join(workspace, "backup-repository");
     await mkdir(vault, { recursive: true, mode: 0o700 });
     await mkdir(archive, { recursive: true, mode: 0o700 });
     await writeFile(
       path.join(vault, "config.toml"),
-      `[store_bindings.archive]\nkind = "filesystem"\npath = ${JSON.stringify(archive)}\npriority = 20\n`,
+      `[backup]\nrepo = ${JSON.stringify(backup)}\n\n` +
+        `[store_bindings.archive]\nkind = "filesystem"\npath = ${JSON.stringify(archive)}\npriority = 20\n`,
       { mode: 0o600 },
     );
     const reports = path.join(workspace, "synthetic", "Reports");
@@ -265,6 +220,15 @@ test.describe("Docbank web screenshots", () => {
     if (!extractionReady) {
       throw new Error("synthetic text extraction did not complete");
     }
+    await runDocbank(["backup", "init"]);
+    await runDocbank([
+      "backup",
+      "create",
+      "--tag",
+      "before-review",
+      "--jobs",
+      "1",
+    ]);
     const revisedReport = path.join(
       workspace,
       "synthetic",
@@ -279,6 +243,14 @@ test.describe("Docbank web screenshots", () => {
       "put",
       revisedReport,
       "/Reports/quarterly-tax-report.txt",
+    ]);
+    await runDocbank([
+      "backup",
+      "create",
+      "--tag",
+      "reviewed",
+      "--jobs",
+      "1",
     ]);
     webURL = await runDocbank(["web", "--no-browser"]);
     const browserURL = new URL(webURL);
@@ -561,10 +533,10 @@ test.describe("Docbank web screenshots", () => {
         .poll(capture, { timeout: 15_000 })
         .toContain("documents for you and your agents");
       await tmux(["send-keys", "-t", session, "O"]);
-      const terminal = await expect
+      await expect
         .poll(capture, { timeout: 15_000 })
-        .toContain("Vault operations")
-        .then(capture);
+        .toContain("2 recovery point(s)");
+      const terminal = await capture();
 
       await page.setViewportSize({ width: 1280, height: 760 });
       await page.setContent(`

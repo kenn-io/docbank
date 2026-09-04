@@ -29,7 +29,7 @@ including records outside the selected directory. Those unrelated documents
 do not become audit members and their content versions are not protected by
 the scope, but the enrollment-time metadata remains part of the evidence.
 
-![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/web-audit-evidence/web-audit-evidence.png)
+![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://docbank.ai/assets/generated/web-audit-evidence.png)
 
 ## Review before enabling
 
