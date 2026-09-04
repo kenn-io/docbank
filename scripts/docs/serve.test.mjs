@@ -94,6 +94,29 @@ test("rejects traversal outside the generated site", async (t) => {
 });
 
 
+test("keeps serving when a file disappears or cannot be opened after stat", async (t) => {
+  const repoRoot = await fixture(t);
+  const server = await startDocsServer({
+    repoRoot,
+    host: "127.0.0.1",
+    port: 0,
+    build: async () => {},
+    watch: false,
+    logger: { log() {}, error() {} },
+  });
+  t.after(() => server.close());
+
+  const unreadable = path.join(repoRoot, "site", "unreadable.txt");
+  await writeFile(unreadable, "secret\n", { mode: 0o000 });
+  if (process.getuid?.() !== 0) {
+    assert.equal(await rawRequest(server.port, "/unreadable.txt"), 500);
+  }
+  await rm(unreadable, { force: true });
+  assert.equal(await rawRequest(server.port, "/unreadable.txt"), 404);
+  assert.equal(await rawRequest(server.port, "/"), 200);
+});
+
+
 test("ignores the docs build's own temporary entries", async (t) => {
   const repoRoot = await fixture(t);
   const listeners = new Map();

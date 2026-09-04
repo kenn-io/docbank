@@ -1,5 +1,5 @@
-import { createReadStream, watch as watchPath } from "node:fs";
-import { lstat } from "node:fs/promises";
+import { watch as watchPath } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -128,7 +128,7 @@ function resolveRequest(siteRoot, rawUrl) {
 }
 
 
-async function serveFile(siteRoot, request, response) {
+async function serveFile(siteRoot, request, response, logger) {
   if (request.method !== "GET" && request.method !== "HEAD") {
     response.writeHead(405, { Allow: "GET, HEAD" });
     response.end();
@@ -159,16 +159,39 @@ async function serveFile(siteRoot, request, response) {
     return;
   }
 
-  response.writeHead(200, {
-    "Cache-Control": "no-store",
-    "Content-Length": metadata.size,
-    "Content-Type": contentTypes.get(path.extname(target)) ?? "application/octet-stream",
-  });
+  let handle;
+  try {
+    handle = await open(target, "r");
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      response.writeHead(404);
+      response.end("Not found\n");
+      return;
+    }
+    throw error;
+  }
+  try {
+    const { size } = await handle.stat();
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Length": size,
+      "Content-Type": contentTypes.get(path.extname(target)) ?? "application/octet-stream",
+    });
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
   if (request.method === "HEAD") {
     response.end();
+    await handle.close();
     return;
   }
-  createReadStream(target).pipe(response);
+  const stream = handle.createReadStream();
+  stream.on("error", (error) => {
+    logger.error(error);
+    response.destroy(error);
+  });
+  stream.pipe(response);
 }
 
 
@@ -225,7 +248,7 @@ export async function startDocsServer({
   }
 
   const server = http.createServer((request, response) => {
-    serveFile(siteRoot, request, response).catch((error) => {
+    serveFile(siteRoot, request, response, logger).catch((error) => {
       logger.error(error);
       if (!response.headersSent) response.writeHead(500);
       response.end("Internal server error\n");
