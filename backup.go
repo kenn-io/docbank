@@ -331,13 +331,19 @@ func (f *vaultBackupFreezer) Begin(ctx context.Context) error {
 	}
 	f.vault.mutation.Lock()
 	f.held = true
-	if f.prepare != nil {
-		if err := f.prepare(ctx); err != nil {
+	prepared := false
+	defer func() {
+		if !prepared {
 			f.held = false
 			f.vault.mutation.Unlock()
+		}
+	}()
+	if f.prepare != nil {
+		if err := f.prepare(ctx); err != nil {
 			return fmt.Errorf("preparing host backup files: %w", err)
 		}
 	}
+	prepared = true
 	return nil
 }
 

@@ -116,6 +116,38 @@ func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {
 	}
 }
 
+func TestEmbeddedBackupPreparationPanicReleasesMutationGate(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_, _ = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+			Prepare: func(context.Context) error { panic("prepare host snapshot") },
+		})
+	}()
+	require.Equal(t, "prepare host snapshot", recovered)
+
+	putDone := make(chan error, 1)
+	go func() {
+		_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+			MediaType: "text/plain",
+		})
+		putDone <- putErr
+	}()
+	select {
+	case putErr := <-putDone:
+		require.NoError(t, putErr)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "content mutation remained blocked after preparation panicked")
+	}
+}
+
 func TestEmbeddedBackupRoundTrip(t *testing.T) {
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)
