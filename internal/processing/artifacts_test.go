@@ -213,7 +213,7 @@ func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t 
 	snapshot, err := fixture.catalog.BeginMetadataSnapshot(t.Context())
 	require.NoError(t, err)
 	var authorized int
-	require.NoError(t, snapshot.QueryRowContext(t.Context(), store.BackupBlobAuthorityCTE+
+	require.NoError(t, snapshot.QueryRowContext(t.Context(), store.BackupBlobAuthorityCTE()+
 		`SELECT COUNT(*) FROM backup_authorized_blobs WHERE hash=?`, actualHash).Scan(&authorized))
 	require.NoError(t, snapshot.Close())
 	assert.Zero(t, authorized, "a rejected receipt must remain non-backup staging")

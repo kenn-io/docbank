@@ -65,7 +65,7 @@ func (s *metadataSnapshot) AuxiliaryArtifacts(
 }
 
 func encodePlacementManifest(ctx context.Context, q rowQuerier) ([]byte, error) {
-	rows, err := q.QueryContext(ctx, store.BackupBlobAuthorityCTE+`
+	rows, err := q.QueryContext(ctx, store.BackupBlobAuthorityCTE()+`
 		SELECT s.store_id, s.name, s.kind, s.role,
 		       COUNT(l.blob_hash), COALESCE(SUM(b.size), 0)
 		FROM blob_stores s
@@ -100,7 +100,7 @@ func encodePlacementManifest(ctx context.Context, q rowQuerier) ([]byte, error) 
 		return nil, fmt.Errorf("backupapp: closing placement stores: %w", err)
 	}
 
-	rows, err = q.QueryContext(ctx, store.BackupBlobAuthorityCTE+`
+	rows, err = q.QueryContext(ctx, store.BackupBlobAuthorityCTE()+`
 		SELECT b.hash, l.store_id
 		FROM blobs b JOIN backup_authorized_blobs a ON a.hash = b.hash
 		LEFT JOIN blob_locations l ON l.blob_hash = b.hash

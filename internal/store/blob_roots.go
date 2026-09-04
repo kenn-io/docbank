@@ -15,10 +15,10 @@ type blobReference struct {
 
 // blobRootReferences is the single definition of "something still needs
 // these bytes" shared by garbage collection, version pruning, derivative
-// purge, and verification. A blob referenced by any of these rows is
-// reachable; a blob referenced by none is a collection candidate. Visual
-// preview sources are omitted because the Go writer binds them to the same
-// hash as their content version, which is already listed.
+// purge, verification, and backup capture. A blob referenced by any of these
+// rows is reachable; a blob referenced by none is a collection candidate.
+// Visual preview sources are omitted because the Go writer binds them to the
+// same hash as their content version, which is already listed.
 var blobRootReferences = []blobReference{
 	{table: "content_versions", column: columnBlobHash},
 	{table: "rendition_builds", column: columnSourceSHA256},
@@ -73,4 +73,22 @@ func blobReferenceRowsSQL(references ...[]blobReference) string {
 		}
 	}
 	return strings.Join(selects, "\n\t\t\tUNION ALL\n\t\t\t")
+}
+
+// blobReferenceSetSQL returns a distinct set of non-NULL blob hashes from the
+// listed references, preserving the order of the reference list.
+func blobReferenceSetSQL(references []blobReference) string {
+	selects := make([]string, 0, len(references))
+	for _, reference := range references {
+		selects = append(selects, "SELECT "+reference.column+" FROM "+reference.table+
+			" WHERE "+reference.column+" IS NOT NULL")
+	}
+	return strings.Join(selects, "\n\tUNION\n\t")
+}
+
+// BackupBlobAuthorityCTE renders the complete blob closure for portable
+// backup. GC-only holds intentionally remain outside this authority.
+func BackupBlobAuthorityCTE() string {
+	return "WITH backup_authorized_blobs(hash) AS (\n\t" +
+		blobReferenceSetSQL(blobRootReferences) + "\n)\n"
 }

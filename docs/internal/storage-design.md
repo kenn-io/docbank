@@ -257,8 +257,10 @@ that physical rewrite into logical deletion.
 Trashed nodes retain their content versions. Permanent node deletion cascades
 through those versions and may make a blob row a GC candidate, but it does not
 itself claim disk space. GC treats every `content_versions` row—current or
-historical—as a reachability root; new logical reference types must be added to
-reachability before their schema is usable.
+historical—as a reachability root, and backup capture uses the same shared root
+list for portable blob authority. GC-only holds stay outside portable backup
+authority; new logical reference types must be added to reachability before
+their schema is usable.
 
 !!! info "Planned — full-audit maintenance"
     Full-audit membership is sticky and protected historical versions remain

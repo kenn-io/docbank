@@ -112,7 +112,7 @@ func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {
 	snapshot, err := s.BeginMetadataSnapshot(t.Context())
 	require.NoError(t, err)
 	var authorized int
-	require.NoError(t, snapshot.QueryRowContext(t.Context(), BackupBlobAuthorityCTE+
+	require.NoError(t, snapshot.QueryRowContext(t.Context(), BackupBlobAuthorityCTE()+
 		`SELECT COUNT(*) FROM backup_authorized_blobs WHERE hash=?`, staged).Scan(&authorized))
 	require.Zero(t, authorized)
 	require.NoError(t, snapshot.ExportBackup(t.Context(), &exported))
@@ -163,7 +163,7 @@ func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *t
 	snapshot, err := s.BeginMetadataSnapshot(t.Context())
 	require.NoError(t, err)
 	var authorized int
-	require.NoError(t, snapshot.QueryRowContext(t.Context(), BackupBlobAuthorityCTE+
+	require.NoError(t, snapshot.QueryRowContext(t.Context(), BackupBlobAuthorityCTE()+
 		`SELECT COUNT(*) FROM backup_authorized_blobs WHERE hash=?`, pending).Scan(&authorized))
 	require.Zero(t, authorized)
 	var exported bytes.Buffer
