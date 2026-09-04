@@ -22,6 +22,12 @@ These layers must not be collapsed. Node reachability is product policy; blob
 membership is docbank's physical authority boundary; offsets, reader caches,
 and repacking are storage mechanics.
 
+Persisted rendition-artifact roles are recognized by a store-owned Go registry,
+which also supplies their stable order to backup derivative statistics. Retention
+and provider-request authorization remain separate policy checks. The
+`rendition_artifacts.role` column remains unconstrained text; unknown values
+fail closed in Go.
+
 Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.

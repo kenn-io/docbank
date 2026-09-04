@@ -15,7 +15,6 @@ import (
 
 	"go.kenn.io/kit/backup"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -180,18 +179,8 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	if len(classes) == 0 {
 		return nil, false, nil
 	}
-	// Class names are the exact rendition_artifacts.role values the catalog
-	// persists (document.EvidenceArtifact* constants plus the two catalog-local
-	// roles); lexical_projection is synthesized above from segment rows.
-	ordered := []string{
-		"normalized_evidence", "sanitized_markdown",
-		string(document.EvidenceArtifactImage),
-		string(document.EvidenceArtifactMarkdown),
-		string(document.EvidenceArtifactStructured),
-		string(document.EvidenceArtifactTranscript),
-		"visual_preview",
-		"lexical_projection",
-	}
+	// Synthetic classes are local to backupapp and follow persisted roles.
+	ordered := append(store.PersistedRenditionArtifactRoles(), "visual_preview", "lexical_projection")
 	result := &DerivativeAuthorityStats{
 		Version: derivativeAuthorityVersion, ProviderDependent: []string{},
 	}
