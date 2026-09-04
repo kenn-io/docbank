@@ -150,14 +150,11 @@ func BuildEmbeddingInputs(evidence NormalizedEvidenceV1, policy InputPolicy, lim
 		return EmbeddingInputGeneration{}, err
 	}
 	fitter := newInputFitter(evidence, tokens, naturalEnds, policy, limits)
+	chunk := policyChunkLimits(policy)
 	var totals generationTotals
 	for start := 0; start < len(tokens); {
 		if len(result.Inputs) == limits.MaxInputs {
 			return EmbeddingInputGeneration{}, errors.New("embedding generated input limit exceeded")
-		}
-		chunk, err := remainingChunkLimits(totals, policy, limits)
-		if err != nil {
-			return EmbeddingInputGeneration{}, err
 		}
 		end := chooseChunkEnd(start, tokens[start].unitEnd, policy.Chunk.MaxTokens, policy.Chunk.OverlapTokens, naturalEnds)
 		fitted, err := fitter.fit(start, end, chunk, len(result.Inputs))
@@ -168,7 +165,7 @@ func BuildEmbeddingInputs(evidence NormalizedEvidenceV1, policy InputPolicy, lim
 			return EmbeddingInputGeneration{}, errors.New("embedding generation exceeds aggregate limits")
 		}
 		result.Inputs = append(result.Inputs, fitted.input)
-		start, err = fitter.advance(start, fitted, chunk.contentTokens)
+		start, err = fitter.advance(start, fitted)
 		if err != nil {
 			return EmbeddingInputGeneration{}, err
 		}
@@ -185,8 +182,9 @@ func BuildEmbeddingInputs(evidence NormalizedEvidenceV1, policy InputPolicy, lim
 	return result, nil
 }
 
-// chunkLimits are the limits one input may consume: the provider hard limits
-// narrowed by whatever aggregate room the generation still has.
+// chunkLimits are the limits one input may consume. They come from the
+// policy only: aggregate generation limits never shape an input, they can
+// only reject the generation once its totals overflow.
 type chunkLimits struct {
 	contentTokens  int
 	renderedTokens int
@@ -194,22 +192,13 @@ type chunkLimits struct {
 	renderedBytes  int64
 }
 
-func remainingChunkLimits(totals generationTotals, policy InputPolicy, limits GenerationLimits) (chunkLimits, error) {
-	remaining := chunkLimits{
-		contentTokens:  int(limits.MaxTotalContentTokens - totals.contentTokens),
-		renderedTokens: int(limits.MaxTotalRenderedTokens - totals.renderedTokens),
-		contentBytes:   limits.MaxTotalContentBytes - totals.contentBytes,
-		renderedBytes:  limits.MaxTotalRenderedBytes - totals.renderedBytes,
-	}
-	if remaining.contentTokens < 1 || remaining.renderedTokens < 1 || remaining.contentBytes < 1 || remaining.renderedBytes < 1 {
-		return chunkLimits{}, errors.New("embedding generation exceeds aggregate limits")
-	}
+func policyChunkLimits(policy InputPolicy) chunkLimits {
 	return chunkLimits{
-		contentTokens:  min(remaining.contentTokens, policy.Chunk.MaxTokens),
-		renderedTokens: min(remaining.renderedTokens, policy.MaxInputTokens),
-		contentBytes:   min(remaining.contentBytes, policy.MaxInputBytes),
-		renderedBytes:  min(remaining.renderedBytes, policy.MaxInputBytes),
-	}, nil
+		contentTokens:  policy.Chunk.MaxTokens,
+		renderedTokens: policy.MaxInputTokens,
+		contentBytes:   policy.MaxInputBytes,
+		renderedBytes:  policy.MaxInputBytes,
+	}
 }
 
 type embeddingToken struct {
@@ -377,15 +366,12 @@ func (fitter *inputFitter) fit(start, end int, limits chunkLimits, ordinal int) 
 
 // advance returns the next chunk start, moving the source rune cursor by the
 // exact emitted tokenization so overlap is measured in real tokens.
-func (fitter *inputFitter) advance(start int, fitted fittedInput, remainingContentTokens int) (int, error) {
+func (fitter *inputFitter) advance(start int, fitted fittedInput) (int, error) {
 	overlap := fitter.policy.Chunk.OverlapTokens
 	if fitted.truncated || fitted.end == fitter.tokens[start].unitEnd || overlap == 0 {
 		return fitted.end, nil
 	}
 	if len(fitted.contentBoundaries) <= overlap {
-		if remainingContentTokens <= overlap {
-			return 0, errors.New("embedding generation exceeds aggregate limits while preserving configured token overlap")
-		}
 		return 0, errors.New("provider limits cannot preserve configured token overlap")
 	}
 	desiredRuneStart := fitted.input.SourceSpan.CharStart + fitted.contentBoundaries[len(fitted.contentBoundaries)-overlap].Start

@@ -477,49 +477,6 @@ func TestBuildEmbeddingInputsBoundsAggregateAmplificationBeforeAppend(t *testing
 	assert.Equal(t, renderedBytes, generation.TotalRenderedBytes)
 }
 
-func TestBuildEmbeddingInputsAppliesRemainingAggregateBytesBeforeConstruction(t *testing.T) {
-	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AA"}, {text: strings.Repeat("b", 1024)}})
-	const contentLimit = 10_000
-	maxExactContentRunes := 0
-	tokenizer := &syntheticTokenizer{name: "recording-runes", revision: "v1", monotonic: true, tokenize: func(text string, limit int) ([]TokenBoundary, error) {
-		if limit == contentLimit {
-			maxExactContentRunes = max(maxExactContentRunes, utf8.RuneCountInString(text))
-		}
-		return runeBoundaries(text, limit)
-	}}
-	policy := testInputPolicy(t, contentLimit, 0)
-	useTokenizer(&policy, tokenizer)
-	policy.MaxInputBytes = 20_000
-	policy.MaxInputTokens = 20_000
-	limits := testGenerationLimits()
-	limits.MaxInputs = 16
-	limits.MaxTotalContentBytes = 6
-	limits.MaxTotalRenderedBytes = 26
-	limits.MaxTotalContentTokens = 20_000
-	limits.MaxTotalRenderedTokens = 40_000
-	_, err := BuildEmbeddingInputs(evidence, policy, limits)
-	require.ErrorContains(t, err, "aggregate")
-	assert.LessOrEqual(t, maxExactContentRunes, 4, "remaining aggregate bytes must shrink a candidate before content construction")
-}
-
-func TestBuildEmbeddingInputsPassesRemainingAggregateTokenLimitToTokenizer(t *testing.T) {
-	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AA"}, {text: "BBBB"}})
-	sawOneTokenContentLimit := false
-	tokenizer := &syntheticTokenizer{name: "recording-runes", revision: "v1", monotonic: true, tokenize: func(text string, limit int) ([]TokenBoundary, error) {
-		if limit == 1 && !strings.HasPrefix(text, "document: ") {
-			sawOneTokenContentLimit = true
-		}
-		return runeBoundaries(text, limit)
-	}}
-	policy := testInputPolicy(t, 4, 0)
-	useTokenizer(&policy, tokenizer)
-	limits := testGenerationLimits()
-	limits.MaxTotalContentTokens = 3
-	_, err := BuildEmbeddingInputs(evidence, policy, limits)
-	require.ErrorContains(t, err, "aggregate")
-	assert.True(t, sawOneTokenContentLimit, "the exact tokenizer must receive the remaining aggregate content-token limit")
-}
-
 func TestBuildEmbeddingInputsRejectsTypedNilAndTokenizerIdentityDrift(t *testing.T) {
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AA"}})
 	policy := testInputPolicy(t, 2, 0)
@@ -656,12 +613,39 @@ func TestBuildEmbeddingInputsFailsClosedWhenOverlapCannotBePreserved(t *testing.
 	policy.MaxInputBytes = int64(len("document: ") + 6)
 	_, err := BuildEmbeddingInputs(evidence, policy, testGenerationLimits())
 	require.ErrorContains(t, err, "provider limits cannot preserve configured token overlap")
+}
 
-	policy.MaxInputBytes = 4096
-	limits := testGenerationLimits()
-	limits.MaxTotalContentTokens = 7
-	_, err = BuildEmbeddingInputs(evidence, policy, limits)
-	require.ErrorContains(t, err, "aggregate limits while preserving configured token overlap")
+func TestBuildEmbeddingInputsAggregateLimitsRejectButNeverShapeInputs(t *testing.T) {
+	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABBCCDDEE"}})
+	policy := testInputPolicy(t, 2, 0)
+	policy.Chunk.TruncationPolicy = TruncationPolicyTruncateIndivisible
+	unlimited := build(t, evidence, policy)
+	require.Len(t, unlimited.Inputs, 3)
+	assert.Equal(t, "EE", unlimited.Inputs[2].Content)
+
+	exact := testGenerationLimits()
+	exact.MaxInputs = len(unlimited.Inputs)
+	exact.MaxTotalContentTokens = unlimited.TotalContentTokens
+	exact.MaxTotalRenderedTokens = unlimited.TotalRenderedTokens
+	exact.MaxTotalContentBytes = unlimited.TotalContentBytes
+	exact.MaxTotalRenderedBytes = unlimited.TotalRenderedBytes
+	generation, err := BuildEmbeddingInputs(evidence, policy, exact)
+	require.NoError(t, err)
+	assert.Equal(t, unlimited, generation, "limits that the generation fits inside must not change it")
+
+	for name, mutate := range map[string]func(*GenerationLimits){
+		"content bytes":   func(limits *GenerationLimits) { limits.MaxTotalContentBytes-- },
+		"content tokens":  func(limits *GenerationLimits) { limits.MaxTotalContentTokens-- },
+		"rendered bytes":  func(limits *GenerationLimits) { limits.MaxTotalRenderedBytes-- },
+		"rendered tokens": func(limits *GenerationLimits) { limits.MaxTotalRenderedTokens-- },
+	} {
+		t.Run(name, func(t *testing.T) {
+			limits := exact
+			mutate(&limits)
+			_, err := BuildEmbeddingInputs(evidence, policy, limits)
+			require.ErrorContains(t, err, "aggregate limits", "the last input must be rejected, never truncated to the remaining budget")
+		})
+	}
 }
 
 func TestEmbeddingInputGenerationRoundTripsCanonicalBytesAndRejectsForgery(t *testing.T) {
