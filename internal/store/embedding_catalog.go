@@ -391,7 +391,7 @@ func validateExactEmbeddingGenerationArtifact(record EmbeddingInputGenerationRec
 
 func validateExactEmbeddingVectorArtifact(
 	vectorSet EmbeddingVectorSetRecord, space EmbeddingVectorSpaceRecord,
-	generation EmbeddingInputGenerationRecord, data []byte,
+	data []byte,
 ) error {
 	if int64(len(data)) != vectorSet.PayloadSize || hashCatalogBytes(data) != vectorSet.PayloadBlobHash {
 		return errors.New("vector-set artifact bytes do not match catalog authority")
@@ -409,17 +409,15 @@ func validateExactEmbeddingVectorArtifact(
 	if vectorSet.ID != checksum || vectorSet.PayloadChecksum != checksum ||
 		decoded.VectorSpaceFingerprint != space.ID || decoded.Dimension != space.Dimensions ||
 		decoded.Metric != space.Metric || decoded.Normalization != space.Normalization ||
-		len(decoded.InputKeys) != len(generation.Inputs) || len(vectorSet.rows) != len(generation.Inputs) {
+		len(decoded.InputKeys) != len(vectorSet.rows) {
 		return errors.New("vector-set artifact header or count does not match catalog authority")
 	}
-	for index := range generation.Inputs {
-		if decoded.InputKeys[index] != generation.Inputs[index].ID ||
-			decoded.InputChecksums[index] != generation.Inputs[index].RenderedChecksum ||
-			vectorSet.rows[index] != (EmbeddingVectorRowRecord{
-				RowID: decoded.InputKeys[index], InputID: decoded.InputKeys[index],
-				Dimensions: decoded.Dimension, Checksum: decoded.InputChecksums[index],
-			}) {
-			return errors.New("vector-set artifact rows do not match exact E2 inputs")
+	for index, row := range vectorSet.rows {
+		if row != (EmbeddingVectorRowRecord{
+			RowID: decoded.InputKeys[index], InputID: decoded.InputKeys[index],
+			Dimensions: decoded.Dimension, Checksum: decoded.InputChecksums[index],
+		}) {
+			return errors.New("vector-set artifact rows do not match catalog authority")
 		}
 	}
 	if vectorSet.ManifestChecksum != embeddingVectorManifestChecksum(vectorSet.rows) {

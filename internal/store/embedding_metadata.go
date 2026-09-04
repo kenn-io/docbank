@@ -443,7 +443,57 @@ func isEmbeddingMetadataType(kind string) bool {
 	return ok
 }
 
-func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) error {
+func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (retErr error) {
+	headRows, err := tx.QueryContext(ctx, `SELECT content_version_id,binding_id,input_kind,
+		embedding_set_id,vector_space_id,profile_fingerprint,published_at
+		FROM embedding_heads ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
+	if err != nil {
+		return fmt.Errorf("listing embedding heads for validation: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, headRows.Close()) }()
+	for headRows.Next() {
+		var record EmbeddingHeadRecord
+		if err := headRows.Scan(&record.Key.ContentVersionID, &record.Key.BindingID,
+			&record.Key.InputKind, &record.SetID, &record.VectorSpaceID,
+			&record.ProcessingProfileFingerprint, &record.PublishedAt); err != nil {
+			return fmt.Errorf("reading embedding head for validation: %w", err)
+		}
+		if err := validateEmbeddingHeadRecord(record); err != nil {
+			return fmt.Errorf("validating embedding head: %w", err)
+		}
+	}
+	if err := headRows.Err(); err != nil {
+		return fmt.Errorf("iterating embedding heads for validation: %w", err)
+	}
+	if err := headRows.Close(); err != nil {
+		return fmt.Errorf("closing embedding heads after validation: %w", err)
+	}
+
+	failureRows, err := tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,
+		binding_id,input_kind,failure_code,failed_at
+		FROM embedding_failures ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
+	if err != nil {
+		return fmt.Errorf("listing embedding failures for validation: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, failureRows.Close()) }()
+	for failureRows.Next() {
+		var record EmbeddingFailureRecord
+		if err := failureRows.Scan(&record.ContentVersionID,
+			&record.ProcessingProfileFingerprint, &record.BindingID, &record.InputKind,
+			&record.FailureCode, &record.FailedAt); err != nil {
+			return fmt.Errorf("reading embedding failure for validation: %w", err)
+		}
+		if err := validateEmbeddingFailureRecord(record); err != nil {
+			return fmt.Errorf("validating embedding failure: %w", err)
+		}
+	}
+	if err := failureRows.Err(); err != nil {
+		return fmt.Errorf("iterating embedding failures for validation: %w", err)
+	}
+	if err := failureRows.Close(); err != nil {
+		return fmt.Errorf("closing embedding failures after validation: %w", err)
+	}
+
 	var invalid int
 	if err := tx.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM embedding_input_generations g WHERE g.input_count !=

@@ -694,7 +694,7 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
 -- checksums, membership, activation pointers, and provider-neutral failures.
 CREATE TABLE IF NOT EXISTS embedding_vector_spaces (
     vector_space_id          TEXT PRIMARY KEY,
-    contract_version         TEXT NOT NULL CHECK (contract_version = 'embedding-vector-space/v1'),
+    contract_version         TEXT NOT NULL,
     descriptor_json          BLOB NOT NULL CHECK (length(descriptor_json) BETWEEN 2 AND 65536),
     provider_descriptor      TEXT NOT NULL CHECK (length(CAST(provider_descriptor AS BLOB)) BETWEEN 1 AND 1024),
     provider_revision        TEXT NOT NULL CHECK (length(CAST(provider_revision AS BLOB)) BETWEEN 1 AND 1024),
@@ -740,7 +740,7 @@ CREATE TABLE IF NOT EXISTS embedding_generation_inputs (
 
 CREATE TABLE IF NOT EXISTS embedding_vector_sets (
     vector_set_id      TEXT PRIMARY KEY,
-    contract_version   TEXT NOT NULL CHECK (contract_version = 'vector-set/v1'),
+    contract_version   TEXT NOT NULL,
     vector_space_id    TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
     payload_blob_hash  TEXT NOT NULL REFERENCES blobs(hash),
     payload_size       INTEGER NOT NULL CHECK (payload_size BETWEEN 1 AND 67108864),
@@ -769,7 +769,7 @@ CREATE TABLE IF NOT EXISTS embedding_sets (
     embedding_set_id             TEXT PRIMARY KEY,
     vault_uid                    TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
     binding_id                   TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
-    input_kind                   TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    input_kind                   TEXT NOT NULL,
     content_version_id           TEXT NOT NULL REFERENCES content_versions(version_id),
     profile_fingerprint          TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
     embedding_input_fingerprint  TEXT NOT NULL,
@@ -793,7 +793,7 @@ CREATE INDEX IF NOT EXISTS embedding_sets_vector_space
 CREATE TABLE IF NOT EXISTS embedding_heads (
     content_version_id   TEXT NOT NULL,
     binding_id           TEXT NOT NULL,
-    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
+    input_kind           TEXT NOT NULL,
     embedding_set_id     TEXT NOT NULL REFERENCES embedding_sets(embedding_set_id),
     vector_space_id      TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
     profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
@@ -808,10 +808,8 @@ CREATE TABLE IF NOT EXISTS embedding_failures (
     content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
     binding_id           TEXT NOT NULL CHECK (length(CAST(binding_id AS BLOB)) BETWEEN 1 AND 1024),
-    input_kind           TEXT NOT NULL CHECK (input_kind IN ('rendition_chunk', 'original_file')),
-    failure_code         TEXT NOT NULL CHECK (failure_code IN (
-        'provider_unavailable','authorization','invalid_response','input_rejected','stale_authority'
-    )),
+    input_kind           TEXT NOT NULL,
+    failure_code         TEXT NOT NULL,
     failed_at            TEXT NOT NULL,
     PRIMARY KEY (content_version_id, profile_fingerprint, binding_id, input_kind)
 );

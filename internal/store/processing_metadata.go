@@ -1864,15 +1864,6 @@ func verifyEmbeddingArtifacts(
 		if err != nil {
 			return err
 		}
-		var generationID string
-		if err := tx.QueryRowContext(ctx, `SELECT input_generation_id FROM embedding_sets
-			WHERE vector_set_id=? ORDER BY embedding_set_id LIMIT 1`, id).Scan(&generationID); err != nil {
-			return fmt.Errorf("finding vector-set generation %s: %w", id, err)
-		}
-		generation, err := loadInputGenerationTx(ctx, tx, generationID)
-		if err != nil {
-			return err
-		}
 		space, err := loadVectorSpaceTx(ctx, tx, vectorSet.VectorSpaceID)
 		if err != nil {
 			return err
@@ -1881,7 +1872,7 @@ func verifyEmbeddingArtifacts(
 		if err != nil {
 			return fmt.Errorf("reading vector-set artifact %s: %w", id, err)
 		}
-		if err := validateExactEmbeddingVectorArtifact(vectorSet, space, generation, data); err != nil {
+		if err := validateExactEmbeddingVectorArtifact(vectorSet, space, data); err != nil {
 			return fmt.Errorf("validating vector-set artifact %s: %w", id, err)
 		}
 	}

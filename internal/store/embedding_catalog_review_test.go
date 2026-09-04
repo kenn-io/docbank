@@ -101,6 +101,74 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 	assert.Equal(t, 2, failures)
 }
 
+func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
+	testCases := []struct {
+		name, dropTrigger, before, mutation, want string
+	}{
+		{
+			name: "vector-space contract", dropTrigger: "embedding_vector_spaces_immutable_update",
+			mutation: `UPDATE embedding_vector_spaces SET contract_version='embedding-vector-space/v2'`,
+			want:     "vector-space contract version is unsupported",
+		},
+		{
+			name: "vector-set contract", dropTrigger: "embedding_vector_sets_immutable_update",
+			mutation: `UPDATE embedding_vector_sets SET contract_version='vector-set/v2'`,
+			want:     "vector-set contract version is unsupported",
+		},
+		{
+			name: "set input kind", dropTrigger: "embedding_sets_immutable_update",
+			before:   `DELETE FROM embedding_heads`,
+			mutation: `UPDATE embedding_sets SET input_kind='future_input'`,
+			want:     "embedding input kind",
+		},
+		{
+			name:     "head input kind",
+			mutation: `UPDATE embedding_heads SET input_kind='future_input'`,
+			want:     "embedding input kind",
+		},
+		{
+			name:     "failure input kind",
+			mutation: `UPDATE embedding_failures SET input_kind='future_input'`,
+			want:     "embedding input kind",
+		},
+		{
+			name:     "failure code",
+			mutation: `UPDATE embedding_failures SET failure_code='future_failure'`,
+			want:     "provider-neutral vocabulary",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+				document.EmbeddingInputOriginalFile, "optional", "")
+			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+			require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+				Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+					InputKind: record.InputKind},
+				SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+				ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+			}))
+			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+				BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
+				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+			}))
+			if testCase.dropTrigger != "" {
+				_, err := s.db.Exec(`DROP TRIGGER ` + testCase.dropTrigger)
+				require.NoError(t, err)
+			}
+			if testCase.before != "" {
+				_, err := s.db.Exec(testCase.before)
+				require.NoError(t, err)
+			}
+			_, err := s.db.Exec(testCase.mutation)
+			require.NoError(t, err)
+			require.ErrorContains(t, s.ValidateMetadata(t.Context()), testCase.want)
+		})
+	}
+}
+
 func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,

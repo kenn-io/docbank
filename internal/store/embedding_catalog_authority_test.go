@@ -145,13 +145,13 @@ func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
 		stored, err := loadEmbeddingSetTx(t.Context(), tx, record.ID)
 		require.NoError(t, err)
 		require.NoError(t, validateExactEmbeddingGenerationArtifact(stored.InputGeneration, generationBytes))
-		require.NoError(t, validateExactEmbeddingVectorArtifact(stored.VectorSet, stored.VectorSpace, stored.InputGeneration, vectorBytes))
+		require.NoError(t, validateExactEmbeddingVectorArtifact(stored.VectorSet, stored.VectorSpace, vectorBytes))
 		corruptGeneration := append([]byte(nil), generationBytes...)
 		corruptGeneration[len(corruptGeneration)/2] ^= 1
 		require.Error(t, validateExactEmbeddingGenerationArtifact(stored.InputGeneration, corruptGeneration))
 		corruptVector := append([]byte(nil), vectorBytes...)
 		corruptVector[len(corruptVector)-1] ^= 1
-		require.Error(t, validateExactEmbeddingVectorArtifact(stored.VectorSet, stored.VectorSpace, stored.InputGeneration, corruptVector))
+		require.Error(t, validateExactEmbeddingVectorArtifact(stored.VectorSet, stored.VectorSpace, corruptVector))
 		return nil
 	}))
 }
@@ -248,6 +248,46 @@ func TestEmbeddingCatalogProviderFreeRestoreVerifiesLooseAndPackedArtifacts(t *t
 			}))
 		})
 	}
+}
+
+func TestEmbeddingCatalogRestoreVerifiesVectorSetRetainedAfterVersionPrune(t *testing.T) {
+	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
+
+	var nodeID, revision int64
+	require.NoError(t, source.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`,
+		versionID).Scan(&nodeID, &revision))
+	replacementHash := testSHA256([]byte("orphan-vector-restore-replacement"))
+	require.NoError(t, source.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return source.EnsureBlobTx(tx, replacementHash, 24)
+	}))
+	updated, _, err := source.ReplaceContent(
+		t.Context(), nodeID, revision, replacementHash, 24, "application/pdf",
+	)
+	require.NoError(t, err)
+	_, err = source.PruneContentVersions(t.Context(), nodeID, updated.Revision,
+		VersionPruneSelector{VersionIDs: []string{versionID}}, true)
+	require.NoError(t, err)
+
+	var metadata bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
+	target := newTestStore(t)
+	layout := materializeEmbeddingRestoreArtifacts(t, target, map[string][]byte{
+		catalogSourceHash:                catalogBlobContents[catalogSourceHash],
+		catalogEvidenceBlobHash:          catalogBlobContents[catalogEvidenceBlobHash],
+		catalogMarkdownBlobHash:          catalogBlobContents[catalogMarkdownBlobHash],
+		record.VectorSet.PayloadBlobHash: record.VectorSet.Payload,
+	})
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+	require.NoError(t, target.VerifyRenditionBlobAuthority(t.Context()))
+	backend, err := packstore.NewFilesystemBackend(*layout, packstore.FilesystemBackendOptions{})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, backend.Close()) }()
+	require.NoError(t, target.VerifyRenditionBlobBytes(t.Context(), &embeddingRestoreReader{
+		store: target, backend: backend,
+	}))
 }
 
 type embeddingRestoreReader struct {
