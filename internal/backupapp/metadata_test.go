@@ -52,11 +52,13 @@ func TestDerivativeAuthorityStatsAcceptEveryCatalogArtifactRole(t *testing.T) {
 }
 
 func TestDerivativeAuthorityStatsRefuseUnregisteredRole(t *testing.T) {
-	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(t.TempDir(), "unknown-role.db"),
-		docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.Exec(`CREATE TABLE rendition_artifacts (
+	for _, role := range []string{"provider_audio", "visual_preview", "lexical_projection"} {
+		t.Run(role, func(t *testing.T) {
+			db, err := store.DefaultSQLiteDriver().Open(filepath.Join(t.TempDir(), "unknown-role.db"),
+				docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			_, err = db.Exec(`CREATE TABLE rendition_artifacts (
 		role TEXT, build_id TEXT, artifact_id TEXT, blob_hash TEXT, size INTEGER, checksum TEXT
 	); CREATE TABLE rendition_lexical_segments (
 		build_id TEXT, segment_id TEXT, checksum TEXT, text TEXT, segment_order INTEGER
@@ -64,11 +66,13 @@ func TestDerivativeAuthorityStatsRefuseUnregisteredRole(t *testing.T) {
 		generation_id TEXT, output_blob_hash TEXT, output_size INTEGER,
 		checksum TEXT, state TEXT
 	); INSERT INTO rendition_artifacts(role,build_id,artifact_id,blob_hash,size,checksum)
-		VALUES('provider_audio','build','artifact','blob',1,'checksum');`)
-	require.NoError(t, err)
+		VALUES(?,'build','artifact','blob',1,'checksum');`, role)
+			require.NoError(t, err)
 
-	stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
-	require.EqualError(t, err, "backupapp: derivative artifact class is not catalog-authorized")
-	assert.False(t, present)
-	assert.Nil(t, stats)
+			stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
+			require.EqualError(t, err, "backupapp: derivative artifact class is not catalog-authorized")
+			assert.False(t, present)
+			assert.Nil(t, stats)
+		})
+	}
 }
