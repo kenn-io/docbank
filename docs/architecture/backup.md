@@ -5,9 +5,11 @@ description: Docbank's JSONL-native Kit snapshot and restore architecture.
 
 # Backup and recovery
 
-`docbank backup init`, `backup create`, `backup list`, `backup verify`, and
-`backup restore` are implemented over the authenticated daemon API; see the
-[Backup user guide](../usage/backup.md).
+Standalone `docbank backup init`, `backup create`, `backup list`, `backup
+verify`, and `backup restore` use the authenticated daemon API; see the
+[Backup user guide](../usage/backup.md). Applications that own an embedded
+vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
+directly; see [Embedding Docbank](../embedding.md#back-up-and-restore-an-embedded-vault).
 A coherent local-state filesystem snapshot remains available by stopping the
 daemon before copying the vault, but it is not a topology-independent backup;
 see [Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
@@ -25,10 +27,10 @@ runtime records are not archive state. A restored copy is not trusted until
 
 The internal `backupapp` adapter supplies Kit with Docbank's frozen logical
 view: every authoritative `blobs` row, representation-neutral fidelity stats,
-and mixed loose/packed content reads. A short daemon freeze opens and pins one
-deferred SQLite read transaction; the freeze then ends, writers resume into the
-WAL, and metadata, content membership, and fidelity statistics continue to see
-the same point-in-time state.
+and mixed loose/packed content reads. A short operation-owner freeze opens and
+pins one deferred SQLite read transaction; the freeze then ends, writers resume
+into the WAL, and metadata, content membership, and fidelity statistics
+continue to see the same point-in-time state.
 
 The same pinned transaction emits a separate deterministic
 `docbank-placement-v1` artifact. It names source store UUIDs, display names,
@@ -117,18 +119,19 @@ reporting success. The human CLI renders the same events as terminal bars or
 plain log lines. Machine-readable CLI output uses the non-streaming endpoint so
 stdout remains one JSON document.
 
-Repository verification is daemon-mediated even though it reads the backup
-repository rather than the live vault. The authenticated JSON endpoint returns
-one complete typed report; the NDJSON endpoint carries Kit's verification
-progress followed by exactly one terminal report or error. Quick mode proves
-structure and references without reading document content. Full mode reads and
-hash-verifies referenced content, deduplicating shared objects across selected
-snapshots, and returns every finding rather than stopping at the first damaged
-object. Kit's shared repository lock permits concurrent verifies and restores
-while excluding repository writers.
+Standalone repository verification is daemon-mediated, while embedded owners
+call `BackupRepository.Verify` directly. Quick mode proves structure and
+references without reading document content. Full mode reads and hash-verifies
+referenced content, deduplicating shared objects across selected snapshots, and
+returns every finding rather than stopping at the first damaged object. Kit's
+shared repository lock permits concurrent verifies and restores while excluding
+repository writers. The daemon's authenticated JSON endpoint returns one
+complete typed report; its NDJSON endpoint carries progress followed by exactly
+one terminal report or error.
 
-Restore is likewise daemon-mediated but never mutates the running store. Before
-Kit receives a target, Docbank canonicalizes its existing path prefix and
+Standalone restore is daemon-mediated; embedded restore is invoked through the
+open vault but never mutates that running store. Before Kit receives a target,
+Docbank canonicalizes its existing path prefix and
 rejects any parent, descendant, or symlink alias overlapping the live vault or
 repository. Filesystem identity supplements those lexical checks for case- or
 normalization-equivalent aliases. Kit then opens the target without following a

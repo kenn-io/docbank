@@ -1,0 +1,177 @@
+package docbank_test
+
+import (
+	"bytes"
+	"io"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	docbank "go.kenn.io/docbank"
+)
+
+func TestEmbeddedBackupRoundTrip(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("embedded backup content\n")
+	created := createRangeFixture(t, vault, "/archive/photo.txt", content)
+
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+	snapshot, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{Tag: "before-edit"})
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshot.ID)
+	require.Equal(t, "before-edit", snapshot.Tag)
+
+	snapshots, err := repository.Snapshots()
+	require.NoError(t, err)
+	require.Len(t, snapshots, 1)
+	require.Equal(t, snapshot.ID, snapshots[0].ID)
+
+	verified, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: snapshot.ID})
+	require.NoError(t, err)
+	require.Equal(t, []string{snapshot.ID}, verified.Snapshots)
+	require.Empty(t, verified.Problems)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	restored, err := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     target,
+	})
+	require.NoError(t, err)
+	require.Equal(t, snapshot.ID, restored.SnapshotID)
+	require.True(t, restored.Proof.ContentVerified)
+	require.True(t, restored.Proof.SQLiteIntegrity)
+	require.True(t, restored.Proof.ManifestStats)
+
+	restoredVault, err := docbank.New(t.Context(), docbank.Config{Root: target})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredVault.Close()) })
+	opened, err := restoredVault.OpenVersionContent(t.Context(), created.Version.ID)
+	require.NoError(t, err)
+	got, err := io.ReadAll(opened.Reader)
+	require.NoError(t, err)
+	require.NoError(t, opened.Reader.Verify())
+	require.NoError(t, opened.Reader.Close())
+	require.Equal(t, content, got)
+}
+
+func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("backup fence content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+
+	paused := make(chan struct{})
+	resume := make(chan struct{})
+	var pauseOnce sync.Once
+	var resumeOnce sync.Once
+	t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
+	backupDone := make(chan error, 1)
+	go func() {
+		_, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+			Progress: func(progress docbank.BackupProgress) {
+				if progress.Stage == "freeze" && progress.Final {
+					pauseOnce.Do(func() { close(paused) })
+					<-resume
+				}
+			},
+		})
+		backupDone <- err
+	}()
+	select {
+	case <-paused:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "backup did not reach its post-freeze capture")
+	}
+
+	packDone := make(chan error, 1)
+	go func() {
+		_, err := vault.Pack(t.Context(), docbank.PackOptions{})
+		packDone <- err
+	}()
+	select {
+	case err := <-packDone:
+		require.FailNow(t, "physical maintenance completed during backup capture", "error: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	resumeOnce.Do(func() { close(resume) })
+	require.NoError(t, <-backupDone)
+	require.NoError(t, <-packDone)
+}
+
+func TestEmbeddedBackupAllowsAppendsAfterFreeze(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+
+	paused := make(chan struct{})
+	resume := make(chan struct{})
+	var pauseOnce sync.Once
+	var resumeOnce sync.Once
+	t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
+	backupDone := make(chan error, 1)
+	go func() {
+		_, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+			Progress: func(progress docbank.BackupProgress) {
+				if progress.Stage == "freeze" && progress.Final {
+					pauseOnce.Do(func() { close(paused) })
+					<-resume
+				}
+			},
+		})
+		backupDone <- err
+	}()
+	select {
+	case <-paused:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "backup did not reach its post-freeze capture")
+	}
+
+	putDone := make(chan error, 1)
+	go func() {
+		_, err := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+			MediaType: "text/plain",
+		})
+		putDone <- err
+	}()
+	select {
+	case err := <-putDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		resumeOnce.Do(func() { close(resume) })
+		require.FailNow(t, "append remained blocked after the backup freeze ended")
+	}
+
+	resumeOnce.Do(func() { close(resume) })
+	require.NoError(t, <-backupDone)
+}
+
+func TestEmbeddedRestoreRejectsLiveVaultOverlap(t *testing.T) {
+	liveRoot := filepath.Join(t.TempDir(), "live")
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: liveRoot})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("overlap content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+	snapshot, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{})
+	require.NoError(t, err)
+
+	_, err = vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     filepath.Join(liveRoot, "restore"),
+	})
+	require.ErrorIs(t, err, docbank.ErrBackupRestoreTargetOverlap)
+}
