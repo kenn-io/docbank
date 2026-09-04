@@ -242,7 +242,7 @@ func (s *Store) PurgeDerivatives(
 		rootedEmbeddingAttachments := make(map[string]struct{})
 		embeddingPayloads, err := purgeEmbeddingCatalogTx(
 			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All,
-			&report, rootedEmbeddingAttachments,
+			asOf, &report, rootedEmbeddingAttachments,
 		)
 		if err != nil {
 			return err
@@ -793,7 +793,7 @@ func validatePurgeRequest(request PurgeRequest) error {
 
 func purgeEmbeddingCatalogTx(
 	ctx context.Context, tx *sql.Tx, versionSet, attachmentSet, buildSet map[string]struct{},
-	all bool, report *PurgeReport, rootedAttachments map[string]struct{},
+	all bool, asOf string, report *PurgeReport, rootedAttachments map[string]struct{},
 ) (_ []string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT s.embedding_set_id,s.content_version_id,
 		s.input_generation_id,s.vector_set_id,v.payload_blob_hash,
@@ -845,7 +845,7 @@ func purgeEmbeddingCatalogTx(
 				(r.target_kind='embedding_input_generation' AND r.target_id=?) OR
 				(r.target_kind='embedding_vector_set' AND r.target_id=?) OR
 				(r.target_kind='embedding_payload' AND r.target_id=?)
-			))`, nowRFC3339(), candidate.id, candidate.generationID,
+			))`, asOf, candidate.id, candidate.generationID,
 			candidate.vectorSetID, candidate.payload).Scan(&rooted); err != nil {
 			return nil, fmt.Errorf("checking embedding set roots: %w", err)
 		}
@@ -913,7 +913,7 @@ func purgeEmbeddingCatalogTx(
 		}
 		report.RemovedEmbeddingSets += count
 	}
-	collected, err := collectOrphanEmbeddingArtifactsTx(ctx, tx, nowRFC3339())
+	collected, err := collectOrphanEmbeddingArtifactsTx(ctx, tx, asOf)
 	if err != nil {
 		return nil, err
 	}

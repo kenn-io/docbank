@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
@@ -15,6 +16,40 @@ import (
 	"go.kenn.io/docbank/document"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
+
+func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	const asOf = "2026-08-25T10:00:00.000000000Z"
+	root := CurrentRenditionRoot{
+		ID: "embedding-purge-boundary", Kind: RenditionRootReaderLease,
+		TargetKind: RenditionRootEmbeddingSet, TargetID: record.ID, FencingToken: 1,
+		RecordedAt: embeddingCatalogTime, ExpiresAt: "2026-08-25T10:00:00.000000001Z",
+	}
+	require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), root))
+
+	report := PurgeReport{}
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		_, err := purgeEmbeddingCatalogTx(t.Context(), tx, stringSet([]string{versionID}), nil, nil,
+			false, asOf, &report, make(map[string]struct{}))
+		return err
+	}))
+
+	assert.Zero(t, report.RemovedEmbeddingSets)
+	assert.Zero(t, report.RemovedEmbeddingInputGenerations)
+	assert.Zero(t, report.RemovedEmbeddingVectorSets)
+	var authorities int
+	require.NoError(t, s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
+		(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
+		(SELECT COUNT(*) FROM embedding_vector_sets WHERE vector_set_id=?) +
+		(SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=? AND active=1)`,
+		record.ID, record.InputGeneration.ID, record.VectorSet.ID, root.ID).Scan(&authorities))
+	assert.Equal(t, 4, authorities)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
 
 func TestEmbeddingCatalogExplicitPurgePreservesEveryActiveRoot(t *testing.T) {
 	testCases := []struct {
