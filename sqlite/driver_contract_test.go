@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +29,8 @@ type driverObservations struct {
 	invalidAccessRejected    bool
 	defaultBusyTimeout       int64
 	explicitBusyTimeout      int64
+	journalMode              string
+	foreignKeysValue         int64
 	wal                      bool
 	foreignKeys              bool
 	deferredWriterAllowed    bool
@@ -78,17 +79,21 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 	baseDir := t.TempDir()
 	databasePath := filepath.Join(baseDir, "contract.db")
 	createContractDatabase(t, driver, databasePath)
+	resetJournalMode(t, driver, databasePath)
 
 	db, err := driver.Open(databasePath, docsqlite.OpenOptions{
 		Access:          docsqlite.ReadWriteExisting,
 		TransactionMode: docsqlite.Deferred,
 	})
 	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
 	require.NoError(t, db.PingContext(t.Context()))
 	observations.readWriteExisting = execAndReadMarker(t, db, "updated")
 	observations.defaultBusyTimeout = pragmaInt(t, db, "busy_timeout")
-	observations.wal = strings.EqualFold(pragmaString(t, db, "journal_mode"), "wal")
-	observations.foreignKeys = pragmaInt(t, db, "foreign_keys") == 1
+	observations.journalMode = strings.ToLower(pragmaString(t, db, "journal_mode"))
+	observations.wal = observations.journalMode == "wal"
+	observations.foreignKeysValue = pragmaInt(t, db, "foreign_keys")
+	observations.foreignKeys = observations.foreignKeysValue == 1
 	require.NoError(t, db.Close())
 
 	missingDB, err := driver.Open(filepath.Join(baseDir, "missing.db"), docsqlite.OpenOptions{
@@ -96,6 +101,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 		TransactionMode: docsqlite.Deferred,
 	})
 	require.NoError(t, err)
+	defer func() { require.NoError(t, missingDB.Close()) }()
 	observations.missingReadWriteRejected = missingDB.PingContext(t.Context()) != nil
 	require.NoError(t, missingDB.Close())
 
@@ -104,6 +110,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 		TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
+	defer func() { require.NoError(t, readOnly.Close()) }()
 	require.NoError(t, readOnly.PingContext(t.Context()))
 	var marker string
 	require.NoError(t, readOnly.QueryRowContext(t.Context(),
@@ -112,11 +119,13 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 	_, writeErr := readOnly.ExecContext(t.Context(), `UPDATE contract SET value = 'rejected' WHERE id = 1`)
 	observations.readOnlyWriteRejected = writeErr != nil
 	readOnlyTx, err := readOnly.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	require.NoError(t, readOnlyTx.QueryRowContext(t.Context(),
-		`SELECT value FROM contract WHERE id = 1`).Scan(&marker))
-	observations.readOnlyImmediate = marker == "updated"
-	require.NoError(t, readOnlyTx.Rollback())
+	observations.readOnlyImmediate = err == nil
+	if err == nil {
+		t.Cleanup(func() { _ = readOnlyTx.Rollback() })
+		require.NoError(t, readOnlyTx.QueryRowContext(t.Context(),
+			`SELECT value FROM contract WHERE id = 1`).Scan(&marker))
+		require.NoError(t, readOnlyTx.Rollback())
+	}
 	require.NoError(t, readOnly.Close())
 
 	invalidDB, err := driver.Open(filepath.Join(baseDir, "invalid.db"), docsqlite.OpenOptions{
@@ -134,16 +143,17 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 		BusyTimeout:     1234 * time.Millisecond,
 	})
 	require.NoError(t, err)
+	defer func() { require.NoError(t, explicitDB.Close()) }()
 	require.NoError(t, explicitDB.PingContext(t.Context()))
 	observations.explicitBusyTimeout = pragmaInt(t, explicitDB, "busy_timeout")
 	require.NoError(t, explicitDB.Close())
 
 	observations.create = observeCreate(t, driver, filepath.Join(baseDir, "created.db"))
-	observations.deferredWriterAllowed, observations.immediateBusy = observeTransactionLocks(t, driver, baseDir)
+	observations.deferredWriterAllowed, observations.immediateBusy, observations.realBusy,
+		observations.wrappedBusy = observeTransactionLocks(t, driver, baseDir)
 	observations.specialPath = observeSpecialPath(t, driver, baseDir)
 	observations.relativePath = observeRelativePath(t, driver, baseDir)
 	observations.independentPools = observeIndependentPools(t, driver, databasePath)
-	observations.realBusy, observations.wrappedBusy = observeBusyClassification(t, driver, baseDir)
 	observations.realUnique, observations.wrappedUnique = observeUniqueClassification(t, driver, databasePath)
 	observations.nilFalse = !driver.IsBusy(nil) && !driver.IsUniqueViolation(nil)
 	observations.textFalse = !driver.IsBusy(errors.New("database is locked")) &&
@@ -196,6 +206,7 @@ func createContractDatabase(t *testing.T, driver docsqlite.Driver, path string) 
 		TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
 	require.NoError(t, db.PingContext(t.Context()))
 	for _, statement := range []string{
 		`CREATE TABLE contract (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE, checked INTEGER NOT NULL CHECK (checked > 0), parent_id INTEGER NOT NULL REFERENCES parent(id))`,
@@ -206,6 +217,16 @@ func createContractDatabase(t *testing.T, driver docsqlite.Driver, path string) 
 		_, err = db.ExecContext(t.Context(), statement)
 		require.NoError(t, err)
 	}
+}
+
+func resetJournalMode(t *testing.T, driver docsqlite.Driver, path string) {
+	t.Helper()
+	db := openAndPing(t, driver, path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+	})
+	var mode string
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA journal_mode=DELETE").Scan(&mode))
+	require.Equal(t, "delete", strings.ToLower(mode))
 	require.NoError(t, db.Close())
 }
 
@@ -216,6 +237,7 @@ func observeCreate(t *testing.T, driver docsqlite.Driver, path string) bool {
 		TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
 	require.NoError(t, db.PingContext(t.Context()))
 	_, err = db.ExecContext(t.Context(), `CREATE TABLE created (value TEXT)`)
 	if err != nil {
@@ -241,7 +263,7 @@ func execAndReadMarker(t *testing.T, db *sql.DB, value string) bool {
 	return marker == value
 }
 
-func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir string) (deferredWriterAllowed, immediateBusy bool) {
+func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir string) (deferredWriterAllowed, immediateBusy, realBusy, wrappedBusy bool) {
 	t.Helper()
 	deferredPath := filepath.Join(baseDir, "deferred.db")
 	createContractDatabase(t, driver, deferredPath)
@@ -270,11 +292,13 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 	immediateTx, err := immediateOne.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	_, err = immediateTwo.ExecContext(t.Context(), `UPDATE contract SET value = 'blocked' WHERE id = 1`)
-	immediateBusy = err != nil && driver.IsBusy(err) && driver.IsBusy(fmt.Errorf("wrapped: %w", err))
+	immediateBusy = err != nil && driver.IsBusy(err)
+	realBusy = immediateBusy
+	wrappedBusy = err != nil && driver.IsBusy(fmt.Errorf("busy wrapper: %w", err))
 	require.NoError(t, immediateTx.Rollback())
 	require.NoError(t, immediateOne.Close())
 	require.NoError(t, immediateTwo.Close())
-	return deferredWriterAllowed, immediateBusy
+	return deferredWriterAllowed, immediateBusy, realBusy, wrappedBusy
 }
 
 func observeSpecialPath(t *testing.T, driver docsqlite.Driver, baseDir string) bool {
@@ -324,27 +348,6 @@ func observeIndependentPools(t *testing.T, driver docsqlite.Driver, path string)
 	return firstTimeout == 17 && secondTimeout == 29
 }
 
-func observeBusyClassification(t *testing.T, driver docsqlite.Driver, baseDir string) (classified, wrapped bool) {
-	t.Helper()
-	path := filepath.Join(baseDir, "classification-busy.db")
-	createContractDatabase(t, driver, path)
-	first := openAndPing(t, driver, path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate, BusyTimeout: 50 * time.Millisecond,
-	})
-	second := openAndPing(t, driver, path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 50 * time.Millisecond,
-	})
-	tx, err := first.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	_, err = second.ExecContext(t.Context(), `UPDATE contract SET value = 'busy' WHERE id = 1`)
-	classified = err != nil && driver.IsBusy(err)
-	wrapped = err != nil && driver.IsBusy(fmt.Errorf("busy wrapper: %w", err))
-	require.NoError(t, tx.Rollback())
-	require.NoError(t, first.Close())
-	require.NoError(t, second.Close())
-	return classified, wrapped
-}
-
 func observeUniqueClassification(t *testing.T, driver docsqlite.Driver, path string) (classified, wrapped bool) {
 	t.Helper()
 	db := openAndPing(t, driver, path, docsqlite.OpenOptions{
@@ -384,6 +387,7 @@ func openAndPing(t *testing.T, driver docsqlite.Driver, path string, options doc
 	t.Helper()
 	db, err := driver.Open(path, options)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	require.NoError(t, db.PingContext(t.Context()))
 	return db
 }
@@ -400,13 +404,4 @@ func pragmaString(t *testing.T, db *sql.DB, name string) string {
 	var value string
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA "+name).Scan(&value))
 	return value
-}
-
-func normalizedObservations(observations driverObservations) driverObservations {
-	observations.name = ""
-	return observations
-}
-
-func observationsEqual(left, right driverObservations) bool {
-	return reflect.DeepEqual(normalizedObservations(left), normalizedObservations(right))
 }

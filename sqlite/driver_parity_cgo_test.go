@@ -3,12 +3,22 @@
 package sqlite_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/sqlite/mattn"
 	"go.kenn.io/docbank/sqlite/modernc"
 )
+
+func normalizedObservations(observations driverObservations) driverObservations {
+	observations.name = ""
+	return observations
+}
+
+func observationsEqual(left, right driverObservations) bool {
+	return reflect.DeepEqual(normalizedObservations(left), normalizedObservations(right))
+}
 
 func TestMattnDriverContract(t *testing.T) {
 	observations := exerciseDriverContract(t, mattn.Driver{})
