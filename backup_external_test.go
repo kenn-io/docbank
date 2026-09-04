@@ -36,6 +36,7 @@ func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 	backupDone := make(chan backupResult, 1)
 	go func() {
 		snapshot, createErr := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+			AllowPlaintextSecrets: true,
 			Prepare: func(ctx context.Context) error {
 				close(prepared)
 				select {
@@ -46,7 +47,7 @@ func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 				return os.WriteFile(extraPath, []byte("host catalog\n"), 0o600)
 			},
 			ExtraFiles: []docbank.BackupExtraFile{{
-				Path: extraPath, RecordAs: "host/catalog.sqlite",
+				Path: extraPath, RecordAs: "host/catalog.sqlite", Sensitive: true,
 			}},
 		})
 		backupDone <- backupResult{snapshot: snapshot, err: createErr}
@@ -85,6 +86,27 @@ func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(target, "host", "catalog.sqlite"))
 	require.NoError(t, err)
 	require.Equal(t, "host catalog\n", string(got))
+}
+
+func TestEmbeddedBackupRefusesSensitiveHostFileWithoutPlaintextOptIn(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+
+	secretPath := filepath.Join(t.TempDir(), "credentials.json")
+	require.NoError(t, os.WriteFile(secretPath, []byte("synthetic secret\n"), 0o600))
+	_, err = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+		ExtraFiles: []docbank.BackupExtraFile{{
+			Path: secretPath, RecordAs: "host/credentials.json", Sensitive: true,
+		}},
+	})
+	require.ErrorContains(t, err, "requires an encrypted repository")
+	snapshots, listErr := repository.Snapshots()
+	require.NoError(t, listErr)
+	require.Empty(t, snapshots)
 }
 
 func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {

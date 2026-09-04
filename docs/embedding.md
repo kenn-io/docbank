@@ -414,14 +414,17 @@ the complete snapshot, but ordinary appends resume after Docbank pins the short
 SQLite metadata view. An embedding application may use `Prepare` to create an
 immutable snapshot of its own catalog while that freeze is held, then declare
 the file in `ExtraFiles` so the same manifest covers both authorities. Prepared
-files must remain unchanged until `CreateBackup` returns. Physical maintenance
-waits until the manifest is published. Restore always targets a separate root,
-rejects overlap with the live vault or repository, and proves content, SQLite
-integrity, and manifest statistics before publication. An embedding application
-supplies any additional storage it owns through `ProtectedRoots`; Docbank
-applies the same canonical, filesystem-aware exclusion before restore cleanup.
-The embedded restore path reconstructs a fresh fixed primary;
-deployment-specific secondary-store placement is not restored.
+files must remain unchanged until `CreateBackup` returns. Mark an extra file
+`Sensitive` when it contains credentials or tokens. Docbank refuses to put a
+sensitive file in its plaintext backup repository unless the application sets
+`AllowPlaintextSecrets` for that backup. Physical maintenance waits until the
+manifest is published. Restore always targets a separate root, rejects overlap
+with the live vault or repository, and proves content, SQLite integrity, and
+manifest statistics before publication. An embedding application supplies any
+additional storage it owns through `ProtectedRoots`; Docbank applies the same
+canonical, filesystem-aware exclusion before restore cleanup. The embedded
+restore path reconstructs a fresh fixed primary; deployment-specific
+secondary-store placement is not restored.
 
 ## Maintain physical storage
 

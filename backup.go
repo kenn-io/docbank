@@ -35,6 +35,9 @@ type BackupRepository struct {
 type BackupExtraFile struct {
 	Path     string
 	RecordAs string
+	// Sensitive requires an encrypted repository or an explicit plaintext
+	// override for this backup.
+	Sensitive bool
 }
 
 // BackupOptions controls one embedded vault snapshot.
@@ -43,7 +46,10 @@ type BackupOptions struct {
 	ZstdLevel   int
 	Jobs        int
 	ForceUnlock bool
-	Progress    func(BackupProgress)
+	// AllowPlaintextSecrets permits ExtraFiles marked Sensitive to be stored
+	// in the current plaintext backup repository.
+	AllowPlaintextSecrets bool
+	Progress              func(BackupProgress)
 	// Prepare runs while Docbank holds its short metadata freeze. It may
 	// create immutable host-owned files named by ExtraFiles; those files must
 	// remain unchanged until CreateBackup returns.
@@ -221,8 +227,9 @@ func (v *Vault) CreateBackup(
 		backup.CreateOptions{
 			Tag: opts.Tag, ZstdLevel: opts.ZstdLevel, Jobs: opts.Jobs,
 			ForceUnlock: opts.ForceUnlock, Progress: backupProgressCallback(opts.Progress),
-			Freezer: &vaultBackupFreezer{vault: v, prepare: opts.Prepare},
-			Extras:  backup.ExtrasSpec{Files: backupExtraFiles(opts.ExtraFiles)},
+			AllowPlaintextSecrets: opts.AllowPlaintextSecrets,
+			Freezer:               &vaultBackupFreezer{vault: v, prepare: opts.Prepare},
+			Extras:                backup.ExtrasSpec{Files: backupExtraFiles(opts.ExtraFiles)},
 		})
 	if err != nil {
 		return BackupSnapshot{}, fmt.Errorf("creating backup snapshot: %w", err)
@@ -374,7 +381,9 @@ func backupExtraFiles(files []BackupExtraFile) []backup.ExtrasFileSpec {
 	}
 	extraFiles := make([]backup.ExtrasFileSpec, len(files))
 	for i, file := range files {
-		extraFiles[i] = backup.ExtrasFileSpec{Path: file.Path, RecordAs: file.RecordAs}
+		extraFiles[i] = backup.ExtrasFileSpec{
+			Path: file.Path, RecordAs: file.RecordAs, Sensitive: file.Sensitive,
+		}
 	}
 	return extraFiles
 }
