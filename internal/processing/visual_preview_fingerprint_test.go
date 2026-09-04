@@ -63,8 +63,7 @@ func TestVisualPreviewDescriptorTracksLinkedDependenciesAndPolicy(t *testing.T) 
 		}
 	}
 	assert.Equal(t, "v0.44.0", xImageVersion)
-	assert.Contains(t, visualPreviewProcessorDescriptor,
-		fmt.Sprintf("max-edge=%d", visualPreviewMaxEdgePixels))
-	assert.Contains(t, visualPreviewProcessorDescriptor,
-		fmt.Sprintf("quality=%d", visualPreviewJPEGQuality))
+	descriptor := ":" + visualPreviewProcessorDescriptor + ":"
+	assert.Contains(t, descriptor, ":"+fmt.Sprintf("max-edge=%d", visualPreviewMaxEdgePixels)+":")
+	assert.Contains(t, descriptor, ":"+fmt.Sprintf("quality=%d", visualPreviewJPEGQuality)+":")
 }
