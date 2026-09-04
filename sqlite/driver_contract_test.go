@@ -27,6 +27,8 @@ type driverObservations struct {
 	readOnlyWriteRejected    bool
 	readOnlyImmediate        bool
 	invalidAccessRejected    bool
+	createWAL                bool
+	createForeignKeys        bool
 	defaultBusyTimeout       int64
 	explicitBusyTimeout      int64
 	journalMode              string
@@ -148,7 +150,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 	observations.explicitBusyTimeout = pragmaInt(t, explicitDB, "busy_timeout")
 	require.NoError(t, explicitDB.Close())
 
-	observations.create = observeCreate(t, driver, filepath.Join(baseDir, "created.db"))
+	observations.create, observations.createWAL, observations.createForeignKeys = observeCreate(t, driver, filepath.Join(baseDir, "created.db"))
 	observations.deferredWriterAllowed, observations.immediateBusy, observations.realBusy,
 		observations.wrappedBusy = observeTransactionLocks(t, driver, baseDir)
 	observations.specialPath = observeSpecialPath(t, driver, baseDir)
@@ -177,6 +179,8 @@ func assertDriverContract(t *testing.T, observations driverObservations) {
 	require.True(t, observations.readOnlyWriteRejected)
 	require.True(t, observations.readOnlyImmediate)
 	require.True(t, observations.invalidAccessRejected)
+	require.True(t, observations.createWAL)
+	require.True(t, observations.createForeignKeys)
 	require.Equal(t, int64(5000), observations.defaultBusyTimeout)
 	require.Equal(t, int64(1234), observations.explicitBusyTimeout)
 	require.True(t, observations.wal)
@@ -230,7 +234,7 @@ func resetJournalMode(t *testing.T, driver docsqlite.Driver, path string) {
 	require.NoError(t, db.Close())
 }
 
-func observeCreate(t *testing.T, driver docsqlite.Driver, path string) bool {
+func observeCreate(t *testing.T, driver docsqlite.Driver, path string) (created, wal, foreignKeys bool) {
 	t.Helper()
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access:          docsqlite.Create,
@@ -239,15 +243,17 @@ func observeCreate(t *testing.T, driver docsqlite.Driver, path string) bool {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	require.NoError(t, db.PingContext(t.Context()))
+	wal = strings.EqualFold(pragmaString(t, db, "journal_mode"), "wal")
+	foreignKeys = pragmaInt(t, db, "foreign_keys") == 1
 	_, err = db.ExecContext(t.Context(), `CREATE TABLE created (value TEXT)`)
 	if err != nil {
 		require.NoError(t, db.Close())
-		return false
+		return false, wal, foreignKeys
 	}
 	_, err = db.ExecContext(t.Context(), `INSERT INTO created (value) VALUES ('synthetic')`)
-	created := err == nil
+	created = err == nil
 	require.NoError(t, db.Close())
-	return created
+	return created, wal, foreignKeys
 }
 
 func execAndReadMarker(t *testing.T, db *sql.DB, value string) bool {

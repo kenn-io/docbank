@@ -29,15 +29,15 @@ func TestDriverParity(t *testing.T) {
 	var moderncObservations, mattnObservations driverObservations
 	t.Run("modernc", func(t *testing.T) {
 		moderncObservations = exerciseDriverContract(t, modernc.Driver{})
-		assertDriverContract(t, moderncObservations)
 	})
 	t.Run("mattn", func(t *testing.T) {
 		mattnObservations = exerciseDriverContract(t, mattn.Driver{})
-		assertDriverContract(t, mattnObservations)
 	})
 
 	require.NotEmpty(t, moderncObservations.name)
 	require.NotEmpty(t, mattnObservations.name)
 	require.NotEqual(t, moderncObservations.name, mattnObservations.name)
 	require.True(t, observationsEqual(moderncObservations, mattnObservations))
+	assertDriverContract(t, moderncObservations)
+	assertDriverContract(t, mattnObservations)
 }
