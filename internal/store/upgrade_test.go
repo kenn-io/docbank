@@ -275,24 +275,31 @@ func schemaSQLWithAddedColumn(t *testing.T, original, table, column string) stri
 }
 
 func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
-	for _, test := range v090UpgradeDrivers() {
-		t.Run(test.name, func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
-			require.NoError(t, err)
-			require.NoError(t, s.Close())
+	for _, table := range []struct {
+		name, expected string
+	}{
+		{name: "blobs", expected: "schema version 4 has an unexpected layout"},
+		{name: "blob_locations", expected: "schema version 4 has an unexpected blob_locations layout"},
+	} {
+		for _, test := range v090UpgradeDrivers() {
+			t.Run(table.name+"/"+test.name, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
 
-			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
-				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				})
+				require.NoError(t, err)
+				_, err = db.Exec(`ALTER TABLE ` + table.name + ` ADD COLUMN synthetic_unexpected_269 TEXT`)
+				require.NoError(t, err)
+				require.NoError(t, db.Close())
+
+				_, err = Open(dbPath, test.driver)
+				require.ErrorContains(t, err, table.expected)
 			})
-			require.NoError(t, err)
-			_, err = db.Exec(`ALTER TABLE blobs ADD COLUMN synthetic_unexpected_269 TEXT`)
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
-
-			_, err = Open(dbPath, test.driver)
-			require.ErrorContains(t, err, "schema version 4 has an unexpected layout")
-		})
+		}
 	}
 }
 
