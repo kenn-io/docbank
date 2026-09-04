@@ -128,3 +128,15 @@ func TestEmbeddingContractRejectsImplicitOrUnboundedQueryInstructions(t *testing
 	_, err = document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileQwen3, QueryInstruction: string(make([]byte, 4097))})
 	require.ErrorContains(t, err, "bounded valid UTF-8")
 }
+
+func TestEmbeddingContractRejectsCustomQueryInstructionOnValidation(t *testing.T) {
+	custom, err := document.NewModelInputContract(document.ModelInputContractConfig{
+		Profile: document.ModelInputProfileCustom, CompatibilityID: "custom/v1",
+		Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "{{content}}"},
+		Query:    document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "Instruct: fixed\nQuery:{{content}}"},
+	})
+	require.NoError(t, err)
+	custom.QueryInstruction = "never rendered"
+	_, err = document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic-embedder", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: testFingerprint(), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "synthetic-model", ModelRevision: "r1", Dimension: 2, Metric: document.VectorMetricCosine, InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}, CompatibilityID: "custom/v1", ModelInput: custom, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}, DocumentFormatter: "document/v1", QueryFormatter: "query/v1", Normalization: document.VectorNormalizationUnitLength, ScalarEncoding: "float32"})
+	require.ErrorContains(t, err, "custom model-input contracts must encode instructions")
+}

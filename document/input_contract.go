@@ -224,6 +224,9 @@ func validateModelInputContractFields(contract ModelInputContract) error {
 		}
 		return nil
 	}
+	if contract.Profile == ModelInputProfileCustom && contract.QueryInstruction != "" {
+		return errors.New("custom model-input contracts must encode instructions in their explicit query template")
+	}
 	if err := validateCompatibilityID(contract.CompatibilityID); err != nil {
 		return err
 	}
