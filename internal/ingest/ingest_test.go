@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -617,6 +618,27 @@ func TestAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T) {
 	assert.Zero(t, rep.Added)
 	_, err = ing.Store.NodeByPath(ctx, "/inbox")
 	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
+}
+
+func TestEnsureSourceDirRejectsPathOutsideWalkRoot(t *testing.T) {
+	const childEnv = "DOCBANK_TEST_ENSURE_SOURCE_DIR_OUTSIDE_ROOT"
+	if os.Getenv(childEnv) == "1" {
+		ing := newTestIngester(t)
+		walkRoot := filepath.Join(t.TempDir(), "root")
+		dirPath := filepath.Join(filepath.Dir(walkRoot), "outside", "nested")
+		_, err := ing.ensureSourceDir(
+			t.Context(), map[string]int64{}, map[string]error{}, ing.Store.RootID(),
+			"source", walkRoot, dirPath,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outside traversal root")
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEnsureSourceDirRejectsPathOutsideWalkRoot$", "-test.count=1") //nolint:gosec // os.Args[0] is the trusted current test executable.
+	cmd.Env = append(os.Environ(), childEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func TestIncludeSkipsNonRegularEntries(t *testing.T) {

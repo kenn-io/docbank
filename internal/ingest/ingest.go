@@ -651,9 +651,14 @@ func (ing *Ingester) ensureSourceDir(
 	if err, ok := dirErrs[dirPath]; ok {
 		return 0, err
 	}
+	rel, err := filepath.Rel(walkRoot, dirPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		err = fmt.Errorf("source directory %q is outside traversal root %q", dirPath, walkRoot)
+		dirErrs[dirPath] = err
+		return 0, err
+	}
 	parentID, name := destDirID, topName
 	if dirPath != walkRoot {
-		var err error
 		parentID, err = ing.ensureSourceDir(
 			ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(dirPath),
 		)
