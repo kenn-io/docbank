@@ -130,7 +130,7 @@ func BuildEmbeddingInputs(evidence NormalizedEvidenceV1, policy InputPolicy, lim
 		}
 		return EmbeddingInputGeneration{}, errors.New("normalized evidence checksum is invalid")
 	}
-	tokenizerIdentity := policy.Tokenizer.Identity()
+	declaredIdentity := TokenizerIdentity{Name: policy.Chunk.Tokenizer, Revision: policy.Chunk.TokenizerRevision}
 	tokens, naturalEnds, err := tokenizeEvidence(evidence, policy.Tokenizer)
 	if err != nil {
 		return EmbeddingInputGeneration{}, err
@@ -173,7 +173,7 @@ func BuildEmbeddingInputs(evidence NormalizedEvidenceV1, policy InputPolicy, lim
 			return EmbeddingInputGeneration{}, err
 		}
 	}
-	if policy.Tokenizer.Identity() != tokenizerIdentity {
+	if policy.Tokenizer.Identity() != declaredIdentity {
 		return EmbeddingInputGeneration{}, errors.New("embedding tokenizer identity changed during generation")
 	}
 	result.TotalContentTokens, result.TotalRenderedTokens = totals.contentTokens, totals.renderedTokens
