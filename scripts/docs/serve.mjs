@@ -97,6 +97,16 @@ export function createRebuildQueue({ build, debounceMs = 100, onError = console.
 }
 
 
+const generatedDocsEntry = /^(?:\.|site$|zensical-site\.|zensical-public-docs\.)/;
+
+
+export function isGeneratedDocsPath(filename) {
+  if (!filename) return false;
+  const [first] = String(filename).split(/[\\/]/, 1);
+  return generatedDocsEntry.test(first);
+}
+
+
 function resolveRequest(siteRoot, rawUrl) {
   const rawPath = rawUrl.split(/[?#]/, 1)[0];
   let decoded;
@@ -200,13 +210,15 @@ export async function startDocsServer({
 
   const watchers = [];
   if (watch) {
-    for (const [source, recursive] of [
-      [path.join(repoRoot, "website"), true],
-      [path.join(repoRoot, "docs"), true],
-      [path.join(repoRoot, "scripts", "docs-assets.ref"), false],
-      [path.join(repoRoot, "scripts", "docs-assets.txt"), false],
+    for (const [source, recursive, ignore] of [
+      [path.join(repoRoot, "website"), true, () => false],
+      [path.join(repoRoot, "docs"), true, isGeneratedDocsPath],
+      [path.join(repoRoot, "scripts", "docs-assets.ref"), false, () => false],
+      [path.join(repoRoot, "scripts", "docs-assets.txt"), false, () => false],
     ]) {
-      const watcher = watchFactory(source, { recursive }, () => queue.request());
+      const watcher = watchFactory(source, { recursive }, (_event, filename) => {
+        if (!ignore(filename)) queue.request();
+      });
       watcher.on?.("error", (error) => logger.error(error));
       watchers.push(watcher);
     }

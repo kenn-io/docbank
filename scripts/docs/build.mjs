@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import { verifySite } from "./verify-site.mjs";
+import { canonicalOrigin, verifySite } from "./verify-site.mjs";
 
 
 const execFileAsync = promisify(execFile);
@@ -116,6 +116,22 @@ async function copyGeneratedAssets(repoRoot, staging, names) {
 }
 
 
+async function localizeAssetUrls(directory) {
+  const absolutePrefix = `="${canonicalOrigin}/assets/`;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await localizeAssetUrls(target);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".html")) continue;
+    const contents = await readFile(target, "utf8");
+    if (!contents.includes(absolutePrefix)) continue;
+    await writeFile(target, contents.replaceAll(absolutePrefix, '="/assets/'));
+  }
+}
+
+
 async function replaceOutput({ output, staging }) {
   const previous = path.join(path.dirname(output), `.${path.basename(output)}.previous`);
   await rm(previous, { recursive: true, force: true });
@@ -166,6 +182,7 @@ export async function buildSite({
     await rm(path.join(docsOutput, "install.sh"), { force: true });
     await rm(path.join(docsOutput, "install.ps1"), { force: true });
     await rm(path.join(docsOutput, outputMarker), { force: true });
+    await localizeAssetUrls(docsOutput);
     await copyFile(path.join(repoRoot, "docs", "llms.txt"), path.join(staging, "llms.txt"));
 
     await verifySite({

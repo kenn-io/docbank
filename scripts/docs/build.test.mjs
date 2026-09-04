@@ -65,7 +65,14 @@ async function syncAssetsFixture({ repoRoot }) {
 
 async function buildDocsFixture({ repoRoot, output }) {
   await write(output, "index.html", html("https://docbank.ai/docs/", '<a href="setup/">Setup</a>'));
-  await write(output, "setup/index.html", html("https://docbank.ai/docs/setup/", '<a href="../">Docs</a>'));
+  await write(
+    output,
+    "setup/index.html",
+    html(
+      "https://docbank.ai/docs/setup/",
+      '<a href="../">Docs</a><img src="https://docbank.ai/assets/generated/capture.png" alt="Capture">',
+    ),
+  );
   await write(output, "index.md", await readFile(path.join(repoRoot, "docs/index.md")));
   await write(output, "setup.md", await readFile(path.join(repoRoot, "docs/setup.md")));
   await write(output, "llms.txt", "redundant docs index\n");
@@ -97,6 +104,10 @@ test("assembles all tiers and public assets into one site root", async (t) => {
   }
   await assert.rejects(access(path.join(output, "docs/llms.txt")));
   await assert.rejects(access(path.join(output, "docs/install.sh")));
+
+  const setup = await readFile(path.join(output, "docs/setup/index.html"), "utf8");
+  assert.match(setup, /src="\/assets\/generated\/capture\.png"/);
+  assert.doesNotMatch(setup, /docbank\.ai\/assets/);
 });
 
 

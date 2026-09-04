@@ -2,7 +2,7 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 
-const canonicalOrigin = "https://docbank.ai";
+export const canonicalOrigin = "https://docbank.ai";
 const forbiddenParts = new Set([
   ".git",
   ".superpowers",
@@ -189,8 +189,8 @@ export async function verifySite({ site, sources }) {
   for (const relative of htmlFiles) {
     const parsed = parsedPages.get(relative);
     for (const raw of parsed.images) {
-      if (targetForUrl(site, relative, raw) === null) {
-        errors.push(`${relative}: image is not served from the site: ${raw}`);
+      if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(raw)) {
+        errors.push(`${relative}: image must use a site-relative URL: ${raw}`);
       }
     }
     for (const raw of parsed.urls) {

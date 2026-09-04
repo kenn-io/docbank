@@ -94,6 +94,45 @@ test("rejects traversal outside the generated site", async (t) => {
 });
 
 
+test("ignores the docs build's own temporary entries", async (t) => {
+  const repoRoot = await fixture(t);
+  const listeners = new Map();
+  let builds = 0;
+  const server = await startDocsServer({
+    repoRoot,
+    host: "127.0.0.1",
+    port: 0,
+    build: async () => {
+      builds += 1;
+    },
+    watchFactory: (source, _options, listener) => {
+      listeners.set(path.basename(source), listener);
+      return { close() {} };
+    },
+    logger: { log() {}, error() {} },
+  });
+  t.after(() => server.close());
+  assert.equal(builds, 1);
+
+  const docs = listeners.get("docs");
+  for (const generated of [
+    "zensical-site.Ab12Cd/index.html",
+    "zensical-public-docs.Ab12Cd/tour.md",
+    ".zensical-build.Ab12Cd.toml",
+    "site/index.html",
+    ".venv/lib/python",
+  ]) {
+    docs("rename", generated);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(builds, 1);
+
+  docs("change", "tour.md");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(builds, 2);
+});
+
+
 test("coalesces file events into one queued rebuild", async () => {
   let calls = 0;
   let finishFirst;

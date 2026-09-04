@@ -160,17 +160,23 @@ test("rejects a broken local link", async (t) => {
 });
 
 
-test("rejects an image that is not served from the site", async (t) => {
-  const { site, sources } = await fixture(t);
-  await write(
-    site,
-    "docs/setup/index.html",
-    page({
-      canonical: "https://docbank.ai/docs/setup/",
-      body: '<img src="https://raw.githubusercontent.com/example/capture.png" alt="Remote capture">',
-    }),
-  );
-  await assert.rejects(() => verifySite({ site, sources }), /image is not served from the site/);
+test("rejects an image that is not site-relative", async (t) => {
+  for (const src of [
+    "https://raw.githubusercontent.com/example/capture.png",
+    "https://docbank.ai/assets/generated/capture.png",
+    "//docbank.ai/assets/generated/capture.png",
+  ]) {
+    const { site, sources } = await fixture(t);
+    await write(
+      site,
+      "docs/setup/index.html",
+      page({
+        canonical: "https://docbank.ai/docs/setup/",
+        body: `<img src="${src}" alt="Capture">`,
+      }),
+    );
+    await assert.rejects(() => verifySite({ site, sources }), /image must use a site-relative URL/);
+  }
 });
 
 
