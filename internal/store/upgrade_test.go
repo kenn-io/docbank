@@ -274,6 +274,7 @@ func (d *flakySchemaDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.
 
 type schemaVariantDriver struct {
 	docsqlite.Driver
+
 	extraColumn string
 }
 
