@@ -56,6 +56,77 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 	require.Error(t, err, "a head must not select another original's evidence")
 }
 
+// Coverage guard: this exercises the immutable-insert provenance used by the
+// source-metadata head conflict predicate.
+func TestSourceMetadataHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	sourceSHA256 := fakeHash("a1")
+	_, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	metadataA := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("A")}}}}
+	canonicalA, _, err := document.MarshalSourceMetadataV1(metadataA)
+	require.NoError(t, err)
+	generationA, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonicalA)
+	require.NoError(t, err)
+
+	metadataB := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("B")}}}}
+	canonicalB, _, err := document.MarshalSourceMetadataV1(metadataB)
+	require.NoError(t, err)
+	generationB, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f2"), canonicalB)
+	require.NoError(t, err)
+
+	active, activeMetadata, err := s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	assert.Equal(t, generationB.GenerationID, active.GenerationID)
+	assert.Equal(t, "B", *activeMetadata.Fields[0].Value.String)
+
+	currentRetry, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f2"), canonicalB)
+	require.NoError(t, err)
+	assert.Equal(t, generationB.GenerationID, currentRetry.GenerationID)
+
+	replayed, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonicalA)
+	require.NoError(t, err)
+	assert.Equal(t, generationA.GenerationID, replayed.GenerationID)
+
+	active, activeMetadata, err = s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	assert.Equal(t, generationB.GenerationID, active.GenerationID)
+	assert.Equal(t, "B", *activeMetadata.Fields[0].Value.String)
+	var generationCount int
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))
+	assert.Equal(t, 2, generationCount)
+}
+
+func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	sourceSHA256 := fakeHash("a1")
+	_, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("A")}}}})
+	require.NoError(t, err)
+	generation, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM source_metadata_heads WHERE source_sha256=?`, sourceSHA256)
+	require.NoError(t, err)
+
+	republished, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	assert.Equal(t, generation.GenerationID, republished.GenerationID)
+	active, _, err := s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	assert.Equal(t, generation.GenerationID, active.GenerationID)
+}
+
 func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

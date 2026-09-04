@@ -78,7 +78,8 @@ func sourceMetadataGenerationID(source, contract, fingerprint, checksum string) 
 }
 
 // PublishSourceMetadata validates and atomically publishes one immutable
-// generation. Retrying the identical publication is idempotent.
+// generation. Retrying the identical publication is idempotent; an older
+// stored generation cannot move the active head backward.
 func (s *Store) PublishSourceMetadata(
 	ctx context.Context, sourceSHA256, extractorFingerprint string, canonical []byte,
 ) (SourceMetadataGeneration, error) {
@@ -102,13 +103,19 @@ func (s *Store) PublishSourceMetadata(
 	generation.GenerationID = sourceMetadataGenerationID(sourceSHA256, metadata.ContractVersion,
 		extractorFingerprint, checksum)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
+		result, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
 			generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
 		) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_sha256,contract_version,extractor_fingerprint) DO NOTHING`,
 			generation.GenerationID, sourceSHA256, metadata.ContractVersion, extractorFingerprint,
-			canonical, checksum, generation.CreatedAt); execErr != nil {
+			canonical, checksum, generation.CreatedAt)
+		if execErr != nil {
 			return fmt.Errorf("recording source metadata: %w", execErr)
 		}
+		inserted, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("recording source metadata: %w", rowsErr)
+		}
+		recorded := inserted > 0
 		var stored SourceMetadataGeneration
 		if scanErr := tx.QueryRowContext(ctx, `SELECT generation_id,source_sha256,contract_version,
 			extractor_fingerprint,canonical_json,checksum,created_at FROM source_metadata_generations
@@ -123,10 +130,11 @@ func (s *Store) PublishSourceMetadata(
 			return errors.New("source metadata extractor identity already has different evidence")
 		}
 		generation = stored
-		_, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
+		_, execErr = tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
 			VALUES(?,?,?) ON CONFLICT(source_sha256) DO UPDATE SET
-			generation_id=excluded.generation_id,published_at=excluded.published_at`,
-			sourceSHA256, generation.GenerationID, nowRFC3339())
+			generation_id=excluded.generation_id,published_at=excluded.published_at
+			WHERE ? OR source_metadata_heads.generation_id=excluded.generation_id`,
+			sourceSHA256, generation.GenerationID, nowRFC3339(), recorded)
 		return execErr
 	})
 	return generation, err
