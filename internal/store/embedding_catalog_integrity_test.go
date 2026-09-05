@@ -31,9 +31,10 @@ func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
 	require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), root))
 
 	report := PurgeReport{}
+	var suppressions []derivativePurgeSuppression
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		_, err := purgeEmbeddingCatalogTx(t.Context(), tx, stringSet([]string{versionID}), nil, nil,
-			false, asOf, &report, make(map[string]struct{}))
+			false, asOf, &report, make(map[string]struct{}), &suppressions)
 		return err
 	}))
 

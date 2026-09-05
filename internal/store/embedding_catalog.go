@@ -176,6 +176,9 @@ func (s *Store) StageEmbeddingSet(ctx context.Context, record EmbeddingSetRecord
 		if err := validateEmbeddingSetFencesTx(ctx, tx, record); err != nil {
 			return err
 		}
+		if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, record); err != nil {
+			return err
+		}
 		// Payload bytes are validated before the transaction writes catalog
 		// authority. SQLite retains only the immutable blob reference and the
 		// canonical row projection derived from those bytes.
@@ -459,6 +462,9 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 			set.InputKind != record.Key.InputKind || set.VectorSpace.ID != record.VectorSpaceID ||
 			set.ProcessingProfileFingerprint != record.ProcessingProfileFingerprint {
 			return errors.New("publishing embedding head: stale source, profile, binding, or vector-space fence")
+		}
+		if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, set); err != nil {
+			return err
 		}
 		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
 		if err != nil {
