@@ -114,6 +114,77 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 	assert.NotContains(t, fmt.Sprintf("%+v", result.Receipt), "synthetic-key")
 }
 
+func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+
+	previousMethod, hadMethod := expectedUnitBounds["docx"]
+	previousCounter, hadCounter := localUnitCounters["docx"]
+	t.Cleanup(func() {
+		if hadMethod {
+			expectedUnitBounds["docx"] = previousMethod
+		} else {
+			delete(expectedUnitBounds, "docx")
+		}
+		if hadCounter {
+			localUnitCounters["docx"] = previousCounter
+		} else {
+			delete(localUnitCounters, "docx")
+		}
+	})
+	expectedUnitBounds["docx"] = UnitBoundLocalExact
+	localUnitCounters["docx"] = func(io.ReaderAt, int64) (int, error) { return 2, nil }
+	for index := range manifest.Results {
+		if manifest.Results[index].FormatID == "docx" {
+			manifest.Results[index].UnitCount = 2
+			manifest.Results[index].UnitsProcessed = 2
+			manifest.Results[index].LocalUnits = 2
+			manifest.Results[index].UnitBoundMethod = UnitBoundLocalExact
+		}
+	}
+
+	descriptor := renditionDescriptor(t, policy, manifest, "docx")
+	response := fmt.Sprintf(
+		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"}],"usage_info":{"pages_processed":2,"doc_size_bytes":%d}}`,
+		len(documentZIP(t, map[string]string{
+			ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
+			"word/document.xml":   "<document/>",
+		})),
+	)
+	source := documentZIP(t, map[string]string{
+		ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
+		"word/document.xml":   "<document/>",
+	})
+	digest := sha256.Sum256(source)
+	metadata := document.AuthorizedUploadMetadata{
+		Filename: "document.docx", MediaFamily: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
+		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64),
+		InputKind: document.RenditionInputOriginalFile,
+	}
+	authorization := document.RenditionAuthorization{
+		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint,
+		RenditionRequestFingerprint: strings.Repeat("4", 64), SourceSHA256: metadata.SHA256, SourceBytes: metadata.ByteLength,
+		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
+		MediaFamily: metadata.MediaFamily, MediaType: metadata.MediaType, InputKind: metadata.InputKind,
+		MaxProviderMarkdownBytes: 4096, MaxTotalResultBytes: 32768,
+		AuthorizedAt: time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
+		ExpiresAt:    time.Now().UTC().Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
+	}
+	client := newRenditionTestClient(t, policy, manifest, descriptor,
+		renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(response)), Request: request,
+			}, nil
+		}))
+
+	result, err := client.Render(t.Context(), &renditionUpload{Reader: bytes.NewReader(source), metadata: metadata}, authorization)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), result.Receipt.Usage.Units)
+	assert.Len(t, result.Evidence.Units, 2)
+}
+
 func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
