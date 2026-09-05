@@ -426,6 +426,29 @@ canonical, filesystem-aware exclusion before restore cleanup. The embedded
 restore path reconstructs a fresh fixed primary; deployment-specific
 secondary-store placement is not restored.
 
+If the original vault is unavailable, open the backup repository and restore
+directly without initializing or opening a source vault:
+
+```go
+repository, err := docbank.OpenBackupRepository(backupRoot)
+if err != nil {
+    return err
+}
+_, err = repository.Restore(ctx, docbank.BackupRestoreOptions{
+    Target: restoreRoot,
+    ProtectedRoots: applicationStorageRoots,
+})
+return err
+```
+
+An omitted snapshot ID selects the latest recovery point. Repository restore
+uses the build's default SQLite driver and restores declared host files along
+with vault content. It rejects the repository, declared protected roots, and
+targets held by another vault. Include any offline source or application
+storage you want to preserve in `ProtectedRoots`: the repository cannot infer
+their current locations. `Vault.RestoreBackup` also protects its open vault
+automatically and retains that vault's configured SQLite driver.
+
 ## Maintain physical storage
 
 Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the

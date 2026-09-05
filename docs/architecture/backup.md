@@ -10,6 +10,12 @@ verify`, and `backup restore` use the authenticated daemon API; see the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
 directly; see [Embedding Docbank](../embedding.md#back-up-and-restore-an-embedded-vault).
+`BackupRepository.Restore` recovers without a source vault and uses the build's
+default SQLite driver. Both embedded entry points share one restore path,
+including repository and protected-root exclusion, target hierarchy locks,
+host-file restoration, and verification before publication. The vault method
+adds its source root to the protected set and supplies its configured driver;
+repository callers explicitly declare any offline storage to preserve.
 A coherent local-state filesystem snapshot remains available by stopping the
 daemon before copying the vault, but it is not a topology-independent backup;
 see [Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
