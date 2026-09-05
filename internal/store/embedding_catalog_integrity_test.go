@@ -51,6 +51,33 @@ func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
+func TestEmbeddingCatalogRejectsJobRootsBeforePersistence(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	for kind, target := range map[CurrentRenditionTargetKind]string{
+		RenditionRootEmbeddingSet:        record.ID,
+		RenditionRootEmbeddingGeneration: record.InputGeneration.ID,
+		RenditionRootEmbeddingVectorSet:  record.VectorSet.ID,
+		RenditionRootEmbeddingPayload:    record.VectorSet.PayloadBlobHash,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			root := CurrentRenditionRoot{
+				ID: "unsupported-job-" + string(kind), Kind: RenditionRootJob,
+				TargetKind: kind, TargetID: target, FencingToken: 1, RecordedAt: embeddingCatalogTime,
+			}
+			require.ErrorContains(t, s.PutCurrentRenditionRoot(t.Context(), root), "job root target")
+			var count int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?`, root.ID).Scan(&count))
+			assert.Zero(t, count)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		})
+	}
+}
+
 func TestEmbeddingCatalogExplicitPurgePreservesEveryActiveRoot(t *testing.T) {
 	testCases := []struct {
 		name       string

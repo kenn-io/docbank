@@ -1098,6 +1098,10 @@ func validateCurrentRenditionRoot(root CurrentRenditionRoot) error {
 	default:
 		return fmt.Errorf("current rendition target kind %q is invalid", root.TargetKind)
 	}
+	if root.Kind == RenditionRootJob && root.TargetKind != RenditionRootBuild &&
+		root.TargetKind != RenditionRootLexicalGeneration {
+		return fmt.Errorf("current rendition job root target kind %q is invalid", root.TargetKind)
+	}
 	return validateMetadataTime("current rendition root recorded_at", root.RecordedAt)
 }
 
