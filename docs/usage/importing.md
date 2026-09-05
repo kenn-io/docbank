@@ -133,6 +133,23 @@ Two different files arriving at the same virtual name don't conflict —
 the newcomer is suffixed (`scan.pdf` → `scan (2).pdf`). The provenance
 record preserves where each one actually came from.
 
+## Replace a changing local file
+
+Use `--replace` when a repeated local add represents one changing source:
+
+```bash
+docbank add ~/reports/summary.pdf --dest /archive --replace
+```
+
+Docbank resolves the exact destination name and records its node revision
+before reading the source. Different bytes become a new content version on the
+same node, while unchanged bytes skip without changing the revision, stored
+MIME type, provenance, or version count. A live directory fails that file
+before source content is opened. If an absent destination is claimed while
+the source is read, the exact create reports a conflict and never chooses a
+suffix. A stale observed revision reports a conflict and leaves the newer
+content current. Omit `--replace` for ordinary collision suffixing.
+
 ## Inspect where a document came from
 
 Docbank keeps provenance as durable metadata rather than leaving it hidden in

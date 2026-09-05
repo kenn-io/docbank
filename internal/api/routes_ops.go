@@ -307,13 +307,14 @@ type ingestRequest struct {
 	Paths   []string `json:"paths" minItems:"1"`
 	Dest    string   `json:"dest" default:"/inbox"`
 	Exclude []string `json:"exclude,omitempty"`
+	Replace bool     `json:"replace,omitempty"`
 }
 
 func ingestParams(body ingestRequest) (string, ingest.Options, error) {
 	if err := validateIngestPaths(body.Paths); err != nil {
 		return "", ingest.Options{}, err
 	}
-	opts := ingest.Options{Exclude: body.Exclude}
+	opts := ingest.Options{Exclude: body.Exclude, Replace: body.Replace}
 	if err := ingest.ValidateOptions(opts); err != nil {
 		return "", ingest.Options{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	}

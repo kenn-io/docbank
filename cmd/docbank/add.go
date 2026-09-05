@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 var (
 	addDest      string
 	addExclude   []string
+	addReplace   bool
 	addPreflight bool
 	addJSON      bool
 	addProgress  string
@@ -43,6 +45,10 @@ var addCmd = &cobra.Command{
 			}
 			abs[i] = p
 		}
+		if addPreflight && addReplace {
+			return usageError(errors.New("--replace cannot be used with --preflight"))
+		}
+		opts := client.IngestOptions{Exclude: addExclude, Replace: addReplace}
 		c, err := client.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -68,7 +74,7 @@ var addCmd = &cobra.Command{
 		}
 		var rep api.IngestReport
 		if addJSON {
-			rep, err = c.IngestWithOptions(cmd.Context(), abs, addDest, addExclude)
+			rep, err = c.IngestWithOptions(cmd.Context(), abs, addDest, opts)
 		} else {
 			mode, modeErr := progressModeFromFlag("add", addProgress)
 			if modeErr != nil {
@@ -76,7 +82,7 @@ var addCmd = &cobra.Command{
 			}
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
-			rep, err = c.IngestStream(cmd.Context(), abs, addDest, addExclude, renderer.handle)
+			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)
 		}
 		if err != nil {
 			return err
@@ -104,6 +110,8 @@ func init() {
 	addCmd.Flags().StringVar(&addDest, "dest", "/inbox", "virtual destination directory")
 	addCmd.Flags().StringArrayVar(&addExclude, "exclude", nil,
 		"exclude an entry name anywhere or a relative path within each source (repeatable)")
+	addCmd.Flags().BoolVar(&addReplace, "replace", false,
+		"version the file already at each destination path instead of adding a suffixed sibling")
 	addCmd.Flags().BoolVar(&addPreflight, "preflight", false,
 		"inventory sources without opening content or changing the vault")
 	addCmd.Flags().BoolVar(&addJSON, "json", false,

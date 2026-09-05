@@ -169,6 +169,229 @@ func TestAddCancellationDoesNotAuthorizeIncompleteFile(t *testing.T) {
 		"cancellation during blob reading must not grant node authority")
 }
 
+func rewriteSource(t *testing.T, path string, content []byte) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, content, 0o644))
+}
+
+func fakeIngestHash(seed string) string {
+	return strings.Repeat("0", 64-len(seed)) + seed
+}
+
+func TestAddReplaceVersionsDestinationWithoutSuffix(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"notes.txt": "first draft"})
+	path := filepath.Join(src, "notes.txt")
+
+	rep, err := ing.AddPaths(ctx, []string{path}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, rep.Added)
+	original, err := ing.Store.NodeByPath(ctx, "/inbox/notes.txt")
+	require.NoError(t, err)
+	rewriteSource(t, path, []byte("second draft"))
+
+	rep, err = ing.AddPathsWithOptions(ctx, []string{path}, "/inbox", Options{Replace: true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	assert.Empty(t, rep.Failed)
+	updated, err := ing.Store.NodeByPath(ctx, "/inbox/notes.txt")
+	require.NoError(t, err)
+	assert.Equal(t, original.ID, updated.ID)
+	assert.Equal(t, original.Revision+1, updated.Revision)
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/notes (2).txt")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	versions, total, err := ing.Store.ContentVersions(ctx, original.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Equal(t, "content_replace", versions[0].TransitionKind)
+}
+
+func TestAddWithoutReplaceStillSuffixesChangedContent(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"notes.txt": "first draft"})
+	path := filepath.Join(src, "notes.txt")
+
+	_, err := ing.AddPaths(ctx, []string{path}, "/inbox")
+	require.NoError(t, err)
+	rewriteSource(t, path, []byte("second draft"))
+	rep, err := ing.AddPaths(ctx, []string{path}, "/inbox")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	_, err = ing.Store.NodeByPath(ctx, "/inbox/notes (2).txt")
+	require.NoError(t, err)
+}
+
+func TestAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	content := []byte("same bytes")
+	src := filepath.Join(t.TempDir(), "notes.bin")
+	require.NoError(t, os.WriteFile(src, content, 0o644))
+	written, err := ing.Blobs.WriteDetailedContext(ctx, bytes.NewReader(content))
+	require.NoError(t, err)
+	original, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "notes.bin",
+		written.Hash, written.Size, "application/octet-stream")
+	require.NoError(t, err)
+
+	rep, err := ing.AddPathsWithOptions(ctx, []string{src}, "/", Options{Replace: true})
+	require.NoError(t, err)
+	assert.Zero(t, rep.Added)
+	assert.Equal(t, 1, rep.Skipped)
+	assert.Empty(t, rep.Failed)
+	unchanged, err := ing.Store.NodeByID(ctx, original.ID)
+	require.NoError(t, err)
+	assert.Equal(t, original.Revision, unchanged.Revision)
+	assert.Equal(t, "application/octet-stream", unchanged.MimeType)
+	_, total, err := ing.Store.ContentVersions(ctx, original.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+}
+
+func TestAddReplaceFailsBeforeSourceReadForDirectory(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	_, err := ing.Store.Mkdir(ctx, ing.Store.RootID(), "notes.txt")
+	require.NoError(t, err)
+	run, err := ing.Store.BeginIngest(ctx, "cli", "test")
+	require.NoError(t, err)
+	_, err = ing.importFile(ctx, run, ing.Store.RootID(), filepath.Join(t.TempDir(), "missing"),
+		"/synthetic/missing/notes.txt", true, nil)
+	assert.ErrorIs(t, err, store.ErrNotFile)
+}
+
+func TestAddReplaceReusesTrashOnlyName(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	trashed, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "notes.txt",
+		fakeIngestHash("trash-name"), 1, "text/plain")
+	require.NoError(t, err)
+	_, _, err = ing.Store.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	src := writeTree(t, map[string]string{"notes.txt": "new bytes"})
+
+	rep, err := ing.AddPathsWithOptions(ctx, []string{filepath.Join(src, "notes.txt")}, "/",
+		Options{Replace: true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Added)
+	live, err := ing.Store.NodeByPath(ctx, "/notes.txt")
+	require.NoError(t, err)
+	assert.NotEqual(t, trashed.ID, live.ID)
+	trashed, err = ing.Store.NodeByID(ctx, trashed.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, trashed.TrashedAt)
+	page, err := ing.Store.NodeProvenance(ctx, live.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, page.Items, 1)
+}
+
+func TestAddReplaceRejectsRacesAgainstObservedRevisionAndExactCreate(t *testing.T) {
+	tests := []struct {
+		name  string
+		claim func(t *testing.T, ing *Ingester, node store.Node, parentID int64, name string)
+		check func(t *testing.T, ing *Ingester, node store.Node)
+	}{
+		{
+			name: "changed live file",
+			claim: func(t *testing.T, ing *Ingester, node store.Node, _ int64, _ string) {
+				t.Helper()
+				_, _, err := ing.Store.ReplaceContent(t.Context(), node.ID, node.Revision,
+					fakeIngestHash("concurrent"), 11, "text/plain")
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, ing *Ingester, node store.Node) {
+				t.Helper()
+				current, err := ing.Store.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				assert.Equal(t, fakeIngestHash("concurrent"), current.BlobHash)
+			},
+		},
+		{
+			name: "unchanged bytes with changed MIME",
+			claim: func(t *testing.T, ing *Ingester, node store.Node, _ int64, _ string) {
+				t.Helper()
+				_, _, err := ing.Store.ReplaceContent(t.Context(), node.ID, node.Revision,
+					node.BlobHash, node.Size, "application/octet-stream")
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, ing *Ingester, node store.Node) {
+				t.Helper()
+				current, err := ing.Store.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				assert.Equal(t, "application/octet-stream", current.MimeType)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ing := newTestIngester(t)
+			ctx := t.Context()
+			large := bytes.Repeat([]byte("r"), progressByteInterval+1)
+			src := filepath.Join(t.TempDir(), "race.txt")
+			require.NoError(t, os.WriteFile(src, large, 0o644))
+			initial, err := ing.AddPathsWithOptions(ctx, []string{src}, "/", Options{})
+			require.NoError(t, err)
+			require.Equal(t, 1, initial.Added)
+			node, err := ing.Store.NodeByPath(ctx, "/race.txt")
+			require.NoError(t, err)
+			var claimed bool
+			rep, err := ing.AddPathsWithOptions(ctx, []string{src}, "/", Options{
+				Replace: true,
+				Progress: func(event ProgressEvent) {
+					if !claimed && event.BytesRead >= progressByteInterval {
+						claimed = true
+						tc.claim(t, ing, node, ing.Store.RootID(), "race.txt")
+					}
+				},
+			})
+			require.NoError(t, err)
+			assert.True(t, claimed)
+			require.Len(t, rep.Failed, 1)
+			require.ErrorIs(t, rep.Failed[0].Err, store.ErrStaleRevision)
+			_, err = ing.Store.NodeByPath(ctx, "/race (2).txt")
+			require.ErrorIs(t, err, store.ErrNotFound)
+			tc.check(t, ing, node)
+		})
+	}
+}
+
+func TestAddReplaceRejectsAbsentFileAndDirectoryClaims(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		t.Run(map[bool]string{false: "file", true: "directory"}[directory], func(t *testing.T) {
+			ing := newTestIngester(t)
+			ctx := t.Context()
+			large := bytes.Repeat([]byte("a"), progressByteInterval+1)
+			src := filepath.Join(t.TempDir(), "claimed.txt")
+			require.NoError(t, os.WriteFile(src, large, 0o644))
+			var claimed bool
+			rep, err := ing.AddPathsWithOptions(ctx, []string{src}, "/", Options{
+				Replace: true,
+				Progress: func(event ProgressEvent) {
+					if claimed || event.BytesRead < progressByteInterval {
+						return
+					}
+					claimed = true
+					if directory {
+						_, claimErr := ing.Store.Mkdir(ctx, ing.Store.RootID(), "claimed.txt")
+						require.NoError(t, claimErr)
+					} else {
+						_, claimErr := ing.Store.CreateFile(ctx, ing.Store.RootID(), "claimed.txt",
+							fakeIngestHash("claim"), 1, "text/plain")
+						require.NoError(t, claimErr)
+					}
+				},
+			})
+			require.NoError(t, err)
+			assert.True(t, claimed)
+			require.Len(t, rep.Failed, 1)
+			require.ErrorIs(t, rep.Failed[0].Err, store.ErrExists)
+			_, err = ing.Store.NodeByPath(ctx, "/claimed (2).txt")
+			assert.ErrorIs(t, err, store.ErrNotFound)
+		})
+	}
+}
+
 type cancelingContentReader struct {
 	cancel context.CancelFunc
 	sent   bool
@@ -590,7 +813,7 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}, nil))
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}, false, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 

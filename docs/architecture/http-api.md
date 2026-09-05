@@ -309,15 +309,22 @@ observations rather than a snapshot lock: sources can still change before
 ingest, and metadata-only scanning cannot prove later content readability.
 
 `POST /ingest` takes **server-side local paths** — `{paths: [...],
-dest: "/inbox", exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
+dest: "/inbox", exclude: [...], replace: false}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
 per-path `failed` entries), backing `docbank add`. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves `docbank
 add`'s arguments to absolute paths before calling, so the command-line
 UX still accepts relative and `cwd`-relative sources. Collisions resolve by the
-same suffixing rules as other imports.
+same suffixing rules as other imports when `replace` is false or omitted.
 
-`POST /ingest/stream` accepts the same body and returns
+With `replace: true`, the daemon resolves the exact destination name and
+records its node revision before reading source content. Changed bytes create
+a new version on that node, while equal hash and size skip without changing
+the stored MIME type or version history. A live directory fails before source
+I/O. A stale revision or exact-name create race fails the file and never falls
+back to a suffix.
+
+`POST /ingest/stream` accepts the same body, including `replace`, and returns
 `application/x-ndjson`. A metadata-only `scan` stage establishes advisory file
 and byte totals, followed by `ingest` progress for bytes read and file outcomes.
 Exactly one `result` carrying `IngestReport` or `error` terminates the stream;
