@@ -127,6 +127,7 @@ type metadataEmbeddingFailure struct {
 	FailureCode        EmbeddingFailureCode `json:"failure_code"`
 	FailedAt           string               `json:"failed_at"`
 	FencingToken       int64                `json:"fencing_token"`
+	AttachmentID       string               `json:"attachment_id"`
 }
 
 var embeddingMetadataRequiredFields = map[string][]string{
@@ -137,7 +138,7 @@ var embeddingMetadataRequiredFields = map[string][]string{
 	metadataEmbeddingVectorRowType:   {metadataTypeField, "vector_set_id", "row_id", "order", "input_id", "dimensions", "checksum"},
 	metadataEmbeddingSetType:         {metadataTypeField, "embedding_set_id", auditVaultIDField, "binding_id", "input_kind", metadataContentVersionIDField, metadataEmbeddingProfileField, "embedding_input_fingerprint", metadataEmbeddingVectorSpaceIDField, metadataGenerationIDField, "vector_set_id", metadataCreatedAtField},
 	metadataEmbeddingHeadType:        {metadataTypeField, metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at", "fencing_token"},
-	metadataEmbeddingFailureType:     {metadataTypeField, metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at", "fencing_token"},
+	metadataEmbeddingFailureType:     {metadataTypeField, metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at", "fencing_token", "attachment_id"},
 }
 
 func exportEmbeddingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -315,7 +316,7 @@ func exportEmbeddingHeads(ctx context.Context, tx metadataQuerier, write metadat
 
 func exportEmbeddingFailures(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,
-		input_kind,failure_code,failed_at,fencing_token FROM embedding_failures
+		input_kind,failure_code,failed_at,fencing_token,attachment_id FROM embedding_failures
 		ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
 	if err != nil {
 		return err
@@ -324,7 +325,7 @@ func exportEmbeddingFailures(ctx context.Context, tx metadataQuerier, write meta
 	for rows.Next() {
 		value := metadataEmbeddingFailure{Type: metadataEmbeddingFailureType}
 		if err := rows.Scan(&value.ContentVersionID, &value.ProfileFingerprint, &value.BindingID,
-			&value.InputKind, &value.FailureCode, &value.FailedAt, &value.FencingToken); err != nil {
+			&value.InputKind, &value.FailureCode, &value.FailedAt, &value.FencingToken, &value.AttachmentID); err != nil {
 			return err
 		}
 		if err := write(value); err != nil {
@@ -429,7 +430,7 @@ func importEmbeddingMetadataRecord(ctx context.Context, tx *sql.Tx, kind string,
 		if err := validateMetadataTime("embedding failure failed_at", value.FailedAt); err != nil {
 			return err
 		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_failures VALUES(?,?,?,?,?,?,?)`, value.ContentVersionID, value.ProfileFingerprint, value.BindingID, value.InputKind, value.FailureCode, value.FailedAt, value.FencingToken)
+		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_failures VALUES(?,?,?,?,?,?,?,?)`, value.ContentVersionID, value.ProfileFingerprint, value.BindingID, value.InputKind, value.FailureCode, value.FailedAt, value.FencingToken, value.AttachmentID)
 	default:
 		return fmt.Errorf("unknown embedding metadata type %q", kind)
 	}
@@ -467,7 +468,8 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		if err != nil {
 			return err
 		}
-		eligible, err := embeddingAttachmentEligible(ctx, tx, set)
+		eligible, err := embeddingAttachmentEligible(ctx, tx, set.ContentVersionID,
+			set.ProcessingProfileFingerprint, set.InputGeneration.AttachmentID)
 		if err != nil {
 			return err
 		}
@@ -483,7 +485,7 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 	}
 
 	failureRows, err := tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,
-		binding_id,input_kind,failure_code,failed_at,fencing_token
+		binding_id,input_kind,failure_code,failed_at,fencing_token,attachment_id
 		FROM embedding_failures ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
 	if err != nil {
 		return fmt.Errorf("listing embedding failures for validation: %w", err)
@@ -494,7 +496,7 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		var record EmbeddingFailureRecord
 		if err := failureRows.Scan(&record.ContentVersionID,
 			&record.ProcessingProfileFingerprint, &record.BindingID, &record.InputKind,
-			&record.FailureCode, &record.FailedAt, &record.FencingToken); err != nil {
+			&record.FailureCode, &record.FailedAt, &record.FencingToken, &record.AttachmentID); err != nil {
 			return fmt.Errorf("reading embedding failure for validation: %w", err)
 		}
 		if err := validateEmbeddingFailureRecord(record); err != nil {
@@ -512,8 +514,8 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		if err := validateEmbeddingFailureBinding(ctx, tx, record); err != nil {
 			return fmt.Errorf("validating embedding failure profile binding: %w", err)
 		}
-		if err := validateEmbeddingFailureHeadFence(ctx, tx, record); err != nil {
-			return fmt.Errorf("validating embedding failure head fence: %w", err)
+		if err := validateEmbeddingFailureEligibility(ctx, tx, record); err != nil {
+			return fmt.Errorf("validating embedding failure eligibility: %w", err)
 		}
 	}
 

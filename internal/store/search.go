@@ -1022,6 +1022,12 @@ func insertRenditionAttachmentAndHeadTx(
 		)`, head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
 		return fmt.Errorf("revoking stale chunk embedding heads: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
+		WHERE content_version_id=? AND profile_fingerprint=?
+		  AND attachment_id<>'' AND attachment_id<>?`,
+		head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
+		return fmt.Errorf("clearing stale chunk embedding failures: %w", err)
+	}
 	return nil
 }
 

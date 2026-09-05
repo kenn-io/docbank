@@ -149,6 +149,9 @@ type EmbeddingFailureRecord struct {
 	InputKind                    EmbeddingInputKind
 	FailureCode                  EmbeddingFailureCode
 	FailedAt                     string
+	// AttachmentID names the rendition used by a chunk attempt and is empty
+	// for original-file attempts.
+	AttachmentID string
 	// FencingToken uses the same attempt sequence as EmbeddingHeadRecord.
 	FencingToken int64
 }
@@ -559,20 +562,22 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 		if err == nil && suppression.active {
 			return errors.New("embedding failure binding has an active purge suppression")
 		}
-		if err := validateEmbeddingFailureHeadFence(ctx, tx, record); err != nil {
+		if err := validateEmbeddingFailureEligibility(ctx, tx, record); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
-			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at,fencing_token
-		) VALUES(?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
-		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at,fencing_token=excluded.fencing_token
+			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at,fencing_token,attachment_id
+		) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at,
+		fencing_token=excluded.fencing_token,attachment_id=excluded.attachment_id
 		WHERE excluded.fencing_token>embedding_failures.fencing_token OR (
 			excluded.fencing_token=embedding_failures.fencing_token AND
 			excluded.failure_code=embedding_failures.failure_code AND
+			excluded.attachment_id=embedding_failures.attachment_id AND
 			excluded.failed_at=embedding_failures.failed_at
 		)`, record.ContentVersionID,
 			record.ProcessingProfileFingerprint, record.BindingID, record.InputKind,
-			record.FailureCode, record.FailedAt, record.FencingToken)
+			record.FailureCode, record.FailedAt, record.FencingToken, record.AttachmentID)
 		if err != nil {
 			return fmt.Errorf("recording embedding failure: %w", err)
 		}
@@ -587,7 +592,15 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 	})
 }
 
-func validateEmbeddingFailureHeadFence(ctx context.Context, query metadataQuerier, record EmbeddingFailureRecord) error {
+func validateEmbeddingFailureEligibility(ctx context.Context, query metadataQuerier, record EmbeddingFailureRecord) error {
+	current, err := embeddingAttachmentEligible(ctx, query, record.ContentVersionID,
+		record.ProcessingProfileFingerprint, record.AttachmentID)
+	if err != nil {
+		return fmt.Errorf("checking embedding failure attachment: %w", err)
+	}
+	if !current {
+		return errors.New("embedding failure attachment is not current")
+	}
 	var newerHead bool
 	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads
 		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
@@ -1321,22 +1334,22 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 	if live != 1 {
 		return false, nil
 	}
-	return embeddingAttachmentEligible(ctx, tx, set)
+	return embeddingAttachmentEligible(ctx, tx, set.ContentVersionID,
+		set.ProcessingProfileFingerprint, set.InputGeneration.AttachmentID)
 }
 
-// The attachment fence also applies to restored heads. Source visibility is
-// checked on publication, not restore: historical and trashed versions may
-// retain their independently published heads.
-func embeddingAttachmentEligible(ctx context.Context, tx metadataQuerier, set EmbeddingSetRecord) (bool, error) {
-	if set.InputGeneration.AttachmentID == "" {
+// Heads and failures share the attachment fence, including during restore.
+// Source visibility is checked on publication, not restore: historical and
+// trashed versions may retain their independently published heads.
+func embeddingAttachmentEligible(ctx context.Context, tx metadataQuerier, versionID, profileFingerprint, attachmentID string) (bool, error) {
+	if attachmentID == "" {
 		return true, nil
 	}
 	var attached int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_heads h
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		WHERE h.content_version_id=? AND h.profile_fingerprint=? AND h.attachment_id=?`,
-		set.ContentVersionID, set.ProcessingProfileFingerprint,
-		set.InputGeneration.AttachmentID).Scan(&attached); err != nil {
+		versionID, profileFingerprint, attachmentID).Scan(&attached); err != nil {
 		return false, err
 	}
 	return attached == 1, nil
@@ -1380,6 +1393,13 @@ func validateEmbeddingFailureRecord(record EmbeddingFailureRecord) error {
 	if err := validateCatalogSHA256(record.ProcessingProfileFingerprint, "embedding failure profile"); err != nil {
 		return err
 	}
+	if record.InputKind == document.EmbeddingInputRenditionChunk {
+		if err := validateCatalogSHA256(record.AttachmentID, "embedding failure attachment ID"); err != nil {
+			return err
+		}
+	} else if record.AttachmentID != "" {
+		return errors.New("original-file embedding failure must not name an attachment")
+	}
 	switch record.FailureCode {
 	case EmbeddingFailureProviderUnavailable, EmbeddingFailureAuthorization,
 		EmbeddingFailureInvalidResponse, EmbeddingFailureInputRejected, EmbeddingFailureStaleAuthority:
@@ -1418,7 +1438,7 @@ var embeddingCatalogSchema = []embeddingCatalogTableSchema{
 	{"embedding_vector_rows", []string{"vector_set_id", "row_id", "row_order", "input_id", "dimensions", "checksum"}},
 	{"embedding_sets", []string{"embedding_set_id", "vault_uid", "binding_id", "input_kind", metadataContentVersionIDField, metadataEmbeddingProfileField, "embedding_input_fingerprint", metadataEmbeddingVectorSpaceIDField, "input_generation_id", "vector_set_id", metadataCreatedAtField}},
 	{"embedding_heads", []string{metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at", "fencing_token"}},
-	{"embedding_failures", []string{metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at", "fencing_token"}},
+	{"embedding_failures", []string{metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at", "fencing_token", "attachment_id"}},
 }
 
 func validateEmbeddingCatalogSchemaTx(ctx context.Context, tx *sql.Tx) error {

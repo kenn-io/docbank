@@ -29,6 +29,20 @@ func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
 			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 		}))
 	}
+	failure := EmbeddingFailureRecord{
+		ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+		BindingID: chunk.BindingID, InputKind: chunk.InputKind, AttachmentID: attachmentID,
+		FencingToken: 2, FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+	}
+	unbound := failure
+	unbound.AttachmentID = ""
+	require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), unbound), "attachment ID")
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
+	directFailure := failure
+	directFailure.BindingID, directFailure.InputKind = direct.BindingID, direct.InputKind
+	require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), directFailure), "must not name an attachment")
+	directFailure.AttachmentID = ""
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), directFailure))
 	build := catalogRenditionBuild(s, profile)
 	build.ID = testSHA256([]byte("replacement-embedding-build"))
 	build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":0,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
@@ -45,6 +59,15 @@ func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
 	err := s.db.QueryRow(`SELECT embedding_set_id FROM embedding_heads WHERE embedding_set_id=?`, chunk.ID).Scan(&headID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 	assert.Equal(t, direct.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, direct.BindingID, direct.InputKind))
+	var failures int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures WHERE binding_id=?`, chunk.BindingID).Scan(&failures))
+	assert.Zero(t, failures, "replacing the rendition clears its previous failure status")
+	failure.FencingToken = 3
+	require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), failure), "attachment is not current")
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), directFailure), "original-file failure status is unchanged")
+	currentFailure := failure
+	currentFailure.AttachmentID = replacement.ID
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), currentFailure))
 	plan, err := s.DerivativeGCPlan(t.Context())
 	require.NoError(t, err)
 	require.Len(t, plan.EmbeddingSets, 1)
@@ -55,6 +78,12 @@ func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.RecordEmbeddingFailure(t.Context(), currentFailure))
+	require.ErrorContains(t, restored.RecordEmbeddingFailure(t.Context(), failure), "attachment is not current")
+	staleFailure := mutateFirstProcessingMetadataRecord(t, exported.Bytes(), metadataEmbeddingFailureType,
+		func(fields map[string]jsontext.Value) { fields["attachment_id"] = jsonStringForTest(t, attachmentID) })
+	rejectedFailure := newTestStore(t)
+	require.ErrorContains(t, rejectedFailure.ImportMetadata(t.Context(), bytes.NewReader(staleFailure)), "attachment is not current")
 	staleHead, err := json.Marshal(metadataEmbeddingHead{
 		FencingToken: 1,
 		Type:         metadataEmbeddingHeadType, ContentVersionID: versionID, BindingID: chunk.BindingID,
@@ -325,10 +354,11 @@ func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
 			chunk := EmbeddingFailureRecord{
 				FencingToken:     1,
 				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
-				BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk,
+				BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk, AttachmentID: attachmentID,
 				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
 			}
 			direct := chunk
+			direct.AttachmentID = ""
 			direct.BindingID, direct.InputKind = "optional", document.EmbeddingInputOriginalFile
 			for _, failure := range []EmbeddingFailureRecord{chunk, direct} {
 				require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
@@ -371,7 +401,8 @@ func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
 				AuthorizedAt: nowRFC3339(),
 			}))
 			chunk.FailedAt = nowRFC3339()
-			require.NoError(t, restored.RecordEmbeddingFailure(t.Context(), chunk))
+			require.ErrorContains(t, restored.RecordEmbeddingFailure(t.Context(), chunk), "attachment is not current",
+				"rebuild authorization does not make a purged rendition current again")
 		})
 	}
 }
