@@ -1170,6 +1170,11 @@ func TestSearchCLI(t *testing.T) {
 	assert.Equal(t, tag.ID, report.TagID)
 	require.Len(t, report.Hits, 1)
 	assert.Equal(t, "/inbox/insurance-2026.txt", report.Hits[0].Path)
+	out, err = runCLI(t, "search", "--tag", "renewal", "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Len(t, report.Hits, 1)
+	assert.Equal(t, "filter", report.Hits[0].Match)
 
 	out, err = runCLI(t, "search", "insurance", "--mime-type", "TEXT/PLAIN", "--json")
 	require.NoError(t, err, out)
@@ -1219,6 +1224,10 @@ func TestSearchCLIReportsTruncation(t *testing.T) {
 	_, err = runCLI(t, "search", "report", "--limit", "0")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "between 1 and 1000")
+
+	_, err = runCLI(t, "search")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "search query is required")
 }
 
 func TestTrashEmpty(t *testing.T) {

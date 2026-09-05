@@ -40,9 +40,24 @@ type SearchOptions struct {
 	ModifiedBefore string
 }
 
+// SearchNeedsQuery reports whether the normalized options leave an empty FTS
+// query without the tag or time anchor required for a bounded filter page.
+func SearchNeedsQuery(query string, opts SearchOptions) bool {
+	return ftsQuery(query) == "" && opts.TagID == "" &&
+		opts.ModifiedSince == "" && opts.ModifiedBefore == ""
+}
+
 const (
 	SearchMatchName    = "name"
 	SearchMatchContent = "content"
+	SearchMatchFilter  = "filter"
+)
+
+// ErrSearchQueryRequired reports an unanchored search without query text.
+// Empty queries are useful only when a tag or modification-time bound keeps
+// the result page bounded.
+var ErrSearchQueryRequired = errors.New(
+	"search query is required unless a tag or modification-time bound is supplied",
 )
 
 // LexicalGeneration identifies one complete, immutable FTS projection. Rows
@@ -1137,8 +1152,35 @@ func (s *Store) SearchPageWithOptions(
 	opts.ModifiedSince = modifiedSince
 	opts.ModifiedBefore = modifiedBefore
 	fq := ftsQuery(query)
+	if SearchNeedsQuery(query, opts) {
+		return nil, false, ErrSearchQueryRequired
+	}
 	if fq == "" {
-		return nil, false, nil
+		filterSQL, filterArgs := searchFilterSQL(opts)
+		filterArgs = append(filterArgs, limit+1)
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT `+nodeCols+`
+			FROM `+nodeFrom+`
+			WHERE n.trashed_at IS NULL
+			  AND n.parent_id IS NOT NULL
+			  `+filterSQL+`
+			ORDER BY n.modified_at DESC, n.name, n.id
+			LIMIT ?`, filterArgs...)
+		if err != nil {
+			return nil, false, fmt.Errorf("searching filters: %w", err)
+		}
+		hits, err := scanSearchRows(rows, SearchMatchFilter, "")
+		if err != nil {
+			return nil, false, err
+		}
+		truncated := len(hits) > limit
+		if truncated {
+			hits = hits[:limit]
+		}
+		if err := s.addSearchPaths(ctx, hits); err != nil {
+			return nil, false, err
+		}
+		return hits, truncated, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	nameArgs := []any{fq}

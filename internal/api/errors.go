@@ -61,6 +61,7 @@ var storeErrCodes = []struct {
 	status int
 	code   string
 }{
+	{store.ErrSearchQueryRequired, http.StatusUnprocessableEntity, "validation"},
 	{store.ErrNotFound, http.StatusNotFound, "not_found"},
 	{store.ErrExists, http.StatusConflict, "exists"},
 	{store.ErrCycle, http.StatusConflict, "cycle"},

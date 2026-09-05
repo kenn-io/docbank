@@ -59,6 +59,18 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "--limit must be between")
 
+	code = run("search")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "search query is required")
+
+	code = run("search", "--under", "/")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "search query is required")
+
+	code = run("search", "--mime-type", "text/plain")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "search query is required")
+
 	code = run("search", "term", "--mime-type", "text/plain; charset=utf-8")
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "must not include parameters")

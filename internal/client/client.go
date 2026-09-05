@@ -827,7 +827,7 @@ func (c *Client) Search(ctx context.Context, query string, limit int) (api.Searc
 	return c.SearchWithOptions(ctx, query, limit, SearchOptions{})
 }
 
-// SearchWithOptions returns one bounded ranked result set.
+// SearchWithOptions returns one bounded ranked or filter-only result set.
 func (c *Client) SearchWithOptions(
 	ctx context.Context, query string, limit int, opts SearchOptions,
 ) (api.SearchReport, error) {
@@ -847,6 +847,13 @@ func (c *Client) SearchWithOptions(
 	)
 	if err != nil {
 		return out, err
+	}
+	normalizedOpts := store.SearchOptions{
+		TagID: opts.TagID, MIMEType: mimeType, UnderNodeID: opts.UnderNodeID,
+		ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+	}
+	if store.SearchNeedsQuery(query, normalizedOpts) {
+		return out, store.ErrSearchQueryRequired
 	}
 	queryValues := url.Values{}
 	queryValues.Set("q", query)
