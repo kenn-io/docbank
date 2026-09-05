@@ -387,7 +387,7 @@ func TestAddReplaceRejectsAbsentFileAndDirectoryClaims(t *testing.T) {
 			require.Len(t, rep.Failed, 1)
 			require.ErrorIs(t, rep.Failed[0].Err, store.ErrExists)
 			_, err = ing.Store.NodeByPath(ctx, "/claimed (2).txt")
-			assert.ErrorIs(t, err, store.ErrNotFound)
+			require.ErrorIs(t, err, store.ErrNotFound)
 			claimant, err := ing.Store.NodeByPath(ctx, "/claimed.txt")
 			require.NoError(t, err)
 			if directory {
