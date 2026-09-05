@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"testing"
 	"time"
 
@@ -22,8 +23,9 @@ func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
 	for _, record := range []EmbeddingSetRecord{chunk, direct} {
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-			Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
-			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+			FencingToken: 1,
+			Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 		}))
 	}
@@ -47,6 +49,92 @@ func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.EmbeddingSets, 1)
 	assert.Equal(t, chunk.ID, plan.EmbeddingSets[0].SetID)
+
+	// Retaining the old set is valid, but restoring its revoked head is not.
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	staleHead, err := json.Marshal(metadataEmbeddingHead{
+		FencingToken: 1,
+		Type:         metadataEmbeddingHeadType, ContentVersionID: versionID, BindingID: chunk.BindingID,
+		InputKind: chunk.InputKind, SetID: chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
+		ProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	})
+	require.NoError(t, err)
+	exported.Write(staleHead)
+	exported.WriteByte('\n')
+	rejected := newTestStore(t)
+	require.ErrorContains(t, rejected.ImportMetadata(t.Context(), &exported), "attachment is not current")
+}
+
+func TestEmbeddingPublicationRejectsOlderWorker(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	older := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	newer := cloneEmbeddingSetRecord(older)
+	newer.ID = testSHA256([]byte("newer-worker-set"))
+	newer.InputGeneration.ID = testSHA256([]byte("newer-worker-generation"))
+	for _, set := range []EmbeddingSetRecord{older, newer} {
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), set))
+	}
+	head := EmbeddingHeadRecord{
+		FencingToken: 2,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: newer.BindingID, InputKind: newer.InputKind},
+		SetID:        newer.ID, VectorSpaceID: newer.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint,
+		PublishedAt: embeddingCatalogTime,
+	}
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), head))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), head), "an exact retry is idempotent")
+	stale := head
+	stale.SetID, stale.FencingToken = older.ID, 1
+	stale.PublishedAt = nowRFC3339()
+	require.ErrorContains(t, s.PublishEmbeddingHead(t.Context(), stale), "fencing token")
+	assert.Equal(t, newer.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, head.Key.BindingID, head.Key.InputKind))
+	stale.FencingToken = head.FencingToken
+	require.ErrorContains(t, s.PublishEmbeddingHead(t.Context(), stale), "fencing token", "one token cannot name two sets")
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), &exported))
+	stale.FencingToken = 1
+	require.ErrorContains(t, restored.PublishEmbeddingHead(t.Context(), stale), "fencing token")
+	stale.FencingToken = 3
+	require.NoError(t, restored.PublishEmbeddingHead(t.Context(), stale))
+}
+
+func TestEmbeddingRestoreRetainsHeadsForNonLiveVersions(t *testing.T) {
+	for _, mutation := range []string{"trash", "replace"} {
+		t.Run(mutation, func(t *testing.T) {
+			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
+			require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+				Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: chunk.BindingID, InputKind: chunk.InputKind},
+				SetID: chunk.ID, VectorSpaceID: chunk.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint,
+				PublishedAt: embeddingCatalogTime, FencingToken: 1,
+			}))
+			var nodeID, revision int64
+			require.NoError(t, s.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
+			if mutation == "trash" {
+				_, _, err := s.Trash(t.Context(), nodeID, revision)
+				require.NoError(t, err)
+			} else {
+				hash := testSHA256([]byte("replacement document"))
+				require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+					return s.EnsureBlobTx(tx, hash, 20)
+				}))
+				_, _, err := s.ReplaceContent(t.Context(), nodeID, revision, hash, 20, "application/pdf")
+				require.NoError(t, err)
+			}
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(t.Context(), &exported))
+			assert.Equal(t, chunk.ID, embeddingHeadSetIDForTest(t, restored, versionID,
+				profile.Fingerprint, chunk.BindingID, chunk.InputKind))
+		})
+	}
 }
 
 func TestEmbeddingPurgeRejectsStalePublication(t *testing.T) {
@@ -60,8 +148,9 @@ func TestEmbeddingPurgeRejectsStalePublication(t *testing.T) {
 			record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 			head := EmbeddingHeadRecord{
-				Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
-				SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+				FencingToken: 1,
+				Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+				SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 				ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 			}
 			require.NoError(t, s.PublishEmbeddingHead(t.Context(), head))
@@ -121,8 +210,9 @@ func TestEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), direct))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: direct.BindingID, InputKind: direct.InputKind},
-		SetID: direct.ID, VectorSpaceID: direct.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: direct.BindingID, InputKind: direct.InputKind},
+		SetID:        direct.ID, VectorSpaceID: direct.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	assert.Equal(t, direct.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, direct.BindingID, direct.InputKind))
@@ -265,8 +355,9 @@ func TestEmbeddingWritesRequirePhysicalBlobAuthority(t *testing.T) {
 						return restored.StageEmbeddingSet(t.Context(), record)
 					}
 					return restored.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-						Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
-						SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+						FencingToken: 1,
+						Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+						SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 						ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 					})
 				}

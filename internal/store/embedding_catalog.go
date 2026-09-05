@@ -136,6 +136,9 @@ type EmbeddingHeadRecord struct {
 	VectorSpaceID                string
 	ProcessingProfileFingerprint string
 	PublishedAt                  string
+	// FencingToken is assigned before work starts and increases for each
+	// attempt in this version/profile/binding/input-kind scope.
+	FencingToken int64
 }
 
 // EmbeddingFailureRecord records provider-neutral coverage failure only.
@@ -483,17 +486,29 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 		if !eligible {
 			return errors.New("publishing embedding head: source or attachment is not eligible")
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_heads(
+		result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
 			content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
-			profile_fingerprint,published_at
-		) VALUES(?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+			profile_fingerprint,published_at,fencing_token
+		) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
 		DO UPDATE SET embedding_set_id=excluded.embedding_set_id,
 		vector_space_id=excluded.vector_space_id,profile_fingerprint=excluded.profile_fingerprint,
-		published_at=excluded.published_at`, record.Key.ContentVersionID, record.Key.BindingID,
+		published_at=excluded.published_at,fencing_token=excluded.fencing_token
+		WHERE excluded.fencing_token>embedding_heads.fencing_token OR (
+			excluded.fencing_token=embedding_heads.fencing_token AND
+			excluded.embedding_set_id=embedding_heads.embedding_set_id AND
+			excluded.published_at=embedding_heads.published_at
+		)`, record.Key.ContentVersionID, record.Key.BindingID,
 			record.Key.InputKind, record.SetID, record.VectorSpaceID,
-			record.ProcessingProfileFingerprint, record.PublishedAt)
+			record.ProcessingProfileFingerprint, record.PublishedAt, record.FencingToken)
 		if err != nil {
 			return fmt.Errorf("publishing embedding head: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("checking embedding publication: %w", err)
+		}
+		if changed != 1 {
+			return errors.New("publishing embedding head: stale or reused fencing token")
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM embedding_failures
 			WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
@@ -1262,6 +1277,13 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 	if live != 1 {
 		return false, nil
 	}
+	return embeddingAttachmentEligible(ctx, tx, set)
+}
+
+// The attachment fence also applies to restored heads. Source visibility is
+// checked on publication, not restore: historical and trashed versions may
+// retain their independently published heads.
+func embeddingAttachmentEligible(ctx context.Context, tx metadataQuerier, set EmbeddingSetRecord) (bool, error) {
 	if set.InputGeneration.AttachmentID == "" {
 		return true, nil
 	}
@@ -1289,6 +1311,9 @@ func validateEmbeddingHeadKey(key EmbeddingHeadKey) error {
 func validateEmbeddingHeadRecord(record EmbeddingHeadRecord) error {
 	if err := validateEmbeddingHeadKey(record.Key); err != nil {
 		return err
+	}
+	if record.FencingToken < 1 {
+		return errors.New("embedding head fencing token must be positive")
 	}
 	for value, subject := range map[string]string{
 		record.SetID: "embedding head set ID", record.VectorSpaceID: "embedding head vector-space ID",
@@ -1345,7 +1370,7 @@ var embeddingCatalogSchema = []embeddingCatalogTableSchema{
 	{"embedding_vector_sets", []string{"vector_set_id", "contract_version", metadataEmbeddingVectorSpaceIDField, "payload_blob_hash", "payload_size", "payload_checksum", "manifest_checksum", "row_count", "dimensions"}},
 	{"embedding_vector_rows", []string{"vector_set_id", "row_id", "row_order", "input_id", "dimensions", "checksum"}},
 	{"embedding_sets", []string{"embedding_set_id", "vault_uid", "binding_id", "input_kind", metadataContentVersionIDField, metadataEmbeddingProfileField, "embedding_input_fingerprint", metadataEmbeddingVectorSpaceIDField, "input_generation_id", "vector_set_id", metadataCreatedAtField}},
-	{"embedding_heads", []string{metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at"}},
+	{"embedding_heads", []string{metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at", "fencing_token"}},
 	{"embedding_failures", []string{metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at"}},
 }
 

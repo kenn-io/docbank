@@ -24,13 +24,15 @@ func TestEmbeddingCatalogChunkAndDirectFileHeadsCoexist(t *testing.T) {
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), direct))
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
-		SetID: direct.ID, VectorSpaceID: direct.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
+		SetID:        direct.ID, VectorSpaceID: direct.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk},
-		SetID: chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk},
+		SetID:        chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 
@@ -103,11 +105,13 @@ func TestEmbeddingCatalogRejectsInvalidRowsAndPublicationFences(t *testing.T) {
 		{"source", func(value *EmbeddingHeadRecord) { value.Key.ContentVersionID = "00000000-0000-4000-8000-000000000176" }, "stale source"},
 		{"profile", func(value *EmbeddingHeadRecord) { value.ProcessingProfileFingerprint = fakeHash("missing-profile") }, "profile fingerprint"},
 		{"space", func(value *EmbeddingHeadRecord) { value.VectorSpaceID = fakeHash("missing-space") }, "vector-space ID"},
+		{"unfenced", func(value *EmbeddingHeadRecord) { value.FencingToken = 0 }, "fencing token"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			head := EmbeddingHeadRecord{
-				Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
-				SetID: base.ID, VectorSpaceID: base.VectorSpace.ID,
+				FencingToken: 1,
+				Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
+				SetID:        base.ID, VectorSpaceID: base.VectorSpace.ID,
 				ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 			}
 			testCase.mutate(&head)
@@ -132,15 +136,17 @@ func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
-		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk},
-		SetID: chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk},
+		SetID:        chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	for _, root := range []CurrentRenditionRoot{
@@ -187,8 +193,9 @@ func TestEmbeddingCatalogDerivativePurgeAndGCLeaveOriginalAuthority(t *testing.T
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
-		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional", InputKind: document.EmbeddingInputOriginalFile},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 
@@ -311,8 +318,9 @@ func TestEmbeddingCatalogVersionPruneDeletesDirectAndChunkAuthority(t *testing.T
 	for _, record := range records {
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-			Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
-			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+			FencingToken: 1,
+			Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 		}))
 	}

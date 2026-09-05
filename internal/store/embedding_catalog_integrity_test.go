@@ -202,6 +202,7 @@ func TestEmbeddingCatalogExplicitChunkPurgeRetainsRootAttachmentChain(t *testing
 			for _, record := range []EmbeddingSetRecord{chunk, direct} {
 				require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 				require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+					FencingToken: 1,
 					Key: EmbeddingHeadKey{
 						ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind,
 					},
@@ -425,8 +426,9 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 		record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		head := EmbeddingHeadRecord{
-			Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
-			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+			FencingToken: 1,
+			Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: "2026-08-25T10:00:00.000000000+00:00",
 		}
 		require.ErrorContains(t, s.PublishEmbeddingHead(t.Context(), head), "embedding head published_at")
@@ -452,8 +454,9 @@ func TestEmbeddingCatalogMetadataImportRequiresCanonicalTimestamps(t *testing.T)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, source.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
-		Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
-		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	require.NoError(t, source.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{

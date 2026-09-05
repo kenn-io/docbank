@@ -798,6 +798,7 @@ CREATE TABLE IF NOT EXISTS embedding_heads (
     vector_space_id      TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id),
     profile_fingerprint  TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
     published_at         TEXT NOT NULL,
+    fencing_token        INTEGER NOT NULL,
     PRIMARY KEY (content_version_id, profile_fingerprint, binding_id, input_kind)
 );
 

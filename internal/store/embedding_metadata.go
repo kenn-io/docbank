@@ -115,6 +115,7 @@ type metadataEmbeddingHead struct {
 	VectorSpaceID      string             `json:"vector_space_id"`
 	ProfileFingerprint string             `json:"profile_fingerprint"`
 	PublishedAt        string             `json:"published_at"`
+	FencingToken       int64              `json:"fencing_token"`
 }
 
 type metadataEmbeddingFailure struct {
@@ -134,7 +135,7 @@ var embeddingMetadataRequiredFields = map[string][]string{
 	metadataEmbeddingVectorSetType:   {metadataTypeField, "vector_set_id", "contract_version", metadataEmbeddingVectorSpaceIDField, "payload_blob_hash", "payload_size", "payload_checksum", "manifest_checksum", "row_count", "dimensions"},
 	metadataEmbeddingVectorRowType:   {metadataTypeField, "vector_set_id", "row_id", "order", "input_id", "dimensions", "checksum"},
 	metadataEmbeddingSetType:         {metadataTypeField, "embedding_set_id", auditVaultIDField, "binding_id", "input_kind", metadataContentVersionIDField, metadataEmbeddingProfileField, "embedding_input_fingerprint", metadataEmbeddingVectorSpaceIDField, metadataGenerationIDField, "vector_set_id", metadataCreatedAtField},
-	metadataEmbeddingHeadType:        {metadataTypeField, metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at"},
+	metadataEmbeddingHeadType:        {metadataTypeField, metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at", "fencing_token"},
 	metadataEmbeddingFailureType:     {metadataTypeField, metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at"},
 }
 
@@ -292,7 +293,7 @@ func exportEmbeddingSets(ctx context.Context, tx metadataQuerier, write metadata
 
 func exportEmbeddingHeads(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `SELECT content_version_id,binding_id,input_kind,
-		embedding_set_id,vector_space_id,profile_fingerprint,published_at
+		embedding_set_id,vector_space_id,profile_fingerprint,published_at,fencing_token
 		FROM embedding_heads ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
 	if err != nil {
 		return err
@@ -301,7 +302,7 @@ func exportEmbeddingHeads(ctx context.Context, tx metadataQuerier, write metadat
 	for rows.Next() {
 		value := metadataEmbeddingHead{Type: metadataEmbeddingHeadType}
 		if err := rows.Scan(&value.ContentVersionID, &value.BindingID, &value.InputKind,
-			&value.SetID, &value.VectorSpaceID, &value.ProfileFingerprint, &value.PublishedAt); err != nil {
+			&value.SetID, &value.VectorSpaceID, &value.ProfileFingerprint, &value.PublishedAt, &value.FencingToken); err != nil {
 			return err
 		}
 		if err := write(value); err != nil {
@@ -418,7 +419,7 @@ func importEmbeddingMetadataRecord(ctx context.Context, tx *sql.Tx, kind string,
 		if err := validateMetadataTime("embedding head published_at", value.PublishedAt); err != nil {
 			return err
 		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_heads VALUES(?,?,?,?,?,?,?)`, value.ContentVersionID, value.BindingID, value.InputKind, value.SetID, value.VectorSpaceID, value.ProfileFingerprint, value.PublishedAt)
+		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_heads VALUES(?,?,?,?,?,?,?,?)`, value.ContentVersionID, value.BindingID, value.InputKind, value.SetID, value.VectorSpaceID, value.ProfileFingerprint, value.PublishedAt, value.FencingToken)
 	case metadataEmbeddingFailureType:
 		var value metadataEmbeddingFailure
 		if err := decodeMetadataRecord(raw, &value); err != nil {
@@ -445,7 +446,7 @@ func isEmbeddingMetadataType(kind string) bool {
 
 func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (retErr error) {
 	headRows, err := tx.QueryContext(ctx, `SELECT content_version_id,binding_id,input_kind,
-		embedding_set_id,vector_space_id,profile_fingerprint,published_at
+		embedding_set_id,vector_space_id,profile_fingerprint,published_at,fencing_token
 		FROM embedding_heads ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
 	if err != nil {
 		return fmt.Errorf("listing embedding heads for validation: %w", err)
@@ -455,11 +456,22 @@ func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (re
 		var record EmbeddingHeadRecord
 		if err := headRows.Scan(&record.Key.ContentVersionID, &record.Key.BindingID,
 			&record.Key.InputKind, &record.SetID, &record.VectorSpaceID,
-			&record.ProcessingProfileFingerprint, &record.PublishedAt); err != nil {
+			&record.ProcessingProfileFingerprint, &record.PublishedAt, &record.FencingToken); err != nil {
 			return fmt.Errorf("reading embedding head for validation: %w", err)
 		}
 		if err := validateEmbeddingHeadRecord(record); err != nil {
 			return fmt.Errorf("validating embedding head: %w", err)
+		}
+		set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
+		if err != nil {
+			return err
+		}
+		eligible, err := embeddingAttachmentEligible(ctx, tx, set)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return errors.New("embedding head attachment is not current")
 		}
 	}
 	if err := headRows.Err(); err != nil {

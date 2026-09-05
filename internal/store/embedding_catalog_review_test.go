@@ -81,6 +81,7 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 		{profile: secondProfile, set: second},
 	} {
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+			FencingToken: 1,
 			Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "optional",
 				InputKind: document.EmbeddingInputOriginalFile},
 			SetID: item.set.ID, VectorSpaceID: item.set.VectorSpace.ID,
@@ -145,6 +146,7 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 				document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 			require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+				FencingToken: 1,
 				Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
 					InputKind: record.InputKind},
 				SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
