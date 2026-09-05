@@ -180,6 +180,23 @@ audited-history backup and restore contract is described in
 
 ## Boundary with packed storage
 
+Embedded repository cleanup is implemented in `backup_cleanup.go`.
+`BackupRepository.Forget` supplies exact snapshot IDs to Kit and preserves its
+last-recovery-point and incremental-parent errors. `BackupRepository.Prune`
+supplies Docbank's existing `backupapp` adapter so Kit traces the same metadata,
+content, auxiliary artifacts, and host-file references used by verification
+and restore. Docbank never enumerates or deletes Kit repository files itself.
+Both methods work without a source vault and return partial reports with errors.
+
+Kit serializes cleanup with its exclusive repository lock. Pruning publishes
+replacement packs and a live index before retiring old indexes and then old
+packs; retry after interruption recomputes live references and cleanup candidates.
+Only wholly dead packs and packs below half-live encoded payload are reclaimed or rewritten.
+This leaves mostly-live packs partly unused. Removing snapshot records alone
+does not reclaim their stored bytes, and neither operation promises secure
+erasure. Scheduling and recovery-point selection belong to the embedding host;
+the daemon and CLI do not expose these cleanup operations.
+
 Backup and live packed storage share Kit's physical formats and verification
 primitives, but docbank remains responsible for which catalog rows belong in a
 snapshot. Kit does not infer application liveness or reach into docbank SQL.
