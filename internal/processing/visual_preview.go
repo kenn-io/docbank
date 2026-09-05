@@ -18,7 +18,6 @@ import (
 	"image/png"
 	"io"
 	"mime"
-	"runtime"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/webp"
@@ -37,18 +36,18 @@ const (
 	visualPreviewWebPAnimation   = 1 << 1
 	visualPreviewWebPEXIF        = 1 << 3
 	visualPreviewWebPICCProfile  = 1 << 5
+	// Bump the descriptor revision when any byte-producing choice changes.
+	visualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v7"
 )
 
 var visualPreviewRecipe = document.VisualPreviewRecipeV1{
-	ContractVersion:   document.VisualPreviewContractV1,
-	MaxEdgePixels:     visualPreviewMaxEdgePixels,
-	OutputMediaType:   "image/jpeg",
-	OrientationPolicy: "apply",
-	ColorPolicy:       "srgb",
-	FramePolicy:       "primary",
-	ProcessorFingerprint: fingerprintVisualPreviewProcessor(
-		"docbank-visual-preview:jpeg+png+gif-stdlib-" + runtime.Version() +
-			"+webp+embedded-camera-raw+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v6"),
+	ContractVersion:      document.VisualPreviewContractV1,
+	MaxEdgePixels:        visualPreviewMaxEdgePixels,
+	OutputMediaType:      "image/jpeg",
+	OrientationPolicy:    "apply",
+	ColorPolicy:          "srgb",
+	FramePolicy:          "primary",
+	ProcessorFingerprint: fingerprintVisualPreviewProcessor(visualPreviewProcessorDescriptor),
 }
 
 // VisualPreviewTarget identifies one exact immutable source to process.

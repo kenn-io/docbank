@@ -26,7 +26,9 @@ Every preview records the complete recipe that can affect its bytes:
 
 The canonical recipe bytes produce a stable fingerprint. Changing any of these
 choices creates a new immutable generation instead of rewriting an earlier
-result.
+result. The processor fingerprint is a maintained descriptor independent of
+the Go runtime. Changing a byte-producing implementation or policy requires a
+deliberate descriptor revision.
 
 ## Durable outcomes
 
