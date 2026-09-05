@@ -240,10 +240,13 @@ func (s *Store) PurgeDerivatives(
 		explicitBuilds := stringSet(request.BuildIDs)
 		requestedBuilds := stringSet(request.BuildIDs)
 		rootedEmbeddingAttachments := make(map[string]struct{})
-		var embeddingSuppressions []derivativePurgeSuppression
+		embeddingSuppressions, err := embeddingPurgeSuppressionsTx(ctx, tx, request, asOf)
+		if err != nil {
+			return err
+		}
 		embeddingPayloads, err := purgeEmbeddingCatalogTx(
 			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All,
-			asOf, &report, rootedEmbeddingAttachments, &embeddingSuppressions,
+			asOf, &report, rootedEmbeddingAttachments,
 		)
 		if err != nil {
 			return err
@@ -800,14 +803,11 @@ func validatePurgeRequest(request PurgeRequest) error {
 func purgeEmbeddingCatalogTx(
 	ctx context.Context, tx *sql.Tx, versionSet, attachmentSet, buildSet map[string]struct{},
 	all bool, asOf string, report *PurgeReport, rootedAttachments map[string]struct{},
-	suppressions *[]derivativePurgeSuppression,
 ) (_ []string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT s.embedding_set_id,s.content_version_id,
 		s.input_generation_id,s.vector_set_id,v.payload_blob_hash,
-		COALESCE(g.attachment_id,''),COALESCE(a.build_id,''),
-		cv.blob_hash,s.profile_fingerprint,s.binding_id,s.input_kind
+		COALESCE(g.attachment_id,''),COALESCE(a.build_id,'')
 		FROM embedding_sets s
-		JOIN content_versions cv ON cv.version_id=s.content_version_id
 		JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
 		JOIN embedding_vector_sets v ON v.vector_set_id=s.vector_set_id
 		LEFT JOIN rendition_attachments a ON a.attachment_id=g.attachment_id
@@ -820,15 +820,13 @@ func purgeEmbeddingCatalogTx(
 		id, versionID, generationID, vectorSetID string
 		payload, attachmentID, buildID           string
 		explicit                                 bool
-		source, profile, binding, inputKind      string
 	}
 	var catalogSets []embeddingPurgeSet
 	for rows.Next() {
 		var candidate embeddingPurgeSet
 		if err := rows.Scan(&candidate.id, &candidate.versionID, &candidate.generationID,
 			&candidate.vectorSetID, &candidate.payload,
-			&candidate.attachmentID, &candidate.buildID, &candidate.source,
-			&candidate.profile, &candidate.binding, &candidate.inputKind); err != nil {
+			&candidate.attachmentID, &candidate.buildID); err != nil {
 			return nil, fmt.Errorf("scanning embedding set for derivative purge: %w", err)
 		}
 		_, versionSelected := versionSet[candidate.versionID]
@@ -837,14 +835,6 @@ func purgeEmbeddingCatalogTx(
 		candidate.explicit = all || versionSelected ||
 			(candidate.attachmentID != "" && attachmentSelected) ||
 			(candidate.buildID != "" && buildSelected)
-		if candidate.explicit {
-			*suppressions = append(*suppressions, derivativePurgeSuppression{
-				sourceSHA256: candidate.source, profileFingerprint: derivativeBuildSuppressionProfile,
-				buildID: embeddingPurgeScope(EmbeddingHeadKey{candidate.versionID, candidate.binding,
-					EmbeddingInputKind(candidate.inputKind)}, candidate.profile),
-				purgedAt: asOf, active: true,
-			})
-		}
 		catalogSets = append(catalogSets, candidate)
 	}
 	if err := rows.Err(); err != nil {

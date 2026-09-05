@@ -3,9 +3,78 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/docbank/document"
 )
+
+// Capture every affected binding before deleting attachments or sets. Work
+// admitted under a registered profile may still be running without a set row.
+func embeddingPurgeSuppressionsTx(
+	ctx context.Context, tx *sql.Tx, request PurgeRequest, asOf string,
+) (_ []derivativePurgeSuppression, retErr error) {
+	if !request.All && len(request.ContentVersionIDs)+len(request.AttachmentIDs)+len(request.BuildIDs) == 0 {
+		return nil, nil
+	}
+	args := []any{request.All}
+	for _, ids := range [][]string{request.ContentVersionIDs, request.AttachmentIDs, request.BuildIDs} {
+		for _, id := range ids {
+			args = append(args, id)
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `WITH scopes AS (
+		SELECT cv.version_id,p.profile_fingerprint,1 AS all_bindings
+		FROM content_versions cv CROSS JOIN processing_profiles p
+		WHERE ? OR cv.version_id IN (`+placeholders(len(request.ContentVersionIDs))+`)
+		UNION ALL
+		SELECT a.content_version_id,a.profile_fingerprint,0
+		FROM rendition_attachments a
+		WHERE a.attachment_id IN (`+placeholders(len(request.AttachmentIDs))+`)
+		   OR a.build_id IN (`+placeholders(len(request.BuildIDs))+`)
+	)
+	SELECT cv.version_id,cv.blob_hash,p.profile_fingerprint,p.canonical_profile,MAX(s.all_bindings)
+	FROM scopes s JOIN content_versions cv ON cv.version_id=s.version_id
+	JOIN processing_profiles p ON p.profile_fingerprint=s.profile_fingerprint
+	GROUP BY p.profile_fingerprint,cv.version_id
+	ORDER BY p.profile_fingerprint,cv.version_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing embedding purge scopes: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	var result []derivativePurgeSuppression
+	var lastProfile string
+	var profile document.ProcessingProfileV1
+	for rows.Next() {
+		var versionID, source, fingerprint, canonical string
+		var allBindings bool
+		if err := rows.Scan(&versionID, &source, &fingerprint, &canonical, &allBindings); err != nil {
+			return nil, fmt.Errorf("reading embedding purge scope: %w", err)
+		}
+		if fingerprint != lastProfile {
+			profile = document.ProcessingProfileV1{}
+			if err := json.Unmarshal([]byte(canonical), &profile); err != nil {
+				return nil, fmt.Errorf("decoding embedding purge profile: %w", err)
+			}
+			lastProfile = fingerprint
+		}
+		for _, binding := range profile.Embeddings {
+			if !allBindings && binding.InputKind != document.EmbeddingInputRenditionChunk {
+				continue
+			}
+			result = append(result, derivativePurgeSuppression{
+				sourceSHA256: source, profileFingerprint: derivativeBuildSuppressionProfile,
+				buildID:  embeddingPurgeScope(EmbeddingHeadKey{versionID, binding.Name, binding.InputKind}, fingerprint),
+				purgedAt: asOf, active: true,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing embedding purge scopes: %w", err)
+	}
+	return result, nil
+}
 
 // EmbeddingRebuildAuthorization permits one exact replacement set after an
 // explicit purge. Worker staging and publication never grant this authority.

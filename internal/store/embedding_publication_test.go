@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
@@ -123,4 +126,96 @@ func TestEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T) {
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	assert.Equal(t, direct.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, direct.BindingID, direct.InputKind))
+}
+
+func TestEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		name := "version"
+		if all {
+			name = "all"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+			request := PurgeRequest{ContentVersionIDs: []string{versionID}}
+			if all {
+				request = PurgeRequest{All: true}
+			}
+			_, err := s.PurgeDerivatives(t.Context(), request)
+			require.NoError(t, err)
+			require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "purge")
+		})
+	}
+}
+
+func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
+	for _, selector := range []string{"attachment", "build"} {
+		t.Run(selector, func(t *testing.T) {
+			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			var buildID string
+			require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+			request := PurgeRequest{AttachmentIDs: []string{attachmentID}}
+			if selector == "build" {
+				request = PurgeRequest{BuildIDs: []string{buildID}}
+			}
+			_, err := s.PurgeDerivatives(t.Context(), request)
+			require.NoError(t, err)
+			// An unstaged binding must have a durable fence that an explicit
+			// rebuild can supersede, even after its attachment has been removed.
+			require.NoError(t, s.AuthorizeEmbeddingRebuild(t.Context(), EmbeddingRebuildAuthorization{
+				Key:                          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk},
+				ProcessingProfileFingerprint: profile.Fingerprint, SetID: testSHA256([]byte("unstaged-rebuild-set")),
+				AuthorizedAt: nowRFC3339(),
+			}))
+		})
+	}
+}
+
+func TestEmbeddingWritesRequirePhysicalBlobAuthority(t *testing.T) {
+	for _, operation := range []string{"stage", "publish"} {
+		for _, missing := range []string{"source", "vectors", "generation"} {
+			t.Run(operation+"/"+missing, func(t *testing.T) {
+				s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+				record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+				if operation == "publish" {
+					require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+				}
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(t.Context(), &exported))
+				blobs := map[string]string{"source": catalogSourceHash, "vectors": record.VectorSet.PayloadBlobHash,
+					"generation": record.InputGeneration.GenerationBlobHash}
+				var size int64
+				require.NoError(t, restored.db.QueryRow(`SELECT size FROM blobs WHERE hash=?`, blobs[missing]).Scan(&size))
+				hash, err := packstore.ParseHash(blobs[missing])
+				require.NoError(t, err)
+				packID := pack.NewPackID()
+				catalog := NewPackCatalog(restored)
+				require.NoError(t, catalog.RecordPack(t.Context(), packstore.PackRecord{
+					PackID: packID, EntryCount: 1, StoredBytes: size + pack.MinEntryOffset,
+					CreatedAt: time.Now().UTC(),
+				}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+					Hash: hash, PackID: packID, Offset: pack.MinEntryOffset, StoredLen: size, RawLen: size,
+				}}}))
+				require.NoError(t, catalog.DeleteIndexEntry(t.Context(), hash))
+				_, err = restored.PhysicalContent(t.Context(), blobs[missing])
+				require.ErrorIs(t, err, ErrPhysicalAuthorityMissing)
+				write := func() error {
+					if operation == "stage" {
+						return restored.StageEmbeddingSet(t.Context(), record)
+					}
+					return restored.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+						Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+						SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+						ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+					})
+				}
+				require.ErrorIs(t, write(), ErrPhysicalAuthorityMissing)
+				_, err = restored.RepairBlobAuthority(t.Context(), blobs[missing], size, BlobPhysical{Encoding: "raw", StoredBytes: size})
+				require.NoError(t, err)
+				require.NoError(t, write())
+			})
+		}
+	}
 }

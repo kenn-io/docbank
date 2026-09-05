@@ -179,6 +179,9 @@ func (s *Store) StageEmbeddingSet(ctx context.Context, record EmbeddingSetRecord
 		if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, record); err != nil {
 			return err
 		}
+		if err := requireEmbeddingPhysicalAuthorityTx(ctx, tx, record); err != nil {
+			return err
+		}
 		// Payload bytes are validated before the transaction writes catalog
 		// authority. SQLite retains only the immutable blob reference and the
 		// canonical row projection derived from those bytes.
@@ -464,6 +467,9 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 			return errors.New("publishing embedding head: stale source, profile, binding, or vector-space fence")
 		}
 		if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, set); err != nil {
+			return err
+		}
+		if err := requireEmbeddingPhysicalAuthorityTx(ctx, tx, set); err != nil {
 			return err
 		}
 		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
@@ -771,6 +777,23 @@ func embeddingVectorManifestChecksum(rows []EmbeddingVectorRowRecord) string {
 		_, _ = hash.Write([]byte{'\n'})
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func requireEmbeddingPhysicalAuthorityTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
+	var source string
+	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
+		record.ContentVersionID).Scan(&source); err != nil {
+		return fmt.Errorf("reading embedding source blob: %w", err)
+	}
+	for _, hash := range []string{source, record.VectorSet.PayloadBlobHash, record.InputGeneration.GenerationBlobHash} {
+		if hash == "" {
+			continue // Original-file inputs have no separate generation artifact.
+		}
+		if _, err := requirePhysicalAuthorityTx(tx, hash); err != nil {
+			return fmt.Errorf("validating embedding blob physical authority: %w", err)
+		}
+	}
+	return nil
 }
 
 func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
