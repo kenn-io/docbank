@@ -486,6 +486,10 @@ Store startup runs the embedded idempotent schema in one immediate transaction
 and ensures the root exists. This safely creates missing compatible tables and
 indexes, but it is not a general migration system.
 
+The embedded `schema.sql` is the sole authority for current-layout columns.
+Startup derives the six guarded table layouts by applying it to an isolated
+temporary database. Released layouts remain pinned by their versioned adapters.
+
 Metadata-v1 identity changes are vertical changes to the live store, ingest,
 reachability, and backup/restore paths. A parallel schema or codec that
 production code does not consume has no authority; shared metadata helpers
