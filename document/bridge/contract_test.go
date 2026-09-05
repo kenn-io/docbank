@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"gopkg.in/yaml.v3"
 )
 
@@ -87,6 +88,117 @@ func TestBridgeContractNormativeDocumentsAreStrictAndVersioned(t *testing.T) {
 	assert.NotContains(t, locatorKinds, "time_range")
 	assert.Equal(t, "#/$defs/locator",
 		contractObject(t, schema, "$defs", "omission", "properties", "locator")["$ref"])
+}
+
+func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *testing.T) {
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(sourceEvidenceSchema, &schema))
+
+	tests := []struct {
+		name     string
+		path     []string
+		want     int
+		setItems func(*document.SourceEvidenceV1, int)
+	}{
+		{
+			name: "heading_path", path: []string{"$defs", "unit", "properties", "heading_path"},
+			want: 64,
+			setItems: func(source *document.SourceEvidenceV1, count int) {
+				source.Units[0].HeadingPath = make([]string, count)
+				for index := range source.Units[0].HeadingPath {
+					source.Units[0].HeadingPath[index] = "heading"
+				}
+			},
+		},
+		{
+			name: "geometry boxes", path: []string{"$defs", "geometry", "properties", "boxes"},
+			want: 10_000,
+			setItems: func(source *document.SourceEvidenceV1, count int) {
+				geometry := source.Units[0].Regions[0].Geometry
+				geometry.Boxes = make([]document.EvidenceBoxV1, count)
+				for index := range geometry.Boxes {
+					geometry.Boxes[index] = document.EvidenceBoxV1{Left: 1, Top: 1, Right: 2, Bottom: 2}
+				}
+			},
+		},
+		{
+			name: "geometry polygons", path: []string{"$defs", "geometry", "properties", "polygons"},
+			want: 10_000,
+			setItems: func(source *document.SourceEvidenceV1, count int) {
+				geometry := source.Units[0].Regions[0].Geometry
+				geometry.Polygons = make([]document.EvidencePolygonV1, count)
+				for index := range geometry.Polygons {
+					geometry.Polygons[index] = document.EvidencePolygonV1{Points: []document.EvidencePointV1{
+						{X: 1, Y: 1}, {X: 2, Y: 1}, {X: 1, Y: 2},
+					}}
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, contractMaxItems(t, schema, test.path...))
+
+			for _, boundary := range []struct {
+				name    string
+				count   int
+				wantErr bool
+			}{
+				{name: "at limit", count: test.want},
+				{name: "over limit", count: test.want + 1, wantErr: true},
+			} {
+				t.Run(boundary.name, func(t *testing.T) {
+					source := contractSourceEvidence()
+					test.setItems(&source, boundary.count)
+					err := document.ValidateSourceEvidenceV1(source)
+					if boundary.wantErr {
+						require.Error(t, err)
+						return
+					}
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
+
+func contractMaxItems(t *testing.T, schema map[string]any, path ...string) int {
+	t.Helper()
+	value, ok := contractObject(t, schema, path...)["maxItems"].(float64)
+	require.True(t, ok, "contract path %v has no numeric maxItems", path)
+	return int(value)
+}
+
+func contractSourceEvidence() document.SourceEvidenceV1 {
+	return document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1,
+		Completeness:    document.EvidenceComplete,
+		Family:          "pdf",
+		UnitKind:        document.EvidenceUnitPage,
+		Units: []document.SourceEvidenceUnitV1{{
+			Order: 0,
+			Locator: document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne,
+				Start: 1, End: 1,
+			},
+			Regions: []document.SourceEvidenceRegionV1{{
+				Kind: document.EvidenceRegionParagraph, Order: 0,
+				ProviderID: "synthetic-region",
+				TextRange:  document.EvidenceTextRangeV1{Start: 0, End: 1},
+				Geometry: &document.SourceEvidenceGeometryV1{
+					CoordinateOrigin: document.EvidenceCoordinateTopLeft,
+					CoordinateSpace:  document.EvidenceCoordinatePage,
+					Height:           100,
+					Orientation:      0,
+					Scale:            1,
+					Unit:             document.EvidenceGeometryPixel,
+					Width:            100,
+				},
+			}},
+			Text: "synthetic evidence",
+		}},
+	}
 }
 
 func contractObject(t *testing.T, value any, path ...string) map[string]any {
