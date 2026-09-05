@@ -138,6 +138,23 @@ type ProvenancePage struct {
 	Offset int              `json:"offset"`
 }
 
+// ProvenanceAppendOptions describes one origin assertion added after ingest.
+// A zero IfRevision is unconditional for embedded callers; a positive value
+// must match the node's current revision.
+type ProvenanceAppendOptions struct {
+	Source     ProvenanceSource
+	Supersedes *string
+	IfRevision int64
+}
+
+// ProvenanceAppendReceipt binds the appended fact to the resulting node and
+// its transactionally captured path.
+type ProvenanceAppendReceipt struct {
+	Node Node           `json:"node"`
+	Path string         `json:"path,omitzero"`
+	Fact ProvenanceFact `json:"fact"`
+}
+
 // PutReceipt proves the computed identity and resulting logical authority.
 type PutReceipt struct {
 	Node            Node            `json:"node"`

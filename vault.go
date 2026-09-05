@@ -63,6 +63,9 @@ var (
 	ErrNotTrashed               = store.ErrNotTrashed
 	ErrIsRoot                   = store.ErrIsRoot
 	ErrAuditMutationUnsupported = store.ErrAuditMutationUnsupported
+	// ErrProvenanceMismatch reports a provenance correction whose predecessor
+	// is missing, belongs to another node, or is already superseded.
+	ErrProvenanceMismatch = store.ErrProvenanceMismatch
 )
 
 const (
@@ -663,6 +666,51 @@ func (v *Vault) Provenance(
 		result.Items = append(result.Items, fromStoreProvenance(fact))
 	}
 	return result, nil
+}
+
+// AppendProvenance adds one immutable origin fact under the node revision
+// precondition and returns the resulting node, fact, and live path.
+func (v *Vault) AppendProvenance(
+	ctx context.Context, nodeID int64, opts ProvenanceAppendOptions,
+) (ProvenanceAppendReceipt, error) {
+	if err := v.begin(); err != nil {
+		return ProvenanceAppendReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if err := validateProvenanceSource(opts.Source); err != nil {
+		return ProvenanceAppendReceipt{}, err
+	}
+	if opts.IfRevision < 0 {
+		return ProvenanceAppendReceipt{}, errors.New("docbank provenance revision must not be negative")
+	}
+	ifRevision := store.UnconditionalRev
+	if opts.IfRevision > 0 {
+		ifRevision = opts.IfRevision
+	}
+	v.mutation.Lock()
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return ProvenanceAppendReceipt{}, err
+	}
+	result, err := v.metadata.AppendNodeProvenance(ctx, store.ProvenanceAppendInput{
+		NodeID: nodeID, IfRevision: ifRevision, SourceKind: opts.Source.Kind,
+		SourceDescription: opts.Source.Description, OriginalPath: opts.Source.Reference,
+		OriginalMTime: provenanceStringPtr(opts.Source.ModifiedAt), Supersedes: opts.Supersedes,
+	})
+	if err != nil {
+		return ProvenanceAppendReceipt{}, err
+	}
+	return ProvenanceAppendReceipt{
+		Node: fromStoreNode(result.Node), Path: result.Path, Fact: fromStoreProvenance(result.Fact),
+	}, nil
+}
+
+func provenanceStringPtr(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	result := value.UTC().Format(time.RFC3339Nano)
+	return &result
 }
 
 // MovePath renames or reparents one live path and returns its canonical new

@@ -23,7 +23,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"assignTagPath", "unassignTagPath",
 		"previewAuditEnrollment", "enableAudit", "auditStatus", "auditNodeHistory", "verifyAudit",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
-		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify",
+		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify", "appendNodeProvenance",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
@@ -126,6 +126,7 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/nodes/{id}/verify"].Post,
 		doc.Paths["/api/v1/nodes/{id}/revert"].Post,
 		doc.Paths["/api/v1/nodes/{id}/versions/prune"].Post,
+		doc.Paths["/api/v1/nodes/{id}/provenance"].Post,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Put,
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
@@ -141,4 +142,15 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	create := doc.Paths["/api/v1/tags"].Post
 	require.NotNil(t, create)
 	assert.NotNil(t, create.Responses["201"])
+}
+
+func TestOpenAPIProvenanceMTimeUsesDateTimeFormat(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for _, name := range []string{"ProvenanceAppendRequest", "ProvenanceFact"} {
+		schema := doc.Components.Schemas.Map()[name]
+		require.NotNil(t, schema)
+		mtime := schema.Properties["original_mtime"]
+		require.NotNil(t, mtime)
+		assert.Equal(t, "date-time", mtime.Format)
+	}
 }

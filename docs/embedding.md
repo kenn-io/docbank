@@ -61,6 +61,25 @@ func StoreSession(ctx context.Context, root string, sessionID string, jsonl []by
 }
 ```
 
+An embedded application can append an origin learned after ingestion with the
+same immutable fact model:
+
+```go
+appended, err := vault.AppendProvenance(ctx, receipt.Node.ID,
+    docbank.ProvenanceAppendOptions{
+        IfRevision: receipt.Node.Revision,
+        Source: docbank.ProvenanceSource{
+            Kind: "agent", Description: "triage", Reference: "opaque://laptop/report.txt",
+        },
+    })
+```
+
+The append returns the resulting node, live path, fact, and revision-bound
+receipt. A zero `IfRevision` is an unconditional embedded operation; a
+positive value fences a caller's earlier read. Set `Supersedes` to an active
+same-node fact identity to add a correction. The source reference is opaque
+evidence and is never opened by Docbank.
+
 `Put` creates missing virtual directories. Repeating the same bytes and media
 type converges on the current version; changed bytes append an immutable content
 version while preserving the node ID. Supply `PutOptions.Expected` when the

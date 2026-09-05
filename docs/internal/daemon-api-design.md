@@ -73,6 +73,13 @@ Do not add a path mutation that resolves through a separate preflight query.
 Use an ID plus revision for read-modify-write or add a transactional store
 operation for one-shot path intent.
 
+`POST /api/v1/nodes/{id}/provenance` is an ID-addressed metadata mutation. It
+requires the node revision in `If-Match`, runs on the fast HTTP mutation side of
+the operation gate, and appends an immutable fact plus a generic ingest in one
+store transaction. `original_path` is opaque evidence, so the daemon never
+opens it or treats it as retained content. An optional `supersedes` value must
+identify an active fact on the same node; the earlier fact remains immutable.
+
 File-node wire representations expose the catalog's lowercase SHA-256
 `blob_hash`; stable node identity and immutable content identity are separate
 on purpose. A content response sends that expected identity before the body

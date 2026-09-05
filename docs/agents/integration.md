@@ -539,6 +539,22 @@ Provenance is evidence, not ownership of the external source. Reading it does
 not open or modify that source, and it does not make a content version a
 retention root.
 
+To record an origin learned after ingest, send the node revision returned by a
+prior read:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "7"' \
+  -H 'Content-Type: application/json' \
+  --data '{"source_kind":"agent","source_description":"triage","original_path":"opaque://laptop/report.txt"}' \
+  "$DOCBANK_URL/api/v1/nodes/42/provenance"
+```
+
+The response is `201` with the appended fact, resulting node revision, path,
+and ETag. `original_path` remains opaque evidence. To correct an active fact,
+include its `identity` as `supersedes`; the earlier fact remains in history.
+
 ## Create and ingest safely
 
 For a one-shot instruction tied to an exact virtual coordinate, create the

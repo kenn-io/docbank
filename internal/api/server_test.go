@@ -542,6 +542,28 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		"browser sessions cannot upload through reconnectable HTTP")
 	require.NoError(t, resp.Body.Close())
 
+	provenanceRequest := api.ProvenanceAppendRequest{
+		SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://browser",
+	}
+	provenanceBody, err := json.Marshal(provenanceRequest)
+	require.NoError(t, err)
+	provenanceHTTP, err := http.NewRequest(
+		http.MethodPost,
+		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/provenance",
+		bytes.NewReader(provenanceBody),
+	)
+	require.NoError(t, err)
+	provenanceHTTP.Header["X-Api-Key"] = []string{""}
+	provenanceHTTP.Header.Set(api.WebSessionHeader, issued.Token)
+	provenanceHTTP.Header.Set("Content-Type", "application/json")
+	resp, err = ts.Client().Do(provenanceHTTP)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	provenanceResponseBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Contains(t, string(provenanceResponseBody), `"code":"web_session_read_only"`)
+
 	trashRequest, err := http.NewRequest(
 		http.MethodPost,
 		ts.URL+"/api/v1/nodes/"+strconv.FormatInt(document.ID, 10)+"/trash",

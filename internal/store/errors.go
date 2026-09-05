@@ -33,6 +33,9 @@ var (
 	// ErrProvenanceMismatch means an immutable retry named source evidence
 	// that is not an active fact on the existing document.
 	ErrProvenanceMismatch = errors.New("provenance does not match existing content")
+	// ErrInvalidProvenanceTime means an optional original modification time is
+	// missing, malformed, or not canonical UTC RFC3339Nano.
+	ErrInvalidProvenanceTime = errors.New("invalid provenance original_mtime")
 	// ErrInvalidVersionPrune means a history-pruning selector is absent,
 	// contradictory, or otherwise unsafe to execute.
 	ErrInvalidVersionPrune = errors.New("invalid version-prune selector")

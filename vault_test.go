@@ -482,6 +482,113 @@ func TestEmbeddedCreateRecordsGenericProvenance(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppendProvenanceReturnsRevisionBoundReceipt(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	content := []byte("embedded provenance")
+	created, err := vault.Create(t.Context(), "/report.txt", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/plain", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	receipt, err := vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		IfRevision: created.Node.Revision,
+		Source:     ProvenanceSource{Kind: "agent", Description: "triage", Reference: "opaque://embedded"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.ID, receipt.Node.ID)
+	assert.Equal(t, created.Node.Revision+1, receipt.Node.Revision)
+	assert.Equal(t, "/report.txt", receipt.Path)
+	assert.Equal(t, "opaque://embedded", receipt.Fact.SourceReference)
+}
+
+// TestEmbeddedAppendProvenanceCoversAdapterBranches exercises the embedded
+// adapter's own branches: mtime conversion to canonical UTC, unconditional
+// and negative revision handling, supersession, stale-revision conflict, and
+// the empty live path for a trashed node, on both SQLite drivers.
+func TestEmbeddedAppendProvenanceCoversAdapterBranches(t *testing.T) {
+	tests := []struct {
+		name   string
+		driver docsqlite.Driver
+	}{
+		{name: "build default"},
+		{name: "pure Go", driver: modernc.Driver{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			testEmbeddedAppendProvenanceAdapterBranches(t, test.driver)
+		})
+	}
+}
+
+func testEmbeddedAppendProvenanceAdapterBranches(t *testing.T, driver docsqlite.Driver) {
+	t.Helper()
+	vault, err := New(t.Context(), Config{Root: t.TempDir(), SQLite: driver})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	content := []byte("adapter branches")
+	created, err := vault.Create(t.Context(), "/branches.txt", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/plain", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+
+	_, err = vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		IfRevision: -1,
+		Source:     ProvenanceSource{Kind: "agent", Description: "triage", Reference: "opaque://x"},
+	})
+	require.ErrorContains(t, err, "revision must not be negative")
+
+	// Non-UTC ModifiedAt converts to canonical UTC RFC3339Nano; IfRevision 0
+	// takes the unconditional branch.
+	modified := time.Date(2026, time.July, 20, 15, 4, 5, 0, time.FixedZone("source", -5*60*60))
+	first, err := vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		Source: ProvenanceSource{Kind: "agent", Description: "triage",
+			Reference: "opaque://laptop/branches.txt", ModifiedAt: &modified},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, first.Fact.SourceModifiedAt)
+	assert.Equal(t, modified.UTC().Format(time.RFC3339Nano), *first.Fact.SourceModifiedAt,
+		"mtime converts to canonical UTC RFC3339Nano without losing the instant")
+	assert.True(t, first.Fact.Active)
+
+	// A stale revision conflicts instead of appending.
+	_, err = vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		IfRevision: created.Node.Revision,
+		Source:     ProvenanceSource{Kind: "agent", Description: "late", Reference: "opaque://stale"},
+	})
+	require.ErrorIs(t, err, store.ErrStaleRevision)
+
+	// A correction supersedes the active fact and keeps it addressable.
+	second, err := vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		IfRevision: first.Node.Revision,
+		Source: ProvenanceSource{Kind: "agent", Description: "corrected",
+			Reference: "opaque://desktop/branches.txt"},
+		Supersedes: &first.Fact.Identity,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, second.Fact.Supersedes)
+	assert.Equal(t, first.Fact.Identity, *second.Fact.Supersedes)
+
+	// A correction naming a missing predecessor classifies through the
+	// public sentinel.
+	missing := strings.Repeat("cd", 32)
+	_, err = vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		Source:     ProvenanceSource{Kind: "agent", Description: "orphan", Reference: "opaque://o"},
+		Supersedes: &missing,
+	})
+	require.ErrorIs(t, err, ErrProvenanceMismatch)
+
+	// A trashed node still accepts appends but reports no live path.
+	_, err = vault.TrashPath(t.Context(), "/branches.txt", RevisionOptions{})
+	require.NoError(t, err)
+	trashed, err := vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		Source: ProvenanceSource{Kind: "agent", Description: "post-trash", Reference: "opaque://t"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, trashed.Path, "a trashed node has no live path in the receipt")
+}
+
 func testEmbeddedCreateRecordsGenericProvenance(t *testing.T, driver docsqlite.Driver) {
 	t.Helper()
 	vault, err := New(t.Context(), Config{Root: t.TempDir(), SQLite: driver})
