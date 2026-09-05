@@ -92,7 +92,7 @@ than translating process exits back into HTTP status.
 ## docbank add
 
 ```
-docbank add <path>... [--dest <virtual-dir>] [--exclude <rule>]... [--progress auto|bar|plain] [--json]
+docbank add <path>... [--dest <virtual-dir>] [--exclude <rule>]... [--replace] [--progress auto|bar|plain] [--json]
 docbank add <path>... --preflight [--exclude <rule>]... [--json]
 ```
 
@@ -103,6 +103,7 @@ never modified or deleted.
 |------|---------|---------|
 | `--dest` | `/inbox` | Virtual destination directory; created (with parents) if missing |
 | `--exclude` | none | Prune a matching entry name anywhere, or a relative path within each source; repeatable |
+| `--replace` | false | Replace the live file at each destination path, or skip it when its bytes are unchanged |
 | `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
 | `--json` | false | Emit only the terminal preflight or ingest report as JSON; suppress progress |
 | `--progress` | `auto` | Human ingest progress: `auto`, `bar`, or durable `plain` lines |
@@ -115,6 +116,12 @@ never modified or deleted.
   reported as failures; they do not abort the run.
 - Name collisions with different content auto-suffix:
   `report.pdf` → `report (2).pdf`.
+- `--replace` records the destination node revision before reading the source,
+  then replaces that exact live file when the bytes differ.
+- `--replace` skips unchanged bytes without changing the stored MIME type or
+  creating a content version. A live directory fails the file. A destination
+  that appears after the pre-read fails with an exact-name conflict instead of
+  using a suffix. Without `--replace`, ordinary suffixing remains unchanged.
 - Re-running an import converges: a file whose content already exists
   under any candidate name in the destination is skipped, so an
   interrupted bulk import can simply be re-run. See

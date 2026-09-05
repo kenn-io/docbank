@@ -149,6 +149,13 @@ The CLI resolves user arguments to absolute paths before sending the request,
 preserving shell-relative ergonomics. Partial source failures are returned in
 the report while other sources continue.
 
+The ingest request may carry `replace: true` for an opt-in exact destination
+policy. The daemon records the destination node revision before reading the
+source. Changed bytes create a content version on the same node, equal hash
+and size skip without changing stored MIME or history, a live directory fails
+before source I/O, and stale or exact-name create races fail the file without
+suffixing. The omitted and false values retain ordinary suffixing.
+
 `POST /uploads` is the remote counterpart, but it is deliberately one file per
 request. `parent_id` and normalized `name` identify the destination; required
 hash/size headers describe the sole multipart `file` part. File granularity

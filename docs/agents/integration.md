@@ -591,13 +591,19 @@ an error with an escaped printable path and is never opened or imported.
 curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
-  --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts","exclude":[]}' \
+  --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts","exclude":[],"replace":true}' \
   "$DOCBANK_URL/api/v1/ingest"
 ```
 
 Inspect `added`, `skipped`, `excluded`, and every member of `failed`. Repeating the same
 ingest after fixing a partial failure is safe; successful content converges to
-`skipped` rather than another copy.
+`skipped` rather than another copy. Set `replace` to `true` on either ingest
+form when the exact destination file represents one changing source. The
+daemon checks the destination node and revision before reading source bytes,
+versions changed content in place, skips equal hash and size without changing
+stored MIME or history, and fails directories, stale revisions, and exact-name
+create races without falling back to a suffix. Omit the field for ordinary
+suffixing.
 
 For an interactive or long-running local integration, send the same body to
 `POST /api/v1/ingest/stream` with `Accept: application/x-ndjson`. Read every
