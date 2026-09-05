@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -590,12 +591,81 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, exclusions{}, nil))
+	selection, err := compileSourceSelection(Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, selection, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 
 	_, err = ing.Store.NodeByPath(ctx, "/inbox")
 	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
+}
+
+func TestAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"sub/a.txt": "x"})
+
+	dest, err := ing.Store.MkdirAll(ctx, "/inbox")
+	require.NoError(t, err)
+	_, _, err = ing.Store.Trash(ctx, dest.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
+	require.NoError(t, err)
+	var rep Report
+	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, sourceSelection{}, nil))
+	assert.NotEmpty(t, rep.Failed)
+	assert.Zero(t, rep.Added)
+	_, err = ing.Store.NodeByPath(ctx, "/inbox")
+	assert.ErrorIs(t, err, store.ErrNotFound, "trashed destination must stay trashed")
+}
+
+func TestEnsureSourceDirRejectsPathOutsideWalkRoot(t *testing.T) {
+	const childEnv = "DOCBANK_TEST_ENSURE_SOURCE_DIR_OUTSIDE_ROOT"
+	if os.Getenv(childEnv) == "1" {
+		ing := newTestIngester(t)
+		walkRoot := filepath.Join(t.TempDir(), "root")
+		dirPath := filepath.Join(filepath.Dir(walkRoot), "outside", "nested")
+		_, err := ing.ensureSourceDir(
+			t.Context(), map[string]int64{}, map[string]error{}, ing.Store.RootID(),
+			"source", walkRoot, dirPath,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outside traversal root")
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEnsureSourceDirRejectsPathOutsideWalkRoot$", "-test.count=1") //nolint:gosec // os.Args[0] is the trusted current test executable.
+	cmd.Env = append(os.Environ(), childEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestIncludeSkipsNonRegularEntries(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	src := writeTree(t, map[string]string{"keep.txt": "keep", "target.bin": "target"})
+	if err := os.Symlink(filepath.Join(src, "keep.txt"), filepath.Join(src, "skip.link")); err != nil {
+		t.Skipf("creating a symlink requires additional platform permission: %v", err)
+	}
+
+	preflight, err := Preflight(ctx, []string{src}, Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), preflight.Files)
+	assert.Equal(t, int64(2), preflight.Excluded)
+	assert.Zero(t, preflight.Skipped)
+
+	report, err := ing.AddPathsWithOptions(ctx, []string{src}, "/inbox", Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, 2, report.Excluded)
+	assert.Empty(t, report.Failed)
+
+	explicit, err := Preflight(ctx, []string{filepath.Join(src, "target.bin")}, Options{Include: []string{"*.txt"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), explicit.Excluded)
+	require.Len(t, explicit.Findings, 1)
+	assert.Equal(t, "excluded", explicit.Findings[0].Kind)
 }
 
 func TestPreflightInventoriesWithoutMutatingVault(t *testing.T) {
@@ -682,6 +752,50 @@ func TestAddPathsHonorsPreflightExclusions(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = ing.Store.NodeByPath(t.Context(), top+"/project/cache")
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPreflightAndImportShareGlobSelection(t *testing.T) {
+	ing := newTestIngester(t)
+	src := writeTree(t, map[string]string{
+		"docs/keep.txt":  "keep",
+		"docs/skip.txt":  "skip",
+		"docs/skip.md":   "skip",
+		"empty/skip.bin": "skip",
+		"root.txt":       "root",
+	})
+	opts := Options{Include: []string{"docs/*.txt"}, Exclude: []string{"docs/skip.txt"}}
+
+	preflight, err := Preflight(t.Context(), []string{src}, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), preflight.Files)
+	assert.Equal(t, int64(4), preflight.Excluded)
+	assert.Equal(t, int64(2), preflight.Directories)
+
+	report, err := ing.AddPathsWithOptions(t.Context(), []string{src}, "/inbox", opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, 4, report.Excluded)
+	assert.Empty(t, report.Failed)
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/"+filepath.Base(src)+"/docs/keep.txt")
+	require.NoError(t, err)
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/"+filepath.Base(src)+"/empty")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPreflightIncludeDoesNotHideLaterErrors(t *testing.T) {
+	root := t.TempDir()
+	for i := range maxPreflightFindings + 10 {
+		path := filepath.Join(root, fmt.Sprintf("skip-%03d.txt", i))
+		require.NoError(t, os.WriteFile(path, []byte("skip"), 0o600))
+	}
+	report, err := Preflight(t.Context(), []string{root, filepath.Join(root, "missing")}, Options{
+		Include: []string{"*.pdf"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(maxPreflightFindings+10), report.Excluded)
+	assert.Equal(t, int64(1), report.Errors)
+	require.Len(t, report.Findings, 1)
+	assert.Equal(t, "error", report.Findings[0].Kind)
 }
 
 func TestPreflightRejectsUnsafeExclusionRules(t *testing.T) {

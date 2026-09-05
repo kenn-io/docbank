@@ -452,7 +452,7 @@ func TestIngestStreamRoundTrip(t *testing.T) {
 	require.NoError(t, os.WriteFile(src, content, 0o600))
 
 	var events []api.IngestProgress
-	report, err := c.IngestStream(t.Context(), []string{src}, "/inbox", nil,
+	report, err := c.IngestStream(t.Context(), []string{src}, "/inbox", nil, nil,
 		func(event api.IngestProgress) { events = append(events, event) })
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
@@ -471,6 +471,40 @@ func TestIngestStreamRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(len(content)), finalStages["ingest"].BytesDone)
 }
 
+func TestIngestClientCarriesSelectionRulesToEveryRoute(t *testing.T) {
+	var bodies []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		bodies = append(bodies, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/ingest/stream" {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_ = json.MarshalWrite(w, api.IngestEvent{Type: "result", Report: &api.IngestReport{}})
+			return
+		}
+		_ = json.MarshalWrite(w, map[string]any{})
+	}))
+	t.Cleanup(ts.Close)
+	c := client.New(ts.URL, "key")
+	include := []string{"*.txt"}
+	exclude := []string{"skip.txt"}
+	_, err := c.PreflightIngest(t.Context(), []string{"/source"}, include, exclude)
+	require.NoError(t, err)
+	_, err = c.IngestWithOptions(t.Context(), []string{"/source"}, "/inbox", include, exclude)
+	require.NoError(t, err)
+	_, err = c.IngestStream(t.Context(), []string{"/source"}, "/inbox", include, exclude, nil)
+	require.NoError(t, err)
+	require.Len(t, bodies, 3)
+	for _, body := range bodies {
+		assert.Contains(t, body, `"include":["*.txt"]`)
+		assert.Contains(t, body, `"exclude":["skip.txt"]`)
+	}
+}
+
 func TestProgressStreamPreservesProblemCode(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -482,7 +516,7 @@ func TestProgressStreamPreservesProblemCode(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	_, err := client.New(ts.URL, "key").IngestStream(
-		t.Context(), []string{"/source"}, "/inbox", nil, nil)
+		t.Context(), []string{"/source"}, "/inbox", nil, nil, nil)
 	require.Error(t, err)
 	code, ok := client.ProblemCode(err)
 	assert.True(t, ok)
@@ -523,15 +557,15 @@ func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 		call func() error
 	}{
 		{name: "ordinary", call: func() error {
-			_, err := c.IngestWithOptions(t.Context(), []string{invalidPath}, "/inbox", nil)
+			_, err := c.IngestWithOptions(t.Context(), []string{invalidPath}, "/inbox", nil, nil)
 			return err
 		}},
 		{name: "stream", call: func() error {
-			_, err := c.IngestStream(t.Context(), []string{invalidPath}, "/inbox", nil, nil)
+			_, err := c.IngestStream(t.Context(), []string{invalidPath}, "/inbox", nil, nil, nil)
 			return err
 		}},
 		{name: "preflight", call: func() error {
-			_, err := c.PreflightIngest(t.Context(), []string{invalidPath}, nil)
+			_, err := c.PreflightIngest(t.Context(), []string{invalidPath}, nil, nil)
 			return err
 		}},
 		{name: "mkdir name", call: func() error {

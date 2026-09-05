@@ -86,8 +86,9 @@ non-goals.
 ## Common agent workflows
 
 - **File local material:** preflight large server-side trees with the intended
-  exclusions, require no errors or over-limit files, then ingest with the same
-  selection and inspect every added, skipped, excluded, and failed result.
+  include and exclude patterns, require no errors or over-limit files, then
+  ingest with the same selection and inspect every added, skipped, excluded,
+  and failed result.
 - **Write from another machine:** upload one file with declared SHA-256, size,
   name, and destination directory ID; accept success only when the returned
   server-computed identity matches.

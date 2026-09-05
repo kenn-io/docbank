@@ -92,8 +92,8 @@ than translating process exits back into HTTP status.
 ## docbank add
 
 ```
-docbank add <path>... [--dest <virtual-dir>] [--exclude <rule>]... [--progress auto|bar|plain] [--json]
-docbank add <path>... --preflight [--exclude <rule>]... [--json]
+docbank add <path>... [--dest <virtual-dir>] [--include <pattern>]... [--exclude <pattern>]... [--progress auto|bar|plain] [--json]
+docbank add <path>... --preflight [--include <pattern>]... [--exclude <pattern>]... [--json]
 ```
 
 Imports files or directory trees into the vault. Sources are copied,
@@ -102,7 +102,8 @@ never modified or deleted.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--dest` | `/inbox` | Virtual destination directory; created (with parents) if missing |
-| `--exclude` | none | Prune a matching entry name anywhere, or a relative path within each source; repeatable |
+| `--include` | none | Select files matching a basename or source-relative `path.Match` pattern; repeatable |
+| `--exclude` | none | Exclude files or prune directories matching a basename or source-relative `path.Match` pattern; repeatable |
 | `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
 | `--json` | false | Emit only the terminal preflight or ingest report as JSON; suppress progress |
 | `--progress` | `auto` | Human ingest progress: `auto`, `bar`, or durable `plain` lines |
@@ -111,8 +112,11 @@ never modified or deleted.
   directory under `--dest` and relative structure is preserved.
 - An explicitly named symlink to a directory is followed as the import root;
   its supplied basename and provenance spelling are retained. Symlinks inside
-  that tree, symlinks to files, and other non-regular files are skipped and
-  reported as failures; they do not abort the run.
+  that tree, symlinks to files, and other selected non-regular files are skipped
+  and reported as failures; include-filtered entries are excluded without
+  failure, and neither case aborts the run.
+- Include and exclude patterns use `/` separators on every platform; a
+  backslash in a pattern is rejected.
 - Name collisions with different content auto-suffix:
   `report.pdf` → `report (2).pdf`.
 - Re-running an import converges: a file whose content already exists
@@ -130,14 +134,15 @@ does not open cloud placeholders, create the destination, record an ingest, or
 write blobs. `--json` retains a bounded set of detailed findings and file-type
 groups for agents and scripts.
 
-Exclusion rules are deliberately simple and shared by preflight and import. A
-bare entry name such as `.git` or `node_modules` matches at any depth. A path
-containing `/`, such as `project/cache`, matches that relative path and its
-descendants within every supplied source. Rules are not shell globs and must be
-relative; absolute paths and `..` escapes are rejected. Rule form is preserved:
-`cache` is a name at any depth, while `cache/` and `./cache` mean only the
-root-relative `cache` entry. Each `--exclude` value is literal and commas are
-ordinary filename characters; repeat the flag to supply multiple rules.
+Selection rules are shared by preflight and import. A pattern without `/`, such
+as `*.pdf`, matches a basename at any depth. A pattern with `/`, such as
+`project/*.pdf`, matches the source-relative path; `*` and `?` do not cross `/`,
+and `**` is not a recursive globstar. Include rules filter regular files but do
+not prune directories. Exclusions win and matching directories prune their
+subtrees. Patterns must be relative and valid; absolute paths and `..` escapes
+are rejected. Commas are ordinary pattern characters; repeat each flag. Watch
+configuration keeps its separate literal exclusion rules.
+Patterns are case-sensitive on every platform, including Windows.
 
 An ordinary import first scans source metadata for file and byte totals, then
 shows ingest progress on stderr. `auto` uses a redrawable bar on a terminal and

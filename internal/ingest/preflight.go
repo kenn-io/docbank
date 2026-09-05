@@ -20,9 +20,10 @@ const (
 )
 
 // Options controls source selection for both preflight and the real import.
-// A rule without a slash matches that entry name anywhere. A relative path
-// rule matches that entry and its descendants within each supplied source.
+// Patterns use path.Match syntax over source-relative slash paths. A pattern
+// without a slash matches a basename anywhere; exclusions take precedence.
 type Options struct {
+	Include []string
 	Exclude []string
 	// Progress receives bounded updates while a real ingest reads and commits
 	// files. Preflight ignores it because it never opens file content.
@@ -82,6 +83,8 @@ type PreflightReport struct {
 	FindingsTruncated  bool
 }
 
+// exclusionRule is retained for watched-inbox configuration, whose patterns
+// are literal by contract and must not use request-scoped glob selection.
 type exclusionRule struct {
 	name string
 	path string
@@ -148,7 +151,7 @@ func (e exclusions) matchNameAndRelative(name, rel string) bool {
 // ValidateOptions checks source-selection rules without touching the
 // filesystem. API handlers use it to return a validation error before work.
 func ValidateOptions(opts Options) error {
-	_, err := compileExclusions(opts.Exclude)
+	_, err := compileSourceSelection(opts)
 	return err
 }
 
@@ -156,11 +159,17 @@ func ValidateOptions(opts Options) error {
 // semantics as AddPathsWithOptions. It uses directory metadata only: cloud
 // placeholders are not opened or hydrated merely to estimate an import.
 func Preflight(ctx context.Context, sources []string, opts Options) (PreflightReport, error) {
-	var report PreflightReport
-	excludes, err := compileExclusions(opts.Exclude)
+	selection, err := CompileSelection(opts)
 	if err != nil {
-		return report, err
+		return PreflightReport{}, err
 	}
+	return PreflightWithSelection(ctx, sources, selection)
+}
+
+// PreflightWithSelection inventories sources using a previously compiled
+// request selection, so callers can share it with the real import.
+func PreflightWithSelection(ctx context.Context, sources []string, selection Selection) (PreflightReport, error) {
+	var report PreflightReport
 	types := make(map[string]FileType)
 	for _, rawSource := range sources {
 		if err := ctx.Err(); err != nil {
@@ -176,7 +185,7 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 			report.addFinding(source, "error", err.Error())
 			continue
 		}
-		if excludes.match(source, source) {
+		if selection.excluded(source, source) {
 			report.addFinding(source, "excluded", "matched an exclusion rule")
 			continue
 		}
@@ -184,28 +193,48 @@ func Preflight(ctx context.Context, sources []string, opts Options) (PreflightRe
 		if info.Mode()&fs.ModeSymlink != 0 {
 			walkRoot, err = filepath.EvalSymlinks(source)
 			if err != nil {
+				if !selection.included(source, source) {
+					report.addFinding(source, "excluded", "did not match an include pattern")
+					continue
+				}
 				report.addFinding(source, "error", "resolving explicitly named directory symlink: "+err.Error())
 				continue
 			}
 			info, err = os.Stat(walkRoot)
 			if err != nil {
+				if !selection.included(source, source) {
+					report.addFinding(source, "excluded", "did not match an include pattern")
+					continue
+				}
 				report.addFinding(source, "error", "checking explicitly named directory symlink: "+err.Error())
 				continue
 			}
 			if !info.IsDir() {
+				if !selection.included(source, source) {
+					report.addFinding(source, "excluded", "did not match an include pattern")
+					continue
+				}
 				report.addFinding(source, "skipped", "explicit symlink source does not resolve to a directory")
 				continue
 			}
 		}
 		if info.Mode().IsRegular() {
+			if !selection.included(source, source) {
+				report.addFinding(source, "excluded", "did not match an include pattern")
+				continue
+			}
 			report.addFile(source, info.Size(), isCloudPlaceholder(info), types)
 			continue
 		}
 		if !info.IsDir() {
+			if !selection.included(source, source) {
+				report.addFinding(source, "excluded", "did not match an include pattern")
+				continue
+			}
 			report.addFinding(source, "skipped", "not a regular file or directory")
 			continue
 		}
-		if err := preflightTree(ctx, &report, types, excludes, source, walkRoot); err != nil {
+		if err := preflightTree(ctx, &report, types, selection, source, walkRoot); err != nil {
 			return report, err
 		}
 	}
@@ -217,7 +246,7 @@ func preflightTree(
 	ctx context.Context,
 	report *PreflightReport,
 	types map[string]FileType,
-	excludes exclusions,
+	selection sourceSelection,
 	sourceRoot, walkRoot string,
 ) error {
 	sourceRoot, err := filepath.Abs(sourceRoot)
@@ -231,6 +260,7 @@ func preflightTree(
 	if filepath.Base(sourceRoot) == string(filepath.Separator) || filepath.Base(walkRoot) == string(filepath.Separator) {
 		return fmt.Errorf("cannot scan filesystem root %q", sourceRoot)
 	}
+	materializedDirs := make(map[string]struct{})
 	return filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -247,7 +277,7 @@ func preflightTree(
 			}
 			return nil
 		}
-		if excludes.match(sourceRoot, sourcePath) {
+		if selection.excluded(sourceRoot, sourcePath) {
 			report.addFinding(sourcePath, "excluded", "matched an exclusion rule")
 			if entry.IsDir() {
 				return fs.SkipDir
@@ -256,8 +286,29 @@ func preflightTree(
 		}
 		switch {
 		case entry.IsDir():
-			report.Directories++
+			if len(selection.include) == 0 {
+				report.Directories++
+			}
 		case entry.Type().IsRegular():
+			if !selection.included(sourceRoot, sourcePath) {
+				report.Excluded++
+				return nil
+			}
+			if len(selection.include) > 0 {
+				for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+					if _, seen := materializedDirs[dir]; !seen {
+						materializedDirs[dir] = struct{}{}
+						report.Directories++
+					}
+					if dir == walkRoot {
+						break
+					}
+					parent := filepath.Dir(dir)
+					if parent == dir {
+						break
+					}
+				}
+			}
 			info, err := entry.Info()
 			if err != nil {
 				report.addFinding(sourcePath, "error", err.Error())
@@ -265,6 +316,10 @@ func preflightTree(
 			}
 			report.addFile(sourcePath, info.Size(), isCloudPlaceholder(info), types)
 		default:
+			if !selection.included(sourceRoot, sourcePath) {
+				report.Excluded++
+				return nil
+			}
 			report.addFinding(sourcePath, "skipped", "not a regular file (symlinks are skipped)")
 		}
 		return nil
