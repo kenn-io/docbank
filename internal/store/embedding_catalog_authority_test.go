@@ -326,14 +326,17 @@ func TestEmbeddingCatalogReadsPackedArtifactAuthority(t *testing.T) {
 	require.Equal(t, data, read)
 }
 
-func TestEmbeddingCatalogProviderFreeRestoreVerifiesLooseAndPackedArtifacts(t *testing.T) {
+func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing.T) {
 	for _, packed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "loose", true: "packed"}[packed], func(t *testing.T) {
 			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 			record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 			require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
+			snapshot, err := source.BeginMetadataSnapshot(t.Context())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, snapshot.Close()) }()
 			var metadata bytes.Buffer
-			require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
+			require.NoError(t, snapshot.ExportBackup(t.Context(), &metadata))
 
 			target := newTestStore(t)
 			artifacts := map[string][]byte{
@@ -344,7 +347,24 @@ func TestEmbeddingCatalogProviderFreeRestoreVerifiesLooseAndPackedArtifacts(t *t
 				testSHA256(record.InputGeneration.EvidenceJSON): record.InputGeneration.EvidenceJSON,
 				record.VectorSet.PayloadBlobHash:                record.VectorSet.Payload,
 			}
-			layout := materializeEmbeddingRestoreArtifacts(t, target, artifacts)
+			// Copy only the bytes selected by the portable backup closure, not
+			// every fixture blob. The embedding evidence has no rendition-artifact
+			// reference to bring it into the backup on the generation's behalf.
+			require.NotEqual(t, catalogEvidenceBlobHash, testSHA256(record.InputGeneration.EvidenceJSON))
+			rows, err := snapshot.QueryContext(t.Context(), BackupBlobAuthorityCTE+
+				`SELECT hash FROM backup_authorized_blobs`)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			backupArtifacts := make(map[string][]byte)
+			for rows.Next() {
+				var hash string
+				require.NoError(t, rows.Scan(&hash))
+				require.Contains(t, artifacts, hash)
+				backupArtifacts[hash] = artifacts[hash]
+			}
+			require.NoError(t, rows.Err())
+			require.NoError(t, rows.Close())
+			layout := materializeEmbeddingRestoreArtifacts(t, target, backupArtifacts)
 			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 			if packed {
 				packEmbeddingRestoreArtifacts(t, target, layout, map[string][]byte{

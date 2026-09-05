@@ -277,6 +277,9 @@ WITH backup_authorized_blobs(hash) AS (
 	SELECT generation_blob_hash FROM embedding_input_generations
 	WHERE generation_blob_hash IS NOT NULL
 	UNION
+	SELECT evidence_fingerprint FROM embedding_input_generations
+	WHERE generation_blob_hash IS NOT NULL
+	UNION
 	SELECT payload_blob_hash FROM embedding_vector_sets
 	UNION
 	SELECT output_blob_hash FROM visual_preview_generations
