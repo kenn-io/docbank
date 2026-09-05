@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -837,24 +838,28 @@ func TestClientClosesBlockedUploadOnWallTimeout(t *testing.T) {
 }
 
 func TestClientAppliesWallDeadlineAfterCompletedResultProcessing(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("final wall"))
-	fixture.profile.MaxWallTime = 10 * time.Millisecond
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		switch request.URL.Path {
-		case uploadPath:
-			return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":null}`), nil
-		case parsePath:
-			return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
-		case jobPath(testJobID):
-			time.Sleep(20 * time.Millisecond)
-			return response(request, http.StatusOK, completedBody()), nil
-		default:
-			return nil, errors.New("unexpected route")
-		}
+	// Advance fake time so the timeout fires before the completed response;
+	// a real sleep does not guarantee the cancellation callback has run.
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("final wall"))
+		fixture.profile.MaxWallTime = 10 * time.Millisecond
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case uploadPath:
+				return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":null}`), nil
+			case parsePath:
+				return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
+			case jobPath(testJobID):
+				time.Sleep(20 * time.Millisecond)
+				return response(request, http.StatusOK, completedBody()), nil
+			default:
+				return nil, errors.New("unexpected route")
+			}
+		})
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 	})
-	_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-		fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
-	assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 }
 
 func TestProviderRequiresFrozenNamedProfileAndHardenedTransport(t *testing.T) {
