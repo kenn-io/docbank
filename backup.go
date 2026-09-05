@@ -9,7 +9,9 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 var (
@@ -68,7 +70,7 @@ type BackupVerifyOptions struct {
 	Progress    func(BackupProgress)
 }
 
-// BackupRestoreOptions controls restore into a separate vault root.
+// BackupRestoreOptions controls restore into a target vault root.
 type BackupRestoreOptions struct {
 	SnapshotID string
 	Target     string
@@ -272,12 +274,28 @@ func (r *BackupRepository) Verify(
 // both the live vault and repository. It never replaces the open vault.
 func (v *Vault) RestoreBackup(
 	ctx context.Context, repository *BackupRepository, opts BackupRestoreOptions,
-) (report BackupRestoreReport, retErr error) {
+) (BackupRestoreReport, error) {
 	if err := v.begin(); err != nil {
 		return BackupRestoreReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	if repository == nil || repository.repo == nil {
+	opts.ProtectedRoots = append([]string{v.root.Name()}, opts.ProtectedRoots...)
+	return repository.restore(ctx, opts, v.metadata.SQLiteDriver())
+}
+
+// Restore materializes and verifies a snapshot without opening the original
+// vault. It uses the default SQLite driver for this build. The target must be
+// disjoint from the repository and ProtectedRoots; active vault targets are
+// rejected by the shared vault lock. Callers must declare any other storage
+// roots they want preserved, including an offline source vault.
+func (r *BackupRepository) Restore(ctx context.Context, opts BackupRestoreOptions) (BackupRestoreReport, error) {
+	return r.restore(ctx, opts, store.DefaultSQLiteDriver())
+}
+
+func (r *BackupRepository) restore(
+	ctx context.Context, opts BackupRestoreOptions, driver docsqlite.Driver,
+) (report BackupRestoreReport, retErr error) {
+	if r == nil || r.repo == nil {
 		return BackupRestoreReport{}, errors.New("docbank backup repository is required")
 	}
 	if opts.Target == "" {
@@ -287,12 +305,12 @@ func (v *Vault) RestoreBackup(
 	if err != nil {
 		return BackupRestoreReport{}, fmt.Errorf("resolving backup restore target: %w", err)
 	}
-	protectedRoots := append([]string{repository.repo.Root(), v.root.Name()}, opts.ProtectedRoots...)
+	protectedRoots := append([]string{r.repo.Root()}, opts.ProtectedRoots...)
 	if err := backupapp.ValidateDisjointRoots(target, protectedRoots...); err != nil {
 		return BackupRestoreReport{}, err
 	}
 	coordinator := backupapp.NewRestoreTargetCoordinator(
-		target, repository.repo.Root(), v.root.Name(), opts.ProtectedRoots, opts.Overwrite,
+		target, r.repo.Root(), "", opts.ProtectedRoots, opts.Overwrite,
 	)
 	if err := coordinator.Prepare(ctx); err != nil {
 		return BackupRestoreReport{}, fmt.Errorf("preparing backup restore target: %w", err)
@@ -301,7 +319,7 @@ func (v *Vault) RestoreBackup(
 		retErr = errors.Join(retErr, coordinator.ReleasePreparation())
 	}()
 	result, err := backupapp.RestoreWithDriver(
-		ctx, repository.repo, version.Version, v.metadata.SQLiteDriver(), backup.RestoreOptions{
+		ctx, r.repo, version.Version, driver, backup.RestoreOptions{
 			SnapshotID: opts.SnapshotID, TargetDir: target, Overwrite: true,
 			Jobs: opts.Jobs, ForceUnlock: opts.ForceUnlock,
 			Progress:          backupProgressCallback(opts.Progress),
