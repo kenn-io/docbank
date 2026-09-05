@@ -240,7 +240,7 @@ func (s *Store) PurgeDerivatives(
 		explicitBuilds := stringSet(request.BuildIDs)
 		requestedBuilds := stringSet(request.BuildIDs)
 		rootedEmbeddingAttachments := make(map[string]struct{})
-		embeddingSuppressions, err := embeddingPurgeSuppressionsTx(ctx, tx, request, asOf)
+		embeddingSuppressions, err := prepareEmbeddingPurgeTx(ctx, tx, request, asOf)
 		if err != nil {
 			return err
 		}
@@ -930,18 +930,6 @@ func purgeEmbeddingCatalogTx(
 	report.RemovedEmbeddingVectorSets += collected.vectorSets
 	for _, payload := range collected.payloads {
 		payloads[payload] = struct{}{}
-	}
-	if all {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures`); err != nil {
-			return nil, fmt.Errorf("removing embedding failures: %w", err)
-		}
-	} else {
-		for versionID := range versionSet {
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM embedding_failures WHERE content_version_id=?`, versionID); err != nil {
-				return nil, fmt.Errorf("removing embedding failure: %w", err)
-			}
-		}
 	}
 	return derivativeSortedKeys(payloads), nil
 }

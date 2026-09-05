@@ -10,9 +10,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// Capture every affected binding before deleting attachments or sets. Work
-// admitted under a registered profile may still be running without a set row.
-func embeddingPurgeSuppressionsTx(
+// Clear failures and capture suppression for every affected binding before
+// deleting attachments or sets. Work admitted under a registered profile may
+// still be running without a set row.
+func prepareEmbeddingPurgeTx(
 	ctx context.Context, tx *sql.Tx, request PurgeRequest, asOf string,
 ) (_ []derivativePurgeSuppression, retErr error) {
 	if !request.All && len(request.ContentVersionIDs)+len(request.AttachmentIDs)+len(request.BuildIDs) == 0 {
@@ -62,6 +63,11 @@ func embeddingPurgeSuppressionsTx(
 		for _, binding := range profile.Embeddings {
 			if !allBindings && binding.InputKind != document.EmbeddingInputRenditionChunk {
 				continue
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
+				WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+				versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
+				return nil, fmt.Errorf("clearing purged embedding failures: %w", err)
 			}
 			result = append(result, derivativePurgeSuppression{
 				sourceSHA256: source, profileFingerprint: derivativeBuildSuppressionProfile,
@@ -122,14 +128,9 @@ func embeddingPurgeScope(key EmbeddingHeadKey, profileFingerprint string) string
 }
 
 func requireEmbeddingPurgeAuthorityTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRecord) error {
-	var source string
-	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
-		set.ContentVersionID).Scan(&source); err != nil {
-		return fmt.Errorf("reading embedding purge source: %w", err)
-	}
-	scope := embeddingPurgeScope(EmbeddingHeadKey{set.ContentVersionID, set.BindingID, set.InputKind},
+	suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
+		EmbeddingHeadKey{set.ContentVersionID, set.BindingID, set.InputKind},
 		set.ProcessingProfileFingerprint)
-	suppression, err := loadDerivativePurgeSuppressionTx(ctx, tx, source, derivativeBuildSuppressionProfile, scope)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
@@ -140,4 +141,16 @@ func requireEmbeddingPurgeAuthorityTx(ctx context.Context, tx *sql.Tx, set Embed
 		return errors.New("embedding binding has a purge suppression without authorization for this set")
 	}
 	return nil
+}
+
+func loadEmbeddingPurgeSuppressionTx(
+	ctx context.Context, tx *sql.Tx, key EmbeddingHeadKey, profileFingerprint string,
+) (derivativePurgeSuppression, error) {
+	var source string
+	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
+		key.ContentVersionID).Scan(&source); err != nil {
+		return derivativePurgeSuppression{}, fmt.Errorf("reading embedding purge source: %w", err)
+	}
+	return loadDerivativePurgeSuppressionTx(ctx, tx, source, derivativeBuildSuppressionProfile,
+		embeddingPurgeScope(key, profileFingerprint))
 }

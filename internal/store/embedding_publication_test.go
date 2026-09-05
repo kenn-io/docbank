@@ -171,6 +171,65 @@ func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
 	}
 }
 
+func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
+	for _, selector := range []string{"attachment", "build", "version", "all"} {
+		t.Run(selector, func(t *testing.T) {
+			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			var buildID string
+			require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+			chunk := EmbeddingFailureRecord{
+				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+				BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk,
+				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+			}
+			direct := chunk
+			direct.BindingID, direct.InputKind = "optional", document.EmbeddingInputOriginalFile
+			for _, failure := range []EmbeddingFailureRecord{chunk, direct} {
+				require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
+			}
+			requests := map[string]PurgeRequest{
+				"attachment": {AttachmentIDs: []string{attachmentID}},
+				"build":      {BuildIDs: []string{buildID}},
+				"version":    {ContentVersionIDs: []string{versionID}},
+				"all":        {All: true},
+			}
+			// A failed attempt need not have staged a set. Its attachment/profile
+			// scope must still be cleared and fenced by the purge.
+			_, err := s.PurgeDerivatives(t.Context(), requests[selector])
+			require.NoError(t, err)
+			var chunkFailures int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures
+				WHERE content_version_id=? AND profile_fingerprint=? AND binding_id='chunk'`,
+				versionID, profile.Fingerprint).Scan(&chunkFailures))
+			assert.Zero(t, chunkFailures)
+			require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), chunk), "purge suppression")
+			var directFailures int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures
+				WHERE content_version_id=? AND profile_fingerprint=? AND binding_id='optional'`,
+				versionID, profile.Fingerprint).Scan(&directFailures))
+			if selector == "attachment" || selector == "build" {
+				assert.Equal(t, 1, directFailures, "scoped rendition purge must leave original-file failures alone")
+				require.NoError(t, s.RecordEmbeddingFailure(t.Context(), direct))
+			} else {
+				assert.Zero(t, directFailures)
+				require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), direct), "purge suppression")
+			}
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(t.Context(), &exported))
+			require.ErrorContains(t, restored.RecordEmbeddingFailure(t.Context(), chunk), "purge suppression")
+			require.NoError(t, restored.AuthorizeEmbeddingRebuild(t.Context(), EmbeddingRebuildAuthorization{
+				Key:                          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: chunk.BindingID, InputKind: chunk.InputKind},
+				ProcessingProfileFingerprint: profile.Fingerprint, SetID: testSHA256([]byte("failure-rebuild-set")),
+				AuthorizedAt: nowRFC3339(),
+			}))
+			chunk.FailedAt = nowRFC3339()
+			require.NoError(t, restored.RecordEmbeddingFailure(t.Context(), chunk))
+		})
+	}
+}
+
 func TestEmbeddingWritesRequirePhysicalBlobAuthority(t *testing.T) {
 	for _, operation := range []string{"stage", "publish"} {
 		for _, missing := range []string{"source", "vectors", "generation", "evidence"} {

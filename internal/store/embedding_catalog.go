@@ -504,7 +504,8 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 }
 
 // RecordEmbeddingFailure records provider-neutral plan status without
-// disturbing any rendition or sibling embedding head.
+// disturbing any rendition or sibling embedding head. Active purge suppression
+// blocks reports until an explicit rebuild is authorized for the binding.
 func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFailureRecord) error {
 	if err := validateEmbeddingFailureRecord(record); err != nil {
 		return err
@@ -522,7 +523,16 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 		if count != 1 {
 			return ErrNotFound
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
+		suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
+			EmbeddingHeadKey{record.ContentVersionID, record.BindingID, record.InputKind},
+			record.ProcessingProfileFingerprint)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("checking embedding failure purge suppression: %w", err)
+		}
+		if err == nil && suppression.active {
+			return errors.New("embedding failure binding has an active purge suppression")
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_failures(
 			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at
 		) VALUES(?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
 		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at`, record.ContentVersionID,
