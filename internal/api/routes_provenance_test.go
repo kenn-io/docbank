@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,4 +61,131 @@ func TestNodeProvenanceEndpointMapsInvalidTargets(t *testing.T) {
 
 	_, err := s.NodeProvenance(t.Context(), s.RootID(), 10, 0)
 	require.ErrorIs(t, err, store.ErrNotFile)
+}
+
+func TestAppendNodeProvenanceEndpointFencesAndReturnsReceipt(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "/report.txt", "report")
+	request := api.ProvenanceAppendRequest{
+		SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://laptop/report",
+	}
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+		map[string]string{"If-Match": `"1"`}, request)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	assert.Equal(t, `"2"`, resp.Header.Get("ETag"))
+	var receipt api.ProvenanceAppendReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, node.ID, receipt.Node.ID)
+	assert.Equal(t, int64(2), receipt.Node.Revision)
+	assert.Equal(t, "/report.txt", receipt.Path)
+	assert.Equal(t, request.SourceKind, receipt.Fact.SourceKind)
+	assert.Equal(t, request.OriginalPath, receipt.Fact.OriginalPath)
+
+	resp, body = do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID), nil, request)
+	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"precondition_required"`)
+	resp, body = do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+		map[string]string{"If-Match": `"1"`}, request)
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"stale_revision"`)
+}
+
+func TestAppendNodeProvenanceEndpointMapsProvenanceMismatch(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "/report.txt", "report")
+	missing := strings.Repeat("ef", 32)
+	request := api.ProvenanceAppendRequest{
+		SourceKind: "agent", SourceDescription: "triage",
+		OriginalPath: "opaque://laptop/report", Supersedes: &missing,
+	}
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+		map[string]string{"If-Match": `"1"`}, request)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"provenance_mismatch"`)
+}
+
+func TestAppendNodeProvenanceEndpointRejectsInvalidOriginalMTime(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "/report.txt", "report")
+	for _, test := range []struct {
+		value, code string
+	}{
+		{value: "not-a-time", code: "validation"},
+		{value: "2026-08-26T14:00:00+02:00", code: "invalid_provenance_time"},
+	} {
+		request := api.ProvenanceAppendRequest{
+			SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://report",
+			OriginalMTime: &test.value,
+		}
+		resp, body := do(t, ts, http.MethodPost,
+			fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+			map[string]string{"If-Match": `"1"`}, request)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		assert.Contains(t, body, fmt.Sprintf(`"code":"%s"`, test.code))
+	}
+	current, err := s.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, node.Revision, current.Revision)
+}
+
+func TestAppendNodeProvenanceEndpointRejectsMaintenanceAndBrowserSessions(t *testing.T) {
+	gate := api.NewOperationGate()
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+	node := createFileWithContent(t, ts, s, "/report.txt", "report")
+	request := api.ProvenanceAppendRequest{
+		SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://report",
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- gate.Maintain(func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+		map[string]string{"If-Match": `"1"`}, request)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"maintenance_busy"`)
+	close(release)
+	require.NoError(t, <-done)
+
+	webSession, webBody := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, webSession.StatusCode, webBody)
+	var issued struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(webBody), &issued))
+	resp, body = do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}, request)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"web_session_read_only"`)
+}
+
+func TestAppendNodeProvenanceEndpointRejectsOversizedRequestBody(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "/report.txt", "report")
+	request := map[string]any{
+		"source_kind":        "agent",
+		"source_description": "triage",
+		"original_path":      "opaque://report",
+		"padding":            strings.Repeat("x", 2<<20),
+	}
+	resp, body := do(t, ts, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
+		map[string]string{"If-Match": `"1"`}, request)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, body)
+	current, err := s.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, node.Revision, current.Revision)
 }

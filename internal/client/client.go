@@ -273,6 +273,8 @@ var codeToTypedErr = map[string]error{
 	"stale_revision":               store.ErrStaleRevision,
 	"not_dir":                      store.ErrNotDir,
 	"not_file":                     store.ErrNotFile,
+	"provenance_mismatch":          store.ErrProvenanceMismatch,
+	"invalid_provenance_time":      store.ErrInvalidProvenanceTime,
 	"invalid_name":                 store.ErrInvalidName,
 	"invalid_tag":                  store.ErrInvalidTag,
 	"invalid_batch_move":           store.ErrInvalidBatchMove,
@@ -479,6 +481,71 @@ func (c *Client) Provenance(
 		return api.ProvenancePage{}, err
 	}
 	return page, nil
+}
+
+// AppendProvenance appends one origin fact to a file node under the caller's
+// inspected node revision.
+func (c *Client) AppendProvenance(
+	ctx context.Context, nodeID, revision int64, request api.ProvenanceAppendRequest,
+) (api.ProvenanceAppendReceipt, error) {
+	var receipt api.ProvenanceAppendReceipt
+	if nodeID < 1 {
+		return receipt, errors.New("provenance node ID must be positive")
+	}
+	if revision < 1 {
+		return receipt, errors.New("provenance revision must be positive")
+	}
+	if request.SourceKind == "" || request.SourceDescription == "" || request.OriginalPath == "" {
+		return receipt, errors.New("provenance source kind, description, and path are required")
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodPost,
+		fmt.Sprintf("/api/v1/nodes/%d/provenance", nodeID), ifMatch(revision), request, &receipt)
+	if err != nil {
+		return api.ProvenanceAppendReceipt{}, err
+	}
+	if err := validateProvenanceAppendReceipt(receipt, headers.Get("ETag"), nodeID, revision, request); err != nil {
+		return api.ProvenanceAppendReceipt{}, err
+	}
+	return receipt, nil
+}
+
+// validateProvenanceAppendReceipt checks that the receipt binds the node and
+// fact to the request and that the response ETag carries the advanced node
+// revision, mirroring validateVersionPruneBinding. The daemon owns the fact
+// identity; only structural binding is verified here.
+func validateProvenanceAppendReceipt(
+	receipt api.ProvenanceAppendReceipt, etag string, nodeID, revision int64,
+	request api.ProvenanceAppendRequest,
+) error {
+	if receipt.Node.ID != nodeID || receipt.Fact.NodeID != nodeID {
+		return errors.New("provenance receipt does not bind its node")
+	}
+	if receipt.Node.Revision != revision+1 {
+		return fmt.Errorf("provenance receipt node revision %d, expected %d",
+			receipt.Node.Revision, revision+1)
+	}
+	if etag != strconv.Quote(strconv.FormatInt(receipt.Node.Revision, 10)) {
+		return fmt.Errorf("provenance response ETag %q disagrees with node revision %d",
+			etag, receipt.Node.Revision)
+	}
+	if receipt.Fact.SourceKind != request.SourceKind ||
+		receipt.Fact.SourceDescription != request.SourceDescription ||
+		receipt.Fact.OriginalPath != request.OriginalPath ||
+		!equalOptionalString(receipt.Fact.OriginalMTime, request.OriginalMTime) ||
+		!equalOptionalString(receipt.Fact.Supersedes, request.Supersedes) {
+		return errors.New("provenance receipt fact does not bind its request")
+	}
+	if !receipt.Fact.Active {
+		return errors.New("provenance receipt fact is not active")
+	}
+	return nil
+}
+
+func equalOptionalString(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	return a == nil || *a == *b
 }
 
 // Version returns immutable version metadata by stable ID.

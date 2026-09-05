@@ -65,6 +65,8 @@ var storeErrCodes = []struct {
 	{store.ErrExists, http.StatusConflict, "exists"},
 	{store.ErrCycle, http.StatusConflict, "cycle"},
 	{store.ErrStaleRevision, http.StatusPreconditionFailed, "stale_revision"},
+	{store.ErrProvenanceMismatch, http.StatusConflict, "provenance_mismatch"},
+	{store.ErrInvalidProvenanceTime, http.StatusUnprocessableEntity, "invalid_provenance_time"},
 	{store.ErrNotDir, http.StatusUnprocessableEntity, "not_dir"},
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},

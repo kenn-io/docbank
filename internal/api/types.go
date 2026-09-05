@@ -128,9 +128,26 @@ type ProvenanceFact struct {
 	SourceKind        string  `json:"source_kind" minLength:"1"`
 	SourceDescription string  `json:"source_description" minLength:"1"`
 	OriginalPath      string  `json:"original_path" minLength:"1"`
-	OriginalMTime     *string `json:"original_mtime,omitempty"`
+	OriginalMTime     *string `json:"original_mtime,omitempty" format:"date-time"`
 	Supersedes        *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
 	Active            bool    `json:"active"`
+}
+
+// ProvenanceAppendRequest is the wire form of one post-ingest origin fact.
+// OriginalPath is evidence only; the daemon never opens or resolves it.
+type ProvenanceAppendRequest struct {
+	SourceKind        string  `json:"source_kind" minLength:"1"`
+	SourceDescription string  `json:"source_description" minLength:"1"`
+	OriginalPath      string  `json:"original_path" minLength:"1"`
+	OriginalMTime     *string `json:"original_mtime,omitempty" format:"date-time"`
+	Supersedes        *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
+}
+
+// ProvenanceAppendReceipt binds the new immutable fact to the resulting node.
+type ProvenanceAppendReceipt struct {
+	Node Node           `json:"node"`
+	Path string         `json:"path,omitzero"`
+	Fact ProvenanceFact `json:"fact"`
 }
 
 // ProvenancePage binds a bounded origin history to one authoritative node
@@ -983,6 +1000,13 @@ func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {
 		IngestStartedAt: fact.IngestStartedAt, SourceKind: fact.SourceKind,
 		SourceDescription: fact.SourceDescription, OriginalPath: fact.OriginalPath,
 		OriginalMTime: fact.OriginalMTime, Supersedes: fact.Supersedes, Active: fact.Active,
+	}
+}
+
+func fromStoreProvenanceAppend(result store.ProvenanceAppendResult) ProvenanceAppendReceipt {
+	return ProvenanceAppendReceipt{
+		Node: fromStoreNode(result.Node), Path: result.Path,
+		Fact: fromStoreProvenanceFact(result.Fact),
 	}
 }
 

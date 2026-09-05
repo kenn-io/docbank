@@ -1736,10 +1736,10 @@ func validateMetadataTime(field, value string) error {
 func validateProvenanceTime(value string) error {
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
-		return fmt.Errorf("invalid provenance original_mtime: %w", err)
+		return fmt.Errorf("%w: %w", ErrInvalidProvenanceTime, err)
 	}
 	if value != parsed.UTC().Format(time.RFC3339Nano) {
-		return errors.New("invalid provenance original_mtime: timestamp is not canonical UTC RFC3339Nano")
+		return fmt.Errorf("%w: timestamp is not canonical UTC RFC3339Nano", ErrInvalidProvenanceTime)
 	}
 	return nil
 }

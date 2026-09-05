@@ -34,6 +34,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes/{id}/revert` | create a new head from a prior version of the same file | Implemented |
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
+| `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
@@ -271,6 +272,15 @@ optional superseded-fact identity. A trashed node remains inspectable by ID but
 has no live `path`. The route is observation only: it neither accesses the
 source nor changes retention authority.
 
+`POST /nodes/{id}/provenance` accepts `source_kind`, `source_description`,
+`original_path`, an optional RFC3339Nano `original_mtime`, and an optional
+`supersedes` identity. The caller supplies the node's current revision in
+`If-Match`; a successful response is `201`, advances that node revision once,
+returns the appended fact and its ETag, and records a generic ingest alongside
+the fact. `original_path` is opaque evidence and is never opened. A
+supersession must point to an active fact on the same node, while the old fact
+stays visible and immutable.
+
 `GET /content-references` is the inverse identity lookup. It accepts one
 canonical lowercase SHA-256 and returns only logical `content_versions`
 references backed by blob-catalog authority; it never infers a match from a
@@ -493,10 +503,12 @@ transaction. This is stronger than a separate path lookup followed by the
 ID-addressed endpoint: moving an ancestor changes a descendant's path without
 changing that descendant's revision.
 
-Ingest provenance is currently filesystem-shaped: each import records the
-source's original path and mtime in the store's `provenance` table. The path is
-a record, never node identity. Non-file origin fields and lookup by content
-hash are not part of the current API.
+Ingest provenance is filesystem-shaped: each import records the source's
+original path and mtime in the store's `provenance` table. Authenticated clients
+can also append a post-ingest fact with a source kind, description, opaque
+original path, optional mtime, and optional supersession, fenced by the node's
+`If-Match` revision. The append records evidence and never opens the supplied
+path or looks up a node by content hash.
 
 ## Maintenance gate
 
@@ -569,6 +581,8 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `invalid_audit_cursor` | 422 | the history cursor is malformed or belongs to another stable node or scope |
 | `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
+| `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, or is already superseded |
+| `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |

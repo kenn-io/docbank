@@ -960,6 +960,122 @@ func TestContentReplacementRoundTrip(t *testing.T) {
 	assert.Equal(t, 2, versions.Total)
 }
 
+func TestProvenanceAppendRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	content := []byte("provenance client")
+	hash := sha256.Sum256(content)
+	created, err := c.Upload(t.Context(), s.RootID(), "provenance.txt", "text/plain",
+		hex.EncodeToString(hash[:]), int64(len(content)), bytes.NewReader(content))
+	require.NoError(t, err)
+	request := api.ProvenanceAppendRequest{
+		SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://client/source",
+	}
+	receipt, err := c.AppendProvenance(t.Context(), created.Node.ID, created.Node.Revision, request)
+	require.NoError(t, err)
+	assert.Equal(t, created.Node.ID, receipt.Node.ID)
+	assert.Equal(t, created.Node.Revision+1, receipt.Node.Revision)
+	assert.Equal(t, "/provenance.txt", receipt.Path)
+	assert.Equal(t, request.OriginalPath, receipt.Fact.OriginalPath)
+	assert.Equal(t, receipt.Fact.NodeID, receipt.Node.ID)
+	_, err = c.AppendProvenance(t.Context(), created.Node.ID, 0, request)
+	assert.ErrorContains(t, err, "revision must be positive")
+}
+
+func TestProvenanceAppendMapsInvalidTimeError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.MarshalWrite(w, api.Error{Status: http.StatusUnprocessableEntity,
+			Code: "invalid_provenance_time", Detail: "invalid provenance original_mtime"})
+	}))
+	t.Cleanup(ts.Close)
+	_, err := client.New(ts.URL, serverKey).AppendProvenance(t.Context(), 7, 3,
+		api.ProvenanceAppendRequest{SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://source"})
+	require.ErrorIs(t, err, store.ErrInvalidProvenanceTime)
+}
+
+func TestProvenanceAppendMapsMismatchError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.MarshalWrite(w, api.Error{Status: http.StatusConflict,
+			Code: "provenance_mismatch", Detail: "provenance predecessor was not found"})
+	}))
+	t.Cleanup(ts.Close)
+	_, err := client.New(ts.URL, serverKey).AppendProvenance(t.Context(), 7, 3,
+		api.ProvenanceAppendRequest{SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://source"})
+	require.ErrorIs(t, err, store.ErrProvenanceMismatch)
+}
+
+func TestProvenanceAppendRejectsUnboundReceipt(t *testing.T) {
+	mtime := "2026-08-26T12:00:00Z"
+	request := api.ProvenanceAppendRequest{
+		SourceKind: "agent", SourceDescription: "triage", OriginalPath: "opaque://client/source",
+		OriginalMTime: &mtime,
+	}
+	goodFact := api.ProvenanceFact{
+		Identity: strings.Repeat("ab", 32), NodeID: 7,
+		IngestID: "0e5edbcd-3a0e-4fbe-9a3c-0d1a4a7e21aa", IngestStartedAt: "2026-09-05T00:00:00Z",
+		SourceKind: "agent", SourceDescription: "triage",
+		OriginalPath: "opaque://client/source", OriginalMTime: &mtime, Active: true,
+	}
+	cases := []struct {
+		name    string
+		mutate  func(receipt *api.ProvenanceAppendReceipt, etag *string)
+		wantErr string
+	}{
+		{"wrong node id", func(r *api.ProvenanceAppendReceipt, _ *string) {
+			r.Node.ID = 8
+		}, "does not bind its node"},
+		{"wrong fact node id", func(r *api.ProvenanceAppendReceipt, _ *string) {
+			r.Fact.NodeID = 8
+		}, "does not bind its node"},
+		{"unadvanced revision", func(r *api.ProvenanceAppendReceipt, e *string) {
+			r.Node.Revision = 3
+			*e = `"3"`
+		}, "node revision 3, expected 4"},
+		{"missing etag", func(_ *api.ProvenanceAppendReceipt, e *string) {
+			*e = ""
+		}, "ETag"},
+		{"etag revision mismatch", func(_ *api.ProvenanceAppendReceipt, e *string) {
+			*e = `"9"`
+		}, "disagrees with node revision"},
+		{"foreign fact", func(r *api.ProvenanceAppendReceipt, _ *string) {
+			r.Fact.OriginalPath = "opaque://other/source"
+		}, "does not bind its request"},
+		{"changed mtime", func(r *api.ProvenanceAppendReceipt, _ *string) {
+			other := "2026-08-27T12:00:00Z"
+			r.Fact.OriginalMTime = &other
+		}, "does not bind its request"},
+		{"dropped mtime", func(r *api.ProvenanceAppendReceipt, _ *string) {
+			r.Fact.OriginalMTime = nil
+		}, "does not bind its request"},
+		{"inactive fact", func(r *api.ProvenanceAppendReceipt, _ *string) {
+			r.Fact.Active = false
+		}, "not active"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			receipt := api.ProvenanceAppendReceipt{
+				Node: api.Node{ID: 7, Name: "provenance.txt", Kind: "file", Revision: 4},
+				Path: "/provenance.txt", Fact: goodFact,
+			}
+			etag := `"4"`
+			tc.mutate(&receipt, &etag)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if etag != "" {
+					w.Header().Set("ETag", etag)
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.MarshalWrite(w, receipt)
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, serverKey).AppendProvenance(t.Context(), 7, 3, request)
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
 func TestContentReplacementRejectsUnprovenReceipt(t *testing.T) {
 	content := []byte("replacement")
 	hash := sha256.Sum256(content)
