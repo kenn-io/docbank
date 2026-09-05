@@ -103,6 +103,61 @@ func TestEmbeddingPublicationRejectsOlderWorker(t *testing.T) {
 	require.NoError(t, restored.PublishEmbeddingHead(t.Context(), stale))
 }
 
+func TestEmbeddingFailureRejectsOlderWorkerAfterPublication(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	set := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), set))
+	failure := EmbeddingFailureRecord{
+		FencingToken:     1,
+		ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+		BindingID: set.BindingID, InputKind: set.InputKind,
+		FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+	}
+	unfenced := failure
+	unfenced.FencingToken = 0
+	require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), unfenced), "fencing token")
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
+	head := EmbeddingHeadRecord{
+		FencingToken: 2,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: set.BindingID, InputKind: set.InputKind},
+		SetID:        set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint,
+		PublishedAt: embeddingCatalogTime,
+	}
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), head))
+	failure.FailedAt = nowRFC3339()
+	require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), failure), "fencing token")
+	var failures int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures`).Scan(&failures))
+	assert.Zero(t, failures, "a late failure must not replace a newer successful outcome")
+	assert.Equal(t, set.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, set.BindingID, set.InputKind))
+	failure.FencingToken = head.FencingToken
+	require.ErrorContains(t, s.RecordEmbeddingFailure(t.Context(), failure), "fencing token")
+	failure.FencingToken = 3
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure), "a later attempt may fail without revoking the last good head")
+	require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure), "an exact failure retry is idempotent")
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.RecordEmbeddingFailure(t.Context(), failure))
+	failure.FailureCode = EmbeddingFailureInputRejected
+	require.ErrorContains(t, restored.RecordEmbeddingFailure(t.Context(), failure), "fencing token", "a token cannot name two outcomes")
+	failure.FencingToken = 1
+	require.ErrorContains(t, restored.RecordEmbeddingFailure(t.Context(), failure), "fencing token")
+	require.ErrorContains(t, restored.PublishEmbeddingHead(t.Context(), head), "fencing token", "an old success must not clear a newer failure")
+	head.FencingToken = 4
+	require.NoError(t, restored.PublishEmbeddingHead(t.Context(), head))
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures`).Scan(&failures))
+	assert.Zero(t, failures)
+
+	// Import must enforce the same ordering as live failure writes.
+	stale := mutateFirstProcessingMetadataRecord(t, exported.Bytes(), metadataEmbeddingFailureType,
+		func(fields map[string]jsontext.Value) { fields["fencing_token"] = jsontext.Value(`1`) })
+	rejected := newTestStore(t)
+	require.ErrorContains(t, rejected.ImportMetadata(t.Context(), bytes.NewReader(stale)), "fencing token")
+}
+
 func TestEmbeddingRestoreRetainsHeadsForNonLiveVersions(t *testing.T) {
 	for _, mutation := range []string{"trash", "replace"} {
 		t.Run(mutation, func(t *testing.T) {
@@ -268,6 +323,7 @@ func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
 			var buildID string
 			require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
 			chunk := EmbeddingFailureRecord{
+				FencingToken:     1,
 				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
 				BindingID: "chunk", InputKind: document.EmbeddingInputRenditionChunk,
 				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,

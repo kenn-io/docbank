@@ -149,6 +149,8 @@ type EmbeddingFailureRecord struct {
 	InputKind                    EmbeddingInputKind
 	FailureCode                  EmbeddingFailureCode
 	FailedAt                     string
+	// FencingToken uses the same attempt sequence as EmbeddingHeadRecord.
+	FencingToken int64
 }
 
 // EmbeddingFailureCode is a closed provider-neutral outcome vocabulary. It is
@@ -486,6 +488,16 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 		if !eligible {
 			return errors.New("publishing embedding head: source or attachment is not eligible")
 		}
+		var newerFailure bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_failures
+			WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
+			AND fencing_token>=?)`, record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
+			record.Key.BindingID, record.Key.InputKind, record.FencingToken).Scan(&newerFailure); err != nil {
+			return fmt.Errorf("checking embedding failure fence: %w", err)
+		}
+		if newerFailure {
+			return errors.New("publishing embedding head: stale or reused fencing token")
+		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
 			content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
 			profile_fingerprint,published_at,fencing_token
@@ -547,14 +559,46 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 		if err == nil && suppression.active {
 			return errors.New("embedding failure binding has an active purge suppression")
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_failures(
-			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at
-		) VALUES(?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
-		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at`, record.ContentVersionID,
+		if err := validateEmbeddingFailureHeadFence(ctx, tx, record); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
+			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at,fencing_token
+		) VALUES(?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at,fencing_token=excluded.fencing_token
+		WHERE excluded.fencing_token>embedding_failures.fencing_token OR (
+			excluded.fencing_token=embedding_failures.fencing_token AND
+			excluded.failure_code=embedding_failures.failure_code AND
+			excluded.failed_at=embedding_failures.failed_at
+		)`, record.ContentVersionID,
 			record.ProcessingProfileFingerprint, record.BindingID, record.InputKind,
-			record.FailureCode, record.FailedAt)
-		return err
+			record.FailureCode, record.FailedAt, record.FencingToken)
+		if err != nil {
+			return fmt.Errorf("recording embedding failure: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("checking embedding failure write: %w", err)
+		}
+		if changed != 1 {
+			return errors.New("recording embedding failure: stale or reused fencing token")
+		}
+		return nil
 	})
+}
+
+func validateEmbeddingFailureHeadFence(ctx context.Context, query metadataQuerier, record EmbeddingFailureRecord) error {
+	var newerHead bool
+	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads
+		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
+		AND fencing_token>=?)`, record.ContentVersionID, record.ProcessingProfileFingerprint,
+		record.BindingID, record.InputKind, record.FencingToken).Scan(&newerHead); err != nil {
+		return fmt.Errorf("checking embedding failure head fence: %w", err)
+	}
+	if newerHead {
+		return errors.New("embedding failure fencing token is not newer than the published head")
+	}
+	return nil
 }
 
 func validateEmbeddingFailureBinding(ctx context.Context, query metadataQuerier, record EmbeddingFailureRecord) error {
@@ -1327,6 +1371,9 @@ func validateEmbeddingHeadRecord(record EmbeddingHeadRecord) error {
 }
 
 func validateEmbeddingFailureRecord(record EmbeddingFailureRecord) error {
+	if record.FencingToken < 1 {
+		return errors.New("embedding failure fencing token must be positive")
+	}
 	if err := validateEmbeddingHeadKey(EmbeddingHeadKey{record.ContentVersionID, record.BindingID, record.InputKind}); err != nil {
 		return err
 	}
@@ -1371,7 +1418,7 @@ var embeddingCatalogSchema = []embeddingCatalogTableSchema{
 	{"embedding_vector_rows", []string{"vector_set_id", "row_id", "row_order", "input_id", "dimensions", "checksum"}},
 	{"embedding_sets", []string{"embedding_set_id", "vault_uid", "binding_id", "input_kind", metadataContentVersionIDField, metadataEmbeddingProfileField, "embedding_input_fingerprint", metadataEmbeddingVectorSpaceIDField, "input_generation_id", "vector_set_id", metadataCreatedAtField}},
 	{"embedding_heads", []string{metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at", "fencing_token"}},
-	{"embedding_failures", []string{metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at"}},
+	{"embedding_failures", []string{metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at", "fencing_token"}},
 }
 
 func validateEmbeddingCatalogSchemaTx(ctx context.Context, tx *sql.Tx) error {

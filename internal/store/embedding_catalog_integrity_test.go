@@ -439,6 +439,7 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 	t.Run("failure", func(t *testing.T) {
 		s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 		failure := EmbeddingFailureRecord{
+			FencingToken:     1,
 			ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
 			BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 			FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: "not-a-time",
@@ -460,6 +461,7 @@ func TestEmbeddingCatalogMetadataImportRequiresCanonicalTimestamps(t *testing.T)
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 	require.NoError(t, source.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+		FencingToken:     1,
 		ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
 		BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 		FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,

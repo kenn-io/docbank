@@ -812,6 +812,7 @@ CREATE TABLE IF NOT EXISTS embedding_failures (
     input_kind           TEXT NOT NULL,
     failure_code         TEXT NOT NULL,
     failed_at            TEXT NOT NULL,
+    fencing_token        INTEGER NOT NULL,
     PRIMARY KEY (content_version_id, profile_fingerprint, binding_id, input_kind)
 );
 

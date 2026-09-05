@@ -575,6 +575,7 @@ func TestEmbeddingCatalogFailureCodesAreClosedProviderNeutralTokens(t *testing.T
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	for _, code := range []EmbeddingFailureCode{"provider said secret=token", "provider\nmessage", "", "timeout: https://provider.invalid/request/1"} {
 		err := s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+			FencingToken:     1,
 			ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
 			BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 			FailureCode: code, FailedAt: embeddingCatalogTime,

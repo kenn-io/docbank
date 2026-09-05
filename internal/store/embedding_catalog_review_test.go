@@ -88,6 +88,7 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 			ProcessingProfileFingerprint: item.profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 		}))
 		require.NoError(t, s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+			FencingToken:     1,
 			ContentVersionID: versionID, ProcessingProfileFingerprint: item.profile.Fingerprint,
 			BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 			FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
@@ -153,6 +154,7 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 				ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 			}))
 			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+				FencingToken:     1,
 				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
 				BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
@@ -186,6 +188,7 @@ func TestEmbeddingCatalogMetadataRejectsFailureOutsideProfile(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
+				FencingToken:     1,
 				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
 				BindingID: "required", InputKind: document.EmbeddingInputOriginalFile,
 				FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
