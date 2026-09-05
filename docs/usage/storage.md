@@ -16,7 +16,7 @@ records which verified stores may satisfy each retained SHA-256 identity, but
 it does not mirror arbitrary filesystem changes, manage bucket lifecycle
 rules, or replace a complete [backup](backup.md).
 
-![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/multi-store-storage/web-multi-store-storage.png)
+![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://docbank.ai/assets/generated/web-multi-store-storage.png)
 
 The web application and TUI expose this inventory read-only. Registration,
 placement, repair, takeover, evacuation, and removal remain explicit CLI or

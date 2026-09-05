@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">Authority ledger</title>
+  <desc id="desc">Exact source bytes remain authoritative while approved processing creates version-bound derivatives.</desc>
+  <rect width="960" height="420" fill="#071411"/>
+  <g fill="none" stroke="#25473f" stroke-width="2">
+    <rect x="48" y="52" width="864" height="96" rx="4"/>
+    <rect x="48" y="188" width="260" height="176" rx="4"/>
+    <rect x="350" y="188" width="260" height="176" rx="4"/>
+    <rect x="652" y="188" width="260" height="176" rx="4"/>
+    <path d="M178 148v40M480 148v40M782 148v40"/>
+  </g>
+  <g font-family="JetBrains Mono, monospace">
+    <text x="76" y="88" fill="#41d7bd" font-size="18">SOURCE AUTHORITY</text>
+    <text x="76" y="123" fill="#edf8f4" font-size="24">Exact bytes · stable identity · immutable version</text>
+    <text x="74" y="226" fill="#41d7bd" font-size="16">01 / AUTHORIZE</text>
+    <text x="74" y="272" fill="#edf8f4" font-size="22">Operator policy</text>
+    <text x="74" y="306" fill="#a7c1ba" font-size="17">Provider and outputs</text>
+    <text x="376" y="226" fill="#41d7bd" font-size="16">02 / PROCESS</text>
+    <text x="376" y="272" fill="#edf8f4" font-size="22">Bounded work</text>
+    <text x="376" y="306" fill="#a7c1ba" font-size="17">Against one version</text>
+    <text x="678" y="226" fill="#41d7bd" font-size="16">03 / RETAIN</text>
+    <text x="678" y="272" fill="#edf8f4" font-size="22">Derivatives</text>
+    <text x="678" y="306" fill="#a7c1ba" font-size="17">Traceable to source</text>
+  </g>
+</svg>

@@ -18,7 +18,11 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 uv_run=(uv run --project "$docs_root" --frozen --no-dev)
 
-repo_root="$(git -C "$docs_root" rev-parse --show-toplevel)"
+if [[ -n "${DOCBANK_REPO_ROOT:-}" ]]; then
+  repo_root="$(cd "$DOCBANK_REPO_ROOT" && pwd)"
+else
+  repo_root="$(git -C "$docs_root" rev-parse --show-toplevel)"
+fi
 if [[ "/$site_dir/" == *"/../"* ]]; then
   printf 'refusing docs site directory containing parent traversal: %s\n' "$site_dir" >&2
   exit 2
@@ -159,7 +163,7 @@ case "$command_name" in
       mkdir -p "$(dirname "$markdown_dest")"
       cp "$markdown_source" "$markdown_dest"
     done < <(find "$tmp_docs" -type f -name '*.md' -print0)
-    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$tmp_site" "$tmp_docs"
+    "${uv_run[@]}" python "$docs_root/scripts/check_built_site.py" "$tmp_site" "$tmp_docs" /docs
     printf '%s\n' "$site_marker_contents" > "$tmp_site/$site_marker"
     mkdir -p "$(dirname "$site_path")"
     if [[ -e "$site_path" || -L "$site_path" ]]; then

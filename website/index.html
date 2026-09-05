@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Docbank — document authority for people and agents</title>
+    <meta name="description" content="Docbank keeps original documents authoritative while governed derivatives make them usable by people, systems, and agents.">
+    <link rel="canonical" href="https://docbank.ai/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles/site.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="The system of record for documents your agents can use.">
+    <meta property="og:description" content="Docbank keeps original documents authoritative while governed derivatives make them usable by people, systems, and agents.">
+    <meta property="og:url" content="https://docbank.ai/">
+    <meta property="og:site_name" content="Docbank">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="The system of record for documents your agents can use.">
+    <meta name="twitter:description" content="Docbank keeps original documents authoritative while governed derivatives make them usable by people, systems, and agents.">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/">Docbank</a>
+      <nav aria-label="Primary navigation">
+        <a href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a class="repo" href="https://github.com/kenn-io/docbank">
+          <span class="sr-only">Docbank on GitHub:</span>
+          <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+              0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+              -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07
+              -.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2
+              -.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27
+              c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0
+              3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0
+              .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <span class="repo-meta">
+            <span class="repo-name">kenn-io/docbank</span>
+            <span class="facts" data-facts hidden>
+              <span class="fact" data-fact="version" hidden>
+                <span class="sr-only">latest release</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0
+                    .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426
+                    2.426 0 0 0 0-3.42z"/>
+                  <circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+              <span class="fact" data-fact="stars" hidden>
+                <span class="sr-only">stars</span>
+                <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="currentColor">
+                  <path d="M8 .25a.75.75 0 0 1 .67.42l1.88 3.8 4.2.62a.75.75 0 0 1 .42
+                    1.28l-3.04 2.97.72 4.18a.75.75 0 0 1-1.09.8L8 12.35l-3.76
+                    1.97a.75.75 0 0 1-1.09-.79l.72-4.19L.83 6.37a.75.75 0 0 1
+                    .42-1.28l4.2-.61L7.33.67A.75.75 0 0 1 8 .25Z"/>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+              <span class="fact" data-fact="forks" hidden>
+                <span class="sr-only">forks</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="18" r="3"></circle>
+                  <circle cx="6" cy="6" r="3"></circle>
+                  <circle cx="18" cy="6" r="3"></circle>
+                  <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9m6 3v3"></path>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+            </span>
+          </span>
+        </a>
+        <a class="icon-link" href="https://discord.gg/nEB7VaAnU9" aria-label="Docbank Discord">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M20.32 4.37a19.8 19.8 0 0 0-4.89-1.52.07.07 0 0 0-.08.04c-.21.38-.44.87-.6
+              1.25a18.3 18.3 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.25.08.08 0 0 0-.08-.04
+              19.7 19.7 0 0 0-4.88 1.52.07.07 0 0 0-.04.03C.53 9.05-.32 13.58.1 18.06c0
+              .02.01.04.03.05a19.9 19.9 0 0 0 6 3.03.08.08 0 0 0 .08-.03c.46-.63.87-1.3
+              1.22-2a.08.08 0 0 0-.04-.11 13 13 0 0 1-1.87-.9.08.08 0 0 1-.01-.12l.37-.29
+              a.07.07 0 0 1 .08-.01 14.2 14.2 0 0 0 12.06 0 .07.07 0 0 1 .08 0l.37.3a.08.08
+              0 0 1 0 .12 12.3 12.3 0 0 1-1.88.89.08.08 0 0 0-.04.12c.36.7.77 1.36 1.22
+              1.99a.08.08 0 0 0 .08.03 19.8 19.8 0 0 0 6.03-3.03.08.08 0 0 0 .03-.05c.5
+              -5.18-.84-9.68-3.55-13.66a.06.06 0 0 0-.03-.03ZM8.02 15.33c-1.18 0-2.16-1.08
+              -2.16-2.42 0-1.33.96-2.42 2.16-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.34-.96 2.42
+              -2.16 2.42Zm7.97 0c-1.18 0-2.15-1.08-2.15-2.42 0-1.33.95-2.42 2.15-2.42 1.21
+              0 2.18 1.1 2.16 2.42 0 1.34-.95 2.42-2.16 2.42Z"/>
+          </svg>
+        </a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <h1 id="hero-title">The system of record for documents your agents can use.</h1>
+        <p class="lede">Docbank is a local-first, open-source document vault. Originals stay exact and authoritative while governed processing makes them searchable for people, systems, and agents.</p>
+        <div class="install-command" data-install-command data-command="curl -fsSL https://docbank.ai/install.sh | sh">
+          <code>curl -fsSL https://docbank.ai/install.sh | sh</code>
+          <button class="button install-copy" type="button" data-install-copy>Copy</button>
+        </div>
+        <p class="install-hint">macOS and Linux · <a href="/docs/setup/">Windows install</a><span data-install-status aria-live="polite"></span></p>
+        <div class="actions">
+          <a class="button primary" href="/guide/">See how it works</a>
+          <a class="button" href="/docs/">Read the docs</a>
+        </div>
+        <p class="hero-meta">Local-first · Apache-2.0 · CLI · Web · TUI · HTTP API · Go · MCP</p>
+      </section>
+
+      <section class="site-section" aria-labelledby="authority-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01 / Authority</p>
+            <h2 id="authority-title">One record. Explicit states.</h2>
+          </div>
+          <p>A document can be copied, indexed, transformed, and served through several interfaces. Its authority does not move implicitly with those operations.</p>
+        </div>
+        <ol class="ledger">
+          <li><strong>Source</strong><span>Exact retained bytes and stable identity.</span></li>
+          <li><strong>Authorization</strong><span>A reviewed processing boundary.</span></li>
+          <li><strong>Understanding</strong><span>Derivatives bound to one source version.</span></li>
+          <li><strong>Retrieval</strong><span>Results backed by evidence and source identity.</span></li>
+          <li><strong>Recovery</strong><span>Verified restore under operator control.</span></li>
+        </ol>
+      </section>
+
+      <section class="site-section" aria-labelledby="proof-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">02 / Guarantees</p>
+            <h2 id="proof-title">Built around the record, not the index.</h2>
+          </div>
+          <p>Docbank separates durable document authority from the systems that make documents useful. That boundary stays visible in routine operator work.</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Source sovereign</p>
+            <h3>Keep the original exact.</h3>
+            <p>Content-addressed bytes, stable document identity, immutable versions, and checksums preserve what entered the system.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Govern understanding</p>
+            <h3>Approve what may leave control.</h3>
+            <p>Processing policy names the provider boundary and retained outputs. Derived text and embeddings remain tied to the source version that produced them.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Constrain answers</p>
+            <h3>Retrieve with evidence.</h3>
+            <p>Search and agent access operate over verified current content while preserving the document and version behind a result.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Restore the record</p>
+            <h3>Recover without a provider.</h3>
+            <p>Incremental snapshots retain content, metadata, and history so recovery does not depend on a search or processing service.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="capture-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">03 / Operation</p>
+            <h2 id="capture-title">A vault operators can inspect.</h2>
+          </div>
+          <p>Browse a filesystem-shaped document tree, inspect document identity and storage state, and move through retained authority without leaving the vault interface.</p>
+        </div>
+        <figure class="capture">
+          <a href="/assets/generated/web-vault-browser.png" data-lightbox>
+            <img src="/assets/generated/web-vault-browser.png" alt="Docbank web vault showing a synthetic technical document collection">
+          </a>
+          <figcaption class="caption">The real web interface against a generated synthetic vault. Select the image to inspect it at full size.</figcaption>
+        </figure>
+      </section>
+
+      <section class="site-section" aria-labelledby="processing-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">04 / Processing</p>
+            <h2 id="processing-title">Choose the boundary per workload.</h2>
+          </div>
+          <p>Understanding is governed work, not an invisible side effect of storage. Operators decide where it runs and which outputs become retained derivatives.</p>
+        </div>
+        <div class="choice-grid">
+          <article class="choice">
+            <p class="choice-label">Local</p>
+            <h3>Keep processing beside the vault.</h3>
+            <p>Use local tooling when document bytes should remain on operator-controlled hardware.</p>
+          </article>
+          <article class="choice">
+            <p class="choice-label">Self-hosted</p>
+            <h3>Run a controlled service boundary.</h3>
+            <p>Point governed jobs at infrastructure your organization operates and audits.</p>
+          </article>
+          <article class="choice">
+            <p class="choice-label">Hosted</p>
+            <h3>Use bounded external capability.</h3>
+            <p>Authorize a provider for a defined task while keeping the original and resulting record in Docbank.</p>
+          </article>
+          <article class="choice">
+            <p class="choice-label">None</p>
+            <h3>Store without processing.</h3>
+            <p>A document remains a complete authoritative record even when no derivative is produced.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="intelligence-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">05 / Intelligence</p>
+            <h2 id="intelligence-title">AI understanding, on the record.</h2>
+          </div>
+          <p>OCR output, renditions, chunks, embeddings, and vector indexes are records too: cataloged, fingerprinted, and bound to the exact source version that produced them.</p>
+        </div>
+        <figure class="diagram pipeline">
+          <img src="/assets/intelligence-pipeline.svg" alt="One exact source version feeding governed rendition, chunk, embedding, and index derivatives that can be purged and rebuilt without touching the record">
+        </figure>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Catalog derivatives</p>
+            <h3>Bind understanding to its source.</h3>
+            <p>Renditions, chunk sets, embedding generations, and vector indexes publish atomically into a durable catalog, each fingerprinted against one immutable source version.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Replace providers</p>
+            <h3>Swap models without losing the record.</h3>
+            <p>Local, self-hosted, and hosted OCR and embedding providers plug into standard bridges. Consent is durable and revocable, and uploads bind to the exact inspected bytes.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Rebuild intelligence</p>
+            <h3>Treat derived state as disposable.</h3>
+            <p>Purge, re-derive, and rebuild renditions, embeddings, and indexes deterministically. Derivatives back up and restore without any provider, and originals are never touched.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Explain retrieval</p>
+            <h3>Rank with reasons, answer with evidence.</h3>
+            <p>Hybrid lexical and semantic search, with optional expansion and reranking, explains each ranked result and keeps the document and version behind it.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="interfaces-title">
+        <div class="interface-layout">
+          <div>
+            <p class="section-index">06 / Interfaces</p>
+            <h2 id="interfaces-title">One authority across every surface.</h2>
+            <p class="lede">People, applications, and agents work through interfaces suited to the task. They do not create separate copies of record.</p>
+            <ul class="interface-list">
+              <li><strong>CLI</strong><span>Scriptable operator workflows.</span></li>
+              <li><strong>Web</strong><span>Visual browsing and maintenance.</span></li>
+              <li><strong>TUI</strong><span>Keyboard-first vault inspection.</span></li>
+              <li><strong>HTTP</strong><span>Authenticated filesystem-shaped API.</span></li>
+              <li><strong>Go</strong><span>Embedded vault ownership.</span></li>
+              <li><strong>MCP</strong><span>Bounded tools for agent work.</span></li>
+            </ul>
+            <div class="actions">
+              <a class="button" href="/docs/agents/">Integrate an agent</a>
+              <a class="button" href="/docs/architecture/http-api/">Inspect the HTTP contract</a>
+            </div>
+          </div>
+          <figure class="diagram">
+            <img src="/assets/interface-map.svg" alt="Six Docbank interfaces converging on one vault authority">
+          </figure>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="boundary-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">07 / Boundary</p>
+            <h2 id="boundary-title">Not a cloud drive. Not a git repo.</h2>
+          </div>
+          <p>Docbank is closer to a storage appliance with an evidence-aware intelligence layer: the operator owns the vault, its policy, and its recovery path.</p>
+        </div>
+        <div class="boundary-grid">
+          <article class="boundary">
+            <p class="choice-label">Cloud drive</p>
+            <h3>The service is the record.</h3>
+            <p>Identity, search, processing, and recovery are coupled to one provider account and its lifecycle.</p>
+          </article>
+          <article class="boundary">
+            <p class="choice-label">Git repository</p>
+            <h3>The ledger expects rewriting.</h3>
+            <p>Rebase and force-push rewrite history by design, identity follows paths, and large originals or AI derivatives overflow into bolt-on stores with no consent or provenance contract.</p>
+          </article>
+          <article class="boundary">
+            <p class="choice-label">Docbank</p>
+            <h3>The vault is the record.</h3>
+            <p>Storage locations, processors, and interfaces are replaceable participants around operator-controlled authority, including every AI-derived record.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="start-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">08 / Start</p>
+            <h2 id="start-title">Follow one document through the system.</h2>
+          </div>
+          <div>
+            <p>The guide makes each authority boundary concrete. The operating documentation carries installation, workflows, architecture, and exact command behavior.</p>
+            <div class="actions">
+              <a class="button primary" href="/guide/">Read the authority guide</a>
+              <a class="button" href="/docs/">Open the operating docs</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Copyright 2026 Kenn Software LLC. Open source under Apache-2.0.</p>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="/index.md">Markdown</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="https://github.com/kenn-io/docbank/blob/main/LICENSE">License</a>
+      </nav>
+    </footer>
+
+    <dialog data-lightbox-dialog aria-labelledby="lightbox-title">
+      <div class="dialog-header">
+        <p id="lightbox-title" data-lightbox-title>Documentation capture</p>
+        <button class="dialog-close" type="button" data-lightbox-close aria-label="Close image">Close</button>
+      </div>
+      <img alt="Expanded documentation capture">
+    </dialog>
+    <script type="module" src="/scripts/site.js"></script>
+  </body>
+</html>

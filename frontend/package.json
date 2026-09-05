@@ -11,8 +11,10 @@
     "build": "vp build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "check:kit-ui": "kit-ui-check src",
+    "docs-site:check": "tsc -p docs-site/tsconfig.json --noEmit",
+    "docs-site:test": "node node_modules/@playwright/test/cli.js test --config docs-site/playwright.config.ts",
     "screenshots": "node screenshots/run.mjs",
-    "screenshots:check": "tsc -p screenshots/tsconfig.json --noEmit",
+    "screenshots:check": "tsc -p screenshots/tsconfig.json --noEmit && node --test screenshots/publish.node-test.mjs",
     "test": "vp test run"
   },
   "dependencies": {

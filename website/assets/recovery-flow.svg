@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-labelledby="title desc">
+  <title id="title">Provider-independent recovery</title>
+  <desc id="desc">A verified snapshot restores exact content, metadata, and history without making a processing provider authoritative.</desc>
+  <rect width="960" height="360" fill="#071411"/>
+  <g fill="#0c1e1a" stroke="#25473f" stroke-width="2">
+    <rect x="48" y="92" width="240" height="176" rx="4"/>
+    <rect x="360" y="92" width="240" height="176" rx="4"/>
+    <rect x="672" y="92" width="240" height="176" rx="4"/>
+  </g>
+  <g fill="none" stroke="#41d7bd" stroke-width="3">
+    <path d="M288 180h72M600 180h72"/>
+    <path d="M346 168l14 12-14 12M658 168l14 12-14 12"/>
+  </g>
+  <g font-family="JetBrains Mono, monospace" text-anchor="middle">
+    <text x="168" y="132" fill="#41d7bd" font-size="16">01 / SNAPSHOT</text>
+    <text x="168" y="181" fill="#edf8f4" font-size="22">Exact record</text>
+    <text x="168" y="216" fill="#a7c1ba" font-size="16">content · metadata</text>
+    <text x="480" y="132" fill="#41d7bd" font-size="16">02 / VERIFY</text>
+    <text x="480" y="181" fill="#edf8f4" font-size="22">Before use</text>
+    <text x="480" y="216" fill="#a7c1ba" font-size="16">checksums · history</text>
+    <text x="792" y="132" fill="#41d7bd" font-size="16">03 / RESTORE</text>
+    <text x="792" y="181" fill="#edf8f4" font-size="22">Operator control</text>
+    <text x="792" y="216" fill="#a7c1ba" font-size="16">no provider required</text>
+  </g>
+</svg>

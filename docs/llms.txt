@@ -2,59 +2,63 @@
 
 > Docbank is a self-sovereign document system for people and agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
 
-Every documentation page is also published as raw Markdown at the same path with a `.md` suffix; the links below point at those Markdown routes.
+Every public page is also published as raw Markdown at the route listed below.
+
+## Public Site
+- [Docbank](https://docbank.ai/index.md): The system of record for documents your agents can use.
+- [Authority lifecycle guide](https://docbank.ai/guide.md): Follow one document from exact source ingestion through governed understanding, bounded retrieval, and verified recovery.
 
 ## Overview
-- [Your documents. Your agents. One system.](https://docbank.ai/index.md): Docbank is a self-sovereign document storage system for you and your agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
+- [Your documents. Your agents. One system.](https://docbank.ai/docs/index.md): Docbank is a self-sovereign document storage system for you and your agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history.
 
 ## Changelog
-- [Changelog](https://docbank.ai/changelog.md): Release history.
+- [Changelog](https://docbank.ai/docs/changelog.md): Release history.
 
 ## Start Here
-- [Setup](https://docbank.ai/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.
-- [Quickstart](https://docbank.ai/quickstart.md): A ten-minute tour of the docbank CLI.
-- [Capabilities](https://docbank.ai/capabilities.md): What Docbank does for people, agents, applications, recovery, and physical storage.
-- [Visual Tour](https://docbank.ai/tour.md): See Docbank's real web and terminal interfaces running against synthetic document vaults.
+- [Setup](https://docbank.ai/docs/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.
+- [Quickstart](https://docbank.ai/docs/quickstart.md): A ten-minute tour of the docbank CLI.
+- [Capabilities](https://docbank.ai/docs/capabilities.md): What Docbank does for people, agents, applications, recovery, and physical storage.
+- [Visual Tour](https://docbank.ai/docs/tour.md): See Docbank's real web and terminal interfaces running against synthetic document vaults.
 
 ## Work with Documents
-- [Importing Documents](https://docbank.ai/usage/importing.md): Bulk import semantics — recursion, idempotency, collision suffixing, and failure handling.
-- [Organizing & Tagging](https://docbank.ai/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
-- [Searching](https://docbank.ai/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
-- [Web application](https://docbank.ai/usage/web.md): Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
-- [Interactive terminal browser](https://docbank.ai/usage/tui.md): Browse documents, inspect authority, storage, backups, and permanent history, and safely move or restore recoverable trash from the TUI.
+- [Importing Documents](https://docbank.ai/docs/usage/importing.md): Bulk import semantics — recursion, idempotency, collision suffixing, and failure handling.
+- [Organizing & Tagging](https://docbank.ai/docs/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
+- [Searching](https://docbank.ai/docs/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
+- [Web application](https://docbank.ai/docs/usage/web.md): Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
+- [Interactive terminal browser](https://docbank.ai/docs/usage/tui.md): Browse documents, inspect authority, storage, backups, and permanent history, and safely move or restore recoverable trash from the TUI.
 
 ## Protect & Operate
-- [Vault Lifecycle](https://docbank.ai/usage/lifecycle.md): Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
-- [Permanent Audited History](https://docbank.ai/usage/audited-history.md): Permanently retain every version and recorded change beneath a reviewed directory scope.
-- [Trash, GC, Repack & Verify](https://docbank.ai/usage/trash-and-gc.md): The explicit deletion and physical-reclamation lifecycle.
-- [Multi-store Storage](https://docbank.ai/usage/storage.md): Keep document bytes local-first, add filesystem or S3-compatible stores, and move verified authority deliberately.
-- [Backup & Restore](https://docbank.ai/usage/backup.md): Create incremental, verifiable snapshots in an immutable repository.
-- [Troubleshooting](https://docbank.ai/troubleshooting.md): Diagnose docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
+- [Vault Lifecycle](https://docbank.ai/docs/usage/lifecycle.md): Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
+- [Permanent Audited History](https://docbank.ai/docs/usage/audited-history.md): Permanently retain every version and recorded change beneath a reviewed directory scope.
+- [Trash, GC, Repack & Verify](https://docbank.ai/docs/usage/trash-and-gc.md): The explicit deletion and physical-reclamation lifecycle.
+- [Multi-store Storage](https://docbank.ai/docs/usage/storage.md): Keep document bytes local-first, add filesystem or S3-compatible stores, and move verified authority deliberately.
+- [Backup & Restore](https://docbank.ai/docs/usage/backup.md): Create incremental, verifiable snapshots in an immutable repository.
+- [Troubleshooting](https://docbank.ai/docs/troubleshooting.md): Diagnose docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
 
 ## Automate & Integrate
-- [Docbank for Agents](https://docbank.ai/agents.md): Why agents use docbank, which interface to choose, and the safety model for document automation.
-- [Agent Integration Guide](https://docbank.ai/agents/integration.md): Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
-- [Embed in Go](https://docbank.ai/embedding.md): Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
-- [Document Understanding in Go](https://docbank.ai/document-understanding.md): Normalize and prepare documents for search, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
+- [Docbank for Agents](https://docbank.ai/docs/agents.md): Why agents use docbank, which interface to choose, and the safety model for document automation.
+- [Agent Integration Guide](https://docbank.ai/docs/agents/integration.md): Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
+- [Embed in Go](https://docbank.ai/docs/embedding.md): Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
+- [Document Understanding in Go](https://docbank.ai/docs/document-understanding.md): Normalize and prepare documents for search, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
 
 ## Reference
-- [CLI Reference](https://docbank.ai/cli-reference.md): Every docbank command, flag, output format, and error behavior.
-- [Configuration](https://docbank.ai/configuration.md): Vault location, data layout, config.toml, and environment variables.
-- [HTTP API](https://docbank.ai/architecture/http-api.md): The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+- [CLI Reference](https://docbank.ai/docs/cli-reference.md): Every docbank command, flag, output format, and error behavior.
+- [Configuration](https://docbank.ai/docs/configuration.md): Vault location, data layout, config.toml, and environment variables.
+- [HTTP API](https://docbank.ai/docs/architecture/http-api.md): The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 
 ## How It Works
-- [How Docbank Works](https://docbank.ai/architecture/overview.md): A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
-- [Source Metadata](https://docbank.ai/architecture/source-metadata.md): How Docbank records bounded facts found inside original files.
-- [Visual Previews](https://docbank.ai/architecture/visual-previews.md): How Docbank identifies and retains canonical visual derivatives.
-- [Storage](https://docbank.ai/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.
-- [Loose & Packed Content](https://docbank.ai/architecture/packed-storage.md): The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
-- [Editing & Versions](https://docbank.ai/architecture/editing-and-versions.md): Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.
-- [Ownership & Concurrency](https://docbank.ai/architecture/locking.md): How daemon and embedded owners coordinate concurrent access with SQLite, hierarchy locks, and owner-local operation gates.
-- [Daemon & Process Model](https://docbank.ai/architecture/daemon.md): docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
-- [Backup & Recovery](https://docbank.ai/architecture/backup.md): Docbank's JSONL-native Kit snapshot and restore architecture.
-- [Integrity & Trust](https://docbank.ai/architecture/integrity.md): What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
-- [Audited History](https://docbank.ai/architecture/audited-history.md): The permanent, tamper-evident history model for protected directory scopes, content versions, backup, agents, and future interactive clients.
+- [How Docbank Works](https://docbank.ai/docs/architecture/overview.md): A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
+- [Source Metadata](https://docbank.ai/docs/architecture/source-metadata.md): How Docbank records bounded facts found inside original files.
+- [Visual Previews](https://docbank.ai/docs/architecture/visual-previews.md): How Docbank identifies and retains canonical visual derivatives.
+- [Storage](https://docbank.ai/docs/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.
+- [Loose & Packed Content](https://docbank.ai/docs/architecture/packed-storage.md): The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
+- [Editing & Versions](https://docbank.ai/docs/architecture/editing-and-versions.md): Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.
+- [Ownership & Concurrency](https://docbank.ai/docs/architecture/locking.md): How daemon and embedded owners coordinate concurrent access with SQLite, hierarchy locks, and owner-local operation gates.
+- [Daemon & Process Model](https://docbank.ai/docs/architecture/daemon.md): docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
+- [Backup & Recovery](https://docbank.ai/docs/architecture/backup.md): Docbank's JSONL-native Kit snapshot and restore architecture.
+- [Integrity & Trust](https://docbank.ai/docs/architecture/integrity.md): What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
+- [Audited History](https://docbank.ai/docs/architecture/audited-history.md): The permanent, tamper-evident history model for protected directory scopes, content versions, backup, agents, and future interactive clients.
 
 ## Project
-- [Roadmap](https://docbank.ai/roadmap.md): What is implemented today and what each phase adds.
-- [License](https://docbank.ai/license.md): Docbank is open-source software licensed under the Apache License, Version 2.0.
+- [Roadmap](https://docbank.ai/docs/roadmap.md): What is implemented today and what each phase adds.
+- [License](https://docbank.ai/docs/license.md): Docbank is open-source software licensed under the Apache License, Version 2.0.

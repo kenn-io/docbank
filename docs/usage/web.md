@@ -41,7 +41,7 @@ The browser is another client of the authenticated HTTP API. It does not open
 SQLite or the blob store, and it has no private route that the CLI or an agent
 cannot use. The daemon remains loopback-only.
 
-![The Docbank web application showing a synthetic vault tree and the selected document's authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-vault-browser.png)
+![The Docbank web application showing a synthetic vault tree and the selected document's authority.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
 *The root browser keeps the document table primary while the authority card
 shows the selected file's stable identity and verified content hash.*
@@ -271,7 +271,7 @@ workflows are bound to the tag's stable UUID so a later rename does not
 silently change which definition was selected. Changing the selector reruns
 the current browse or search.
 
-![The Docbank web application showing extracted-text search results in a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-search-results.png)
+![The Docbank web application showing extracted-text search results in a synthetic vault.](https://docbank.ai/assets/generated/web-search-results.png)
 
 *Search results display complete virtual paths and keep the same authority
 inspection available from ordinary folder browsing.*

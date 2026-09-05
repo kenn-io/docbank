@@ -15,24 +15,76 @@ plus internal design material.
   metadata, assets, and publishing boundary; all Python tools run through
   the locked `uv` environment
 
-Every rendered directory route also publishes its exact Markdown source at
-the sibling `.md` path: `/setup/` has `/setup.md`, and
-`/usage/importing/` has `/usage/importing.md`. This gives agents and other
-text-first clients a stable representation without scraping rendered HTML.
-Section landing pages use a sibling source such as `usage.md`, not
-`usage/index.md`, so relative links keep the same base at `/usage.md`.
+Every rendered directory route also publishes its exact Markdown source at the
+sibling `.md` path. The operating page `/docs/setup/` has `/docs/setup.md`, and
+`/docs/usage/importing/` has `/docs/usage/importing.md`. The product page and
+authority guide follow the same rule at `/index.md` and `/guide.md`. Agents and
+other text-first clients can use these stable representations without scraping
+rendered HTML.
 
 ## Building
 
+Run documentation commands from the repository root:
+
 ```bash
-cd docs
-uv sync --frozen          # one-time: installs zensical into docs/.venv
-./zensical-docs.sh serve  # live-reload preview
-./zensical-docs.sh build  # strict production build into docs/site/
+make docs-install  # one-time: install the locked Zensical environment
+make docs-serve    # build and watch all three tiers on http://127.0.0.1:8000
+make docs-build    # strict production build into site/
 ```
 
-Or from the repository root: `make docs-install`, `make docs-serve`,
-`make docs-build`.
+`make docs-serve` serves the product page, authority guide, and operating
+documentation from one origin. It rebuilds after changes beneath `website/` or
+`docs/`, or after the pinned screenshot commit or manifest changes. A failed
+rebuild leaves the last successful `site/` available for inspection.
+
+## Screenshots
+
+Screenshot generation is a separate reviewed workflow. It never runs during a
+documentation build or deployment.
+
+1. Run `make docs-screenshots`. The harness starts a real daemon with a
+   temporary synthetic vault and writes the complete capture set beneath
+   `.superpowers/screenshots/`.
+2. Inspect every generated image and its metadata.
+3. Publish the complete reviewed set as one orphan `docs-assets` commit.
+4. Put that exact commit in `scripts/docs-assets.ref` and run
+   `make docs-assets-sync`.
+5. Run `make docs-build` after the final source or asset-pin edit.
+
+Never capture a developer vault, publish a partial set, or point the build at a
+mutable branch head.
+
+## Deployment
+
+A software release makes a documentation source eligible; it does not publish
+that source. The selected source is normally the documentation-only follow-up
+after the tag and release notes exist. A maintainer must still authorize every
+deployment.
+
+Link the Vercel project once from the repository root with `make docs-link`.
+Deploy an exact eligible source from a clean checkout with:
+
+```bash
+make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)
+```
+
+The command checks that the source is on `origin/main`, descends from the latest
+software release, and contains only approved documentation changes. It uploads
+an unpromoted production build, waits for Vercel to verify it, repeats the
+release check, and only then promotes the build. Deployment does not generate
+screenshots, build the product, run Docker, or install frontend dependencies.
+
+The protected `Deploy documentation` workflow provides the same path for an
+explicitly supplied source SHA. A credential-free job checks that SHA against
+the release policy from `main` before the protected production job receives
+the validated SHA. It has no automatic push, pull-request, tag, or release
+trigger.
+
+Pull-request documentation checks never receive Vercel credentials. The
+authenticated upload dry run runs only after a trusted push to `main` and
+requires the repository `VERCEL_TOKEN` secret. Production deployment requires
+the `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` secrets on the
+protected `production` environment.
 
 ## Documentation boundary
 
