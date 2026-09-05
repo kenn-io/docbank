@@ -1013,6 +1013,21 @@ func insertRenditionAttachmentAndHeadTx(
 		head.AttachmentID, head.PublishedAt); err != nil {
 		return fmt.Errorf("publishing rendition head: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
+		WHERE content_version_id=? AND profile_fingerprint=? AND EXISTS (
+			SELECT 1 FROM embedding_sets s
+			JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
+			WHERE s.embedding_set_id=embedding_heads.embedding_set_id
+			  AND g.attachment_id IS NOT NULL AND g.attachment_id<>?
+		)`, head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
+		return fmt.Errorf("revoking stale chunk embedding heads: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
+		WHERE content_version_id=? AND profile_fingerprint=?
+		  AND attachment_id<>'' AND attachment_id<>?`,
+		head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
+		return fmt.Errorf("clearing stale chunk embedding failures: %w", err)
+	}
 	return nil
 }
 

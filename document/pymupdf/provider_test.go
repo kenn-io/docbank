@@ -177,14 +177,14 @@ func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 }
 
 func TestProviderTerminatesChildThatNeverStopsOversizedOutput(t *testing.T) {
-	provider := newTestProvider(t, helperExecutable(t, "unbounded-output"), 2*time.Second, 1024)
+	provider := newTestProvider(t, helperExecutable(t, "unbounded-output"), 30*time.Second, 1024)
 	upload := newTestUpload(testPDF(2))
-	started := time.Now()
 
 	_, err := provider.Render(t.Context(), upload,
 		testAuthorization(provider.Descriptor(), upload.Metadata()))
+	// A child stopped only by the deadline returns a timeout error instead.
+	// Check the termination reason, not executable startup and cleanup speed.
 	assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
-	assert.Less(t, time.Since(started), time.Second)
 	assert.NotContains(t, err.Error(), "broken pipe")
 }
 

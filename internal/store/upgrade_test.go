@@ -282,7 +282,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 			var schemaVersion int
 			require.NoError(t, s.db.QueryRow(`
 				SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&schemaVersion))
-			assert.Equal(t, 4, schemaVersion)
+			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assert.Equal(t, fixture.metadata, upgraded.Bytes())
