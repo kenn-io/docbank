@@ -136,75 +136,115 @@ func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T)
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "exact processing profile")
 }
 
-func TestEmbeddingCatalogRejectsGenerationRenderedOutsideModelInputContract(t *testing.T) {
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
-		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
-	generation, err := document.DecodeEmbeddingInputGeneration(
-		record.InputGeneration.GenerationJSON,
-		document.EmbeddingInputGenerationDecodeBounds{
-			MaxEncodedBytes: int64(len(record.InputGeneration.GenerationJSON)), MaxInputs: 128,
-		},
-	)
-	require.NoError(t, err)
+func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
+	for _, mutation := range []string{"rendered", "content"} {
+		t.Run(mutation, func(t *testing.T) {
+			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+				document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			generation, err := document.DecodeEmbeddingInputGeneration(
+				record.InputGeneration.GenerationJSON,
+				document.EmbeddingInputGenerationDecodeBounds{
+					MaxEncodedBytes: int64(len(record.InputGeneration.GenerationJSON)), MaxInputs: 128,
+				},
+			)
+			require.NoError(t, err)
 
-	input := &generation.Inputs[0]
-	mutatedRendered := strings.Repeat("x", len(input.Rendered))
-	require.NotEqual(t, input.Rendered, mutatedRendered)
-	input.Rendered = mutatedRendered
-	input.Checksum = testSHA256([]byte(input.Rendered))
-	input.Key = fmt.Sprintf("chunk-%06d-%s", 0, input.Checksum[:12])
-	generation.Checksum = ""
-	checksumInput, err := canonical.Marshal(generation)
-	require.NoError(t, err)
-	generation.Checksum = testSHA256(checksumInput)
-	encodedGeneration, err := document.MarshalEmbeddingInputGeneration(generation)
-	require.NoError(t, err)
-	record.InputGeneration.GenerationJSON = encodedGeneration
-	record.InputGeneration.GenerationBlobHash = testSHA256(encodedGeneration)
-	record.InputGeneration.GenerationEncodedSize = int64(len(encodedGeneration))
-	record.InputGeneration.GenerationChecksum = generation.Checksum
-	record.InputGeneration.ID = testSHA256([]byte(
-		"embedding-generation-attachment/v1\x00" + generation.Checksum + "\x00" + attachmentID,
-	))
+			input := &generation.Inputs[0]
+			mutatedRendered := strings.Repeat("x", len(input.Rendered))
+			require.NotEqual(t, input.Rendered, mutatedRendered)
+			if mutation == "content" {
+				content := strings.Repeat("x", len(input.Content))
+				input.Rendered = strings.Replace(input.Rendered, input.Content, content, 1)
+				input.Content = content
+			} else {
+				input.Rendered = mutatedRendered
+			}
+			input.Checksum = testSHA256([]byte(input.Rendered))
+			input.Key = fmt.Sprintf("chunk-%06d-%s", 0, input.Checksum[:12])
+			generation.Checksum = ""
+			checksumInput, err := canonical.Marshal(generation)
+			require.NoError(t, err)
+			generation.Checksum = testSHA256(checksumInput)
+			encodedGeneration, err := document.MarshalEmbeddingInputGeneration(generation)
+			require.NoError(t, err)
+			record.InputGeneration.GenerationJSON = encodedGeneration
+			record.InputGeneration.GenerationBlobHash = testSHA256(encodedGeneration)
+			record.InputGeneration.GenerationEncodedSize = int64(len(encodedGeneration))
+			record.InputGeneration.GenerationChecksum = generation.Checksum
+			record.InputGeneration.ID = testSHA256([]byte(
+				"embedding-generation-attachment/v1\x00" + generation.Checksum + "\x00" + attachmentID,
+			))
 
-	decodedVectors, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
-		MaxRows: 128, MaxDimension: record.VectorSpace.Descriptor.Dimension, MaxBytes: len(record.VectorSet.Payload),
-	})
-	require.NoError(t, err)
-	decodedVectors.InputKeys[0] = input.Key
-	decodedVectors.InputChecksums[0] = input.Checksum
-	values := make([][]float64, len(decodedVectors.Vectors))
-	for row := range decodedVectors.Vectors {
-		values[row] = make([]float64, len(decodedVectors.Vectors[row]))
-		for column, value := range decodedVectors.Vectors[row] {
-			values[row][column] = float64(value)
-		}
+			decodedVectors, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
+				MaxRows: 128, MaxDimension: record.VectorSpace.Descriptor.Dimension, MaxBytes: len(record.VectorSet.Payload),
+			})
+			require.NoError(t, err)
+			decodedVectors.InputKeys[0] = input.Key
+			decodedVectors.InputChecksums[0] = input.Checksum
+			values := make([][]float64, len(decodedVectors.Vectors))
+			for row := range decodedVectors.Vectors {
+				values[row] = make([]float64, len(decodedVectors.Vectors[row]))
+				for column, value := range decodedVectors.Vectors[row] {
+					values[row][column] = float64(value)
+				}
+			}
+			mutatedVectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
+				VectorSpaceFingerprint: decodedVectors.VectorSpaceFingerprint,
+				Metric:                 decodedVectors.Metric,
+				Normalization:          decodedVectors.Normalization,
+				Dimension:              decodedVectors.Dimension,
+				InputKeys:              decodedVectors.InputKeys,
+				InputChecksums:         decodedVectors.InputChecksums,
+				Values:                 values,
+			})
+			require.NoError(t, err)
+			encodedVectors, vectorChecksum, err := document.EncodeVectorSetV1(mutatedVectors)
+			require.NoError(t, err)
+			record.VectorSet.Payload = encodedVectors
+			record.VectorSet.ID = vectorChecksum
+			record.VectorSet.PayloadChecksum = vectorChecksum
+			record.VectorSet.PayloadBlobHash = testSHA256(encodedVectors)
+			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+				if err := s.EnsureBlobTx(tx, record.InputGeneration.GenerationBlobHash, int64(len(encodedGeneration))); err != nil {
+					return err
+				}
+				return s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(encodedVectors)))
+			}))
+
+			want := "model-input contract"
+			if mutation == "content" {
+				want = "source span"
+			}
+			require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), want)
+			if mutation == "content" {
+				// Simulate imported orphan authority: no set remains to validate the
+				// generation on its behalf. Restore must still reject the forged text.
+				normalized, err := normalizeEmbeddingSetRecord(record)
+				require.NoError(t, err)
+				require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+					return insertInputGenerationTx(t.Context(), tx, normalized.InputGeneration)
+				}))
+				var metadata bytes.Buffer
+				require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
+				target := newTestStore(t)
+				layout := materializeEmbeddingRestoreArtifacts(t, target, map[string][]byte{
+					catalogSourceHash:                               catalogBlobContents[catalogSourceHash],
+					catalogEvidenceBlobHash:                         catalogBlobContents[catalogEvidenceBlobHash],
+					catalogMarkdownBlobHash:                         catalogBlobContents[catalogMarkdownBlobHash],
+					record.InputGeneration.GenerationBlobHash:       record.InputGeneration.GenerationJSON,
+					testSHA256(record.InputGeneration.EvidenceJSON): record.InputGeneration.EvidenceJSON,
+				})
+				require.NoError(t, target.ImportMetadata(t.Context(), &metadata))
+				backend, err := packstore.NewFilesystemBackend(*layout, packstore.FilesystemBackendOptions{})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, backend.Close()) }()
+				require.ErrorContains(t, target.VerifyRenditionBlobBytes(t.Context(), &embeddingRestoreReader{
+					store: target, backend: backend,
+				}), "source span")
+			}
+		})
 	}
-	mutatedVectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
-		VectorSpaceFingerprint: decodedVectors.VectorSpaceFingerprint,
-		Metric:                 decodedVectors.Metric,
-		Normalization:          decodedVectors.Normalization,
-		Dimension:              decodedVectors.Dimension,
-		InputKeys:              decodedVectors.InputKeys,
-		InputChecksums:         decodedVectors.InputChecksums,
-		Values:                 values,
-	})
-	require.NoError(t, err)
-	encodedVectors, vectorChecksum, err := document.EncodeVectorSetV1(mutatedVectors)
-	require.NoError(t, err)
-	record.VectorSet.Payload = encodedVectors
-	record.VectorSet.ID = vectorChecksum
-	record.VectorSet.PayloadChecksum = vectorChecksum
-	record.VectorSet.PayloadBlobHash = testSHA256(encodedVectors)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tx, record.InputGeneration.GenerationBlobHash, int64(len(encodedGeneration))); err != nil {
-			return err
-		}
-		return s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(encodedVectors)))
-	}))
-
-	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "model-input contract")
 }
 
 func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
@@ -297,18 +337,20 @@ func TestEmbeddingCatalogProviderFreeRestoreVerifiesLooseAndPackedArtifacts(t *t
 
 			target := newTestStore(t)
 			artifacts := map[string][]byte{
-				catalogSourceHash:                         catalogBlobContents[catalogSourceHash],
-				catalogEvidenceBlobHash:                   catalogBlobContents[catalogEvidenceBlobHash],
-				catalogMarkdownBlobHash:                   catalogBlobContents[catalogMarkdownBlobHash],
-				record.InputGeneration.GenerationBlobHash: record.InputGeneration.GenerationJSON,
-				record.VectorSet.PayloadBlobHash:          record.VectorSet.Payload,
+				catalogSourceHash:                               catalogBlobContents[catalogSourceHash],
+				catalogEvidenceBlobHash:                         catalogBlobContents[catalogEvidenceBlobHash],
+				catalogMarkdownBlobHash:                         catalogBlobContents[catalogMarkdownBlobHash],
+				record.InputGeneration.GenerationBlobHash:       record.InputGeneration.GenerationJSON,
+				testSHA256(record.InputGeneration.EvidenceJSON): record.InputGeneration.EvidenceJSON,
+				record.VectorSet.PayloadBlobHash:                record.VectorSet.Payload,
 			}
 			layout := materializeEmbeddingRestoreArtifacts(t, target, artifacts)
 			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 			if packed {
 				packEmbeddingRestoreArtifacts(t, target, layout, map[string][]byte{
-					record.InputGeneration.GenerationBlobHash: record.InputGeneration.GenerationJSON,
-					record.VectorSet.PayloadBlobHash:          record.VectorSet.Payload,
+					record.InputGeneration.GenerationBlobHash:       record.InputGeneration.GenerationJSON,
+					testSHA256(record.InputGeneration.EvidenceJSON): record.InputGeneration.EvidenceJSON,
+					record.VectorSet.PayloadBlobHash:                record.VectorSet.Payload,
 				})
 			}
 			require.NoError(t, target.VerifyRenditionBlobAuthority(t.Context()))
@@ -322,11 +364,14 @@ func TestEmbeddingCatalogProviderFreeRestoreVerifiesLooseAndPackedArtifacts(t *t
 	}
 }
 
-func TestEmbeddingCatalogRestoreVerifiesVectorSetRetainedAfterVersionPrune(t *testing.T) {
-	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+func TestEmbeddingCatalogRestoreVerifiesArtifactsRetainedAfterVersionPrune(t *testing.T) {
+	source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
+	chunk := embeddingSetFixture(source, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	require.NoError(t, source.StageEmbeddingSet(t.Context(), chunk))
 
 	var nodeID, revision int64
 	require.NoError(t, source.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`,
@@ -347,10 +392,13 @@ func TestEmbeddingCatalogRestoreVerifiesVectorSetRetainedAfterVersionPrune(t *te
 	require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
 	target := newTestStore(t)
 	layout := materializeEmbeddingRestoreArtifacts(t, target, map[string][]byte{
-		catalogSourceHash:                catalogBlobContents[catalogSourceHash],
-		catalogEvidenceBlobHash:          catalogBlobContents[catalogEvidenceBlobHash],
-		catalogMarkdownBlobHash:          catalogBlobContents[catalogMarkdownBlobHash],
-		record.VectorSet.PayloadBlobHash: record.VectorSet.Payload,
+		catalogSourceHash:                              catalogBlobContents[catalogSourceHash],
+		catalogEvidenceBlobHash:                        catalogBlobContents[catalogEvidenceBlobHash],
+		catalogMarkdownBlobHash:                        catalogBlobContents[catalogMarkdownBlobHash],
+		record.VectorSet.PayloadBlobHash:               record.VectorSet.Payload,
+		chunk.VectorSet.PayloadBlobHash:                chunk.VectorSet.Payload,
+		chunk.InputGeneration.GenerationBlobHash:       chunk.InputGeneration.GenerationJSON,
+		testSHA256(chunk.InputGeneration.EvidenceJSON): chunk.InputGeneration.EvidenceJSON,
 	})
 	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 	require.NoError(t, target.VerifyRenditionBlobAuthority(t.Context()))
@@ -458,6 +506,14 @@ func TestEmbeddingCatalogRequiresCanonicalGenerationAndVectorPayloads(t *testing
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	record.InputGeneration.GenerationJSON = nil
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "generation JSON")
+
+	record = embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	evidenceJSON := record.InputGeneration.EvidenceJSON
+	record.InputGeneration.EvidenceJSON = nil
+	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "canonical evidence bytes")
+	record.InputGeneration.EvidenceJSON = bytes.Replace(evidenceJSON, []byte("Synthetic evidence"), []byte("Invented evidence!"), 1)
+	require.NotEqual(t, evidenceJSON, record.InputGeneration.EvidenceJSON)
+	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "evidence hash mismatch")
 
 	record = embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	record.VectorSet.Payload = nil

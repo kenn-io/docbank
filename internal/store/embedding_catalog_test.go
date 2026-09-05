@@ -341,11 +341,18 @@ func TestEmbeddingCatalogVersionPruneDeletesDirectAndChunkAuthority(t *testing.T
 		records[0].VectorSet.ID, records[1].VectorSet.ID).Scan(&generations, &vectorSets))
 	assert.Equal(t, 2, generations)
 	assert.Equal(t, 2, vectorSets)
+	evidenceHash := testSHA256(records[1].InputGeneration.EvidenceJSON)
+	unreachable, err := s.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	for _, blob := range unreachable {
+		assert.NotEqual(t, evidenceHash, blob.Hash, "orphan generation still needs evidence for restore verification")
+	}
 
 	report, err := s.PurgeDerivatives(t.Context(), PurgeRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, 2, report.RemovedEmbeddingInputGenerations)
 	assert.Equal(t, 2, report.RemovedEmbeddingVectorSets)
+	assert.Contains(t, report.PhysicalDerivativeBlobsPendingGC, evidenceHash)
 }
 
 func TestEmbeddingCatalogVersionPrunePreservesSharedAuthorityRoots(t *testing.T) {
@@ -536,7 +543,11 @@ func embeddingSetFixture(
 		CreatedAt: embeddingCatalogTime,
 	}
 	if kind == document.EmbeddingInputRenditionChunk {
-		generated := embeddingCatalogGeneration(profile, fingerprints.EvidenceLexical, attachmentID)
+		generated, evidence := embeddingCatalogGeneration(profile, fingerprints.EvidenceLexical, attachmentID)
+		generation.EvidenceJSON, _, err = document.MarshalNormalizedEvidenceV1(evidence)
+		if err != nil {
+			panic(err)
+		}
 		generation.ID = testSHA256([]byte("embedding-generation-attachment/v1\x00" + generated.Checksum + "\x00" + attachmentID))
 		generation.GenerationJSON, err = document.MarshalEmbeddingInputGeneration(generated)
 		if err != nil {
@@ -546,6 +557,9 @@ func embeddingSetFixture(
 		generation.GenerationEncodedSize = int64(len(generation.GenerationJSON))
 		generation.GenerationChecksum = generated.Checksum
 		if err := s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
+			if err := s.EnsureBlobTx(tx, testSHA256(generation.EvidenceJSON), int64(len(generation.EvidenceJSON))); err != nil {
+				return err
+			}
 			return s.EnsureBlobTx(tx, generation.GenerationBlobHash, generation.GenerationEncodedSize)
 		}); err != nil {
 			panic(err)
@@ -704,7 +718,7 @@ func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
 	}
 }
 
-func embeddingCatalogGeneration(profile document.ProcessingProfileV1, lexicalFingerprint, attachmentID string) document.EmbeddingInputGeneration {
+func embeddingCatalogGeneration(profile document.ProcessingProfileV1, lexicalFingerprint, attachmentID string) (document.EmbeddingInputGeneration, document.NormalizedEvidenceV1) {
 	policy, err := document.NewEvidencePolicy(4096)
 	if err != nil {
 		panic(err)
@@ -746,12 +760,13 @@ func embeddingCatalogGeneration(profile document.ProcessingProfileV1, lexicalFin
 	if err != nil {
 		panic(err)
 	}
-	return generation
+	return generation, evidence
 }
 
 func cloneEmbeddingSetRecord(value EmbeddingSetRecord) EmbeddingSetRecord {
 	clone := value
 	clone.InputGeneration.GenerationJSON = append([]byte(nil), value.InputGeneration.GenerationJSON...)
+	clone.InputGeneration.EvidenceJSON = append([]byte(nil), value.InputGeneration.EvidenceJSON...)
 	clone.InputGeneration.Inputs = append([]EmbeddingInputReference(nil), value.InputGeneration.Inputs...)
 	clone.VectorSet.Payload = append([]byte(nil), value.VectorSet.Payload...)
 	clone.VectorSet.rows = append([]EmbeddingVectorRowRecord(nil), value.VectorSet.rows...)

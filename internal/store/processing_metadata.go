@@ -1703,6 +1703,9 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		SELECT generation_blob_hash FROM embedding_input_generations
 		WHERE generation_blob_hash IS NOT NULL
 		UNION
+		SELECT evidence_fingerprint FROM embedding_input_generations
+		WHERE generation_blob_hash IS NOT NULL
+		UNION
 		SELECT payload_blob_hash FROM embedding_vector_sets
 		ORDER BY source_sha256`)
 	if err != nil {
@@ -1824,6 +1827,17 @@ func verifyEmbeddingArtifacts(
 		}
 		if err := validateExactEmbeddingGenerationArtifact(record, data); err != nil {
 			return fmt.Errorf("validating E2 generation artifact %s: %w", id, err)
+		}
+		var evidenceSize int64
+		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, record.EvidenceFingerprint).Scan(&evidenceSize); err != nil {
+			return fmt.Errorf("reading E2 evidence blob size: %w", err)
+		}
+		evidence, err := read(ctx, record.EvidenceFingerprint, evidenceSize)
+		if err != nil {
+			return fmt.Errorf("reading E2 evidence artifact %s: %w", id, err)
+		}
+		if err := validateEmbeddingGenerationEvidence(record, data, evidence); err != nil {
+			return fmt.Errorf("validating E2 generation evidence %s: %w", id, err)
 		}
 		setIDs, err := stringColumnTx(ctx, tx, "embedding generation sets", `
 			SELECT embedding_set_id FROM embedding_sets
@@ -2157,7 +2171,7 @@ func validateProcessingBlobReferences(ctx context.Context, tx metadataQuerier) e
 		var dangling bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM `+reference.table+` r LEFT JOIN blobs b ON b.hash=r.`+reference.column+`
-			WHERE r.`+reference.column+` IS NOT NULL AND b.hash IS NULL)`).Scan(&dangling); err != nil {
+			WHERE r.`+reference.column+` IS NOT NULL AND b.hash IS NULL`+reference.conditionSQL()+`)`).Scan(&dangling); err != nil {
 			return fmt.Errorf("validating %s blob references: %w", reference.table, err)
 		}
 		if dangling {

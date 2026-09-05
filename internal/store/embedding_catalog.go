@@ -67,6 +67,9 @@ type EmbeddingInputGenerationRecord struct {
 	SourceVersionID              string
 	ProcessingProfileFingerprint string
 	GenerationJSON               []byte
+	// EvidenceJSON supplies canonical normalized evidence for chunk staging only.
+	// Its hash is retained as EvidenceFingerprint; the bytes live in blob storage.
+	EvidenceJSON                 []byte
 	GenerationBlobHash           string
 	GenerationEncodedSize        int64
 	GenerationChecksum           string
@@ -187,6 +190,7 @@ func (s *Store) StageEmbeddingSet(ctx context.Context, record EmbeddingSetRecord
 		// canonical row projection derived from those bytes.
 		record.VectorSet.Payload = nil
 		record.InputGeneration.GenerationJSON = nil
+		record.InputGeneration.EvidenceJSON = nil
 		if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace); err != nil {
 			return err
 		}
@@ -779,13 +783,35 @@ func embeddingVectorManifestChecksum(rows []EmbeddingVectorRowRecord) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+func validateEmbeddingGenerationEvidence(record EmbeddingInputGenerationRecord, generationJSON, evidenceJSON []byte) error {
+	if len(evidenceJSON) == 0 || len(evidenceJSON) > 64<<20 {
+		return errors.New("embedding generation requires bounded canonical evidence bytes")
+	}
+	if hashCatalogBytes(evidenceJSON) != record.EvidenceFingerprint {
+		return errors.New("embedding generation canonical evidence hash mismatch")
+	}
+	var evidence document.NormalizedEvidenceV1
+	if err := jsonv2.Unmarshal(evidenceJSON, &evidence, jsonv2.RejectUnknownMembers(true)); err != nil {
+		return fmt.Errorf("decoding embedding generation evidence: %w", err)
+	}
+	var generation document.EmbeddingInputGeneration
+	if err := json.Unmarshal(generationJSON, &generation); err != nil {
+		return err
+	}
+	return generation.ValidateEvidence(evidence)
+}
+
 func requireEmbeddingPhysicalAuthorityTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
 	var source string
 	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
 		record.ContentVersionID).Scan(&source); err != nil {
 		return fmt.Errorf("reading embedding source blob: %w", err)
 	}
-	for _, hash := range []string{source, record.VectorSet.PayloadBlobHash, record.InputGeneration.GenerationBlobHash} {
+	hashes := []string{source, record.VectorSet.PayloadBlobHash, record.InputGeneration.GenerationBlobHash}
+	if record.InputGeneration.GenerationBlobHash != "" {
+		hashes = append(hashes, record.InputGeneration.EvidenceFingerprint)
+	}
+	for _, hash := range hashes {
 		if hash == "" {
 			continue // Original-file inputs have no separate generation artifact.
 		}
@@ -842,12 +868,24 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 		if generationBlobCount != 1 || generationBlobSize != int64(len(record.InputGeneration.GenerationJSON)) {
 			return errors.New("embedding set references a missing exact E2 generation artifact")
 		}
+		if err := validateEmbeddingGenerationEvidence(record.InputGeneration,
+			record.InputGeneration.GenerationJSON, record.InputGeneration.EvidenceJSON); err != nil {
+			return err
+		}
+		var evidenceSize int64
+		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`,
+			record.InputGeneration.EvidenceFingerprint).Scan(&evidenceSize); err != nil {
+			return fmt.Errorf("reading embedding evidence blob: %w", err)
+		}
+		if evidenceSize != int64(len(record.InputGeneration.EvidenceJSON)) {
+			return errors.New("embedding evidence blob size mismatch")
+		}
 	}
 	if record.InputKind == document.EmbeddingInputRenditionChunk && record.InputGeneration.AttachmentID == "" {
 		return errors.New("chunk embedding set requires rendition attachment authority")
 	}
 	if record.InputKind == document.EmbeddingInputOriginalFile {
-		if record.InputGeneration.AttachmentID != "" || len(record.InputGeneration.GenerationJSON) != 0 ||
+		if record.InputGeneration.AttachmentID != "" || len(record.InputGeneration.GenerationJSON) != 0 || len(record.InputGeneration.EvidenceJSON) != 0 ||
 			record.InputGeneration.GenerationBlobHash != "" || record.InputGeneration.GenerationEncodedSize != 0 ||
 			len(record.InputGeneration.Inputs) != 1 {
 			return errors.New("original-file input authority cannot claim rendition attachment or E2 generation")

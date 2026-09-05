@@ -173,7 +173,7 @@ func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
 
 func TestEmbeddingWritesRequirePhysicalBlobAuthority(t *testing.T) {
 	for _, operation := range []string{"stage", "publish"} {
-		for _, missing := range []string{"source", "vectors", "generation"} {
+		for _, missing := range []string{"source", "vectors", "generation", "evidence"} {
 			t.Run(operation+"/"+missing, func(t *testing.T) {
 				s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 				record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -185,7 +185,7 @@ func TestEmbeddingWritesRequirePhysicalBlobAuthority(t *testing.T) {
 				restored := newTestStore(t)
 				require.NoError(t, restored.ImportMetadata(t.Context(), &exported))
 				blobs := map[string]string{"source": catalogSourceHash, "vectors": record.VectorSet.PayloadBlobHash,
-					"generation": record.InputGeneration.GenerationBlobHash}
+					"generation": record.InputGeneration.GenerationBlobHash, "evidence": testSHA256(record.InputGeneration.EvidenceJSON)}
 				var size int64
 				require.NoError(t, restored.db.QueryRow(`SELECT size FROM blobs WHERE hash=?`, blobs[missing]).Scan(&size))
 				hash, err := packstore.ParseHash(blobs[missing])

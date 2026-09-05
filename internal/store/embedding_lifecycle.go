@@ -27,19 +27,19 @@ func collectOrphanEmbeddingArtifactsTx(
 			SELECT 1 FROM current_rendition_roots r
 			WHERE r.target_kind='embedding_input_generation' AND r.target_id=g.generation_id
 			  AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?)
-		) RETURNING COALESCE(generation_blob_hash,'')`, asOf)
+		) RETURNING COALESCE(generation_blob_hash,''),evidence_fingerprint`, asOf)
 	if err != nil {
 		return result, fmt.Errorf("collecting orphan embedding input generations: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, generationRows.Close()) }()
 	for generationRows.Next() {
-		var blobHash string
-		if err := generationRows.Scan(&blobHash); err != nil {
+		var blobHash, evidenceHash string
+		if err := generationRows.Scan(&blobHash, &evidenceHash); err != nil {
 			return result, fmt.Errorf("scanning collected embedding input generation: %w", err)
 		}
 		result.inputGenerations++
 		if blobHash != "" {
-			result.payloads = append(result.payloads, blobHash)
+			result.payloads = append(result.payloads, blobHash, evidenceHash)
 		}
 	}
 	if err := generationRows.Err(); err != nil {
