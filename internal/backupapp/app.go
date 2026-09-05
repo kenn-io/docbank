@@ -41,16 +41,16 @@ type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-const authorizedContentRowsQuery = store.BackupBlobAuthorityCTE + `
+var authorizedContentRowsQuery = store.BackupBlobAuthorityCTE() + `
 SELECT b.hash,b.size FROM blobs b
 JOIN backup_authorized_blobs a ON a.hash=b.hash
 ORDER BY b.hash`
 
-const authorizedContentStatsQuery = store.BackupBlobAuthorityCTE + `
+var authorizedContentStatsQuery = store.BackupBlobAuthorityCTE() + `
 SELECT COUNT(*),COALESCE(SUM(b.size),0) FROM blobs b
 JOIN backup_authorized_blobs a ON a.hash=b.hash`
 
-const authorizedExtractedTextStatsQuery = store.BackupBlobAuthorityCTE + `
+var authorizedExtractedTextStatsQuery = store.BackupBlobAuthorityCTE() + `
 SELECT COUNT(*) FROM extracted_text e
 JOIN backup_authorized_blobs a ON a.hash=e.blob_hash`
 
