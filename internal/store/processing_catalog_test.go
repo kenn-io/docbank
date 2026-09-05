@@ -79,6 +79,24 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 	assert.Equal(t, 2, attachmentCount)
 }
 
+func TestPersistedRenditionArtifactRoles(t *testing.T) {
+	want := []string{
+		catalogArtifactNormalizedEvidence, catalogArtifactSanitizedMarkdown,
+		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
+		string(document.EvidenceArtifactStructured), string(document.EvidenceArtifactTranscript),
+	}
+	assert.Equal(t, want, PersistedRenditionArtifactRoles())
+	for _, role := range want {
+		assert.True(t, validCapturedArtifactRole(role))
+	}
+	for _, role := range []string{"", "NORMALIZED_EVIDENCE", "provider_audio"} {
+		assert.False(t, validCapturedArtifactRole(role))
+	}
+	roles := PersistedRenditionArtifactRoles()
+	roles[0] = "mutated"
+	assert.Equal(t, want, PersistedRenditionArtifactRoles())
+}
+
 func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	other := newTestStore(t)
