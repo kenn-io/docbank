@@ -78,7 +78,8 @@ func sourceMetadataGenerationID(source, contract, fingerprint, checksum string) 
 }
 
 // PublishSourceMetadata validates and atomically publishes one immutable
-// generation. Retrying the identical publication is idempotent.
+// generation and selects it as the active head, including on republication.
+// Fingerprints identify extractors but do not order them by age.
 func (s *Store) PublishSourceMetadata(
 	ctx context.Context, sourceSHA256, extractorFingerprint string, canonical []byte,
 ) (SourceMetadataGeneration, error) {

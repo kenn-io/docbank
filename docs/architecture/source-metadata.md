@@ -89,6 +89,15 @@ is idempotent. Because the fingerprint covers every parser, any change to it
 makes the daemon re-read and re-extract every retained original in every
 vault; a test pins the fingerprint so that cost is taken deliberately.
 
+The active head follows the last successful publication, including publication
+of an already-recorded generation. Fingerprints identify parser bundles; they
+do not order extractors by age. After switching binaries, an explicit ensure
+reactivates the running binary's evidence even if another extractor published
+more recently. The first ensure re-reads and re-extracts the original; subsequent
+ensures reuse that active generation. The daemon backfill only processes
+originals missing a generation for its fingerprint, so it does not reactivate
+already-recorded evidence by itself.
+
 The HTTP node and content-version detail surfaces return the active generation.
 Embedded applications call `Vault.EnsureSourceMetadata` with an immutable
 content version ID to run the current local extractor synchronously for those

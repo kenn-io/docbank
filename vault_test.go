@@ -205,6 +205,45 @@ func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) 
 	assert.Equal(t, "Current event", title)
 }
 
+func TestVaultEnsureSourceMetadataRestoresPreviouslyRecordedExtractorGeneration(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Current event\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	receipt, err := vault.Create(t.Context(), "/calendar.ics", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/calendar", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	current, err := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+
+	// Model a vault reopened after another binary published its own evidence.
+	otherCanonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{
+			Key: "title", Namespace: "calendar", SourceField: "SUMMARY",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Other event")},
+		}},
+	})
+	require.NoError(t, err)
+	otherFingerprint := contentIdentity([]byte("other extractor")).SHA256
+	_, err = vault.metadata.PublishSourceMetadata(t.Context(), receipt.Version.BlobHash, otherFingerprint, otherCanonical)
+	require.NoError(t, err)
+	other, err := vault.SourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	require.Equal(t, otherFingerprint, other.ExtractorFingerprint)
+
+	publications := 0
+	vault.testAfterSourceMetadataPublication = func() { publications++ }
+	for range 3 {
+		metadata, err := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+		require.NoError(t, err)
+		assert.Equal(t, current, metadata)
+	}
+	assert.Equal(t, 1, publications, "only the first ensure should reprocess the original")
+}
+
 func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
