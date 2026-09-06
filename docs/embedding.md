@@ -449,6 +449,51 @@ storage you want to preserve in `ProtectedRoots`: the repository cannot infer
 their current locations. `Vault.RestoreBackup` also protects its open vault
 automatically and retains that vault's configured SQLite driver.
 
+### Remove recovery points and reclaim storage
+
+`BackupRepository.Forget` removes explicitly selected snapshot records;
+`BackupRepository.Prune` reclaims backup storage that retained snapshots no
+longer need. Neither operation opens the source vault. Retention schedules and
+which recovery points to keep remain the embedding application's policy.
+
+Preview each operation before committing to it:
+
+```go
+selection, err := repository.Forget(ctx, docbank.BackupForgetOptions{
+    SnapshotIDs: snapshotIDs,
+    DryRun: true,
+})
+if err != nil {
+    return err
+}
+// Present selection.Selected to the user. Call Forget again with DryRun false
+// to apply the removal; selection.Forgotten is empty during a dry run.
+fmt.Println("Selected recovery points:", selection.Selected)
+
+cleanup, err := repository.Prune(ctx, docbank.BackupPruneOptions{DryRun: true})
+if err != nil {
+    return err
+}
+// After removing snapshots, preview cleanup again before calling Prune with
+// DryRun false. PacksToRemove includes any old packs that will be rewritten.
+fmt.Println("Packs selected for cleanup:", cleanup.PacksToRemove)
+```
+
+Forgetting alone does not reclaim packed bytes. It refuses to remove the last
+recovery point unless `AllowEmpty` is explicit (`ErrBackupLastSnapshot`), and
+refuses parents needed by retained incremental snapshots
+(`ErrBackupSnapshotRequired`). Both cleanup operations use Kit's exclusive
+repository lock, including dry runs; contention returns
+`ErrBackupRepositoryLocked`. `ForceUnlock` is only for known abandoned locks.
+
+Pruning removes wholly unused packs and rewrites packs with less than half
+their encoded payload still needed. Mostly-live packs retain unused bytes, so
+this is not full compaction or secure erasure. Planned byte counts cover old
+pack files and copied payload, not exact net savings or temporary-space needs.
+Inspect the returned report even when an error occurs: completed removals and
+writes may be partial. Interrupted pruning can be retried. These embedded
+operations do not add automatic retention or standalone CLI cleanup commands.
+
 ## Maintain physical storage
 
 Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the

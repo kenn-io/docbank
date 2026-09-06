@@ -24,7 +24,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/yuin/goldmark v1.7.17
-	go.kenn.io/kit v0.24.0
+	go.kenn.io/kit v0.24.1
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sync v0.22.0
