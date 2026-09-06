@@ -169,6 +169,17 @@ func (s *Store) ContentVersionVisualPreview(
 	return VisualPreviewView{Version: version, Generation: generation, PublishedAt: publishedAt}, nil
 }
 
+// VisualPreviewGenerationByRecipe returns the recorded result for one exact
+// content version and recipe, whether or not it is the active head.
+func (s *Store) VisualPreviewGenerationByRecipe(
+	ctx context.Context, versionID, recipeFingerprint string,
+) (VisualPreviewGeneration, error) {
+	if err := validateUUIDv4(versionID); err != nil {
+		return VisualPreviewGeneration{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
+	}
+	return visualPreviewGenerationByRecipeTx(ctx, s.db, versionID, recipeFingerprint)
+}
+
 func visualPreviewGenerationByRecipeTx(
 	ctx context.Context, q metadataQuerier, versionID, recipeFingerprint string,
 ) (VisualPreviewGeneration, error) {
