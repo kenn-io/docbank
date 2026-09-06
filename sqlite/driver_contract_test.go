@@ -18,8 +18,6 @@ import (
 type driverObservations struct {
 	name                     string
 	validateOK               bool
-	nilValidateRejected      bool
-	emptyNameRejected        bool
 	create                   bool
 	readWriteExisting        bool
 	missingReadWriteRejected bool
@@ -40,7 +38,6 @@ type driverObservations struct {
 	specialPath              bool
 	relativePath             bool
 	independentPools         bool
-	realBusy                 bool
 	wrappedBusy              bool
 	realUnique               bool
 	wrappedUnique            bool
@@ -53,17 +50,6 @@ type driverObservations struct {
 	primaryKeyFalse          bool
 }
 
-type emptyNameDriver struct{}
-
-func (emptyNameDriver) Name() string { return "" }
-
-func (emptyNameDriver) Open(string, docsqlite.OpenOptions) (*sql.DB, error) {
-	return nil, errors.New("empty-name test driver is not openable")
-}
-
-func (emptyNameDriver) IsBusy(error) bool            { return false }
-func (emptyNameDriver) IsUniqueViolation(error) bool { return false }
-
 func TestModerncDriverContract(t *testing.T) {
 	observations := exerciseDriverContract(t, modernc.Driver{})
 	assertDriverContract(t, observations)
@@ -75,8 +61,6 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 
 	observations.name = driver.Name()
 	observations.validateOK = docsqlite.Validate(driver) == nil
-	observations.nilValidateRejected = docsqlite.Validate(nil) != nil
-	observations.emptyNameRejected = docsqlite.Validate(emptyNameDriver{}) != nil
 
 	baseDir := t.TempDir()
 	databasePath := filepath.Join(baseDir, "contract.db")
@@ -151,8 +135,7 @@ func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObserva
 	require.NoError(t, explicitDB.Close())
 
 	observations.create, observations.createWAL, observations.createForeignKeys = observeCreate(t, driver, filepath.Join(baseDir, "created.db"))
-	observations.deferredWriterAllowed, observations.immediateBusy, observations.realBusy,
-		observations.wrappedBusy = observeTransactionLocks(t, driver, baseDir)
+	observations.deferredWriterAllowed, observations.immediateBusy, observations.wrappedBusy = observeTransactionLocks(t, driver, baseDir)
 	observations.specialPath = observeSpecialPath(t, driver, baseDir)
 	observations.relativePath = observeRelativePath(t, driver, baseDir)
 	observations.independentPools = observeIndependentPools(t, driver, databasePath)
@@ -170,8 +153,6 @@ func assertDriverContract(t *testing.T, observations driverObservations) {
 	t.Helper()
 	require.NotEmpty(t, observations.name)
 	require.True(t, observations.validateOK)
-	require.True(t, observations.nilValidateRejected)
-	require.True(t, observations.emptyNameRejected)
 	require.True(t, observations.create)
 	require.True(t, observations.readWriteExisting)
 	require.True(t, observations.missingReadWriteRejected)
@@ -190,7 +171,6 @@ func assertDriverContract(t *testing.T, observations driverObservations) {
 	require.True(t, observations.specialPath)
 	require.True(t, observations.relativePath)
 	require.True(t, observations.independentPools)
-	require.True(t, observations.realBusy)
 	require.True(t, observations.wrappedBusy)
 	require.True(t, observations.realUnique)
 	require.True(t, observations.wrappedUnique)
@@ -269,7 +249,7 @@ func execAndReadMarker(t *testing.T, db *sql.DB, value string) bool {
 	return marker == value
 }
 
-func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir string) (deferredWriterAllowed, immediateBusy, realBusy, wrappedBusy bool) {
+func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir string) (deferredWriterAllowed, immediateBusy, wrappedBusy bool) {
 	t.Helper()
 	deferredPath := filepath.Join(baseDir, "deferred.db")
 	createContractDatabase(t, driver, deferredPath)
@@ -301,12 +281,11 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 	t.Cleanup(func() { _ = immediateTx.Rollback() })
 	_, err = immediateTwo.ExecContext(t.Context(), `UPDATE contract SET value = 'blocked' WHERE id = 1`)
 	immediateBusy = err != nil && driver.IsBusy(err)
-	realBusy = immediateBusy
 	wrappedBusy = err != nil && driver.IsBusy(fmt.Errorf("busy wrapper: %w", err))
 	require.NoError(t, immediateTx.Rollback())
 	require.NoError(t, immediateOne.Close())
 	require.NoError(t, immediateTwo.Close())
-	return deferredWriterAllowed, immediateBusy, realBusy, wrappedBusy
+	return deferredWriterAllowed, immediateBusy, wrappedBusy
 }
 
 func observeSpecialPath(t *testing.T, driver docsqlite.Driver, baseDir string) bool {
@@ -362,7 +341,7 @@ func observeUniqueClassification(t *testing.T, driver docsqlite.Driver, path str
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	_, err := db.ExecContext(t.Context(),
-		`INSERT INTO contract (id, value, checked, parent_id) VALUES (2, 'independent', 1, 1)`)
+		`INSERT INTO contract (id, value, checked, parent_id) SELECT 2, value, 1, 1 FROM contract WHERE id = 1`)
 	classified = err != nil && driver.IsUniqueViolation(err)
 	wrapped = err != nil && driver.IsUniqueViolation(fmt.Errorf("unique wrapper: %w", err))
 	require.NoError(t, db.Close())

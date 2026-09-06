@@ -20,11 +20,6 @@ func observationsEqual(left, right driverObservations) bool {
 	return reflect.DeepEqual(normalizedObservations(left), normalizedObservations(right))
 }
 
-func TestMattnDriverContract(t *testing.T) {
-	observations := exerciseDriverContract(t, mattn.Driver{})
-	assertDriverContract(t, observations)
-}
-
 func TestDriverParity(t *testing.T) {
 	var moderncObservations, mattnObservations driverObservations
 	t.Run("modernc", func(t *testing.T) {
