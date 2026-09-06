@@ -54,6 +54,35 @@ shorter document therefore cannot share an identity with a longer document
 whose retained evidence or remaining units were truncated by a normalization
 bound.
 
+## Build evidence from a supplied transcript
+
+Applications that already have transcript text can pass it through the same
+evidence and rendition contracts as other document families:
+
+```go
+evidencePolicy, err := document.NewEvidencePolicy(100_000)
+if err != nil {
+	return err
+}
+evidence, artifact, err := document.BuildTranscriptEvidenceV1(
+	document.SuppliedTranscript{Provider: "beeper", Text: transcript}, evidencePolicy,
+)
+if err != nil {
+	return err
+}
+_ = artifact // retain the provider transcript with the source record
+```
+
+The provider value must be a lowercase identifier. Docbank keeps the exact
+provider and transcript text in the `supplied-transcript/v1` JSON artifact,
+while normalized evidence and the rendition apply their existing Unicode,
+Markdown, and character limits. The evidence uses the `audio` family with a
+generic unit and `degraded_provenance` completeness because supplied text has
+no timing or speaker data. The caller still associates the transcript with the
+audio source and its source version. This operation does not inspect audio,
+run speech recognition, verify provider identity, or create ingestion and
+search records.
+
 ## Run Mistral OCR safely
 
 Mistral uploads fail closed until an operator has produced and supplied a
