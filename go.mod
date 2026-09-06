@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.38.0
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/mattn/go-sqlite3 v1.14.47

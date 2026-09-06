@@ -265,6 +265,31 @@ spending and scheduling limits, durable manifests, job orchestration, vector
 storage, and search serving. Docbank does not compute, store, or serve
 embeddings for its own vault.
 
+## Convert CSV locally for PDF OCR
+
+Go applications can use `document/csvpdf` to convert an explicitly declared `text/csv` source to a bounded PDF before using the existing PDF OCR path. Conversion runs locally and closes the supplied `ocr.Source.Content` on every path. It verifies the original byte count and SHA-256, parses CSV records, labels every cell, and counts the generated PDF pages before returning any result. It performs no upload or credential lookup.
+
+```go
+policy, err := csvpdf.NewPolicy(csvpdf.DefaultLimits())
+if err != nil {
+    return err
+}
+converted, err := csvpdf.Convert(ctx, originalCSV, policy)
+if err != nil {
+    return err
+}
+receipt := converted.Receipt()
+pdfSource, err := converted.Source()
+if err != nil {
+    return err
+}
+// Retain receipt with the source and pass pdfSource to the authorized PDF processor.
+```
+
+Defaults are also hard ceilings. A conversion accepts at most 1 MiB of source bytes, 10 MiB of PDF bytes, 10,000 records, 50,000 cells, 64 KiB per cell, and 100 generated pages. `NewPolicy` accepts positive tighter limits. The embedded Go Mono font supports a subset of Latin, Greek, Cyrillic and common punctuation or symbols. Conversion rejects missing glyphs, characters outside the Unicode basic multilingual plane, combining marks, shaping scripts, formatting controls, and control characters except cell newlines. Use precomposed accented characters such as `é`. CSV quoting, blank lines and CRLF normalization follow Go's `encoding/csv`; empty cells, variable-width records and quoted newlines remain represented. Long cells continue on subsequent generated pages. CSV formulas remain literal text.
+
+Retain both original and generated hashes and byte counts, the converter version, the conversion policy fingerprint, and the receipt's generated-page to original-record/cell spans. All span identifiers are one-based. A record can span multiple generated pages. PDF OCR evidence refers to generated pages, so applications must join that evidence through the receipt to cite original CSV cells. The receipt does not authorize upload. The application must separately verify its PDF capability manifest and consent, choose PDF byte and page limits that accommodate the conversion, and retain the conversion policy with that consent. This Go API does not add CSV OCR to the daemon or CLI.
+
 ## Package boundary
 
 The dependency direction is deliberate:
