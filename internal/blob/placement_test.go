@@ -594,23 +594,25 @@ func TestPlacementRunnerReschedulesFailedPhysicalCleanup(t *testing.T) {
 	operationID := createPlacementOperation(t, metadata, retirePlan)
 	runner.RetryDelay = 100 * time.Millisecond
 	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(supervisor.Stop)
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	require.NoError(t, runner.Start(supervisor, operationID))
 
 	select {
 	case <-failing.failed:
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("cleanup failure was not observed")
 	}
-	require.Eventually(t, func() bool {
-		operation, operationErr := metadata.StorageOperation(t.Context(), operationID)
-		return operationErr == nil && operation.State == store.StorageOperationQueued &&
-			operation.Error != ""
-	}, time.Second, time.Millisecond)
-	require.Eventually(t, func() bool {
-		operation, operationErr := metadata.StorageOperation(t.Context(), operationID)
-		return operationErr == nil && operation.State == store.StorageOperationCompleted
-	}, time.Second, 10*time.Millisecond)
+	// The synchronous retry test below checks the persisted queued state.
+	// Here, wait for automatic completion without racing the retry timer or
+	// imposing a one-second disk-I/O budget on Windows runners.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		snapshots := supervisor.Snapshot()
+		require.Len(c, snapshots, 1)
+		require.Equal(c, jobs.StatusCompleted, snapshots[0].Status, "%+v", snapshots[0])
+	}, 30*time.Second, 10*time.Millisecond)
+	operation, err := metadata.StorageOperation(t.Context(), operationID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, operation.State)
 }
 
 func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T) {
