@@ -6,6 +6,7 @@ import (
 )
 
 func TestLocalUnitCounterRegistryIsMistralOwnedAndBounded(t *testing.T) {
+	// This guards future registrations; no local counters are authorized today.
 	for formatID, counter := range localUnitCounters {
 		if counter == nil {
 			t.Fatalf("localUnitCounters[%q] is nil", formatID)

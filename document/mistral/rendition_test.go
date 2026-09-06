@@ -115,6 +115,8 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 }
 
 func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
+	// Keep this test and its subtests sequential: the synthetic authority below
+	// replaces package globals until cleanup. It does not enable DOCX in production.
 	policy := testPolicy(t, 1<<20, 10)
 	manifest := syntheticManifest(t, policy, true)
 
@@ -144,17 +146,14 @@ func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
 	}
 
 	descriptor := renditionDescriptor(t, policy, manifest, "docx")
-	response := fmt.Sprintf(
-		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"}],"usage_info":{"pages_processed":2,"doc_size_bytes":%d}}`,
-		len(documentZIP(t, map[string]string{
-			ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
-			"word/document.xml":   "<document/>",
-		})),
-	)
 	source := documentZIP(t, map[string]string{
 		ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
 		"word/document.xml":   "<document/>",
 	})
+	response := fmt.Sprintf(
+		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"}],"usage_info":{"pages_processed":2,"doc_size_bytes":%d}}`,
+		len(source),
+	)
 	digest := sha256.Sum256(source)
 	metadata := document.AuthorizedUploadMetadata{
 		Filename: "document.docx", MediaFamily: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -183,6 +182,14 @@ func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), result.Receipt.Usage.Units)
 	assert.Len(t, result.Evidence.Units, 2)
+
+	response = fmt.Sprintf(
+		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"},{"index":2,"markdown":"third"}],"usage_info":{"pages_processed":3,"doc_size_bytes":%d}}`,
+		len(source),
+	)
+	_, err = client.Render(t.Context(), &renditionUpload{Reader: bytes.NewReader(source), metadata: metadata}, authorization)
+	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
+	assert.ErrorIs(t, err, ErrCapabilityContract)
 }
 
 func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {

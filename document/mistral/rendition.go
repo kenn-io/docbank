@@ -161,13 +161,9 @@ func (client *RenditionClient) Render(
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if (candidate.ID == formatIDPDF || localUnits > 0) && int64(providerResult.UnitsProcessed) != localUnits {
-		message := "Mistral OCR unit count changed"
-		if candidate.ID == formatIDPDF {
-			message = "Mistral OCR page count changed"
-		}
+	if candidate.ID == formatIDPDF && int64(providerResult.UnitsProcessed) != localUnits {
 		return document.RenditionResult{}, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
-			message, ErrCapabilityContract)
+			"Mistral OCR page count changed", ErrCapabilityContract)
 	}
 	completedAt := time.Now().UTC()
 	if err := operation.Check(); err != nil {
@@ -217,31 +213,30 @@ func (client *RenditionClient) verifySource(
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
 			"Mistral input identity does not match authorization", nil)
 	}
-	if candidate.ID == formatIDPDF {
-		localUnits, err := formatdetect.CountPDFPages(source)
-		if err != nil {
-			return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
-				"Mistral PDF page count could not be verified", err)
-		}
-		if localUnits <= 0 || localUnits > int64(client.policy.values.MaxUnits) {
-			return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
-				"Mistral PDF exceeds the complete unit limit", nil)
-		}
-		return candidate, localUnits, nil
-	}
-	if expectedUnitBound(candidate.ID) != UnitBoundLocalExact {
+	var localUnits int64
+	countFailure := "Mistral OCR local unit count could not be verified"
+	limitFailure := "Mistral OCR exceeds the complete unit limit"
+	switch {
+	case candidate.ID == formatIDPDF:
+		localUnits, err = formatdetect.CountPDFPages(source)
+		countFailure = "Mistral PDF page count could not be verified"
+		limitFailure = "Mistral PDF exceeds the complete unit limit"
+	case expectedUnitBound(candidate.ID) == UnitBoundLocalExact:
+		var units int
+		units, err = countLocalUnits(candidate, bytes.NewReader(source), int64(len(source)))
+		localUnits = int64(units)
+	default:
 		return candidate, 0, nil
 	}
-	localUnits, err := countLocalUnits(candidate, bytes.NewReader(source), int64(len(source)))
 	if err != nil {
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
-			"Mistral OCR local unit count could not be verified", err)
+			countFailure, err)
 	}
-	if localUnits <= 0 || int64(localUnits) > int64(client.policy.values.MaxUnits) {
+	if localUnits <= 0 || localUnits > int64(client.policy.values.MaxUnits) {
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorPolicyRejected,
-			"Mistral OCR exceeds the complete unit limit", nil)
+			limitFailure, nil)
 	}
-	return candidate, int64(localUnits), nil
+	return candidate, localUnits, nil
 }
 
 func (client *RenditionClient) process(
