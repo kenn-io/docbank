@@ -316,9 +316,9 @@ func (client *EmbeddingClient) embedDirectFiles(ctx context.Context, inputs []do
 	values := client.profile.Policy.Values()
 	policy, err := NewPolicy(PolicyConfig{
 		Model: values.Model, Dimension: values.Dimension, Media: values.Media,
-		MaxBatchItems:    min(values.MaxBatchItems, client.profile.MaxBatchItems),
-		MaxRequestBytes:  min(values.MaxRequestBytes, client.profile.MaxRequestBytes),
-		MaxResponseBytes: min(values.MaxResponseBytes, client.profile.MaxResponseBytes),
+		MaxBatchItems:    client.profile.MaxBatchItems,
+		MaxRequestBytes:  client.profile.MaxRequestBytes,
+		MaxResponseBytes: client.profile.MaxResponseBytes,
 	})
 	if err != nil {
 		return document.EmbeddingResult{}, errors.New("voyage embedding: direct-file bounds are invalid")
@@ -675,6 +675,11 @@ func normalizeEmbeddingProfile(profile EmbeddingProfile) (EmbeddingProfile, docu
 		if !profile.Policy.valid() {
 			return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: direct-file policy is invalid")
 		}
+		// Fingerprinting, authorization, and the delegated client must share
+		// the same effective limits, including when defaults exceed Policy.
+		profile.MaxBatchItems = min(profile.MaxBatchItems, profile.Policy.values.MaxBatchItems)
+		profile.MaxRequestBytes = min(profile.MaxRequestBytes, profile.Policy.values.MaxRequestBytes)
+		profile.MaxResponseBytes = min(profile.MaxResponseBytes, profile.Policy.values.MaxResponseBytes)
 		if profile.Endpoint != profile.Policy.values.Endpoint {
 			return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: direct-file endpoint differs from capability policy")
 		}

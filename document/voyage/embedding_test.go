@@ -533,3 +533,62 @@ func TestDirectFileEmbeddingRejectsOversizedUploadBeforeReading(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectFileEmbeddingUsesEffectivePolicyLimits(t *testing.T) {
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxBatchItems: 2, MaxRequestBytes: 4096, MaxResponseBytes: 16 << 10})
+	require.NoError(t, err)
+	manifest, err := voyagetest.SyntheticManifest(policy)
+	require.NoError(t, err)
+	exact := voyageDirectFileProfile(t, policy, manifest)
+	exact.MaxBatchItems, exact.MaxRequestBytes, exact.MaxResponseBytes = 2, 4096, 16<<10
+	exact = refingerprintVoyageProfile(t, exact)
+	for _, defaults := range []bool{false, true} {
+		t.Run(strconv.FormatBool(defaults), func(t *testing.T) {
+			profile := voyageDirectFileProfile(t, policy, manifest)
+			if defaults {
+				profile.MaxBatchItems, profile.MaxRequestBytes, profile.MaxResponseBytes = 0, 0, 0
+			}
+			profile = refingerprintVoyageProfile(t, profile)
+			assert.Equal(t, exact.Descriptor.PolicyFingerprint, profile.Descriptor.PolicyFingerprint)
+			provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, failingEmbeddingResolver{})
+			require.NoError(t, err)
+			requests := 0
+			voyage.SetEmbeddingTestTransport(provider, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				requests++
+				response := httptest.NewRecorder()
+				writeVectors(t, response, [][]float32{unitVector(0, 1)}, 1)
+				return response.Result(), nil
+			}))
+			for _, bound := range []string{"exact", "batch", "response"} {
+				t.Run(bound, func(t *testing.T) {
+					requests = 0
+					authorization := voyageAuthorization(profile.Descriptor)
+					authorization.MaxBatchItems, authorization.MaxResponseBytes = 2, 16<<10
+					if bound == "batch" {
+						authorization.MaxBatchItems++
+					}
+					if bound == "response" {
+						authorization.MaxResponseBytes++
+					}
+					data := mediatest.PNG(2, 2, color.White)
+					source := &embeddingUpload{Reader: bytes.NewReader(data), metadata: document.AuthorizedUploadMetadata{
+						MediaFamily: "image", MediaType: "image/png", ByteLength: int64(len(data)), SHA256: fmt.Sprintf("%x", sha256.Sum256(data)),
+						CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile,
+					}}
+					_, err := document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "image", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}, authorization)
+					if bound == "exact" {
+						require.NoError(t, err)
+						require.Equal(t, 1, requests)
+					} else {
+						require.ErrorContains(t, err, "authorization exceeds profile capacity")
+						position, seekErr := source.Seek(0, io.SeekCurrent)
+						require.NoError(t, seekErr)
+						require.Zero(t, position)
+						require.Zero(t, requests)
+					}
+					require.True(t, source.closed)
+				})
+			}
+		})
+	}
+}
