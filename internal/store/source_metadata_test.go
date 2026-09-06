@@ -56,9 +56,7 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 	require.Error(t, err, "a head must not select another original's evidence")
 }
 
-// Coverage guard: this exercises the immutable-insert provenance used by the
-// source-metadata head conflict predicate.
-func TestSourceMetadataHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *testing.T) {
+func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
@@ -95,8 +93,8 @@ func TestSourceMetadataHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *te
 
 	active, activeMetadata, err = s.ActiveSourceMetadata(ctx, sourceSHA256)
 	require.NoError(t, err)
-	assert.Equal(t, generationB.GenerationID, active.GenerationID)
-	assert.Equal(t, "B", *activeMetadata.Fields[0].Value.String)
+	assert.Equal(t, generationA.GenerationID, active.GenerationID)
+	assert.Equal(t, "A", *activeMetadata.Fields[0].Value.String)
 	var generationCount int
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))

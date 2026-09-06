@@ -379,8 +379,8 @@ func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMet
 }
 
 // EnsureSourceMetadata returns current local metadata for one exact immutable
-// content version. When the current extractor has not processed those bytes,
-// it verifies and processes them synchronously before returning. Retrying the
+// content version. When no metadata is active for the current extractor,
+// it verifies and processes the bytes synchronously before returning. Retrying the
 // same version and extractor generation is idempotent. The call holds the
 // vault mutation lock for the whole extraction, so writes and maintenance
 // wait behind it.
