@@ -1,4 +1,4 @@
-package document
+package document_test
 
 import (
 	"encoding/json"
@@ -6,21 +6,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestBuildTranscriptEvidenceV1(t *testing.T) {
-	policy, err := NewEvidencePolicy(100)
+	policy, err := document.NewEvidencePolicy(100)
 	require.NoError(t, err)
 
-	evidence, artifact, err := BuildTranscriptEvidenceV1(SuppliedTranscript{
+	evidence, artifact, err := document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
 		Provider: "beeper",
 		Text:     "The shipment arrives at dock seven.",
 	}, policy)
 	require.NoError(t, err)
 
-	assert.Equal(t, EvidenceDegradedProvenance, evidence.Completeness)
+	assert.Equal(t, document.EvidenceDegradedProvenance, evidence.Completeness)
 	assert.Equal(t, "audio", evidence.Family)
-	assert.Equal(t, EvidenceUnitGeneric, evidence.UnitKind)
+	assert.Equal(t, document.EvidenceUnitGeneric, evidence.UnitKind)
 	require.Len(t, evidence.Units, 1)
 	assert.Equal(t, "The shipment arrives at dock seven.", evidence.Units[0].Text)
 	require.Len(t, evidence.Omissions, 1)
@@ -42,27 +43,34 @@ func TestBuildTranscriptEvidenceV1(t *testing.T) {
 }
 
 func TestBuildTranscriptEvidenceV1UsesCanonicalPolicyBoundary(t *testing.T) {
-	policy, err := NewEvidencePolicy(4)
+	policy, err := document.NewEvidencePolicy(4)
 	require.NoError(t, err)
 
-	evidence, artifact, err := BuildTranscriptEvidenceV1(SuppliedTranscript{
+	evidence, artifact, err := document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
 		Provider: "beeper", Text: "Café",
 	}, policy)
 	require.NoError(t, err)
 	assert.Equal(t, "Café", evidence.Units[0].Text)
 	assert.Contains(t, string(artifact.Payload), "Café")
 
-	_, _, err = BuildTranscriptEvidenceV1(SuppliedTranscript{
+	_, _, err = document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
 		Provider: "beeper", Text: "Café!",
 	}, policy)
 	require.ErrorContains(t, err, "character budget")
 }
 
 func TestBuildTranscriptEvidenceV1RejectsInvalidInput(t *testing.T) {
-	policy, err := NewEvidencePolicy(4)
+	evidence, artifact, err := document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
+		Provider: "beeper", Text: "words",
+	}, document.EvidencePolicy{})
+	require.ErrorContains(t, err, "use NewEvidencePolicy")
+	assert.Empty(t, evidence)
+	assert.Empty(t, artifact)
+
+	policy, err := document.NewEvidencePolicy(4)
 	require.NoError(t, err)
 
-	for name, input := range map[string]SuppliedTranscript{
+	for name, input := range map[string]document.SuppliedTranscript{
 		"blank":            {Provider: "beeper", Text: " \n\t"},
 		"invalid provider": {Provider: "Beeper", Text: "words"},
 		"invalid UTF-8":    {Provider: "beeper", Text: string([]byte{0xff})},
@@ -70,7 +78,7 @@ func TestBuildTranscriptEvidenceV1RejectsInvalidInput(t *testing.T) {
 		"over policy":      {Provider: "beeper", Text: "12345"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			evidence, artifact, err := BuildTranscriptEvidenceV1(input, policy)
+			evidence, artifact, err := document.BuildTranscriptEvidenceV1(input, policy)
 			require.Error(t, err)
 			assert.Empty(t, evidence)
 			assert.Empty(t, artifact)
@@ -79,19 +87,25 @@ func TestBuildTranscriptEvidenceV1RejectsInvalidInput(t *testing.T) {
 }
 
 func TestBuildTranscriptEvidenceV1KeepsArtifactIdentitySeparateFromNormalizedText(t *testing.T) {
-	policy, err := NewEvidencePolicy(100)
+	policy, err := document.NewEvidencePolicy(100)
 	require.NoError(t, err)
 
-	first, firstArtifact, err := BuildTranscriptEvidenceV1(SuppliedTranscript{
+	first, firstArtifact, err := document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
 		Provider: "beeper", Text: "Cafe\u0301\r\narrival",
 	}, policy)
 	require.NoError(t, err)
-	second, secondArtifact, err := BuildTranscriptEvidenceV1(SuppliedTranscript{
+	repeat, repeatArtifact, err := document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
+		Provider: "beeper", Text: "Cafe\u0301\r\narrival",
+	}, policy)
+	require.NoError(t, err)
+	second, secondArtifact, err := document.BuildTranscriptEvidenceV1(document.SuppliedTranscript{
 		Provider: "other", Text: "Café\narrival",
 	}, policy)
 	require.NoError(t, err)
 
 	assert.Equal(t, "Café\narrival", first.Units[0].Text)
+	assert.Equal(t, firstArtifact.SHA256, repeatArtifact.SHA256)
+	assert.Equal(t, first.Checksum, repeat.Checksum)
 	assert.NotEqual(t, firstArtifact.SHA256, secondArtifact.SHA256)
 	assert.NotEqual(t, first.Checksum, second.Checksum)
 	var payload struct {
