@@ -12,7 +12,9 @@ import (
 
 // Clear failures and capture suppression for every affected binding before
 // deleting attachments or sets. Work admitted under a registered profile may
-// still be running without a set row.
+// still be running without a set row. A scoped rendition purge fences bindings
+// only when it selects their current rendition; obsolete attachments already
+// fail the current-attachment check and must not suppress newer work.
 func prepareEmbeddingPurgeTx(
 	ctx context.Context, tx *sql.Tx, request PurgeRequest, asOf string,
 ) (_ []derivativePurgeSuppression, retErr error) {
@@ -32,6 +34,8 @@ func prepareEmbeddingPurgeTx(
 		UNION ALL
 		SELECT a.content_version_id,a.profile_fingerprint,0
 		FROM rendition_attachments a
+		JOIN rendition_heads h ON h.content_version_id=a.content_version_id
+		  AND h.profile_fingerprint=a.profile_fingerprint AND h.attachment_id=a.attachment_id
 		WHERE a.attachment_id IN (`+placeholders(len(request.AttachmentIDs))+`)
 		   OR a.build_id IN (`+placeholders(len(request.BuildIDs))+`)
 	)

@@ -345,6 +345,58 @@ func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
 	}
 }
 
+func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) {
+	for _, selector := range []string{"attachment", "build"} {
+		t.Run(selector, func(t *testing.T) {
+			s, versionID, profile, oldAttachmentID := newEmbeddingCatalogFixture(t)
+			var oldBuildID string
+			require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, oldAttachmentID).Scan(&oldBuildID))
+			build := catalogRenditionBuild(s, profile)
+			build.ID = testSHA256([]byte("replacement-embedding-build"))
+			build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
+			build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":0,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+			build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+			replacement := RenditionAttachmentRecord{
+				ID: testSHA256([]byte("replacement-embedding-attachment")), VaultID: s.VaultID(), ContentVersionID: versionID,
+				BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime,
+			}
+			require.NoError(t, publishRenditionForTest(t, s, replacement, embeddingCatalogTime,
+				testSHA256([]byte("replacement-embedding-lexical-generation"))))
+			set := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", replacement.ID)
+			require.NoError(t, s.StageEmbeddingSet(t.Context(), set))
+			head := EmbeddingHeadRecord{
+				Key:   EmbeddingHeadKey{ContentVersionID: versionID, BindingID: set.BindingID, InputKind: set.InputKind},
+				SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint,
+				PublishedAt: embeddingCatalogTime, FencingToken: 1,
+			}
+			require.NoError(t, s.PublishEmbeddingHead(t.Context(), head))
+			failure := EmbeddingFailureRecord{
+				ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+				BindingID: set.BindingID, InputKind: set.InputKind, AttachmentID: replacement.ID,
+				FencingToken: 2, FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+			}
+			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
+			request := PurgeRequest{AttachmentIDs: []string{oldAttachmentID}}
+			if selector == "build" {
+				request = PurgeRequest{BuildIDs: []string{oldBuildID}}
+			}
+			_, err := s.PurgeDerivatives(t.Context(), request)
+			require.NoError(t, err)
+			var oldAttachments, failures int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments WHERE attachment_id=?`, oldAttachmentID).Scan(&oldAttachments))
+			assert.Zero(t, oldAttachments, "the selected historical rendition is purged")
+			assert.Equal(t, set.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, set.BindingID, set.InputKind))
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures WHERE attachment_id=?`, replacement.ID).Scan(&failures))
+			assert.Equal(t, 1, failures, "purging history must preserve current failure status")
+			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
+			require.NoError(t, s.StageEmbeddingSet(t.Context(), set))
+			head.FencingToken = 3
+			require.NoError(t, s.PublishEmbeddingHead(t.Context(), head))
+		})
+	}
+}
+
 func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
 	for _, selector := range []string{"attachment", "build", "version", "all"} {
 		t.Run(selector, func(t *testing.T) {
