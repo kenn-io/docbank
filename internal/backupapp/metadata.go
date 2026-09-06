@@ -55,7 +55,7 @@ type derivativeClassAccumulator struct {
 
 func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*DerivativeAuthorityStats, bool, error) {
 	classes := make(map[string]*derivativeClassAccumulator)
-	persistedRoles := store.PersistedRenditionArtifactRoles()
+	roleOrder := store.PersistedRenditionArtifactRoles()
 	get := func(classification, class string) *derivativeClassAccumulator {
 		item := classes[class]
 		if item != nil {
@@ -87,8 +87,8 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 			if err := rows.Scan(&role, &buildID, &artifactID, &blobHash, &size, &checksum); err != nil {
 				return fmt.Errorf("scanning derivative artifact: %w", err)
 			}
-			if !slices.Contains(persistedRoles, role) {
-				return errors.New("derivative artifact class is not catalog-authorized")
+			if !slices.Contains(roleOrder, role) {
+				return fmt.Errorf("derivative artifact class %q is not catalog-authorized", role)
 			}
 			item := get("included", role)
 			if err := addDerivativeClassBytes(&item.LogicalBytes, size); err != nil {
@@ -185,11 +185,11 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 		return nil, false, nil
 	}
 	// Synthetic classes are local to backupapp and follow persisted roles.
-	ordered := append(store.PersistedRenditionArtifactRoles(), "visual_preview", "lexical_projection")
+	roleOrder = append(roleOrder, "visual_preview", "lexical_projection")
 	result := &DerivativeAuthorityStats{
 		Version: derivativeAuthorityVersion, ProviderDependent: []string{},
 	}
-	for _, class := range ordered {
+	for _, class := range roleOrder {
 		item := classes[class]
 		if item == nil {
 			continue
@@ -197,10 +197,6 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 		item.BlobCount = int64(len(item.blobs))
 		item.Checksum = hex.EncodeToString(item.checksum.Sum(nil))
 		result.Classes = append(result.Classes, item.DerivativeClassStats)
-		delete(classes, class)
-	}
-	if len(classes) != 0 {
-		return nil, false, errors.New("backupapp: derivative artifact class is not catalog-authorized")
 	}
 	return result, true, nil
 }

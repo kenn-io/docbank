@@ -1,6 +1,7 @@
 package backupapp
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestDerivativeAuthorityStatsRefuseUnregisteredRole(t *testing.T) {
 			require.NoError(t, err)
 
 			stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
-			require.EqualError(t, err, "backupapp: derivative artifact class is not catalog-authorized")
+			require.EqualError(t, err, fmt.Sprintf("backupapp: derivative artifact class %q is not catalog-authorized", role))
 			assert.False(t, present)
 			assert.Nil(t, stats)
 		})
