@@ -292,6 +292,10 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1",
 	})
 	rec.PID = cmd.Process.Pid
+	identity, ok := kitdaemon.ReadProcessIdentity(rec.PID)
+	require.True(t, ok, "read helper process identity")
+	rec.ProcessIdentity = ""
+	rec.ProcessIdentityV2 = identity
 	rec.Metadata = map[string]string{
 		metaCreateTime: strconv.FormatInt(created, 10),
 		metaAPIKey:     "key", metaProtocolVersion: daemonProtocolVersion,

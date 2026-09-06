@@ -257,7 +257,9 @@ func ensureDaemonWithOptions(
 		return res, err
 	}
 	rec, _, ok, err := discoverWithOptions(ctx, root, opts)
-	if err != nil {
+	// An unreachable endpoint still needs the recorded-process replacement
+	// path below. Other discovery failures must stop acquisition.
+	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
 	if ok {
@@ -268,7 +270,7 @@ func ensureDaemonWithOptions(
 	// Serialize racing starters; re-check under the lock.
 	err = WithLaunchLock(ctx, root, func() error {
 		rec, _, ok, err = discoverWithOptions(ctx, root, opts)
-		if err != nil {
+		if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
 		if ok {
@@ -278,7 +280,7 @@ func ensureDaemonWithOptions(
 
 		// Any live incompatible daemon blocks the vault lock: replace it.
 		old, _, found, findErr := Find(ctx, root)
-		if findErr != nil {
+		if findErr != nil && !errors.Is(findErr, kitdaemon.ErrDaemonUnreachable) {
 			return findErr
 		}
 		if found {
@@ -519,7 +521,7 @@ func Stop(ctx context.Context, root string) (bool, error) {
 		return false, err
 	}
 	rec, _, ok, err := Find(ctx, root)
-	if err != nil {
+	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return false, err
 	}
 	if ok {
