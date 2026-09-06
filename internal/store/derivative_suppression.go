@@ -70,51 +70,57 @@ func (s *Store) AuthorizeDerivativeRebuild(
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		prior, err := loadDerivativePurgeSuppressionTx(ctx, tx, authorization.SourceSHA256,
-			profileFingerprint, authorization.PurgedBuildID)
-		if err != nil {
-			return fmt.Errorf("authorizing derivative rebuild: %w", err)
+		return s.authorizeDerivativeRebuildTx(ctx, tx, authorization, profileFingerprint)
+	})
+}
+
+func (s *Store) authorizeDerivativeRebuildTx(
+	ctx context.Context, tx *sql.Tx, authorization DerivativeRebuildAuthorization, profileFingerprint string,
+) error {
+	prior, err := loadDerivativePurgeSuppressionTx(ctx, tx, authorization.SourceSHA256,
+		profileFingerprint, authorization.PurgedBuildID)
+	if err != nil {
+		return fmt.Errorf("authorizing derivative rebuild: %w", err)
+	}
+	resulting := prior
+	resulting.active = false
+	resulting.supersededAt = authorization.AuthorizedAt
+	resulting.supersedingBuildID = authorization.SupersedingBuildID
+	if !prior.active {
+		if prior == resulting {
+			return nil
 		}
-		resulting := prior
-		resulting.active = false
-		resulting.supersededAt = authorization.AuthorizedAt
-		resulting.supersedingBuildID = authorization.SupersedingBuildID
-		if !prior.active {
-			if prior == resulting {
-				return nil
-			}
-			return errors.New("derivative purge suppression was already superseded differently")
-		}
-		result, err := tx.ExecContext(ctx, `
+		return errors.New("derivative purge suppression was already superseded differently")
+	}
+	result, err := tx.ExecContext(ctx, `
 			UPDATE derivative_purge_suppressions
 			SET active=0,superseded_at=?,superseding_build_id=?
 			WHERE source_sha256=? AND profile_fingerprint=? AND build_id=? AND active=1`,
-			authorization.AuthorizedAt, authorization.SupersedingBuildID,
-			authorization.SourceSHA256, profileFingerprint,
-			authorization.PurgedBuildID)
-		if err != nil {
-			return fmt.Errorf("superseding derivative purge suppression: %w", err)
-		}
-		count, err := rowsAffectedInt(result)
-		if err != nil {
-			return err
-		}
-		if count != 1 {
-			return errors.New("derivative purge suppression changed concurrently")
-		}
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !active {
-			return nil
-		}
-		change, err := derivativeSuppressionAuditChange(prior, resulting)
-		if err != nil {
-			return err
-		}
-		return s.persistAuditedDerivativeSuppressionChanges(ctx, tx, []audit.Record{change})
-	})
+		authorization.AuthorizedAt, authorization.SupersedingBuildID,
+		authorization.SourceSHA256, profileFingerprint,
+		authorization.PurgedBuildID)
+	if err != nil {
+		return fmt.Errorf("superseding derivative purge suppression: %w", err)
+	}
+	count, err := rowsAffectedInt(result)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("derivative purge suppression changed concurrently")
+	}
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return nil
+	}
+	change, err := derivativeSuppressionAuditChange(prior, resulting)
+	if err != nil {
+		return err
+	}
+	return s.persistAuditedDerivativeSuppressionChanges(ctx, tx, []audit.Record{change})
 }
 
 func installDerivativePurgeSuppressionsTx(

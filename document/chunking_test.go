@@ -706,6 +706,37 @@ func TestEmbeddingInputGenerationDecodeAppliesCallerBounds(t *testing.T) {
 	require.ErrorContains(t, err, "decode bound is invalid")
 }
 
+func TestEmbeddingInputGenerationValidatesEvidenceSpans(t *testing.T) {
+	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "é界AB", heading: []string{"Evidence"}}})
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*GeneratedEmbeddingInput)
+	}{
+		{"missing unit", func(input *GeneratedEmbeddingInput) { input.SourceSpan.UnitIndex = 1 }},
+		{"out of bounds", func(input *GeneratedEmbeddingInput) { input.SourceSpan.CharEnd = 100 }},
+		{"wrong span", func(input *GeneratedEmbeddingInput) {
+			input.SourceSpan.CharStart++
+			input.SourceSpan.CharEnd++
+		}},
+		{"headings", func(input *GeneratedEmbeddingInput) { input.HeadingPath = []string{"Invented"} }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			generation := build(t, evidence, testInputPolicy(t, 1, 0))
+			require.NoError(t, generation.ValidateEvidence(evidence))
+			testCase.mutate(&generation.Inputs[0])
+			var err error
+			generation.Checksum, err = generationChecksum(generation)
+			require.NoError(t, err)
+			_, err = MarshalEmbeddingInputGeneration(generation)
+			require.NoError(t, err, "the forgery must satisfy internal generation validation")
+			require.ErrorContains(t, generation.ValidateEvidence(evidence), "source span")
+		})
+	}
+	generation := build(t, evidence, testInputPolicy(t, 1, 0))
+	otherEvidence := testChunkEvidence(t, []sourceChunkUnit{{text: "Other text"}})
+	require.ErrorContains(t, generation.ValidateEvidence(otherEvidence), "evidence checksum")
+}
+
 func TestEmbeddingInputGenerationMapsContextIntoE1ExactlyOnce(t *testing.T) {
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Evidence"}}})
 	attachment, err := NewAttachmentContextSnapshot("Human title", "Human context")
@@ -866,6 +897,7 @@ func testChunkEvidence(t *testing.T, units []sourceChunkUnit) NormalizedEvidence
 
 func assertGenerationSpans(t *testing.T, evidence NormalizedEvidenceV1, generation EmbeddingInputGeneration) {
 	t.Helper()
+	require.NoError(t, generation.ValidateEvidence(evidence))
 	for _, input := range generation.Inputs {
 		span := input.SourceSpan
 		require.GreaterOrEqual(t, span.UnitIndex, 0)

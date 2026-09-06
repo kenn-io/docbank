@@ -214,6 +214,43 @@ func DecodeEmbeddingInputGeneration(data []byte, bounds EmbeddingInputGeneration
 	return generation, nil
 }
 
+// ValidateEvidence verifies that each input's text and headings come from its
+// declared span in the canonical evidence. Checksums within a generation alone
+// cannot establish this relationship.
+func (generation EmbeddingInputGeneration) ValidateEvidence(evidence NormalizedEvidenceV1) error {
+	if err := validateEmbeddingInputGeneration(generation); err != nil {
+		return err
+	}
+	_, checksum, err := MarshalNormalizedEvidenceV1(evidence)
+	if err != nil {
+		return err
+	}
+	if checksum != generation.EvidenceChecksum {
+		return errors.New("embedding generation evidence checksum mismatch")
+	}
+	unitRunes := make(map[int][]rune)
+	for index, input := range generation.Inputs {
+		span := input.SourceSpan
+		if span.UnitIndex < 0 || span.UnitIndex >= len(evidence.Units) {
+			return fmt.Errorf("embedding input %d source span names a missing evidence unit", index)
+		}
+		unit := evidence.Units[span.UnitIndex]
+		runes, ok := unitRunes[span.UnitIndex]
+		if !ok {
+			runes = []rune(unit.Text)
+			unitRunes[span.UnitIndex] = runes
+		}
+		if span.CharStart < 0 || span.CharEnd <= span.CharStart || span.CharEnd > len(runes) ||
+			string(runes[span.CharStart:span.CharEnd]) != input.Content {
+			return fmt.Errorf("embedding input %d content does not match evidence source span", index)
+		}
+		if !slices.Equal(input.HeadingPath, unit.HeadingPath) {
+			return fmt.Errorf("embedding input %d headings do not match evidence source span", index)
+		}
+	}
+	return nil
+}
+
 // ToEmbeddingInputs reconstructs the contextualized pre-envelope text for E1.
 // The complete model-input fingerprint must match before any input is exposed,
 // even when two contracts happen to share a document envelope.
