@@ -58,15 +58,21 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
-Search accepts an optional `q` query. Omitting it is valid only when `tag_id`,
-`modified_since`, or `modified_before` bounds the page. The resulting
-filter-only hits are ordered by current `modified_at` descending and identify
-their source with `match: "filter"`; `mime_type` and `under_node_id` can
-narrow an anchored page but cannot anchor an empty query alone. An empty
-unanchored query returns `422 validation`. The normal `limit` and `truncated`
-contract remains in force, without a cursor. Filter-only selection may scan
-all live nodes before applying `limit`, so large-vault callers should use a
-narrow time or tag bound.
+Search accepts an optional `q` query. An omitted, empty, or whitespace-only
+query requires `tag_id`, `modified_since`, or `modified_before`. This is a
+request rule; `limit` bounds the response size, not the database work.
+Filter-only hits include live files and directories except the vault root.
+They are ordered by current `modified_at` descending, then name and ID, and
+identify their source with `match: "filter"`. `mime_type` and `under_node_id`
+narrow a page but cannot anchor a blank query alone. A blank unanchored query
+returns `422 search_query_required`.
+
+Tag selection uses the tag index; time-window selection has a live-node index
+matching the result ordering. Combined filters can still require substantial
+work before reaching `limit`. The normal `limit` and `truncated` contract
+remains in force, without a cursor. If `truncated` is true, the page is
+incomplete. Narrowing time bounds cannot split a group with identical
+modification timestamps, such as nodes restored together.
 
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
@@ -308,7 +314,7 @@ transparency log are outside docbank's current trust model.
 
 ## Addendum: `POST /ingest`, `POST /ingest/stream`, and `POST /ingest/preflight`
 
-`POST /ingest/preflight` takes `{paths: [...], exclude: [...]}` and performs a
+`POST /ingest/preflight` takes `{paths: [...], include: [...], exclude: [...]}` and performs a
 metadata-only source inventory. It opens no regular-file content and writes no
 vault metadata or blobs. Its report includes file/directory/logical-byte totals,
 pack-eligible, loose-only, and rejected size classes, exclusion/skip/error
@@ -317,9 +323,12 @@ absolute-path validation, explicit root-directory-symlink behavior, exclusion
 rules, loopback fence, and timeout exemption as the real ingest. Findings are
 observations rather than a snapshot lock: sources can still change before
 ingest, and metadata-only scanning cannot prove later content readability.
+Include and exclude patterns use `/` separators on every platform; a backslash
+in a pattern is rejected. Entries filtered by a rule are excluded without
+failure, while selected non-regular entries are reported as skipped findings.
 
 `POST /ingest` takes **server-side local paths** — `{paths: [...],
-dest: "/inbox", exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
+dest: "/inbox", include: [...], exclude: [...]}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
 per-path `failed` entries), backing `docbank add`. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves `docbank
@@ -344,10 +353,18 @@ capability on this route: remote bytes use `POST /uploads`, while remote access
 to the loopback-bound daemon still terminates through the configured SSH/VPN
 tunnel.
 
-Each exclusion is either a bare entry name, matched at any depth, or a relative
-path containing `/`, matched within every supplied source. Matching a directory
-prunes its subtree. The preflight and ingest implementations share this matcher
-so reviewed selection and actual selection cannot drift.
+Each include or exclude pattern uses Go's `path.Match` grammar over a
+slash-separated source-relative path. Use `/` separators on every platform;
+backslashes are rejected. A pattern without `/` matches a basename
+at any depth; a pattern containing `/` matches the relative path. `*` and `?`
+do not cross `/`, and `**` has no recursive globstar behavior. An include filters
+regular files only, while a matching exclusion wins and prunes a directory's
+subtree. The preflight and ingest implementations share this compiler so
+reviewed selection and actual selection cannot drift. Patterns must be relative;
+invalid syntax and parent traversal are rejected before filesystem access. Use
+bracket expressions such as `report[[]1].txt` for literal metacharacters instead
+of backslash escaping.
+Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: `POST /uploads`
 
@@ -580,6 +597,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
+| `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
 | `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |

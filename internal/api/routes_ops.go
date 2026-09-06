@@ -97,19 +97,17 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "preflightIngest", Method: http.MethodPost, Path: "/api/v1/ingest/preflight",
 		Summary: "Inventory server-side files without opening content or mutating the vault",
 	}, func(ctx context.Context, in *struct {
-		Body struct {
-			Paths   []string `json:"paths" minItems:"1"`
-			Exclude []string `json:"exclude,omitempty"`
-		}
+		Body IngestPreflightRequest
 	}) (*ingestPreflightOutput, error) {
 		if err := validateIngestPaths(in.Body.Paths); err != nil {
 			return nil, err
 		}
-		opts := ingest.Options{Exclude: in.Body.Exclude}
-		if err := ingest.ValidateOptions(opts); err != nil {
+		opts := ingest.Options{Include: in.Body.Include, Exclude: in.Body.Exclude}
+		selection, err := ingest.CompileSelection(opts)
+		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
-		report, err := ingest.Preflight(ctx, in.Body.Paths, opts)
+		report, err := ingest.PreflightWithSelection(ctx, in.Body.Paths, selection)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -120,13 +118,13 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "ingest", Method: http.MethodPost, Path: "/api/v1/ingest",
 		Summary: "Import server-side files or directory trees (loopback callers only)",
 	}, func(ctx context.Context, in *struct {
-		Body ingestRequest
+		Body IngestRequest
 	}) (*ingestOutput, error) {
-		dest, opts, err := ingestParams(in.Body)
+		dest, opts, selection, err := ingestParams(in.Body)
 		if err != nil {
 			return nil, err
 		}
-		report, err := runIngest(ctx, d, g, in.Body.Paths, dest, opts)
+		report, err := runIngest(ctx, d, g, in.Body.Paths, dest, opts, selection)
 		return &ingestOutput{Body: report}, err
 	})
 
@@ -146,9 +144,9 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			},
 		},
 	}, func(_ context.Context, in *struct {
-		Body ingestRequest
+		Body IngestRequest
 	}) (*huma.StreamResponse, error) {
-		dest, opts, err := ingestParams(in.Body)
+		dest, opts, selection, err := ingestParams(in.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +157,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			defer cancel()
 			stream := newEventStreamWriter[IngestEvent](hctx.BodyWriter(), cancel)
 			stream.send(IngestEvent{Type: "progress", Progress: &IngestProgress{Stage: "scan"}})
-			preflight, scanErr := ingest.Preflight(runCtx, in.Body.Paths, opts)
+			preflight, scanErr := ingest.PreflightWithSelection(runCtx, in.Body.Paths, selection)
 			if stream.err() != nil {
 				return
 			}
@@ -185,7 +183,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 					Failed: event.Failed, Final: event.Final,
 				}})
 			}
-			report, ingestErr := runIngest(runCtx, d, g, in.Body.Paths, dest, opts)
+			report, ingestErr := runIngest(runCtx, d, g, in.Body.Paths, dest, opts, selection)
 			if stream.err() != nil {
 				return
 			}
@@ -303,19 +301,14 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	})
 }
 
-type ingestRequest struct {
-	Paths   []string `json:"paths" minItems:"1"`
-	Dest    string   `json:"dest" default:"/inbox"`
-	Exclude []string `json:"exclude,omitempty"`
-}
-
-func ingestParams(body ingestRequest) (string, ingest.Options, error) {
+func ingestParams(body IngestRequest) (string, ingest.Options, ingest.Selection, error) {
 	if err := validateIngestPaths(body.Paths); err != nil {
-		return "", ingest.Options{}, err
+		return "", ingest.Options{}, ingest.Selection{}, err
 	}
-	opts := ingest.Options{Exclude: body.Exclude}
-	if err := ingest.ValidateOptions(opts); err != nil {
-		return "", ingest.Options{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+	opts := ingest.Options{Include: body.Include, Exclude: body.Exclude}
+	selection, err := ingest.CompileSelection(opts)
+	if err != nil {
+		return "", ingest.Options{}, ingest.Selection{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	}
 	// The schema default covers an absent dest, not an explicit ""
 	// (which MkdirAll would treat as the vault root).
@@ -324,10 +317,10 @@ func ingestParams(body ingestRequest) (string, ingest.Options, error) {
 		dest = "/inbox"
 	}
 	if !strings.HasPrefix(dest, "/") {
-		return "", ingest.Options{}, NewError(http.StatusUnprocessableEntity, "validation",
+		return "", ingest.Options{}, ingest.Selection{}, NewError(http.StatusUnprocessableEntity, "validation",
 			fmt.Sprintf("dest %q must be an absolute virtual path (start with /)", dest))
 	}
-	return dest, opts, nil
+	return dest, opts, selection, nil
 }
 
 func runIngest(
@@ -337,12 +330,13 @@ func runIngest(
 	paths []string,
 	dest string,
 	opts ingest.Options,
+	selection ingest.Selection,
 ) (IngestReport, error) {
 	var out IngestReport
 	err := g.mutate(func() error {
 		return d.Blobs.WithMutation(ctx, func() error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			rep, err := ing.AddPathsWithOptions(ctx, paths, dest, opts)
+			rep, err := ing.AddPathsWithSelection(ctx, paths, dest, opts, selection)
 			if err != nil {
 				return FromStoreError(err)
 			}

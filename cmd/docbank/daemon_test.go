@@ -99,17 +99,30 @@ func TestServeRecoversInterruptedRestoreBeforeInitializingVault(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runServe(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			require.Fail(t, "daemon did not shut down")
+		}
+	})
+	healthClient := &http.Client{Timeout: time.Second}
 	require.Eventually(t, func() bool {
 		records, listErr := client.RuntimeStore(dir).List()
-		return listErr == nil && len(records) == 1
+		if listErr != nil || len(records) != 1 {
+			return false
+		}
+		// Discovery is published before worker registration finishes. Wait for
+		// serving readiness before asking a successfully started daemon to stop.
+		response, err := healthClient.Get("http://" + records[0].Address + "/health")
+		if err != nil {
+			return false
+		}
+		_ = response.Body.Close()
+		return response.StatusCode == http.StatusOK
 	}, 10*time.Second, 50*time.Millisecond)
-	cancel()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not shut down")
-	}
 	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(dir, "blobs"))
 	require.NoError(t, err)
 	assert.False(t, pending)

@@ -42,7 +42,14 @@ id:198     content  /taxes/2026/car-insurance-notes.md
   results are ordered by `modified_at` descending and each hit reports
   `filter` in the `MATCH` column. The default limit and truncation behavior
   are unchanged. A blank query with only `--mime-type` or `--under` is rejected;
-  those options narrow an anchored search but don't anchor one.
+  those options narrow an anchored search but don't anchor one. Blank includes
+  whitespace-only queries. Results include live files and directories, excluding
+  the vault root. The limit bounds the response size, not database work.
+- **Truncation is not pagination.** If `truncated` is true, the page is incomplete.
+  Increasing the limit or narrowing filters may help, but time bounds cannot
+  split results with identical modification timestamps. For example, restoring
+  more than 1,000 nodes together can leave some unreachable through time bounds
+  alone, even at the maximum limit. Search has no continuation cursor.
 - **Live nodes only.** Trashed documents don't appear; restore returns
   them to the index. Renames update the index immediately.
 - **Current content only.** Retained prior versions stay available through

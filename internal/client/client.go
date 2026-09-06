@@ -267,6 +267,7 @@ func (c *Client) Close() error {
 // codeToTypedErr preserves server problem codes that have a stable local
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
+	"search_query_required":        store.ErrSearchQueryRequired,
 	"not_found":                    store.ErrNotFound,
 	"exists":                       store.ErrExists,
 	"cycle":                        store.ErrCycle,
@@ -847,13 +848,6 @@ func (c *Client) SearchWithOptions(
 	)
 	if err != nil {
 		return out, err
-	}
-	normalizedOpts := store.SearchOptions{
-		TagID: opts.TagID, MIMEType: mimeType, UnderNodeID: opts.UnderNodeID,
-		ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
-	}
-	if store.SearchNeedsQuery(query, normalizedOpts) {
-		return out, store.ErrSearchQueryRequired
 	}
 	queryValues := url.Values{}
 	queryValues.Set("q", query)
@@ -1999,20 +1993,21 @@ func canonicalDirectoryPath(path string) (string, error) {
 }
 
 func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.IngestReport, error) {
-	return c.IngestWithOptions(ctx, paths, dest, nil)
+	return c.IngestWithOptions(ctx, paths, dest, nil, nil)
 }
 
-// IngestWithOptions imports server-side paths with the same exclusion rules
+// IngestWithOptions imports server-side paths with the same selection rules
 // accepted by PreflightIngest.
 func (c *Client) IngestWithOptions(
 	ctx context.Context,
 	paths []string,
 	dest string,
+	include []string,
 	exclude []string,
 ) (api.IngestReport, error) {
 	var rep api.IngestReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest", nil,
-		map[string]any{"paths": paths, "dest": dest, "exclude": exclude}, &rep)
+		map[string]any{"paths": paths, "dest": dest, "include": include, "exclude": exclude}, &rep)
 	return rep, err
 }
 
@@ -2023,11 +2018,12 @@ func (c *Client) IngestStream(
 	ctx context.Context,
 	paths []string,
 	dest string,
+	include []string,
 	exclude []string,
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
 	body, err := marshalJSONRequest(map[string]any{
-		"paths": paths, "dest": dest, "exclude": exclude,
+		"paths": paths, "dest": dest, "include": include, "exclude": exclude,
 	})
 	if err != nil {
 		return api.IngestReport{}, fmt.Errorf("encoding ingest request: %w", err)
@@ -2098,11 +2094,12 @@ func (c *Client) IngestStream(
 func (c *Client) PreflightIngest(
 	ctx context.Context,
 	paths []string,
+	include []string,
 	exclude []string,
 ) (api.IngestPreflightReport, error) {
 	var rep api.IngestPreflightReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest/preflight", nil,
-		map[string]any{"paths": paths, "exclude": exclude}, &rep)
+		map[string]any{"paths": paths, "include": include, "exclude": exclude}, &rep)
 	return rep, err
 }
 

@@ -208,8 +208,14 @@ The `q` parameter may be omitted when `tag_id`, `modified_since`, or
 `modified_before` is present. This returns a bounded filter page ordered by
 `modified_at` descending, with `match: "filter"` on every hit. A MIME or
 subtree filter can narrow that page but cannot anchor an empty query by itself;
-an empty query without a tag or time bound is a validation error. Always inspect
-`truncated` and increase `limit` or add a narrower filter when needed.
+a blank or whitespace-only query without a tag or time bound returns
+`422 search_query_required`. Results include live files and directories, but
+exclude the vault root. The limit bounds response size, not database work.
+Always inspect `truncated`: a true value means the page is incomplete.
+Increasing `limit` or narrowing filters may help, but time bounds cannot split
+nodes with identical modification timestamps, such as a restored subtree.
+Search has no continuation cursor and cannot guarantee complete enumeration
+of a time window.
 
 ```bash
 curl --fail-with-body --get \
@@ -595,13 +601,13 @@ filesystem metadata but does not open file content or mutate the vault:
 curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
-  --data '{"paths":["/Users/me/Dropbox"],"exclude":[".git",".Trash"]}' \
+  --data '{"paths":["/Users/me/Dropbox"],"include":["*.pdf"],"exclude":[".git",".Trash"]}' \
   "$DOCBANK_URL/api/v1/ingest/preflight"
 ```
 
 Require `errors == 0` and `rejected.files == 0`, inspect every returned
-finding, and retain the exact exclusion list for ingest. Findings and extension
-groups are bounded; their count and truncation fields say when the detailed
+finding, and retain the exact include and exclusion lists for ingest. Findings
+and extension groups are bounded; their count and truncation fields say when the detailed
 arrays are samples rather than complete lists. A non-UTF-8 filesystem entry is
 an error with an escaped printable path and is never opened or imported.
 
@@ -609,13 +615,21 @@ an error with an escaped printable path and is never opened or imported.
 curl --fail-with-body -X POST \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   -H 'Content-Type: application/json' \
-  --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts","exclude":[]}' \
+  --data '{"paths":["/Users/me/Downloads/receipt.pdf"],"dest":"/receipts","include":[],"exclude":[]}' \
   "$DOCBANK_URL/api/v1/ingest"
 ```
 
 Inspect `added`, `skipped`, `excluded`, and every member of `failed`. Repeating the same
 ingest after fixing a partial failure is safe; successful content converges to
 `skipped` rather than another copy.
+
+Include and exclude values use Go's `path.Match` grammar on slash-separated
+source-relative paths. Use `/` separators on every platform; backslashes are
+rejected. A pattern without `/` matches basenames at any depth;
+exclusions win, and include patterns do not prune directories. Invalid patterns
+are rejected before traversal. Use bracket expressions such as
+`report[[]1].txt` for literal metacharacters instead of backslash escaping.
+Watched-inbox exclusions remain literal.
 
 For an interactive or long-running local integration, send the same body to
 `POST /api/v1/ingest/stream` with `Accept: application/x-ndjson`. Read every

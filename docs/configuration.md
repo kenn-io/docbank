@@ -170,8 +170,9 @@ explicit operator choices.
 Each `[[watch]]` entry makes the daemon poll one local directory recursively.
 `source` must be absolute or begin with `~/`; `destination` is an absolute path
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
-source are ignored. `exclude` uses the same literal name-or-relative-path rules
-as repeated `docbank add --exclude` flags; it is not glob syntax.
+source are ignored. `exclude` remains a literal name-or-relative-path rule. It
+is independent of the glob include and exclude patterns accepted by
+`docbank add`.
 
 Traversal stays on the source's filesystem mount. It does not enter symlinks,
 Windows directory reparse points, or nested mounts; configure another

@@ -205,6 +205,45 @@ func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) 
 	assert.Equal(t, "Current event", title)
 }
 
+func TestVaultEnsureSourceMetadataRestoresPreviouslyRecordedExtractorGeneration(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Current event\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	receipt, err := vault.Create(t.Context(), "/calendar.ics", bytes.NewReader(content), CreateOptions{
+		MediaType: "text/calendar", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	current, err := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+
+	// Model a vault reopened after another binary published its own evidence.
+	otherCanonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{
+			Key: "title", Namespace: "calendar", SourceField: "SUMMARY",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Other event")},
+		}},
+	})
+	require.NoError(t, err)
+	otherFingerprint := contentIdentity([]byte("other extractor")).SHA256
+	_, err = vault.metadata.PublishSourceMetadata(t.Context(), receipt.Version.BlobHash, otherFingerprint, otherCanonical)
+	require.NoError(t, err)
+	other, err := vault.SourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	require.Equal(t, otherFingerprint, other.ExtractorFingerprint)
+
+	publications := 0
+	vault.testAfterSourceMetadataPublication = func() { publications++ }
+	for range 3 {
+		metadata, err := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+		require.NoError(t, err)
+		assert.Equal(t, current, metadata)
+	}
+	assert.Equal(t, 1, publications, "only the first ensure should reprocess the original")
+}
+
 func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
@@ -395,6 +434,58 @@ func TestVaultEnsureVisualPreviewProducesBoundedJPEG(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4096, decoded.Bounds().Dx())
 	assert.Equal(t, 2, decoded.Bounds().Dy())
+}
+
+func TestVaultEnsureVisualPreviewReusesRecordedRecipeAfterHeadAdvances(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		source    []byte
+		mediaType string
+		state     document.VisualPreviewState
+	}{
+		{"ready", mediatest.JPEG(3, 2, color.White), "image/jpeg", document.VisualPreviewReady},
+		{"unsupported", []byte("plain text"), "text/plain", document.VisualPreviewUnsupported},
+		{"failed", []byte("malformed jpeg"), "image/jpeg", document.VisualPreviewFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vault, err := New(t.Context(), Config{Root: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			receipt, err := vault.Create(t.Context(), "/source", bytes.NewReader(test.source), CreateOptions{
+				MediaType: test.mediaType, Expected: contentIdentity(test.source),
+			})
+			require.NoError(t, err)
+			current, err := vault.EnsureVisualPreview(t.Context(), receipt.Version.ID)
+			require.NoError(t, err)
+			require.Equal(t, test.state, current.State)
+
+			otherRecipe := current.Recipe
+			otherRecipe.ProcessorFingerprint = strings.Repeat("4", 64)
+			canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+				ContractVersion: document.VisualPreviewContractV1, SourceSHA256: receipt.Version.BlobHash,
+				Recipe: otherRecipe, State: document.VisualPreviewUnsupported,
+				Failure: &document.VisualPreviewFailureV1{Code: "unsupported_media_type", Detail: "unsupported by this producer"},
+			})
+			require.NoError(t, err)
+			other, err := vault.metadata.PublishVisualPreview(t.Context(), receipt.Version.ID, canonical, nil)
+			require.NoError(t, err)
+			require.NotEqual(t, current.GenerationID, other.GenerationID)
+			head, err := vault.VisualPreview(t.Context(), receipt.Version.ID)
+			require.NoError(t, err)
+			require.Equal(t, other.GenerationID, head.GenerationID)
+
+			// An already processed recipe must not need to reopen the source.
+			require.NoError(t, vault.blobs.Remove(receipt.Version.BlobHash))
+			for range 3 {
+				retry, err := vault.EnsureVisualPreview(t.Context(), receipt.Version.ID)
+				require.NoError(t, err)
+				assert.Equal(t, head, retry)
+			}
+			active, err := vault.VisualPreview(t.Context(), receipt.Version.ID)
+			require.NoError(t, err)
+			assert.Equal(t, head, active)
+		})
+	}
 }
 
 func TestVaultEnsureVisualPreviewRemovesLooseDuplicateOfPackedOutput(t *testing.T) {

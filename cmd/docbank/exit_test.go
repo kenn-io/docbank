@@ -26,6 +26,7 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "success", want: exitSuccess},
 		{name: "general", err: errors.New("failed"), started: true, want: exitGeneral},
 		{name: "cobra usage", err: errors.New("unknown flag"), want: exitUsage},
+		{name: "search query required", err: store.ErrSearchQueryRequired, started: true, want: exitUsage},
 		{name: "semantic usage", err: usageError(errors.New("bad limit")), started: true, want: exitUsage},
 		{name: "not found", err: fmt.Errorf("lookup: %w", store.ErrNotFound), started: true, want: exitNotFound},
 		{name: "stale revision", err: store.ErrStaleRevision, started: true, want: exitStale},

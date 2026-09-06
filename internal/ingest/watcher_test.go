@@ -132,6 +132,23 @@ func TestWatcherWaitsForStabilityAndUpdatesTheSameMovedNode(t *testing.T) {
 	assert.Equal(t, expectedUpdatedContent, sourceBytes)
 }
 
+func TestWatcherWildcardExclusionRemainsLiteral(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"keep.tmp": "watch me"})
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "literal", Source: source, Destination: "/archive",
+		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+		Exclude: []string{"*.tmp"},
+	}, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	at := time.Unix(1_700_000_000, 0)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(time.Second)))
+	_, err = ing.Store.NodeByPath(t.Context(), "/archive/keep.tmp")
+	require.NoError(t, err)
+}
+
 func TestWatcherDoesNotCountTraversalTimeTowardSettle(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{

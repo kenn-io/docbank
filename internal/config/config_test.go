@@ -112,6 +112,7 @@ model = "voyage-3-large"
 input_kind = "rendition_chunk"
 max_batch_items = 32
 max_input_bytes = 1048576
+max_input_tokens = 8192
 max_response_bytes = 1048576
 metric = "cosine"
 normalization = "unit_length"
@@ -125,7 +126,8 @@ formatter = "rendition-chunk/v1"
 max_tokens = 800
 overlap_tokens = 80
 tokenizer = "voyage-3"
-truncation_policy = "reject"
+tokenizer_revision = "2024.1"
+truncation_policy = "reject_indivisible"
 
 [retrieval_profiles.hybrid]
 lexical_limit = 40
@@ -297,10 +299,10 @@ func validProcessingConfig() Config {
 			Activation: "required", AuthorizationFingerprint: strings.Repeat("6", 64), CompatibilityID: "model/8",
 			CredentialBinding: "credential:embedding-primary", DescriptorID: "embedding-v1", DescriptorFingerprint: strings.Repeat("7", 64),
 			Dimensions: 8, DisclosureFingerprint: strings.Repeat("8", 64), DocumentFormatter: "document/v1", InputKind: "rendition_chunk",
-			MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: "cosine", Model: "model",
+			MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxInputTokens: 512, MaxResponseBytes: 1 << 20, Metric: "cosine", Model: "model",
 			Normalization: "unit_length", QueryFormatter: "query/v1", ScalarEncoding: "float32", TrustBoundary: "processor",
 			Chunk: EmbeddingChunkConfig{ContextFingerprint: strings.Repeat("9", 64), Formatter: "chunk/v1", MaxTokens: 100,
-				OverlapTokens: 10, Tokenizer: "tokenizer", TruncationPolicy: "reject"},
+				OverlapTokens: 10, Tokenizer: "tokenizer", TokenizerRevision: "v1", TruncationPolicy: "reject_indivisible"},
 		}},
 		RetrievalProfiles: map[string]RetrievalProfileConfig{"hybrid": {LexicalLimit: 10, VectorLimit: 10}},
 		ProcessingProfiles: map[string]ProcessingProfileConfig{"archive": {

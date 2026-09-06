@@ -420,12 +420,11 @@ func TestSearch(t *testing.T) {
 	for _, hit := range rep.Hits {
 		assert.Equal(t, "filter", hit.Match)
 	}
-	resp, body = get(t, ts, "/api/v1/search?limit=10", nil)
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"validation"`)
-	resp, body = get(t, ts, "/api/v1/search?limit=10&mime_type=application%2Fpdf", nil)
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"validation"`)
+	for _, query := range []string{"", "&q=%20", "&mime_type=application%2Fpdf"} {
+		resp, body = get(t, ts, "/api/v1/search?limit=10"+query, nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		assert.Contains(t, body, `"code":"search_query_required"`)
+	}
 
 	tag, err := s.CreateTag(t.Context(), "renewal")
 	require.NoError(t, err)

@@ -23,7 +23,11 @@ import (
 
 const metadataFormatVersion = 1
 
-const metadataCreatedAtField = "created_at"
+const (
+	metadataCreatedAtField        = "created_at"
+	metadataGenerationIDField     = "generation_id"
+	metadataContentVersionIDField = "content_version_id"
+)
 
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
 // connections use BEGIN IMMEDIATE for mutations; using that pool here would
@@ -260,24 +264,6 @@ type metadataAuditMembership struct {
 	BaselineDigest string `json:"baseline_digest"`
 }
 
-// BackupBlobAuthorityCTE is the complete blob closure for portable backup:
-// retained document versions, rendition artifacts, visual previews, staged
-// rendition sources, and no operational cursor or provider-staging rows.
-const BackupBlobAuthorityCTE = `
-WITH backup_authorized_blobs(hash) AS (
-	SELECT blob_hash FROM content_versions
-	UNION
-	SELECT blob_hash FROM rendition_artifacts
-	UNION
-	SELECT output_blob_hash FROM visual_preview_generations
-	WHERE output_blob_hash IS NOT NULL
-	UNION
-	SELECT source_sha256 FROM rendition_builds
-	UNION
-	SELECT source_sha256 FROM rendition_jobs
-)
-`
-
 // ExportMetadata writes a deterministic JSONL description of Docbank's
 // logical state. Rebuildable FTS data and physical pack authority are omitted.
 func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
@@ -433,7 +419,16 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if !layout.hasDerivativeCatalog() {
 		return nil
 	}
-	return exportProcessingMetadata(ctx, tx, write)
+	if err := exportProcessingMetadata(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportEmbeddingMetadata(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
 
 type metadataWrite func(any) error
@@ -456,7 +451,7 @@ func exportBlobs(
 ) error {
 	query := `SELECT hash, size, created_at FROM blobs ORDER BY hash`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 SELECT b.hash, b.size, b.created_at
 FROM blobs b JOIN backup_authorized_blobs a ON a.hash = b.hash
 ORDER BY b.hash`
@@ -486,7 +481,7 @@ func exportBlobChecksums(
 ) error {
 	query := `SELECT blob_sha256,md5 FROM blob_checksums ORDER BY blob_sha256`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 SELECT c.blob_sha256,c.md5 FROM blob_checksums c
 JOIN backup_authorized_blobs a ON a.hash=c.blob_sha256
 ORDER BY c.blob_sha256`
@@ -517,7 +512,7 @@ func exportSourceMetadata(ctx context.Context, tx metadataQuerier, write metadat
 	query := `SELECT generation_id,source_sha256,contract_version,extractor_fingerprint,
 		canonical_json,checksum,created_at FROM source_metadata_generations ORDER BY generation_id`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 SELECT g.generation_id,g.source_sha256,g.contract_version,g.extractor_fingerprint,
 g.canonical_json,g.checksum,g.created_at FROM source_metadata_generations g
 JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_id`
@@ -545,7 +540,7 @@ JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_i
 	}
 	headQuery := `SELECT source_sha256,generation_id,published_at FROM source_metadata_heads ORDER BY source_sha256`
 	if backupScoped {
-		headQuery = BackupBlobAuthorityCTE + `
+		headQuery = BackupBlobAuthorityCTE() + `
 SELECT h.source_sha256,h.generation_id,h.published_at FROM source_metadata_heads h
 JOIN backup_authorized_blobs a ON a.hash=h.source_sha256 ORDER BY h.source_sha256`
 	}
@@ -852,7 +847,7 @@ func exportExtractedText(
 		SELECT blob_hash, extractor, extractor_version, status, error, attempts, text, extracted_at
 		FROM extracted_text ORDER BY blob_hash, extractor`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 		SELECT e.blob_hash, e.extractor, e.extractor_version, e.status,
 		       e.error, e.attempts, e.text, e.extracted_at
 		FROM extracted_text e
@@ -986,6 +981,14 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM rendition_lexical_segments)
 		    + (SELECT COUNT(*) FROM rendition_attachments)
 		    + (SELECT COUNT(*) FROM rendition_heads)
+		    + (SELECT COUNT(*) FROM embedding_vector_spaces)
+		    + (SELECT COUNT(*) FROM embedding_input_generations)
+		    + (SELECT COUNT(*) FROM embedding_generation_inputs)
+		    + (SELECT COUNT(*) FROM embedding_vector_sets)
+		    + (SELECT COUNT(*) FROM embedding_vector_rows)
+		    + (SELECT COUNT(*) FROM embedding_sets)
+		    + (SELECT COUNT(*) FROM embedding_heads)
+		    + (SELECT COUNT(*) FROM embedding_failures)
 		    + (SELECT COUNT(*) FROM rendition_jobs)
 		    + (SELECT COUNT(*) FROM rendition_job_waiters)
 		    + (SELECT COUNT(*) FROM rendition_blob_staging)
@@ -1094,6 +1097,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if isProcessingMetadataType(kind) {
 		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
+	}
+	if isEmbeddingMetadataType(kind) {
+		return importEmbeddingMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -1365,10 +1371,10 @@ var metadataHeaderFields = []string{metadataTypeField, "format", "version", audi
 var metadataRequiredFields = map[string][]string{
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
-	metadataSourceMetadataGenerationType:   {metadataTypeField, "generation_id", columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
-	metadataSourceMetadataHeadType:         {metadataTypeField, columnSourceSHA256, "generation_id", "published_at"},
-	metadataVisualPreviewGenerationType:    {metadataTypeField, "generation_id", auditVaultIDField, "content_version_id", columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
-	metadataVisualPreviewHeadType:          {metadataTypeField, "content_version_id", "generation_id", "published_at"},
+	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
+	metadataSourceMetadataHeadType:         {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
+	metadataVisualPreviewGenerationType:    {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
+	metadataVisualPreviewHeadType:          {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
@@ -1396,6 +1402,14 @@ var metadataRequiredFields = map[string][]string{
 	metadataDerivativePurgeSuppressionType: processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
 	metadataRenditionJobType:               processingMetadataRequiredFields[metadataRenditionJobType],
 	metadataRenditionJobWaiterType:         processingMetadataRequiredFields[metadataRenditionJobWaiterType],
+	metadataEmbeddingVectorSpaceType:       embeddingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
+	metadataEmbeddingGenerationType:        embeddingMetadataRequiredFields[metadataEmbeddingGenerationType],
+	metadataEmbeddingInputType:             embeddingMetadataRequiredFields[metadataEmbeddingInputType],
+	metadataEmbeddingVectorSetType:         embeddingMetadataRequiredFields[metadataEmbeddingVectorSetType],
+	metadataEmbeddingVectorRowType:         embeddingMetadataRequiredFields[metadataEmbeddingVectorRowType],
+	metadataEmbeddingSetType:               embeddingMetadataRequiredFields[metadataEmbeddingSetType],
+	metadataEmbeddingHeadType:              embeddingMetadataRequiredFields[metadataEmbeddingHeadType],
+	metadataEmbeddingFailureType:           embeddingMetadataRequiredFields[metadataEmbeddingFailureType],
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -1407,6 +1421,7 @@ var metadataNullableFields = map[string]map[string]bool{
 	metadataProvenanceType:             {"original_mtime": true, "supersedes": true},
 	"extracted_text":                   {"error": true, "text": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
+	metadataEmbeddingGenerationType:    {"attachment_id": true},
 	metadataProcessingConsentGrantType: {"expires_at": true},
 	metadataRenditionJobType: {
 		"execution_snapshot": true, "claim_owner": true, "lease_expires_at": true,
@@ -1766,6 +1781,9 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.hasDerivativeCatalog() {
 		if err := validateProcessingMetadataState(ctx, tx); err != nil {
+			return err
+		}
+		if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
 			return err
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {

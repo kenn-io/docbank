@@ -369,6 +369,131 @@ final tree; an existing directory does not mean “move into.” The complete fi
 tree is validated before any change, so embedded applications can express file
 or directory swaps and nested moves without temporary names or partial completion.
 
+## Back up and restore an embedded vault
+
+An application that owns a vault in-process can use the same portable,
+topology-independent backup format as the daemon:
+
+```go
+repository, err := docbank.InitBackupRepository(backupRoot)
+if err != nil {
+    return err
+}
+snapshot, err := vault.CreateBackup(ctx, repository, docbank.BackupOptions{
+    Tag: "before-import",
+	Prepare: func(ctx context.Context) error {
+		return snapshotApplicationCatalog(ctx, catalogSnapshot)
+	},
+	ExtraFiles: []docbank.BackupExtraFile{{
+		Path: catalogSnapshot, RecordAs: "application/catalog.sqlite",
+	}},
+})
+if err != nil {
+    return err
+}
+proof, err := repository.Verify(ctx, docbank.BackupVerifyOptions{
+    SnapshotID: snapshot.ID,
+})
+if err != nil {
+	return err
+}
+if len(proof.Problems) != 0 {
+	return fmt.Errorf("backup verification found %d problems", len(proof.Problems))
+}
+_, err = vault.RestoreBackup(ctx, repository, docbank.BackupRestoreOptions{
+	SnapshotID:    snapshot.ID,
+	Target:        restoreRoot,
+	ProtectedRoots: applicationStorageRoots,
+})
+return err
+```
+
+Use `OpenBackupRepository` after process restart. `Snapshots` lists immutable
+recovery points in chronological order. Capture holds a preservation lease for
+the complete snapshot, but ordinary appends resume after Docbank pins the short
+SQLite metadata view. An embedding application may use `Prepare` to create an
+immutable snapshot of its own catalog while that freeze is held, then declare
+the file in `ExtraFiles` so the same manifest covers both authorities. Prepared
+files must remain unchanged until `CreateBackup` returns. Mark an extra file
+`Sensitive` when it contains credentials or tokens. Docbank refuses to put a
+sensitive file in its plaintext backup repository unless the application sets
+`AllowPlaintextSecrets` for that backup. Physical maintenance waits until the
+manifest is published. Restore always targets a separate root, rejects overlap
+with the live vault or repository, and proves content, SQLite integrity, and
+manifest statistics before publication. An embedding application supplies any
+additional storage it owns through `ProtectedRoots`; Docbank applies the same
+canonical, filesystem-aware exclusion before restore cleanup. The embedded
+restore path reconstructs a fresh fixed primary; deployment-specific
+secondary-store placement is not restored.
+
+If the original vault is unavailable, open the backup repository and restore
+directly without initializing or opening a source vault:
+
+```go
+repository, err := docbank.OpenBackupRepository(backupRoot)
+if err != nil {
+    return err
+}
+_, err = repository.Restore(ctx, docbank.BackupRestoreOptions{
+    Target: restoreRoot,
+    ProtectedRoots: applicationStorageRoots,
+})
+return err
+```
+
+An omitted snapshot ID selects the latest recovery point. Repository restore
+uses the build's default SQLite driver and restores declared host files along
+with vault content. It rejects the repository, declared protected roots, and
+targets held by another vault. Include any offline source or application
+storage you want to preserve in `ProtectedRoots`: the repository cannot infer
+their current locations. `Vault.RestoreBackup` also protects its open vault
+automatically and retains that vault's configured SQLite driver.
+
+### Remove recovery points and reclaim storage
+
+`BackupRepository.Forget` removes explicitly selected snapshot records;
+`BackupRepository.Prune` reclaims backup storage that retained snapshots no
+longer need. Neither operation opens the source vault. Retention schedules and
+which recovery points to keep remain the embedding application's policy.
+
+Preview each operation before committing to it:
+
+```go
+selection, err := repository.Forget(ctx, docbank.BackupForgetOptions{
+    SnapshotIDs: snapshotIDs,
+    DryRun: true,
+})
+if err != nil {
+    return err
+}
+// Present selection.Selected to the user. Call Forget again with DryRun false
+// to apply the removal; selection.Forgotten is empty during a dry run.
+fmt.Println("Selected recovery points:", selection.Selected)
+
+cleanup, err := repository.Prune(ctx, docbank.BackupPruneOptions{DryRun: true})
+if err != nil {
+    return err
+}
+// After removing snapshots, preview cleanup again before calling Prune with
+// DryRun false. PacksToRemove includes any old packs that will be rewritten.
+fmt.Println("Packs selected for cleanup:", cleanup.PacksToRemove)
+```
+
+Forgetting alone does not reclaim packed bytes. It refuses to remove the last
+recovery point unless `AllowEmpty` is explicit (`ErrBackupLastSnapshot`), and
+refuses parents needed by retained incremental snapshots
+(`ErrBackupSnapshotRequired`). Both cleanup operations use Kit's exclusive
+repository lock, including dry runs; contention returns
+`ErrBackupRepositoryLocked`. `ForceUnlock` is only for known abandoned locks.
+
+Pruning removes wholly unused packs and rewrites packs with less than half
+their encoded payload still needed. Mostly-live packs retain unused bytes, so
+this is not full compaction or secure erasure. Planned byte counts cover old
+pack files and copied payload, not exact net savings or temporary-space needs.
+Inspect the returned report even when an error occurs: completed removals and
+writes may be partial. Interrupted pruning can be retried. These embedded
+operations do not add automatic retention or standalone CLI cleanup commands.
+
 ## Maintain physical storage
 
 Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the

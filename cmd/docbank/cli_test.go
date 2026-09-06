@@ -912,6 +912,28 @@ func TestAddExcludeCommaIsLiteral(t *testing.T) {
 	assert.Zero(t, report.Excluded)
 }
 
+func TestAddIncludeUsesDaemonSelectionAndReportsCounts(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "keep.txt"), []byte("keep"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "skip.txt"), []byte("skip"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "skip.md"), []byte("skip"), 0o600))
+
+	out, err := runCLI(t, "add", src, "--preflight", "--include", "*.txt", "--exclude", "skip.txt", "--json")
+	require.NoError(t, err)
+	var report api.IngestPreflightReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, int64(1), report.Files)
+	assert.Equal(t, int64(2), report.Excluded)
+
+	out, err = runCLI(t, "add", src, "--include", "*.txt", "--exclude", "skip.txt", "--json")
+	require.NoError(t, err)
+	var ingestReport api.IngestReport
+	require.NoError(t, json.Unmarshal([]byte(out), &ingestReport))
+	assert.Equal(t, 1, ingestReport.Added)
+	assert.Equal(t, 2, ingestReport.Excluded)
+}
+
 func TestAddMissingSourceFails(t *testing.T) {
 	_ = setupVaultHome(t)
 

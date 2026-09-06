@@ -27,9 +27,10 @@ type SearchHit struct {
 	Match string
 }
 
-// SearchOptions narrows ranked search without changing its name-before-content
-// ordering. TagID identifies one required assignment; MIMEType selects the
-// current file version's parameter-free base media type; UnderNodeID selects
+// SearchOptions selects a filter-only page or narrows ranked search without
+// changing its name-before-content ordering. TagID identifies one required
+// assignment; MIMEType selects the current file version's parameter-free base
+// media type; UnderNodeID selects
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
@@ -54,8 +55,8 @@ const (
 )
 
 // ErrSearchQueryRequired reports an unanchored search without query text.
-// Empty queries are useful only when a tag or modification-time bound keeps
-// the result page bounded.
+// Queryless search requires a tag or modification-time filter. The result
+// limit bounds the response, not the database work.
 var ErrSearchQueryRequired = errors.New(
 	"search query is required unless a tag or modification-time bound is supplied",
 )
@@ -1028,6 +1029,21 @@ func insertRenditionAttachmentAndHeadTx(
 		head.AttachmentID, head.PublishedAt); err != nil {
 		return fmt.Errorf("publishing rendition head: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
+		WHERE content_version_id=? AND profile_fingerprint=? AND EXISTS (
+			SELECT 1 FROM embedding_sets s
+			JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
+			WHERE s.embedding_set_id=embedding_heads.embedding_set_id
+			  AND g.attachment_id IS NOT NULL AND g.attachment_id<>?
+		)`, head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
+		return fmt.Errorf("revoking stale chunk embedding heads: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
+		WHERE content_version_id=? AND profile_fingerprint=?
+		  AND attachment_id<>'' AND attachment_id<>?`,
+		head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
+		return fmt.Errorf("clearing stale chunk embedding failures: %w", err)
+	}
 	return nil
 }
 
@@ -1109,8 +1125,9 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 	return s.SearchPageWithOptions(ctx, query, limit, SearchOptions{})
 }
 
-// SearchPageWithOptions returns ranked live matches that satisfy every
-// requested filter. Filters apply equally to name and content candidates.
+// SearchPageWithOptions returns live matches that satisfy every requested
+// filter. Blank queries select a filter-only page; other queries rank name
+// matches before content matches.
 func (s *Store) SearchPageWithOptions(
 	ctx context.Context, query string, limit int, opts SearchOptions,
 ) ([]SearchHit, bool, error) {
@@ -1156,31 +1173,7 @@ func (s *Store) SearchPageWithOptions(
 		return nil, false, ErrSearchQueryRequired
 	}
 	if fq == "" {
-		filterSQL, filterArgs := searchFilterSQL(opts)
-		filterArgs = append(filterArgs, limit+1)
-		rows, err := s.db.QueryContext(ctx, `
-			SELECT `+nodeCols+`
-			FROM `+nodeFrom+`
-			WHERE n.trashed_at IS NULL
-			  AND n.parent_id IS NOT NULL
-			  `+filterSQL+`
-			ORDER BY n.modified_at DESC, n.name, n.id
-			LIMIT ?`, filterArgs...)
-		if err != nil {
-			return nil, false, fmt.Errorf("searching filters: %w", err)
-		}
-		hits, err := scanSearchRows(rows, SearchMatchFilter, "")
-		if err != nil {
-			return nil, false, err
-		}
-		truncated := len(hits) > limit
-		if truncated {
-			hits = hits[:limit]
-		}
-		if err := s.addSearchPaths(ctx, hits); err != nil {
-			return nil, false, err
-		}
-		return hits, truncated, nil
+		return s.searchFilterPage(ctx, limit, opts)
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	nameArgs := []any{fq}
@@ -1301,14 +1294,66 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
+// searchFilterPage selects the limited page before walking its ancestry, so
+// result data and paths come from one read snapshot without per-hit queries.
+func (s *Store) searchFilterPage(
+	ctx context.Context, limit int, opts SearchOptions,
+) ([]SearchHit, bool, error) {
+	filterSQL, args := searchFilterSQL(opts)
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, `
+		WITH RECURSIVE page AS (
+			SELECT n.id, n.parent_id, n.name, n.modified_at
+			FROM `+nodeFrom+`
+			WHERE n.trashed_at IS NULL AND n.parent_id IS NOT NULL
+			  `+filterSQL+`
+			ORDER BY n.modified_at DESC, n.name, n.id
+			LIMIT ?
+		), ancestry(node_id, id, parent_id, path) AS (
+			SELECT id, id, parent_id, name FROM page
+			UNION ALL
+			SELECT a.node_id, n.id, n.parent_id,
+			       CASE WHEN n.name = '' THEN '/' || a.path ELSE n.name || '/' || a.path END
+			FROM nodes n JOIN ancestry a ON n.id = a.parent_id
+		)
+		SELECT `+nodeCols+`, paths.path
+		FROM `+nodeFrom+`
+		JOIN page ON page.id = n.id
+		JOIN ancestry paths ON paths.node_id = n.id AND paths.parent_id IS NULL
+		ORDER BY page.modified_at DESC, page.name, page.id`, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("searching filters: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var hits []SearchHit
+	for rows.Next() {
+		hit := SearchHit{Match: SearchMatchFilter}
+		n := &hit.Node
+		if err := rows.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind,
+			&n.CurrentVersionID, &n.BlobHash, &n.MD5, &n.Size, &n.MimeType,
+			&n.Revision, &n.CreatedAt, &n.ModifiedAt, &n.TrashedAt, &hit.Path); err != nil {
+			return nil, false, fmt.Errorf("scanning search filters: %w", err)
+		}
+		hits = append(hits, hit)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("searching filters: %w", err)
+	}
+	truncated := len(hits) > limit
+	if truncated {
+		hits = hits[:limit]
+	}
+	return hits, truncated, nil
+}
+
 func searchFilterSQL(opts SearchOptions) (string, []any) {
 	var (
 		clauses []string
 		args    []any
 	)
 	if opts.TagID != "" {
-		clauses = append(clauses, `AND EXISTS (
-			SELECT 1 FROM node_tags nt WHERE nt.node_id=n.id AND nt.tag_id=?
+		clauses = append(clauses, `AND n.id IN (
+			SELECT node_id FROM node_tags WHERE tag_id=?
 		)`)
 		args = append(args, opts.TagID)
 	}

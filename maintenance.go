@@ -95,6 +95,8 @@ func (v *Vault) GarbageCollect(ctx context.Context, opts GCOptions) (GCReport, e
 		return GCReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	var report internalmaintenance.GCReport
@@ -114,6 +116,8 @@ func (v *Vault) Verify(ctx context.Context, opts VerifyOptions) (VerifyReport, e
 		return VerifyReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Verify(ctx, v.metadata, v.blobs,
@@ -128,6 +132,8 @@ func (v *Vault) Repack(ctx context.Context, opts RepackOptions) (RepackReport, e
 		return RepackReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Repack(ctx, v.metadata, v.blobs,

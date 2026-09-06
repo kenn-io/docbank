@@ -1,12 +1,16 @@
 package embedding
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // EgressPurpose distinguishes privacy approvals that must not be reused for a
@@ -133,4 +137,19 @@ func canonicalEndpoint(raw string) (string, error) {
 		parsed.Path = ""
 	}
 	return parsed.String(), nil
+}
+
+func validateIdentityText(name, value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%s contains invalid UTF-8", name)
+	}
+	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return fmt.Errorf("%s contains a control character", name)
+	}
+	return nil
+}
+
+func fingerprint(value []byte) string {
+	digest := sha256.Sum256(value)
+	return hex.EncodeToString(digest[:])
 }

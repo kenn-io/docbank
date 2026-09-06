@@ -116,9 +116,10 @@ type Vault struct {
 	metadata *store.Store
 	blobs    *blob.Store
 
-	lifecycle sync.RWMutex
-	mutation  sync.Mutex
-	closed    bool
+	lifecycle    sync.RWMutex
+	mutation     sync.Mutex
+	preservation sync.RWMutex
+	closed       bool
 
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
 	// after durable physical publication. Production constructors leave it nil.
@@ -379,8 +380,8 @@ func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMet
 }
 
 // EnsureSourceMetadata returns current local metadata for one exact immutable
-// content version. When the current extractor has not processed those bytes,
-// it verifies and processes them synchronously before returning. Retrying the
+// content version. When no metadata is active for the current extractor,
+// it verifies and processes the bytes synchronously before returning. Retrying the
 // same version and extractor generation is idempotent. The call holds the
 // vault mutation lock for the whole extraction, so writes and maintenance
 // wait behind it.
@@ -442,9 +443,10 @@ func (v *Vault) VisualPreview(ctx context.Context, versionID string) (VisualPrev
 	return fromStoreVisualPreview(view), nil
 }
 
-// EnsureVisualPreview returns the current built-in preview for one exact
-// immutable content version, producing and publishing it synchronously when
-// the current recipe has not processed those bytes.
+// EnsureVisualPreview returns the active preview for one exact immutable
+// content version, producing and publishing it synchronously when the current
+// built-in recipe has not processed those bytes. A recorded recipe is reused
+// without replacing a head published by another recipe.
 func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
 	if err := v.begin(); err != nil {
 		return VisualPreview{}, err
@@ -465,11 +467,17 @@ func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (Visu
 		return VisualPreview{}, err
 	}
 	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)
-	if err == nil && view.Generation.RecipeFingerprint == recipeFingerprint {
-		return fromStoreVisualPreview(view), nil
-	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return VisualPreview{}, err
+	}
+	if err == nil {
+		_, err = v.metadata.VisualPreviewGenerationByRecipe(ctx, versionID, recipeFingerprint)
+		if err == nil {
+			return fromStoreVisualPreview(view), nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return VisualPreview{}, err
+		}
 	}
 	reader, size, err := v.blobs.OpenSeekableContext(ctx, version.BlobHash)
 	if err != nil {
@@ -805,6 +813,8 @@ func (v *Vault) EmptyTrash(
 	if maxRoots == 0 {
 		maxRoots = DefaultTrashEmptyMaxRoots
 	}
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -843,6 +853,8 @@ func (v *Vault) RepairContent(
 		return RepairReceipt{}, errors.New("repair content size must not be negative")
 	}
 
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	var receipt RepairReceipt
@@ -1394,6 +1406,8 @@ func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) 
 		return PackReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	v.preservation.Lock()
+	defer v.preservation.Unlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Pack(ctx, v.metadata, v.blobs, opts.MaxBytes)

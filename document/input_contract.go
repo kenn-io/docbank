@@ -19,6 +19,20 @@ const (
 	ModelInputProfileMistral ModelInputProfile = "mistral/v1"
 	// ModelInputProfileCustom permits an explicit compatibility contract.
 	ModelInputProfileCustom ModelInputProfile = "custom/v1"
+	// ModelInputProfileNomic uses Nomic's reviewed asymmetric search prefixes.
+	ModelInputProfileNomic ModelInputProfile = "nomic/v1"
+	// ModelInputProfileE5 uses E5's reviewed passage/query prefixes.
+	ModelInputProfileE5 ModelInputProfile = "e5/v1"
+	// ModelInputProfileBGEM3 is BGE-M3's prefix-free dense retrieval input.
+	ModelInputProfileBGEM3 ModelInputProfile = "bge-m3/v1"
+	// ModelInputProfileGTE is GTE's prefix-free retrieval input.
+	ModelInputProfileGTE ModelInputProfile = "gte/v1"
+	// ModelInputProfileQwen3 is Qwen3's prefix-free document input and optional
+	// explicit query instruction contract.
+	ModelInputProfileQwen3 ModelInputProfile = "qwen3/v1"
+	// ModelInputProfileQueryInstruction is the reviewed query-only instruction
+	// envelope for compatible models whose document role stays prefix-free.
+	ModelInputProfileQueryInstruction ModelInputProfile = "query-instruction/v1"
 
 	modelInputContractVersion = 1
 	modelInputContentSlot     = "{{content}}"
@@ -47,61 +61,86 @@ type ModelInputEncoder struct {
 // declaration. Fingerprint covers both role envelopes, including an explicit
 // empty contract.
 type ModelInputContract struct {
-	Version         int               `json:"version"`
-	Profile         ModelInputProfile `json:"profile"`
-	CompatibilityID string            `json:"compatibility_id"`
-	Document        ModelInputEncoder `json:"document"`
-	Query           ModelInputEncoder `json:"query"`
-	Fingerprint     string            `json:"fingerprint"`
+	Version          int               `json:"version"`
+	Profile          ModelInputProfile `json:"profile"`
+	CompatibilityID  string            `json:"compatibility_id"`
+	Document         ModelInputEncoder `json:"document"`
+	Query            ModelInputEncoder `json:"query"`
+	QueryInstruction string            `json:"query_instruction,omitempty"`
+	Fingerprint      string            `json:"fingerprint"`
 }
 
 // ModelInputContractConfig constructs one canonical model-input contract.
 type ModelInputContractConfig struct {
-	Profile         ModelInputProfile
-	CompatibilityID string
-	Document        ModelInputEncoder
-	Query           ModelInputEncoder
+	Profile          ModelInputProfile
+	CompatibilityID  string
+	Document         ModelInputEncoder
+	Query            ModelInputEncoder
+	QueryInstruction string
+}
+
+// builtinModelInputProfile is one reviewed model-family contract. Profiles
+// that allow a query instruction render it through queryInstructionTemplate;
+// every other profile rejects one so model names never imply hidden prompts.
+type builtinModelInputProfile struct {
+	compatibilityID     string
+	documentMode        ModelInputMode
+	documentPrefix      string
+	queryMode           ModelInputMode
+	queryPrefix         string
+	queryInstruction    bool
+	requiresInstruction bool
+}
+
+var builtinModelInputProfiles = map[ModelInputProfile]builtinModelInputProfile{
+	ModelInputProfileOpenAICompatible: {compatibilityID: "openai-compatible/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileVoyage:           {compatibilityID: "voyage/document-query/v1", documentMode: ModelInputModeDocument, queryMode: ModelInputModeQuery},
+	ModelInputProfileMistral:          {compatibilityID: "mistral/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileNomic:            {compatibilityID: "nomic/search/v1", documentMode: ModelInputModeText, documentPrefix: "search_document: ", queryMode: ModelInputModeText, queryPrefix: "search_query: "},
+	ModelInputProfileE5:               {compatibilityID: "e5/asymmetric/v1", documentMode: ModelInputModeText, documentPrefix: "passage: ", queryMode: ModelInputModeText, queryPrefix: "query: "},
+	ModelInputProfileBGEM3:            {compatibilityID: "bge-m3/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileGTE:              {compatibilityID: "gte/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText},
+	ModelInputProfileQwen3:            {compatibilityID: "qwen3/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText, queryInstruction: true},
+	ModelInputProfileQueryInstruction: {compatibilityID: "query-instruction/text/v1", documentMode: ModelInputModeText, queryMode: ModelInputModeText, queryInstruction: true, requiresInstruction: true},
 }
 
 // NewModelInputContract resolves a reviewed built-in profile or one explicit
 // custom contract. An empty config is intentional and has its own fingerprint.
 func NewModelInputContract(config ModelInputContractConfig) (ModelInputContract, error) {
-	contract := ModelInputContract{Version: modelInputContractVersion, Profile: config.Profile}
+	contract := ModelInputContract{Version: modelInputContractVersion, Profile: config.Profile, QueryInstruction: config.QueryInstruction}
+	hasEncoderOverrides := config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{})
 	switch config.Profile {
 	case "":
-		if config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) {
+		if hasEncoderOverrides || config.QueryInstruction != "" {
 			return ModelInputContract{}, errors.New("empty model-input contract cannot define encoders")
 		}
-	case ModelInputProfileOpenAICompatible:
-		if config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "openai-compatible/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-	case ModelInputProfileVoyage:
-		if config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "voyage/document-query/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeDocument, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeQuery, Template: modelInputContentSlot}
-	case ModelInputProfileMistral:
-		if config.CompatibilityID != "" || config.Document != (ModelInputEncoder{}) || config.Query != (ModelInputEncoder{}) {
-			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
-		}
-		contract.CompatibilityID = "mistral/text/v1"
-		contract.Document = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
-		contract.Query = ModelInputEncoder{Mode: ModelInputModeText, Template: modelInputContentSlot}
 	case ModelInputProfileCustom:
+		if config.QueryInstruction != "" {
+			return ModelInputContract{}, errors.New("custom model-input contracts must encode instructions in their explicit query template")
+		}
 		contract.CompatibilityID = config.CompatibilityID
 		contract.Document = config.Document
 		contract.Query = config.Query
 	default:
-		if strings.HasPrefix(string(config.Profile), "alias:") {
-			return ModelInputContract{}, errors.New("opaque model-input aliases require an explicit compatibility contract")
+		builtin, ok := builtinModelInputProfiles[config.Profile]
+		if !ok {
+			if strings.HasPrefix(string(config.Profile), "alias:") {
+				return ModelInputContract{}, errors.New("opaque model-input aliases require an explicit compatibility contract")
+			}
+			return ModelInputContract{}, fmt.Errorf("unknown built-in model-input profile %q", config.Profile)
 		}
-		return ModelInputContract{}, fmt.Errorf("unknown built-in model-input profile %q", config.Profile)
+		if hasEncoderOverrides {
+			return ModelInputContract{}, errors.New("built-in model-input profiles cannot be overridden")
+		}
+		if !builtin.queryInstruction && config.QueryInstruction != "" {
+			return ModelInputContract{}, fmt.Errorf("%s profile cannot define a query instruction", config.Profile)
+		}
+		if err := validateQueryInstruction(config.QueryInstruction, builtin.requiresInstruction); err != nil {
+			return ModelInputContract{}, err
+		}
+		contract.CompatibilityID = builtin.compatibilityID
+		contract.Document = ModelInputEncoder{Mode: builtin.documentMode, Template: builtin.documentPrefix + modelInputContentSlot}
+		contract.Query = ModelInputEncoder{Mode: builtin.queryMode, Template: builtin.queryPrefix + queryInstructionTemplate(config.QueryInstruction)}
 	}
 	if err := validateModelInputContractFields(contract); err != nil {
 		return ModelInputContract{}, err
@@ -159,8 +198,9 @@ func validateModelInputContract(contract ModelInputContract) error {
 		return errors.New("model-input contract fingerprint or canonical form is invalid")
 	}
 	if contract.Profile != ModelInputProfileCustom && contract.Profile != "" {
-		canonical, err := NewModelInputContract(ModelInputContractConfig{Profile: contract.Profile})
-		if err != nil || contract != (ModelInputContract{Version: canonical.Version, Profile: canonical.Profile, CompatibilityID: canonical.CompatibilityID, Document: canonical.Document, Query: canonical.Query}) {
+		canonical, err := NewModelInputContract(ModelInputContractConfig{Profile: contract.Profile, QueryInstruction: contract.QueryInstruction})
+		canonical.Fingerprint = ""
+		if err != nil || contract != canonical {
 			return errors.New("model-input contract is not the reviewed built-in profile")
 		}
 	}
@@ -179,10 +219,13 @@ func validateModelInputContractFields(contract ModelInputContract) error {
 		return fmt.Errorf("model-input contract version must be %d", modelInputContractVersion)
 	}
 	if contract.Profile == "" {
-		if contract.CompatibilityID != "" || contract.Document != (ModelInputEncoder{}) || contract.Query != (ModelInputEncoder{}) {
+		if contract.CompatibilityID != "" || contract.Document != (ModelInputEncoder{}) || contract.Query != (ModelInputEncoder{}) || contract.QueryInstruction != "" {
 			return errors.New("empty model-input contract must have zero encoders and compatibility ID")
 		}
 		return nil
+	}
+	if contract.Profile == ModelInputProfileCustom && contract.QueryInstruction != "" {
+		return errors.New("custom model-input contracts must encode instructions in their explicit query template")
 	}
 	if err := validateCompatibilityID(contract.CompatibilityID); err != nil {
 		return err
@@ -191,6 +234,26 @@ func validateModelInputContractFields(contract ModelInputContract) error {
 		return err
 	}
 	return validateModelInputEncoder("query", contract.Query)
+}
+
+func validateQueryInstruction(instruction string, required bool) error {
+	if required && instruction == "" {
+		return errors.New("query-instruction profile requires a query instruction")
+	}
+	if instruction == "" {
+		return nil
+	}
+	if !utf8.ValidString(instruction) || len(instruction) > 4096 || strings.ContainsAny(instruction, "\x00\r") || strings.Contains(instruction, modelInputContentSlot) {
+		return errors.New("query instruction must be bounded valid UTF-8 text without a content slot")
+	}
+	return nil
+}
+
+func queryInstructionTemplate(instruction string) string {
+	if instruction == "" {
+		return modelInputContentSlot
+	}
+	return "Instruct: " + instruction + "\nQuery:" + modelInputContentSlot
 }
 
 func validateCompatibilityID(value string) error {

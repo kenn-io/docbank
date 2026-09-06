@@ -10,9 +10,9 @@ into stable text, provenance, and chunks. These packages are independent of a
 Docbank vault: importing them does not start a daemon, open storage, or connect
 to an existing installation.
 
-Use `go.kenn.io/docbank/document` for provider-neutral normalization. Use
-`go.kenn.io/docbank/document/embedding` to build deterministic text-embedding
-plans, optionally with a pre-embedding distillation step. Use
+Use `go.kenn.io/docbank/document` for provider-neutral normalization and
+tokenizer-specific embedding inputs. Use `go.kenn.io/docbank/document/embedding`
+for egress identities and shared retrieval policy. Use
 `go.kenn.io/docbank/document/embedding/eval` to compare retrieval recipes. Use
 `go.kenn.io/docbank/document/mistral` when an application explicitly chooses
 Mistral OCR as its extraction provider. Use `go.kenn.io/docbank/document/media`
@@ -101,71 +101,63 @@ outside the reusable packages and their policy identity.
 
 ## Prepare text for semantic retrieval
 
-`embedding.BuildEmbeddingPlan` converts a complete `NormalizedDocument` into a
-deterministic set of bounded provider inputs. Raw normalized chunks are the
-default representation. A recipe may instead select distilled sections or a
-combined plan containing both representations.
+`document.BuildEmbeddingInputs` converts canonical normalized evidence into a
+sealed generation of provider-ready document inputs. It never reads the
+retained Markdown, so YAML frontmatter, checksums, build identifiers, and
+navigation metadata cannot enter embedding text.
+
+The identity-bearing declaration lives in the processing profile's
+`EmbeddingChunkPolicyV1`: tokenizer name and revision, content token budget,
+overlap, formatter, truncation policy, and the fingerprint of the rules that
+govern attachment context. `document.NewInputPolicy` resolves one
+rendition-chunk binding into its runtime form by pairing that declaration with
+a `document.Tokenizer` implementation that must report the same identity, the
+binding's sealed model-input contract, the lexical evidence fingerprint, and
+the provider's hard rendered-input token and byte limits.
 
 ```go
-recipe, err := embedding.NewRecipe(embedding.RecipeConfig{
-	Mode:            embedding.RepresentationRaw,
-	MaxInputRunes:   8_000,
-	MaxHeadingRunes: 512,
+policy, err := document.NewInputPolicy(binding, tokenizer, lexicalFingerprint, nil)
+if err != nil {
+	return err
+}
+
+generation, err := document.BuildEmbeddingInputs(evidence, policy, document.GenerationLimits{
+	MaxInputs:              10_000,
+	MaxTotalContentTokens:  4_000_000,
+	MaxTotalRenderedTokens: 5_000_000,
+	MaxTotalContentBytes:   64 << 20,
+	MaxTotalRenderedBytes:  80 << 20,
+	MaxFittingWorkTokens:   50_000_000,
+	MaxFittingWorkBytes:    1 << 30,
 })
 if err != nil {
 	return err
 }
-
-plan, err := embedding.BuildEmbeddingPlan(
-	normalized,
-	embedding.DocumentContext{Filename: "quarterly-report.pdf"},
-	recipe,
-	nil,
-)
-if err != nil {
-	return err
-}
 ```
 
-Context includes bounded filename, title, heading path, and source locator
-fields. The recipe's heading bound applies to both final embedding inputs and
-distillation partitions, and yields to the enclosing limit so source content
-still fits. Filename and title context must be valid UTF-8; provider, model,
-revision, and vector-normalization identifiers must also be free of control
-characters. Filename or title clipping is recorded in the context fingerprint
-and every affected input's truncation identity. Every final input is truncated
-on rune boundaries to the recipe's provider input cap. Recipe, context, plan,
-source, and individual input fingerprints let an application store derived
-state without making worker batch size or claim timing part of vector identity.
+Page, heading, region, and table boundaries are preferred before token
+splitting. The configured token budget applies to content only; the document
+role envelope and any declared attachment context are rendered on top of it,
+and the complete rendered input is re-counted against the provider limits.
+Overlap is measured in exact emitted tokens, and every input keeps its heading
+path and the source span it was reconstructed from.
 
-For optional distillation, configure `Distillation` on a `distilled` or
-`combined` recipe and use this flow:
+Generation limits bound one build and can only turn a build into an error, so
+they stay out of every fingerprint. Everything else in the policy enters the
+generation's policy fingerprint, and a declared `AttachmentContextSnapshot`
+seals the exact per-attachment title and context inside the generation's
+identity. `MarshalEmbeddingInputGeneration` produces the one canonical byte
+form; `DecodeEmbeddingInputGeneration` accepts only those bytes under explicit
+caller bounds and rejects forged totals, policy fingerprints, and checksums.
+`ToEmbeddingInputs` converts a generation into provider inputs only under the
+exact model-input contract it was built for.
 
-```text
-PrepareDistillation(complete normalized document)
-  -> application checks separate distillation consent
-  -> Distiller.Distill
-  -> ValidateDistillate
-  -> BuildEmbeddingPlan
-```
-
-Partitions contain complete normalized chunks in source order. A distiller's
-result must cover every partition exactly once in that order and stays linked
-to exact source spans. Derived text is untrusted, non-authoritative evidence;
-callers should retain normalized source evidence for display and verification.
-Different provider output gets a different content-addressed distillate and
-plan identity.
-
-Docbank defines the provider-neutral `Distiller` interface but does not choose
-a distillation provider or make network requests. Provider implementations are
-responsible for authenticated capability checks, transport bounds, redirect
-policy, and per-request consent enforcement. `EgressIdentity` gives
-applications separate endpoint-sensitive fingerprints for document
-distillation, document embedding, and query embedding. Credentials are not
-part of those identities. `VectorSpaceIdentity` separately pins provider,
-model revision, dimension, and normalization without an endpoint, allowing an
-application to reuse compatible vectors while still requiring fresh consent
-when their destination changes.
+`EgressIdentity` gives applications separate endpoint-sensitive fingerprints
+for document embedding and query embedding. Credentials are not part of those
+identities. `VectorSpaceIdentity` separately pins provider, model revision,
+dimension, and normalization without an endpoint, allowing an application to
+reuse compatible vectors while still requiring fresh consent when their
+destination changes.
 
 The shared retrieval helpers make omitted and `auto` search lexical, so a
 query is not sent to an embedding provider without explicit `semantic` or
@@ -272,6 +264,31 @@ The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration, vector
 storage, and search serving. Docbank does not compute, store, or serve
 embeddings for its own vault.
+
+## Convert CSV locally for PDF OCR
+
+Go applications can use `document/csvpdf` to convert an explicitly declared `text/csv` source to a bounded PDF before using the existing PDF OCR path. Conversion runs locally and closes the supplied `ocr.Source.Content` on every path. It verifies the original byte count and SHA-256, parses CSV records, labels every cell, and counts the generated PDF pages before returning any result. It performs no upload or credential lookup.
+
+```go
+policy, err := csvpdf.NewPolicy(csvpdf.DefaultLimits())
+if err != nil {
+    return err
+}
+converted, err := csvpdf.Convert(ctx, originalCSV, policy)
+if err != nil {
+    return err
+}
+receipt := converted.Receipt()
+pdfSource, err := converted.Source()
+if err != nil {
+    return err
+}
+// Retain receipt with the source and pass pdfSource to the authorized PDF processor.
+```
+
+Defaults are also hard ceilings. A conversion accepts at most 1 MiB of source bytes, 10 MiB of PDF bytes, 10,000 records, 50,000 cells, 64 KiB per cell, and 100 generated pages. `NewPolicy` accepts positive tighter limits. The embedded Go Mono font supports a subset of Latin, Greek, Cyrillic and common punctuation or symbols. Conversion rejects missing glyphs, characters outside the Unicode basic multilingual plane, combining marks, shaping scripts, formatting controls, and control characters except cell newlines. Use precomposed accented characters such as `é`. CSV quoting, blank lines and CRLF normalization follow Go's `encoding/csv`; empty cells, variable-width records and quoted newlines remain represented. Long cells continue on subsequent generated pages. CSV formulas remain literal text.
+
+Retain both original and generated hashes and byte counts, the converter version, the conversion policy fingerprint, and the receipt's generated-page to original-record/cell spans. All span identifiers are one-based. A record can span multiple generated pages. PDF OCR evidence refers to generated pages, so applications must join that evidence through the receipt to cite original CSV cells. The receipt does not authorize upload. The application must separately verify its PDF capability manifest and consent, choose PDF byte and page limits that accommodate the conversion, and retain the conversion policy with that consent. This Go API does not add CSV OCR to the daemon or CLI.
 
 ## Package boundary
 

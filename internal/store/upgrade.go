@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	v090BackupSuffix = ".v0.9.0.bak"
-	v2BackupSuffix   = ".schema-v2.bak"
-	v3BackupSuffix   = ".schema-v3.bak"
+	v090BackupSuffix                 = ".v0.9.0.bak"
+	v2BackupSuffix                   = ".schema-v2.bak"
+	v3BackupSuffix                   = ".schema-v3.bak"
+	lastReleasedStorageSchemaVersion = 3
 )
 
 type databaseSchema struct {
@@ -138,7 +139,7 @@ func validateReleasedStorageSchemas() error {
 		versions[source.version] = true
 		suffixes[source.backupSuffix] = true
 	}
-	for version := 1; version < currentStorageSchemaVersion; version++ {
+	for version := 1; version <= lastReleasedStorageSchemaVersion; version++ {
 		if !versions[version] {
 			return fmt.Errorf("released storage schema version %d adapter is missing", version)
 		}
@@ -259,7 +260,7 @@ func validateCurrentSchemaColumns(
 			)
 		}
 	}
-	return nil
+	return validateEmbeddingCatalogSchema(context.Background(), db)
 }
 
 func validateV2Schema(db *sql.DB, blobs, packs []string) error {

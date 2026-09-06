@@ -16,3 +16,5 @@ deploy/glmocr/engine_identity.py -text
 deploy/glmocr/Dockerfile -text
 deploy/glmocr/requirements.lock -text
 deploy/glmocr/config.yaml -text
+# Embedding-input goldens are byte-for-byte oracles, not text files.
+document/testdata/chunks-*.golden.json -text

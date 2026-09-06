@@ -415,6 +415,59 @@ func TestSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T) {
 	require.ErrorContains(t, err, "absolute RFC3339 timestamp")
 }
 
+func TestSearchFilterPagePathsAndTies(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "briefing")
+	require.NoError(t, err)
+	directory, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	nested, err := s.Mkdir(ctx, directory.ID, "nested")
+	require.NoError(t, err)
+	first, err := s.CreateFile(ctx, directory.ID, "same.txt", fakeHash("first"), 1, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, nested.ID, "same.txt", fakeHash("second"), 1, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, directory.ID, "trashed.txt", fakeHash("trashed"), 1, "text/plain")
+	require.NoError(t, err)
+	root, err := s.NodeByID(ctx, s.RootID())
+	require.NoError(t, err)
+	for _, node := range []Node{root, nested, first, second, trashed} {
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, -1)
+		require.NoError(t, err)
+	}
+	_, _, err = s.Trash(ctx, trashed.ID, -1)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=?`, "2026-01-01T00:00:00.000000000Z")
+	require.NoError(t, err)
+
+	opts := SearchOptions{TagID: tag.ID, ModifiedSince: "2026-01-01T00:00:00Z"}
+	hits, truncated, err := s.SearchPageWithOptions(ctx, "", 2, opts)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.True(t, truncated)
+	assert.Equal(t, nested.ID, hits[0].Node.ID)
+	assert.Equal(t, "/docs/nested", hits[0].Path)
+	assert.Equal(t, first.ID, hits[1].Node.ID)
+	assert.Equal(t, "/docs/same.txt", hits[1].Path)
+
+	hits, truncated, err = s.SearchPageWithOptions(ctx, "", 3, opts)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+	assert.False(t, truncated)
+	assert.Equal(t, second.ID, hits[2].Node.ID)
+	assert.Equal(t, "/docs/nested/same.txt", hits[2].Path)
+
+	opts.UnderNodeID = nested.ID
+	opts.MIMEType = "text/plain"
+	hits, truncated, err = s.SearchPageWithOptions(ctx, "", 3, opts)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.False(t, truncated)
+	assert.Equal(t, second.ID, hits[0].Node.ID)
+	assert.Equal(t, "/docs/nested/same.txt", hits[0].Path)
+}
+
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

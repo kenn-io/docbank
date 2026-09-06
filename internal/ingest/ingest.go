@@ -381,20 +381,32 @@ func (ing *Ingester) AddPaths(ctx context.Context, sources []string, destPath st
 }
 
 // AddPathsWithOptions ingests the selected parts of files and directory trees
-// under the virtual destPath. Exclusions have the same semantics as Preflight.
+// under the virtual destPath. Selection has the same semantics as Preflight.
 func (ing *Ingester) AddPathsWithOptions(
 	ctx context.Context,
 	sources []string,
 	destPath string,
 	opts Options,
 ) (rep Report, err error) {
+	selection, err := CompileSelection(opts)
+	if err != nil {
+		return rep, err
+	}
+	return ing.AddPathsWithSelection(ctx, sources, destPath, opts, selection)
+}
+
+// AddPathsWithSelection imports sources using a previously compiled request
+// selection shared with preflight.
+func (ing *Ingester) AddPathsWithSelection(
+	ctx context.Context,
+	sources []string,
+	destPath string,
+	opts Options,
+	selection Selection,
+) (rep Report, err error) {
 	progress := newProgressTracker(opts.Progress)
 	progress.report(rep, false)
 	if err := ctx.Err(); err != nil {
-		return rep, err
-	}
-	excludes, err := compileExclusions(opts.Exclude)
-	if err != nil {
 		return rep, err
 	}
 	dest, err := ing.Store.MkdirAll(ctx, destPath)
@@ -424,23 +436,33 @@ func (ing *Ingester) AddPathsWithOptions(
 			progress.report(rep, false)
 			continue
 		}
-		if excludes.match(src, src) {
+		if selection.excluded(src, src) {
 			rep.Excluded++
 			progress.report(rep, false)
 			continue
 		}
 		switch {
 		case info.Mode().IsRegular():
+			if !selection.included(src, src) {
+				rep.Excluded++
+				progress.report(rep, false)
+				continue
+			}
 			if err := ing.addOne(ctx, &rep, ingestID, dest.ID, src, src, progress); err != nil {
 				return rep, err
 			}
 		case info.IsDir():
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, excludes, progress); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, selection, progress); err != nil {
 				return rep, err
 			}
 		case info.Mode()&fs.ModeSymlink != 0:
 			walkRoot, err := filepath.EvalSymlinks(src)
 			if err != nil {
+				if !selection.included(src, src) {
+					rep.Excluded++
+					progress.report(rep, false)
+					continue
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: fmt.Errorf("resolving explicitly named directory symlink: %w", err)})
 				progress.report(rep, false)
@@ -448,21 +470,36 @@ func (ing *Ingester) AddPathsWithOptions(
 			}
 			target, err := os.Stat(walkRoot)
 			if err != nil {
+				if !selection.included(src, src) {
+					rep.Excluded++
+					progress.report(rep, false)
+					continue
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: fmt.Errorf("checking explicitly named directory symlink: %w", err)})
 				progress.report(rep, false)
 				continue
 			}
 			if !target.IsDir() {
+				if !selection.included(src, src) {
+					rep.Excluded++
+					progress.report(rep, false)
+					continue
+				}
 				rep.Failed = append(rep.Failed, FileError{Path: src,
 					Err: errors.New("explicit symlink source does not resolve to a directory")})
 				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, excludes, progress); err != nil {
+			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, selection, progress); err != nil {
 				return rep, err
 			}
 		default:
+			if !selection.included(src, src) {
+				rep.Excluded++
+				progress.report(rep, false)
+				continue
+			}
 			rep.Failed = append(rep.Failed, FileError{Path: src,
 				Err: errors.New("not a regular file or directory (symlinks are skipped)")})
 			progress.report(rep, false)
@@ -489,7 +526,7 @@ func (ing *Ingester) addTree(
 	ingestRun store.IngestRun,
 	destDirID int64,
 	sourceRoot, walkRoot string,
-	excludes exclusions,
+	selection sourceSelection,
 	progress *progressTracker,
 ) error {
 	// Absolutize first. WalkDir hands back the root spelled exactly as given
@@ -514,7 +551,8 @@ func (ing *Ingester) addTree(
 	// the resolved id of its parent, never by re-deriving a path from
 	// destDirID — a concurrent move or trash of the destination would make
 	// that path re-create (even resurrect) a tree somewhere else.
-	dirIDs := map[string]int64{} // source dir path -> virtual dir node id
+	dirIDs := map[string]int64{}  // source dir path -> virtual dir node id
+	dirErrs := map[string]error{} // source dir path -> reported creation failure
 	walkErr := filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -533,7 +571,7 @@ func (ing *Ingester) addTree(
 			}
 			return nil
 		}
-		if excludes.match(sourceRoot, sourcePath) {
+		if selection.excluded(sourceRoot, sourcePath) {
 			rep.Excluded++
 			progress.report(*rep, false)
 			if d.IsDir() {
@@ -543,6 +581,9 @@ func (ing *Ingester) addTree(
 		}
 		switch {
 		case d.IsDir():
+			if len(selection.include) > 0 {
+				return nil
+			}
 			parentID, name := destDirID, topName
 			if p != walkRoot {
 				pid, ok := dirIDs[filepath.Dir(p)]
@@ -563,14 +604,34 @@ func (ing *Ingester) addTree(
 			}
 			dirIDs[p] = dir.ID
 		case d.Type().IsRegular():
-			parentID, ok := dirIDs[filepath.Dir(p)]
-			if !ok {
-				return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
+			if !selection.included(sourceRoot, sourcePath) {
+				rep.Excluded++
+				progress.report(*rep, false)
+				return nil
+			}
+			parentID, err := ing.ensureSourceDir(
+				ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(p),
+			)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
+				progress.report(*rep, false)
+				if _, rootFailed := dirErrs[walkRoot]; rootFailed {
+					return fs.SkipAll
+				}
+				return fs.SkipDir
 			}
 			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, progress); err != nil {
 				return err
 			}
 		default:
+			if !selection.included(sourceRoot, sourcePath) {
+				rep.Excluded++
+				progress.report(*rep, false)
+				return nil
+			}
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath,
 				Err: errors.New("not a regular file (symlinks are skipped)")})
 			progress.report(*rep, false)
@@ -578,6 +639,43 @@ func (ing *Ingester) addTree(
 		return nil
 	})
 	return walkErr
+}
+
+func (ing *Ingester) ensureSourceDir(
+	ctx context.Context, dirIDs map[string]int64, dirErrs map[string]error,
+	destDirID int64, topName, walkRoot, dirPath string,
+) (int64, error) {
+	if id, ok := dirIDs[dirPath]; ok {
+		return id, nil
+	}
+	if err, ok := dirErrs[dirPath]; ok {
+		return 0, err
+	}
+	rel, err := filepath.Rel(walkRoot, dirPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		err = fmt.Errorf("source directory %q is outside traversal root %q", dirPath, walkRoot)
+		dirErrs[dirPath] = err
+		return 0, err
+	}
+	parentID, name := destDirID, topName
+	if dirPath != walkRoot {
+		parentID, err = ing.ensureSourceDir(
+			ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(dirPath),
+		)
+		if err != nil {
+			dirErrs[dirPath] = err
+			return 0, err
+		}
+		name = filepath.Base(dirPath)
+	}
+	dir, err := ing.Store.EnsureDir(ctx, parentID, name)
+	if err != nil {
+		err = fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)
+		dirErrs[dirPath] = err
+		return 0, err
+	}
+	dirIDs[dirPath] = dir.ID
+	return dir.ID, nil
 }
 
 func sourceTreePath(sourceRoot, walkRoot, walkPath string) string {

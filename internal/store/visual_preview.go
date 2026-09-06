@@ -43,7 +43,8 @@ func visualPreviewGenerationID(versionID, recipeFingerprint, checksum string) st
 
 // PublishVisualPreview validates and atomically publishes one exact-version
 // result. Ready results also commit the already-durable output blob receipt.
-// Retrying the identical publication is idempotent.
+// The active head advances only when recording a new generation or retrying
+// the current head. Retrying the identical publication is idempotent.
 func (s *Store) PublishVisualPreview(
 	ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical,
 ) (VisualPreviewGeneration, error) {
@@ -84,7 +85,7 @@ func (s *Store) PublishVisualPreview(
 				return fmt.Errorf("recording visual preview output: %w", err)
 			}
 		}
-		if _, execErr := tx.ExecContext(ctx, `INSERT INTO visual_preview_generations(
+		result, execErr := tx.ExecContext(ctx, `INSERT INTO visual_preview_generations(
 			generation_id,vault_uid,content_version_id,source_sha256,contract_version,
 			recipe_fingerprint,canonical_result,checksum,state,output_blob_hash,output_size,
 			output_media_type,output_width,output_height,failure_code,failure_detail,created_at
@@ -94,8 +95,13 @@ func (s *Store) PublishVisualPreview(
 			preview.ContractVersion, recipeFingerprint, canonical, checksum, preview.State,
 			previewOutputHash(preview), previewOutputSize(preview), previewOutputMediaType(preview),
 			previewOutputWidth(preview), previewOutputHeight(preview), previewFailureCode(preview),
-			previewFailureDetail(preview), generation.CreatedAt); execErr != nil {
+			previewFailureDetail(preview), generation.CreatedAt)
+		if execErr != nil {
 			return fmt.Errorf("recording visual preview generation: %w", execErr)
+		}
+		inserted, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("checking visual preview generation insertion: %w", rowsErr)
 		}
 		stored, readErr := visualPreviewGenerationByRecipeTx(ctx, tx, versionID, recipeFingerprint)
 		if readErr != nil {
@@ -106,11 +112,12 @@ func (s *Store) PublishVisualPreview(
 			return errors.New("visual preview recipe already has a different result")
 		}
 		generation = stored
-		_, execErr := tx.ExecContext(ctx, `INSERT INTO visual_preview_heads(
+		_, execErr = tx.ExecContext(ctx, `INSERT INTO visual_preview_heads(
 			content_version_id,generation_id,published_at
 		) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET
-			generation_id=excluded.generation_id,published_at=excluded.published_at`,
-			versionID, generation.GenerationID, nowRFC3339())
+			generation_id=excluded.generation_id,published_at=excluded.published_at
+			WHERE ? != 0 OR visual_preview_heads.generation_id=excluded.generation_id`,
+			versionID, generation.GenerationID, nowRFC3339(), inserted)
 		return execErr
 	})
 	return generation, err
@@ -160,6 +167,17 @@ func (s *Store) ContentVersionVisualPreview(
 		return VisualPreviewView{}, fmt.Errorf("closing visual preview snapshot: %w", err)
 	}
 	return VisualPreviewView{Version: version, Generation: generation, PublishedAt: publishedAt}, nil
+}
+
+// VisualPreviewGenerationByRecipe returns the recorded result for one exact
+// content version and recipe, whether or not it is the active head.
+func (s *Store) VisualPreviewGenerationByRecipe(
+	ctx context.Context, versionID, recipeFingerprint string,
+) (VisualPreviewGeneration, error) {
+	if err := validateUUIDv4(versionID); err != nil {
+		return VisualPreviewGeneration{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
+	}
+	return visualPreviewGenerationByRecipeTx(ctx, s.db, versionID, recipeFingerprint)
 }
 
 func visualPreviewGenerationByRecipeTx(

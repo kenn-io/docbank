@@ -109,8 +109,9 @@ With one process holding the vault lock for its whole run, `gc --run`,
 serializes maintenance against regular mutations: ordinary mutating API handlers
 take the read side (concurrent with each other), and
 `gc --run`/`trash empty`/`verify` take the write side, giving them the same
-"observe a quiescent vault" guarantee as an exclusive per-command lock. Requests
-queue rather than fail. See
+"observe a quiescent vault" guarantee as an exclusive per-command lock. Once
+maintenance is running or queued, a new mutation fails immediately with
+`503 maintenance_busy` rather than blocking. See
 [HTTP API: maintenance gate](http-api.md#maintenance-gate) for the
 request-handling detail.
 
