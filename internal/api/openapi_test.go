@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -33,6 +34,41 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	assert.Contains(t, doc, api.ContentVersionHeader)
 	assert.Contains(t, doc, "Content-Digest")
 	assert.Contains(t, doc, "computed_hash")
+	for _, schema := range []string{"IngestPreflightRequest", "IngestRequest"} {
+		block := openAPISchemaBlock(t, doc, schema)
+		assert.Contains(t, block, "        include:")
+		assert.Contains(t, block, "        exclude:")
+		if schema == "IngestRequest" {
+			assert.Contains(t, block, "        dest:")
+		} else {
+			assert.NotContains(t, block, "        dest:")
+		}
+	}
+}
+
+func openAPISchemaBlock(t *testing.T, doc, schema string) string {
+	t.Helper()
+	marker := "\n    " + schema + ":\n"
+	start := strings.Index(doc, marker)
+	require.NotEqual(t, -1, start, "schema missing from OpenAPI document")
+	block := doc[start+len(marker):]
+	for offset := strings.Index(block, "\n"); offset >= 0; {
+		line := block[offset+1:]
+		if line != "" && !strings.HasPrefix(line, "      ") {
+			block = block[:offset]
+			break
+		}
+		if strings.HasPrefix(line, "    ") && len(line) > 4 && line[4] != ' ' {
+			block = block[:offset]
+			break
+		}
+		next := strings.Index(line, "\n")
+		if next < 0 {
+			break
+		}
+		offset += next + 1
+	}
+	return block
 }
 
 func TestOpenAPIDeclaresSecurity(t *testing.T) {
