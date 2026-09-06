@@ -264,33 +264,6 @@ type metadataAuditMembership struct {
 	BaselineDigest string `json:"baseline_digest"`
 }
 
-// BackupBlobAuthorityCTE is the complete blob closure for portable backup:
-// retained document versions, rendition and embedding artifacts, visual
-// previews, staged rendition sources, and no operational cursor or
-// provider-staging rows.
-const BackupBlobAuthorityCTE = `
-WITH backup_authorized_blobs(hash) AS (
-	SELECT blob_hash FROM content_versions
-	UNION
-	SELECT blob_hash FROM rendition_artifacts
-	UNION
-	SELECT generation_blob_hash FROM embedding_input_generations
-	WHERE generation_blob_hash IS NOT NULL
-	UNION
-	SELECT evidence_fingerprint FROM embedding_input_generations
-	WHERE generation_blob_hash IS NOT NULL
-	UNION
-	SELECT payload_blob_hash FROM embedding_vector_sets
-	UNION
-	SELECT output_blob_hash FROM visual_preview_generations
-	WHERE output_blob_hash IS NOT NULL
-	UNION
-	SELECT source_sha256 FROM rendition_builds
-	UNION
-	SELECT source_sha256 FROM rendition_jobs
-)
-`
-
 // ExportMetadata writes a deterministic JSONL description of Docbank's
 // logical state. Rebuildable FTS data and physical pack authority are omitted.
 func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
@@ -478,7 +451,7 @@ func exportBlobs(
 ) error {
 	query := `SELECT hash, size, created_at FROM blobs ORDER BY hash`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 SELECT b.hash, b.size, b.created_at
 FROM blobs b JOIN backup_authorized_blobs a ON a.hash = b.hash
 ORDER BY b.hash`
@@ -508,7 +481,7 @@ func exportBlobChecksums(
 ) error {
 	query := `SELECT blob_sha256,md5 FROM blob_checksums ORDER BY blob_sha256`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 SELECT c.blob_sha256,c.md5 FROM blob_checksums c
 JOIN backup_authorized_blobs a ON a.hash=c.blob_sha256
 ORDER BY c.blob_sha256`
@@ -539,7 +512,7 @@ func exportSourceMetadata(ctx context.Context, tx metadataQuerier, write metadat
 	query := `SELECT generation_id,source_sha256,contract_version,extractor_fingerprint,
 		canonical_json,checksum,created_at FROM source_metadata_generations ORDER BY generation_id`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 SELECT g.generation_id,g.source_sha256,g.contract_version,g.extractor_fingerprint,
 g.canonical_json,g.checksum,g.created_at FROM source_metadata_generations g
 JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_id`
@@ -567,7 +540,7 @@ JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_i
 	}
 	headQuery := `SELECT source_sha256,generation_id,published_at FROM source_metadata_heads ORDER BY source_sha256`
 	if backupScoped {
-		headQuery = BackupBlobAuthorityCTE + `
+		headQuery = BackupBlobAuthorityCTE() + `
 SELECT h.source_sha256,h.generation_id,h.published_at FROM source_metadata_heads h
 JOIN backup_authorized_blobs a ON a.hash=h.source_sha256 ORDER BY h.source_sha256`
 	}
@@ -874,7 +847,7 @@ func exportExtractedText(
 		SELECT blob_hash, extractor, extractor_version, status, error, attempts, text, extracted_at
 		FROM extracted_text ORDER BY blob_hash, extractor`
 	if backupScoped {
-		query = BackupBlobAuthorityCTE + `
+		query = BackupBlobAuthorityCTE() + `
 		SELECT e.blob_hash, e.extractor, e.extractor_version, e.status,
 		       e.error, e.attempts, e.text, e.extracted_at
 		FROM extracted_text e
