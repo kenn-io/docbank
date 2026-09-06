@@ -443,9 +443,10 @@ func (v *Vault) VisualPreview(ctx context.Context, versionID string) (VisualPrev
 	return fromStoreVisualPreview(view), nil
 }
 
-// EnsureVisualPreview returns the current built-in preview for one exact
-// immutable content version, producing and publishing it synchronously when
-// the current recipe has not processed those bytes.
+// EnsureVisualPreview returns the active preview for one exact immutable
+// content version, producing and publishing it synchronously when the current
+// built-in recipe has not processed those bytes. A recorded recipe is reused
+// without replacing a head published by another recipe.
 func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
 	if err := v.begin(); err != nil {
 		return VisualPreview{}, err
@@ -466,11 +467,17 @@ func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (Visu
 		return VisualPreview{}, err
 	}
 	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)
-	if err == nil && view.Generation.RecipeFingerprint == recipeFingerprint {
-		return fromStoreVisualPreview(view), nil
-	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return VisualPreview{}, err
+	}
+	if err == nil {
+		_, err = v.metadata.VisualPreviewGenerationByRecipe(ctx, versionID, recipeFingerprint)
+		if err == nil {
+			return fromStoreVisualPreview(view), nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return VisualPreview{}, err
+		}
 	}
 	reader, size, err := v.blobs.OpenSeekableContext(ctx, version.BlobHash)
 	if err != nil {

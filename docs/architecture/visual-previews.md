@@ -44,6 +44,12 @@ removes its preview generations. Content-addressed storage still deduplicates
 identical preview bytes across versions, and garbage collection retains an
 output while any generation references it.
 
+Recording a new recipe advances the head. Replaying a recorded generation
+does not replace a different active generation. Recipes have no age ordering,
+so a recipe from an older binary still becomes active if it has never been
+recorded for that version. When a head is missing, the first publication,
+including a replay, recreates it.
+
 ## Backup and embedded reads
 
 Preview generations, active heads, and ready output blobs are included in
@@ -55,11 +61,14 @@ and `Vault.OpenVisualPreview` to stream a ready output through the verified
 reader contract. Unsupported and failed results remain queryable but do not
 open as content.
 
-`Vault.EnsureVisualPreview` synchronously produces the current preview for one
-exact version when no matching generation exists. It verifies the complete
-source before decoding and holds the vault mutation boundary through
-publication, so callers either observe a complete generation or a retryable
-error.
+`Vault.EnsureVisualPreview` synchronously produces a preview with the current
+built-in recipe when no matching generation exists, then returns the active
+result. If that recipe already has a recorded outcome and a head exists, ensure
+skips production and returns the head even if another recipe published it.
+This keeps ensure consistent with `Vault.VisualPreview` and
+`Vault.OpenVisualPreview`. Production verifies the complete source before
+decoding and holds the vault mutation boundary through publication, so callers
+either observe a complete generation or a retryable error.
 
 The built-in producer accepts JPEG, PNG, GIF, still WebP, and camera RAW
 originals that contain a supported embedded JPEG preview. Camera RAW support

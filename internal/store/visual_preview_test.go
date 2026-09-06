@@ -43,6 +43,95 @@ func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "conflicting output membership must roll back")
 }
 
+func TestVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *testing.T) {
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("91"), 12, "image/x-raw")
+	require.NoError(t, err)
+	physical := &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9}
+
+	previewA := readyVisualPreview(t, node.BlobHash, fakeHash("92"), 9)
+	first, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewA, physical)
+	require.NoError(t, err)
+	view, err := s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, first.GenerationID, view.Generation.GenerationID)
+
+	recipeB := visualPreviewRecipe()
+	recipeB.ProcessorFingerprint = fakeHash("93")
+	previewB := readyVisualPreviewWithRecipe(t, node.BlobHash, fakeHash("94"), 9, recipeB)
+	second, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewB, physical)
+	require.NoError(t, err)
+	assert.NotEqual(t, first.GenerationID, second.GenerationID)
+
+	replayed, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewA, physical)
+	require.NoError(t, err)
+	assert.Equal(t, first.GenerationID, replayed.GenerationID)
+
+	view, err = s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, second.GenerationID, view.Generation.GenerationID)
+	assert.Equal(t, fakeHash("94"), view.Generation.Preview.Output.BlobSHA256)
+}
+
+func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) {
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("95"), 12, "image/x-raw")
+	require.NoError(t, err)
+	canonical := readyVisualPreview(t, node.BlobHash, fakeHash("96"), 9)
+	physical := &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9}
+
+	first, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, physical)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`DELETE FROM visual_preview_heads WHERE content_version_id=?`, node.CurrentVersionID)
+	require.NoError(t, err)
+
+	recovered, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, physical)
+	require.NoError(t, err)
+	assert.Equal(t, first.GenerationID, recovered.GenerationID)
+
+	view, err := s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, first.GenerationID, view.Generation.GenerationID)
+}
+
+func TestVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state document.VisualPreviewState
+		code  string
+	}{
+		{name: "unsupported", state: document.VisualPreviewUnsupported, code: "unsupported_media_type"},
+		{name: "failed", state: document.VisualPreviewFailed, code: "decode_failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("97"), 12, "image/x-raw")
+			require.NoError(t, err)
+
+			recipeA := visualPreviewRecipe()
+			previewA := terminalVisualPreviewWithRecipe(t, node.BlobHash, recipeA, test.state, test.code)
+			first, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewA, nil)
+			require.NoError(t, err)
+
+			recipeB := recipeA
+			recipeB.ProcessorFingerprint = fakeHash("98")
+			previewB := terminalVisualPreviewWithRecipe(t, node.BlobHash, recipeB, test.state, test.code)
+			second, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewB, nil)
+			require.NoError(t, err)
+			assert.NotEqual(t, first.GenerationID, second.GenerationID)
+
+			replayed, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, previewA, nil)
+			require.NoError(t, err)
+			assert.Equal(t, first.GenerationID, replayed.GenerationID)
+
+			view, err := s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+			require.NoError(t, err)
+			assert.Equal(t, second.GenerationID, view.Generation.GenerationID)
+			assert.Equal(t, test.state, view.Generation.Preview.State)
+		})
+	}
+}
+
 func TestVisualPreviewMetadataRoundTrip(t *testing.T) {
 	source := newTestStore(t)
 	node, err := source.CreateFile(t.Context(), source.RootID(), "image.jpg", fakeHash("31"), 12, "image/jpeg")
@@ -162,11 +251,32 @@ func (r *visualPreviewVerifiedReader) Verify() error  { return r.verifyErr }
 
 func readyVisualPreview(t *testing.T, source, output string, size int64) []byte {
 	t.Helper()
+	return readyVisualPreviewWithRecipe(t, source, output, size, visualPreviewRecipe())
+}
+
+func readyVisualPreviewWithRecipe(
+	t *testing.T, source, output string, size int64, recipe document.VisualPreviewRecipeV1,
+) []byte {
+	t.Helper()
 	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
 		ContractVersion: document.VisualPreviewContractV1, SourceSHA256: source,
-		Recipe: visualPreviewRecipe(), State: document.VisualPreviewReady,
+		Recipe: recipe, State: document.VisualPreviewReady,
 		Output: &document.VisualPreviewOutputV1{BlobSHA256: output, Size: size,
 			MediaType: "image/jpeg", Width: 1600, Height: 900},
+	})
+	require.NoError(t, err)
+	return canonical
+}
+
+func terminalVisualPreviewWithRecipe(
+	t *testing.T, source string, recipe document.VisualPreviewRecipeV1,
+	state document.VisualPreviewState, code string,
+) []byte {
+	t.Helper()
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+		ContractVersion: document.VisualPreviewContractV1, SourceSHA256: source,
+		Recipe: recipe, State: state,
+		Failure: &document.VisualPreviewFailureV1{Code: code, Detail: "deterministic preview outcome"},
 	})
 	require.NoError(t, err)
 	return canonical
