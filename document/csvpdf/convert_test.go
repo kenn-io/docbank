@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/media"
@@ -246,7 +247,7 @@ func TestConvertCancellationClosureAndZeroValues(t *testing.T) {
 	source, reader = sourceFor(t, "x\n")
 	reader.closeErr = errors.New("synthetic close failure")
 	result, err = Convert(t.Context(), source, policyFor(t, DefaultLimits()))
-	require.ErrorIs(t, err, reader.closeErr)
+	require.EqualError(t, err, "close CSV source failed")
 	require.Nil(t, result)
 	for _, zero := range []*Result{nil, {}} {
 		require.Empty(t, zero.PDF())
@@ -264,6 +265,55 @@ func TestConvertCancellationClosureAndZeroValues(t *testing.T) {
 	require.Nil(t, result)
 	require.True(t, reader.closed)
 }
+
+func TestConvertSanitizesSourceErrors(t *testing.T) {
+	const sentinel = "synthetic-cell-value-93817"
+	for _, test := range []struct {
+		name                      string
+		readFailure, closeFailure bool
+	}{
+		{"read", true, false}, {"close", false, true}, {"read and close", true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source, reader := sourceFor(t, sentinel)
+			if test.readFailure {
+				reader.Reader = failingReader{err: errors.New("read failed for " + sentinel)}
+			}
+			if test.closeFailure {
+				reader.closeErr = errors.New("close failed for " + sentinel)
+			}
+			result, err := Convert(t.Context(), source, policyFor(t, DefaultLimits()))
+			require.Error(t, err)
+			require.NotContains(t, err.Error(), sentinel)
+			require.Nil(t, result)
+			require.True(t, reader.closed)
+		})
+	}
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("context deadline %t", deadline), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			want := context.Canceled
+			if deadline {
+				cancel()
+				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
+				want = context.DeadlineExceeded
+			}
+			defer cancel()
+			source, reader := sourceFor(t, "x")
+			reader.Reader = cancelReader{cancel: cancel}
+			reader.closeErr = errors.New("close failed for " + sentinel)
+			result, err := Convert(ctx, source, policyFor(t, DefaultLimits()))
+			require.ErrorIs(t, err, want)
+			require.NotContains(t, err.Error(), sentinel)
+			require.Nil(t, result)
+			require.True(t, reader.closed)
+		})
+	}
+}
+
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
 
 type cancelReader struct{ cancel context.CancelFunc }
 

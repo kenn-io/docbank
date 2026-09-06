@@ -20,7 +20,7 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 		defer func() {
 			if closeErr := source.Content.Close(); closeErr != nil {
 				result = nil
-				err = errors.Join(err, fmt.Errorf("close CSV source: %w", closeErr))
+				err = errors.Join(err, errors.New("close CSV source failed"))
 			}
 		}()
 	}
@@ -41,7 +41,10 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 	}
 	content, err := io.ReadAll(io.LimitReader(contextReader{ctx, source.Content}, source.Size+1))
 	if err != nil {
-		return nil, fmt.Errorf("read CSV source: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, errors.New("read CSV source failed")
 	}
 	if int64(len(content)) != source.Size || digest(content) != source.SHA256 {
 		return nil, errors.New("CSV source does not match declared size and SHA-256")
