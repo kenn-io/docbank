@@ -16,17 +16,15 @@ import (
 // This test fails if row checksums are incorrectly treated as part of logical
 // identity, allowing one (set ID, input key) row to appear twice.
 func TestOpenGenerationRejectsDuplicateLogicalRowsWithDifferentChecksums(t *testing.T) {
-	setID := strings.Repeat("a", 64)
-	manifest, err := NewManifest([]string{setID})
+	set := testVectorSet(document.VectorMetricDotProduct, document.VectorNormalizationNone,
+		[]string{"row-a", "row-b"}, [][]float32{{1}, {2}})
+	generation, err := BuildGeneration(testManifest(t, []document.VectorSetV1{set}), []document.VectorSetV1{set}, Options{})
 	require.NoError(t, err)
-	rows := []generationRow{
-		{SetID: setID, InputKey: "duplicate", InputChecksum: strings.Repeat("b", 64), vector: []float32{1}},
-		{SetID: setID, InputKey: "duplicate", InputChecksum: strings.Repeat("c", 64), vector: []float32{2}},
-	}
-	encoded, err := encodeGeneration(manifest, strings.Repeat("f", 64), document.VectorMetricDotProduct,
-		document.VectorNormalizationNone, 1, rows, defaultMaxBytes)
-	require.NoError(t, err)
-
+	encoded := generation.Bytes()
+	offset := bytes.Index(encoded, []byte("row-b"))
+	require.NotEqual(t, -1, offset)
+	copy(encoded[offset:], "row-a")
+	rewriteGenerationChecksum(encoded, uint64(len(encoded)-generationChecksumBytes))
 	_, err = OpenGeneration(bytes.NewReader(encoded), int64(len(encoded)))
 	require.ErrorContains(t, err, "duplicate logical rows")
 }
@@ -133,28 +131,25 @@ func TestSearchRejectsInvalidBoundsAndQueries(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name   string
-		query  []float32
-		k      int
-		visits int
-		want   string
+		name  string
+		query []float32
+		k     int
+		want  string
 	}{
-		{name: "zero k", query: []float32{1, 0}, k: 0, visits: 2, want: "k is outside"},
-		{name: "oversized k", query: []float32{1, 0}, k: 3, visits: 3, want: "k is outside"},
-		{name: "short visit bound", query: []float32{1, 0}, k: 1, visits: 1, want: "visit bound"},
-		{name: "long visit bound", query: []float32{1, 0}, k: 1, visits: 3, want: "visit bound"},
-		{name: "wrong dimension", query: []float32{1}, k: 1, visits: 2, want: "dimension"},
-		{name: "non-finite", query: []float32{float32(math.Inf(1)), 0}, k: 1, visits: 2, want: "non-finite"},
-		{name: "zero cosine", query: []float32{0, 0}, k: 1, visits: 2, want: "must be non-zero"},
+		{name: "zero k", query: []float32{1, 0}, k: 0, want: "k is outside"},
+		{name: "oversized k", query: []float32{1, 0}, k: 3, want: "k is outside"},
+		{name: "wrong dimension", query: []float32{1}, k: 1, want: "dimension"},
+		{name: "non-finite", query: []float32{float32(math.Inf(1)), 0}, k: 1, want: "non-finite"},
+		{name: "zero cosine", query: []float32{0, 0}, k: 1, want: "must be non-zero"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := generation.Search(test.query, test.k, test.visits)
+			_, err := generation.Search(test.query, test.k)
 			require.ErrorContains(t, err, test.want)
 		})
 	}
 	var unopened *Generation
-	_, err = unopened.Search([]float32{1, 0}, 1, 2)
+	_, err = unopened.Search([]float32{1, 0}, 1)
 	require.ErrorContains(t, err, "not open")
 }
 

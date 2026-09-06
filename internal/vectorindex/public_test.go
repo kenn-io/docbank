@@ -12,7 +12,7 @@ import (
 )
 
 // This test fails if a caller reopening persisted bytes cannot compare the
-// validated projection to current authority or discover the exact visit bound.
+// validated projection to current authority and search the complete generation.
 func TestOpenedGenerationExposesCopySafeValidatedMetadata(t *testing.T) {
 	set := document.VectorSetV1{
 		VectorSpaceFingerprint: strings.Repeat("f", 64),
@@ -45,7 +45,7 @@ func TestOpenedGenerationExposesCopySafeValidatedMetadata(t *testing.T) {
 
 	metadata.Manifest.SetIDs[0] = strings.Repeat("0", 64)
 	assert.Equal(t, setID, opened.Metadata().Manifest.SetIDs[0])
-	neighbors, err := opened.Search([]float32{1, 0}, 1, opened.Metadata().RowCount)
+	neighbors, err := opened.Search([]float32{1, 0}, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "row-a", neighbors[0].InputKey)
 }

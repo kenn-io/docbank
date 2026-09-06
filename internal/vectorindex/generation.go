@@ -35,6 +35,8 @@ var generationHeaderSize = uint32(len(generationDomain) + 4 + 4 + 8*6 + 4)
 
 // Manifest is the canonical logical membership authority for one projection.
 // SetIDs are canonical vector-set/v1 checksums in strictly ascending order.
+// Each member contributes every row of its source set, in source order. Row
+// removal or replacement requires a new source set and a new manifest.
 type Manifest struct {
 	Checksum string
 	SetIDs   []string
@@ -64,21 +66,16 @@ type Neighbor struct {
 	Distance float64
 }
 
-type generationRow struct {
-	RowIdentity
-
-	vector []float32
-}
-
 // Generation is a completely validated disposable vector-index generation.
 type Generation struct {
-	encoded       []byte
 	manifest      Manifest
 	vectorSpaceID string
 	metric        string
 	normalization string
 	dimension     int
-	rows          []generationRow
+	rows          []RowIdentity
+	vectors       []float32
+	sections      generationSections
 }
 
 // GenerationMetadata is the immutable validated identity and shape of an open
@@ -101,8 +98,7 @@ type buildProjection struct {
 	dimension      int
 	rowCount       int
 	metadataLength uint64
-	vectorLength   uint64
-	totalLength    uint64
+	sections       generationSections
 }
 
 // NewManifest constructs sorted logical membership and its complete checksum.
@@ -119,61 +115,58 @@ func NewManifest(setIDs []string) (Manifest, error) {
 
 // BuildGeneration builds one deterministic exact row-major projection. Vector
 // sets may arrive in any order; manifest membership determines encoded order.
-func BuildGeneration(manifest Manifest, sets []document.VectorSetV1, options Options) (Generation, error) {
+func BuildGeneration(manifest Manifest, sets []document.VectorSetV1, options Options) (*Generation, error) {
 	bounds, err := normalizeOptions(options)
 	if err != nil {
-		return Generation{}, err
+		return nil, err
 	}
 	if err := validateManifest(manifest); err != nil {
-		return Generation{}, err
+		return nil, err
 	}
 	if len(sets) != len(manifest.SetIDs) {
-		return Generation{}, errors.New("vector index sets do not match manifest membership")
+		return nil, errors.New("vector index sets do not match manifest membership")
 	}
 	projection, err := preflightBuildProjection(manifest, sets, bounds)
 	if err != nil {
-		return Generation{}, err
+		return nil, err
 	}
-
 	byID := make(map[string]document.VectorSetV1, len(sets))
-	for _, set := range sets {
+	for index, set := range sets {
 		_, id, encodeErr := document.EncodeVectorSetV1(set)
 		if encodeErr != nil {
-			return Generation{}, fmt.Errorf("vector index source set is invalid: %w", encodeErr)
+			return nil, fmt.Errorf("vector index source set %d: %w", index, encodeErr)
 		}
 		if _, duplicate := byID[id]; duplicate {
-			return Generation{}, errors.New("vector index source sets contain duplicate logical membership")
+			return nil, fmt.Errorf("vector index source set %s has duplicate logical membership", id)
 		}
 		byID[id] = set
 	}
-
-	rows := make([]generationRow, 0, projection.rowCount)
+	generation := &Generation{
+		manifest:      Manifest{Checksum: manifest.Checksum, SetIDs: slices.Clone(manifest.SetIDs)},
+		vectorSpaceID: projection.space, metric: projection.metric, normalization: projection.normalization,
+		dimension: projection.dimension, sections: projection.sections,
+		rows:    make([]RowIdentity, 0, projection.rowCount),
+		vectors: make([]float32, projection.rowCount*projection.dimension),
+	}
 	for _, setID := range manifest.SetIDs {
 		set, exists := byID[setID]
 		if !exists {
-			return Generation{}, errors.New("vector index manifest names a missing vector set")
+			return nil, fmt.Errorf("vector index manifest names a missing vector set %s", setID)
 		}
 		for index, vector := range set.Vectors {
-			rows = append(rows, generationRow{
-				SetID: setID, InputKey: set.InputKeys[index], InputChecksum: set.InputChecksums[index], vector: append([]float32(nil), vector...)})
+			copy(generation.vector(len(generation.rows)), vector)
+			generation.rows = append(generation.rows, RowIdentity{
+				SetID: setID, InputKey: set.InputKeys[index], InputChecksum: set.InputChecksums[index],
+			})
 		}
 	}
-
-	encoded, err := encodeGeneration(manifest, projection.space, projection.metric, projection.normalization, projection.dimension, rows, bounds.MaxBytes)
-	if err != nil {
-		return Generation{}, err
-	}
-	validated, err := OpenGeneration(bytes.NewReader(encoded), int64(len(encoded)))
-	if err != nil {
-		return Generation{}, fmt.Errorf("validate built vector index generation: %w", err)
-	}
-	return *validated, nil
+	return generation, nil
 }
 
 func preflightBuildProjection(manifest Manifest, sets []document.VectorSetV1, bounds Options) (buildProjection, error) {
 	projection := buildProjection{}
 	for setIndex, set := range sets {
-		if !validFingerprint(set.VectorSpaceFingerprint) || !validMetric(set.Metric) ||
+		if !validFingerprint(set.VectorSpaceFingerprint) || !document.IsValidVectorMetric(set.Metric) ||
 			!validNormalization(set.Normalization) {
 			return buildProjection{}, errors.New("vector index source set has an invalid descriptor")
 		}
@@ -220,21 +213,11 @@ func preflightBuildProjection(manifest Manifest, sets []document.VectorSetV1, bo
 			return buildProjection{}, err
 		}
 	}
-	var ok bool
-	projection.vectorLength, ok = checkedProduct(
-		uint64(projection.rowCount),  //nolint:gosec // row count is non-negative and bounded above.
-		uint64(projection.dimension), //nolint:gosec // dimension is positive and bounded above.
-		4,
-	)
-	if !ok {
-		return buildProjection{}, errors.New("vector index scalar byte length overflows")
+	sections, err := computeSections(projection.metadataLength, projection.rowCount, projection.dimension, bounds.MaxBytes)
+	if err != nil {
+		return buildProjection{}, err
 	}
-	metadataEnd, metadataOK := checkedAdd(uint64(generationHeaderSize), projection.metadataLength)
-	checksumOffset, vectorOK := checkedAdd(metadataEnd, projection.vectorLength)
-	projection.totalLength, ok = checkedAdd(checksumOffset, generationChecksumBytes)
-	if !metadataOK || !vectorOK || !ok || projection.totalLength > uint64(bounds.MaxBytes) { //nolint:gosec // normalized MaxBytes is positive.
-		return buildProjection{}, errors.New("vector index generation exceeds byte bounds")
-	}
+	projection.sections = sections
 	return projection, nil
 }
 
@@ -260,9 +243,19 @@ func OpenGeneration(reader io.ReaderAt, size int64) (*Generation, error) {
 	return decodeGeneration(encoded)
 }
 
-// Bytes returns an independent copy of the deterministic generation bytes.
+// Bytes deterministically encodes an independent v1 generation. Encoded bytes
+// are not retained by Generation; callers may retain them for persistence.
+// A nil or uninitialized generation returns nil.
 func (generation *Generation) Bytes() []byte {
-	return append([]byte(nil), generation.encoded...)
+	if generation == nil || len(generation.rows) == 0 {
+		return nil
+	}
+	return encodeGeneration(generation)
+}
+
+func (generation *Generation) vector(row int) []float32 {
+	start := row * generation.dimension
+	return generation.vectors[start : start+generation.dimension]
 }
 
 // Metadata returns the validated authority identity, descriptor, and shape
@@ -284,17 +277,13 @@ func (generation *Generation) Metadata() GenerationMetadata {
 	}
 }
 
-// Search performs exact search. maxVisits must cover the full generation so
-// callers cannot accidentally mistake a truncated scan for exact results.
-func (generation *Generation) Search(query []float32, k, maxVisits int) ([]Neighbor, error) {
+// Search scans the complete generation and returns the exact k nearest rows.
+func (generation *Generation) Search(query []float32, k int) ([]Neighbor, error) {
 	if generation == nil || len(generation.rows) == 0 {
 		return nil, errors.New("vector index generation is not open")
 	}
 	if k < 1 || k > len(generation.rows) {
 		return nil, errors.New("vector index search k is outside row bounds")
-	}
-	if maxVisits != len(generation.rows) || maxVisits < k {
-		return nil, errors.New("vector index exact search visit bound must equal row count")
 	}
 	if len(query) != generation.dimension {
 		return nil, errors.New("vector index query dimension does not match generation")
@@ -305,14 +294,14 @@ func (generation *Generation) Search(query []float32, k, maxVisits int) ([]Neigh
 
 	neighbors := make([]Neighbor, len(generation.rows))
 	for index, row := range generation.rows {
-		neighbor := Neighbor{RowIdentity: row.RowIdentity}
+		neighbor := Neighbor{RowIdentity: row}
 		switch generation.metric {
 		case document.VectorMetricCosine:
-			neighbor.Score = cosine(query, row.vector)
+			neighbor.Score = cosine(query, generation.vector(index))
 		case document.VectorMetricDotProduct:
-			neighbor.Score = dot(query, row.vector)
+			neighbor.Score = dot(query, generation.vector(index))
 		case document.VectorMetricL2:
-			neighbor.Distance = euclidean(query, row.vector)
+			neighbor.Distance = euclidean(query, generation.vector(index))
 		}
 		neighbors[index] = neighbor
 	}
@@ -375,80 +364,64 @@ func manifestChecksum(setIDs []string) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func encodeGeneration(manifest Manifest, space, metric, normalization string, dimension int, rows []generationRow, maxBytes int64) ([]byte, error) {
-	if maxBytes < 1 || maxBytes > defaultMaxBytes {
-		return nil, errors.New("vector index generation exceeds byte bounds")
-	}
-	metadataLength := uint64(0)
-	for _, value := range []string{generationLayout, manifest.Checksum, space, metric, normalization} {
-		if err := addFramedStringLength(&metadataLength, value); err != nil {
-			return nil, err
-		}
-	}
-	for _, row := range rows {
-		if len(row.vector) != dimension {
-			return nil, errors.New("vector index row dimension does not match generation")
-		}
-		for _, value := range []string{row.SetID, row.InputKey, row.InputChecksum} {
-			if err := addFramedStringLength(&metadataLength, value); err != nil {
-				return nil, err
-			}
-		}
-	}
-	vectorLength, ok := checkedProduct(
-		uint64(len(rows)),
-		uint64(dimension), //nolint:gosec // dimension is positive and bounded above.
-		4,
-	)
-	if !ok {
-		return nil, errors.New("vector index scalar byte length overflows")
-	}
-	metadataOffset := uint64(generationHeaderSize)
-	vectorOffset, ok := checkedAdd(metadataOffset, metadataLength)
-	if !ok {
-		return nil, errors.New("vector index metadata offset overflows")
-	}
-	checksumOffset, ok := checkedAdd(vectorOffset, vectorLength)
-	totalLength, totalOK := checkedAdd(checksumOffset, generationChecksumBytes)
-	if !ok || !totalOK || totalLength > uint64(maxBytes) {
-		return nil, errors.New("vector index generation exceeds byte bounds")
-	}
+// generationSections is shared by build sizing, encoding, and header validation.
+type generationSections struct {
+	metadataOffset uint64
+	metadataLength uint64
+	vectorOffset   uint64
+	vectorLength   uint64
+	checksumOffset uint64
+	totalLength    uint64
+}
 
-	var metadata bytes.Buffer
-	metadata.Grow(int(metadataLength))
-	for _, value := range []string{generationLayout, manifest.Checksum, space, metric, normalization} {
-		if err := writeString(&metadata, value); err != nil {
-			return nil, err
-		}
+func computeSections(metadataLength uint64, rows, dimension int, maxBytes int64) (generationSections, error) {
+	if rows < 1 || rows > defaultMaxRows || dimension < 1 || dimension > defaultMaxDimension {
+		return generationSections{}, errors.New("vector index generation dimensions exceed bounds")
 	}
-	for _, row := range rows {
+	if maxBytes < 1 || maxBytes > defaultMaxBytes {
+		return generationSections{}, errors.New("vector index generation exceeds byte bounds")
+	}
+	vectorLength, ok := checkedProduct(uint64(rows), uint64(dimension), 4)
+	vectorOffset, metadataOK := checkedAdd(uint64(generationHeaderSize), metadataLength)
+	checksumOffset, vectorOK := checkedAdd(vectorOffset, vectorLength)
+	totalLength, totalOK := checkedAdd(checksumOffset, generationChecksumBytes)
+	if !ok || !metadataOK || !vectorOK || !totalOK || totalLength > uint64(maxBytes) {
+		return generationSections{}, errors.New("vector index generation exceeds byte bounds")
+	}
+	return generationSections{uint64(generationHeaderSize), metadataLength, vectorOffset, vectorLength, checksumOffset, totalLength}, nil
+}
+
+func encodeGeneration(generation *Generation) []byte {
+	sections := generation.sections
+	output := make([]byte, 0, int(sections.totalLength)) //nolint:gosec // computeSections bounds total length to 512 MiB.
+	output = append(output, generationDomain...)
+	output = binary.LittleEndian.AppendUint32(output, generationVersion)
+	output = binary.LittleEndian.AppendUint32(output, generationHeaderSize)
+	for _, value := range []uint64{sections.metadataOffset, sections.metadataLength, sections.vectorOffset, sections.vectorLength, sections.checksumOffset, uint64(len(generation.rows))} {
+		output = binary.LittleEndian.AppendUint64(output, value)
+	}
+	output = binary.LittleEndian.AppendUint32(output, uint32(generation.dimension)) //nolint:gosec // Validated dimension is at most 16,384.
+	for _, value := range []string{generationLayout, generation.manifest.Checksum, generation.vectorSpaceID, generation.metric, generation.normalization} {
+		output = appendString(output, value)
+	}
+	for _, row := range generation.rows {
 		for _, value := range []string{row.SetID, row.InputKey, row.InputChecksum} {
-			if err := writeString(&metadata, value); err != nil {
-				return nil, err
-			}
+			output = appendString(output, value)
 		}
 	}
-	var output bytes.Buffer
-	output.Grow(int(totalLength)) //nolint:gosec // total length is bounded by 512 MiB above.
-	output.WriteString(generationDomain)
-	writeUint32(&output, generationVersion)
-	writeUint32(&output, generationHeaderSize)
-	for _, value := range []uint64{metadataOffset, metadataLength, vectorOffset, vectorLength, checksumOffset, uint64(len(rows))} {
-		writeUint64(&output, value)
-	}
-	writeUint32(&output, uint32(dimension)) //nolint:gosec // dimension is bounded by 16,384 above.
-	output.Write(metadata.Bytes())
-	for _, row := range rows {
-		for _, value := range row.vector {
-			if value == 0 {
-				value = 0
-			}
-			writeUint32(&output, math.Float32bits(value))
+	for _, value := range generation.vectors {
+		if value == 0 {
+			value = 0
 		}
+		output = binary.LittleEndian.AppendUint32(output, math.Float32bits(value))
 	}
-	checksum := generationChecksum(output.Bytes())
-	output.Write(checksum[:])
-	return output.Bytes(), nil
+	checksum := generationChecksum(output)
+	return append(output, checksum[:]...)
+}
+
+func appendString(output []byte, value string) []byte {
+	output = binary.LittleEndian.AppendUint32(output, uint32(len(value))) //nolint:gosec // Validated strings are at most 64 KiB.
+	return append(output, value...)
 }
 
 func addFramedStringLength(total *uint64, value string) error {
@@ -475,87 +448,99 @@ func addFramedIdentityLength(total *uint64, length int) error {
 }
 
 func decodeGeneration(encoded []byte) (*Generation, error) {
-	if len(encoded) < int(generationHeaderSize)+generationChecksumBytes {
-		return nil, errors.New("vector index generation is truncated")
-	}
-	reader := bytes.NewReader(encoded)
-	magic := make([]byte, len(generationDomain))
-	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != generationDomain {
-		return nil, errors.New("vector index generation has an invalid domain")
-	}
-	version, err := readUint32(reader)
-	if err != nil || version != generationVersion {
-		return nil, errors.New("vector index generation has an unsupported version")
-	}
-	headerSize, err := readUint32(reader)
-	if err != nil || headerSize != generationHeaderSize {
-		return nil, errors.New("vector index generation has an invalid header size")
-	}
-	fields := make([]uint64, 6)
-	for index := range fields {
-		fields[index], err = readUint64(reader)
-		if err != nil {
-			return nil, err
-		}
-	}
-	dimension32, err := readUint32(reader)
+	sections, rows, dimension, err := decodeHeader(encoded)
 	if err != nil {
 		return nil, err
 	}
-	metadataOffset, metadataLength, vectorOffset, vectorLength, checksumOffset, rowCount := fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]
-	if rowCount == 0 || rowCount > defaultMaxRows || dimension32 == 0 || dimension32 > defaultMaxDimension {
-		return nil, errors.New("vector index generation dimensions exceed bounds")
+	generation, err := decodeMetadata(encoded[sections.metadataOffset:sections.vectorOffset], rows, dimension)
+	if err != nil {
+		return nil, err
 	}
-	expectedVectorLength, ok := checkedProduct(rowCount, uint64(dimension32), 4)
-	metadataEnd, metadataOK := checkedAdd(metadataOffset, metadataLength)
-	vectorEnd, vectorOK := checkedAdd(vectorOffset, vectorLength)
-	fileEnd, fileOK := checkedAdd(checksumOffset, generationChecksumBytes)
-	if !ok || !metadataOK || !vectorOK || !fileOK || metadataOffset != uint64(headerSize) ||
-		metadataLength == 0 || metadataEnd != vectorOffset || expectedVectorLength != vectorLength ||
-		vectorEnd != checksumOffset || fileEnd != uint64(len(encoded)) {
-		return nil, errors.New("vector index generation has invalid or overlapping sections")
+	generation.sections = sections
+	if err := generation.decodeVectors(encoded[sections.vectorOffset:sections.checksumOffset]); err != nil {
+		return nil, err
 	}
-	wantChecksum := generationChecksum(encoded[:checksumOffset])
-	if !bytes.Equal(wantChecksum[:], encoded[checksumOffset:]) {
-		return nil, errors.New("vector index generation checksum mismatch")
+	if err := generation.verifySourceSetIdentities(); err != nil {
+		return nil, err
 	}
+	return generation, nil
+}
 
-	metadataReader := bytes.NewReader(encoded[metadataOffset:metadataEnd])
-	layout, err := readString(metadataReader)
+func decodeHeader(encoded []byte) (generationSections, int, int, error) {
+	if len(encoded) < int(generationHeaderSize)+generationChecksumBytes {
+		return generationSections{}, 0, 0, errors.New("vector index generation is truncated")
+	}
+	if string(encoded[:len(generationDomain)]) != generationDomain {
+		return generationSections{}, 0, 0, errors.New("vector index generation has an invalid domain")
+	}
+	header := encoded[len(generationDomain):generationHeaderSize]
+	if binary.LittleEndian.Uint32(header) != generationVersion {
+		return generationSections{}, 0, 0, errors.New("vector index generation has an unsupported version")
+	}
+	if binary.LittleEndian.Uint32(header[4:]) != generationHeaderSize {
+		return generationSections{}, 0, 0, errors.New("vector index generation has an invalid header size")
+	}
+	fields := header[8:]
+	rowCount := binary.LittleEndian.Uint64(fields[40:])
+	dimension := binary.LittleEndian.Uint32(fields[48:])
+	if rowCount == 0 || rowCount > defaultMaxRows || dimension == 0 || dimension > defaultMaxDimension {
+		return generationSections{}, 0, 0, errors.New("vector index generation dimensions exceed bounds")
+	}
+	metadataLength := binary.LittleEndian.Uint64(fields[8:])
+	sections, err := computeSections(metadataLength, int(rowCount), int(dimension), defaultMaxBytes)
+	if err != nil {
+		return generationSections{}, 0, 0, err
+	}
+	if metadataLength == 0 || sections.metadataOffset != binary.LittleEndian.Uint64(fields) ||
+		sections.vectorOffset != binary.LittleEndian.Uint64(fields[16:]) ||
+		sections.vectorLength != binary.LittleEndian.Uint64(fields[24:]) ||
+		sections.checksumOffset != binary.LittleEndian.Uint64(fields[32:]) || sections.totalLength != uint64(len(encoded)) {
+		return generationSections{}, 0, 0, errors.New("vector index generation has invalid or overlapping sections")
+	}
+	checksum := generationChecksum(encoded[:sections.checksumOffset])
+	if !bytes.Equal(checksum[:], encoded[sections.checksumOffset:]) {
+		return generationSections{}, 0, 0, errors.New("vector index generation checksum mismatch")
+	}
+	return sections, int(rowCount), int(dimension), nil
+}
+
+func decodeMetadata(metadata []byte, rowCount, dimension int) (*Generation, error) {
+	metadataReader := metadata
+	layout, err := readString(&metadataReader)
 	if err != nil || layout != generationLayout {
 		return nil, errors.New("vector index generation has an unsupported layout")
 	}
-	manifestChecksumValue, err := readString(metadataReader)
+	manifestChecksumValue, err := readString(&metadataReader)
 	if err != nil || !validFingerprint(manifestChecksumValue) {
 		return nil, errors.New("vector index generation has an invalid manifest checksum")
 	}
-	space, err := readString(metadataReader)
+	space, err := readString(&metadataReader)
 	if err != nil || !validFingerprint(space) {
 		return nil, errors.New("vector index generation has an invalid vector-space identity")
 	}
-	metric, err := readString(metadataReader)
-	if err != nil || !validMetric(metric) {
+	metric, err := readString(&metadataReader)
+	if err != nil || !document.IsValidVectorMetric(metric) {
 		return nil, errors.New("vector index generation has an unsupported metric")
 	}
-	normalization, err := readString(metadataReader)
+	normalization, err := readString(&metadataReader)
 	if err != nil || !validNormalization(normalization) {
 		return nil, errors.New("vector index generation has an unsupported normalization")
 	}
 
-	rows := make([]generationRow, int(rowCount))
+	rows := make([]RowIdentity, rowCount)
 	setIDs := make([]string, 0)
 	type logicalRowKey struct{ setID, inputKey string }
-	seenRows := make(map[logicalRowKey]struct{}, int(rowCount))
+	seenRows := make(map[logicalRowKey]struct{}, rowCount)
 	for index := range rows {
-		setID, readErr := readString(metadataReader)
+		setID, readErr := readString(&metadataReader)
 		if readErr != nil || !validFingerprint(setID) {
 			return nil, errors.New("vector index generation has an invalid row set identity")
 		}
-		inputKey, readErr := readString(metadataReader)
+		inputKey, readErr := readString(&metadataReader)
 		if readErr != nil || !validIdentity(inputKey) {
 			return nil, errors.New("vector index generation has an invalid row input identity")
 		}
-		inputChecksum, readErr := readString(metadataReader)
+		inputChecksum, readErr := readString(&metadataReader)
 		if readErr != nil || !validFingerprint(inputChecksum) {
 			return nil, errors.New("vector index generation has an invalid row checksum")
 		}
@@ -571,58 +556,52 @@ func decodeGeneration(encoded []byte) (*Generation, error) {
 			}
 			setIDs = append(setIDs, setID)
 		}
-		rows[index].RowIdentity = identity
+		rows[index] = identity
 	}
-	if metadataReader.Len() != 0 {
+	if len(metadataReader) != 0 {
 		return nil, errors.New("vector index generation metadata has trailing bytes")
 	}
 	if manifestChecksum(setIDs) != manifestChecksumValue {
 		return nil, errors.New("vector index generation manifest checksum does not match rows")
 	}
 
-	vectorReader := bytes.NewReader(encoded[vectorOffset:vectorEnd])
-	for index := range rows {
-		rows[index].vector = make([]float32, int(dimension32))
-		for scalar := range rows[index].vector {
-			bits, readErr := readUint32(vectorReader)
-			if readErr != nil {
-				return nil, readErr
-			}
-			value := math.Float32frombits(bits)
-			if !finite(value) || value == 0 && bits != 0 {
-				return nil, errors.New("vector index generation contains non-canonical vector scalars")
-			}
-			rows[index].vector[scalar] = value
-		}
-		if err := validateMetricVector(metric, normalization, rows[index].vector); err != nil {
-			return nil, err
-		}
-	}
-	if vectorReader.Len() != 0 {
-		return nil, errors.New("vector index generation vector payload has trailing bytes")
-	}
-	if err := verifySourceSetIdentities(rows, space, metric, normalization, int(dimension32)); err != nil {
-		return nil, err
-	}
-
 	return &Generation{
-		encoded: encoded, manifest: Manifest{Checksum: manifestChecksumValue, SetIDs: setIDs},
+		manifest:      Manifest{Checksum: manifestChecksumValue, SetIDs: setIDs},
 		vectorSpaceID: space, metric: metric, normalization: normalization,
-		dimension: int(dimension32), rows: rows,
+		dimension: dimension, rows: rows,
 	}, nil
 }
 
-func verifySourceSetIdentities(rows []generationRow, space, metric, normalization string, dimension int) error {
+func (generation *Generation) decodeVectors(encoded []byte) error {
+	generation.vectors = make([]float32, len(encoded)/4)
+	for index := range generation.vectors {
+		bits := binary.LittleEndian.Uint32(encoded[index*4:])
+		value := math.Float32frombits(bits)
+		if !finite(value) || value == 0 && bits != 0 {
+			return fmt.Errorf("vector index row %d scalar %d: non-canonical vector scalars", index/generation.dimension, index%generation.dimension)
+		}
+		generation.vectors[index] = value
+	}
+	for index, row := range generation.rows {
+		if err := validateMetricVector(generation.metric, generation.normalization, generation.vector(index)); err != nil {
+			return fmt.Errorf("vector index set %s row %d (%q): %w", row.SetID, index, row.InputKey, err)
+		}
+	}
+	return nil
+}
+
+func (generation *Generation) verifySourceSetIdentities() error {
+	rows := generation.rows
 	for start := 0; start < len(rows); {
 		end := start + 1
 		for end < len(rows) && rows[end].SetID == rows[start].SetID {
 			end++
 		}
 		set := document.VectorSetV1{
-			VectorSpaceFingerprint: space,
-			Metric:                 metric,
-			Normalization:          normalization,
-			Dimension:              dimension,
+			VectorSpaceFingerprint: generation.vectorSpaceID,
+			Metric:                 generation.metric,
+			Normalization:          generation.normalization,
+			Dimension:              generation.dimension,
 			InputKeys:              make([]string, end-start),
 			InputChecksums:         make([]string, end-start),
 			Vectors:                make([][]float32, end-start),
@@ -631,11 +610,11 @@ func verifySourceSetIdentities(rows []generationRow, space, metric, normalizatio
 			setIndex := index - start
 			set.InputKeys[setIndex] = rows[index].InputKey
 			set.InputChecksums[setIndex] = rows[index].InputChecksum
-			set.Vectors[setIndex] = rows[index].vector
+			set.Vectors[setIndex] = generation.vector(index)
 		}
 		_, sourceSetID, err := document.EncodeVectorSetV1(set)
 		if err != nil || sourceSetID != rows[start].SetID {
-			return errors.New("vector index generation does not match source set identity")
+			return fmt.Errorf("vector index generation does not match source set identity %s (rows %d-%d)", rows[start].SetID, start, end-1)
 		}
 		start = end
 	}
@@ -643,7 +622,7 @@ func verifySourceSetIdentities(rows []generationRow, space, metric, normalizatio
 }
 
 func validateMetricVector(metric, normalization string, vector []float32) error {
-	if !validMetric(metric) || !validNormalization(normalization) {
+	if !document.IsValidVectorMetric(metric) || !validNormalization(normalization) {
 		return errors.New("vector index metric or normalization is unsupported")
 	}
 	normSquared := 0.0
@@ -660,10 +639,6 @@ func validateMetricVector(metric, normalization string, vector []float32) error 
 		return errors.New("vector index unit-length vector does not match normalization contract")
 	}
 	return nil
-}
-
-func validMetric(metric string) bool {
-	return metric == document.VectorMetricCosine || metric == document.VectorMetricDotProduct || metric == document.VectorMetricL2
 }
 
 func validNormalization(normalization string) bool {
@@ -737,59 +712,22 @@ func generationChecksum(data []byte) [sha256.Size]byte {
 	return result
 }
 
-func writeString(output *bytes.Buffer, value string) error {
-	if !validIdentity(value) {
-		return errors.New("vector index identity must be bounded non-empty UTF-8")
-	}
-	writeUint32(output, uint32(len(value))) //nolint:gosec // validIdentity bounds length to 64 KiB.
-	output.WriteString(value)
-	return nil
-}
-
-func readString(reader *bytes.Reader) (string, error) {
-	length, err := readUint32(reader)
-	if err != nil {
-		return "", err
-	}
-	if length == 0 || length > maxIdentityBytes || uint64(length) > uint64(reader.Len()) { //nolint:gosec // bytes.Reader length cannot be negative.
-		return "", errors.New("vector index generation has an invalid string length")
-	}
-	value := make([]byte, int(length))
-	if _, err := io.ReadFull(reader, value); err != nil {
+func readString(remaining *[]byte) (string, error) {
+	data := *remaining
+	if len(data) < 4 {
 		return "", errors.New("vector index generation is truncated")
 	}
+	length := binary.LittleEndian.Uint32(data)
+	data = data[4:]
+	if length == 0 || length > maxIdentityBytes || uint64(length) > uint64(len(data)) {
+		return "", errors.New("vector index generation has an invalid string length")
+	}
+	value := data[:length]
 	if !utf8.Valid(value) {
 		return "", errors.New("vector index generation contains invalid UTF-8")
 	}
+	*remaining = data[length:]
 	return string(value), nil
-}
-
-func writeUint32(output *bytes.Buffer, value uint32) {
-	var encoded [4]byte
-	binary.LittleEndian.PutUint32(encoded[:], value)
-	output.Write(encoded[:])
-}
-
-func writeUint64(output *bytes.Buffer, value uint64) {
-	var encoded [8]byte
-	binary.LittleEndian.PutUint64(encoded[:], value)
-	output.Write(encoded[:])
-}
-
-func readUint32(reader *bytes.Reader) (uint32, error) {
-	var encoded [4]byte
-	if _, err := io.ReadFull(reader, encoded[:]); err != nil {
-		return 0, errors.New("vector index generation is truncated")
-	}
-	return binary.LittleEndian.Uint32(encoded[:]), nil
-}
-
-func readUint64(reader *bytes.Reader) (uint64, error) {
-	var encoded [8]byte
-	if _, err := io.ReadFull(reader, encoded[:]); err != nil {
-		return 0, errors.New("vector index generation is truncated")
-	}
-	return binary.LittleEndian.Uint64(encoded[:]), nil
 }
 
 func checkedAdd(left, right uint64) (uint64, bool) {

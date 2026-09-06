@@ -33,7 +33,7 @@ func TestBuildGenerationIsDeterministicAndSearchesExactCosine(t *testing.T) {
 
 	opened, err := OpenGeneration(bytes.NewReader(first.Bytes()), int64(len(first.Bytes())))
 	require.NoError(t, err)
-	neighbors, err := opened.Search([]float32{1, 0}, 3, 3)
+	neighbors, err := opened.Search([]float32{1, 0}, 3)
 	require.NoError(t, err)
 	require.Len(t, neighbors, 3)
 	assert.Equal(t, "chunk-a", neighbors[0].InputKey)
@@ -59,8 +59,41 @@ func TestGenerationEncodesGoldenBinary(t *testing.T) {
 	want, err := os.ReadFile("testdata/vector-index-v1.golden.bin")
 	require.NoError(t, err)
 	assert.Equal(t, want, generation.Bytes())
+	opened, err := OpenGeneration(bytes.NewReader(want), int64(len(want)))
+	require.NoError(t, err)
+	assert.Equal(t, want, opened.Bytes())
 	digest := sha256.Sum256(want)
 	assert.Equal(t, "20a953023d9e2c3a5793a09743531504fda8e922b84237bf57a5be15fc5415eb", hex.EncodeToString(digest[:]))
+}
+
+// Built and opened projections must own their state after callers release or
+// reuse the source slices and serialized buffer.
+func TestGenerationOwnsBuildAndOpenInputs(t *testing.T) {
+	set := testVectorSet(document.VectorMetricDotProduct, document.VectorNormalizationNone,
+		[]string{"row-a", "row-b"}, [][]float32{{1, 0}, {0, 1}})
+	manifest := testManifest(t, []document.VectorSetV1{set})
+	built, err := BuildGeneration(manifest, []document.VectorSetV1{set}, Options{})
+	require.NoError(t, err)
+	wantBytes := built.Bytes()
+	encoded := bytes.Clone(wantBytes)
+	opened, err := OpenGeneration(bytes.NewReader(encoded), int64(len(encoded)))
+	require.NoError(t, err)
+	wantMetadata := built.Metadata()
+	wantNeighbors, err := built.Search([]float32{1, 0}, 2)
+	require.NoError(t, err)
+
+	manifest.SetIDs[0] = strings.Repeat("0", 64)
+	set.InputKeys[0] = "changed"
+	set.InputChecksums[0] = strings.Repeat("0", 64)
+	set.Vectors[0][0] = -1
+	clear(encoded)
+	for _, generation := range []*Generation{built, opened} {
+		assert.Equal(t, wantMetadata, generation.Metadata())
+		assert.Equal(t, wantBytes, generation.Bytes())
+		neighbors, err := generation.Search([]float32{1, 0}, 2)
+		require.NoError(t, err)
+		assert.Equal(t, wantNeighbors, neighbors)
+	}
 }
 
 // This test fails if dot-product ranking stops preferring larger scores or L2
@@ -92,7 +125,7 @@ func TestSearchUsesExactDotProductAndEuclideanOrdering(t *testing.T) {
 			generation, err := BuildGeneration(testManifest(t, []document.VectorSetV1{set}),
 				[]document.VectorSetV1{set}, Options{})
 			require.NoError(t, err)
-			neighbors, err := generation.Search(test.query, 3, 3)
+			neighbors, err := generation.Search(test.query, 3)
 			require.NoError(t, err)
 			for index, neighbor := range neighbors {
 				assert.Equal(t, test.wantKeys[index], neighbor.InputKey)
