@@ -332,6 +332,8 @@ func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing
 			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 			record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 			require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
+			direct := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+			require.NoError(t, source.StageEmbeddingSet(t.Context(), direct))
 			snapshot, err := source.BeginMetadataSnapshot(t.Context())
 			require.NoError(t, err)
 			defer func() { require.NoError(t, snapshot.Close()) }()
@@ -346,12 +348,13 @@ func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing
 				record.InputGeneration.GenerationBlobHash:       record.InputGeneration.GenerationJSON,
 				testSHA256(record.InputGeneration.EvidenceJSON): record.InputGeneration.EvidenceJSON,
 				record.VectorSet.PayloadBlobHash:                record.VectorSet.Payload,
+				direct.VectorSet.PayloadBlobHash:                direct.VectorSet.Payload,
 			}
 			// Copy only the bytes selected by the portable backup closure, not
 			// every fixture blob. The embedding evidence has no rendition-artifact
 			// reference to bring it into the backup on the generation's behalf.
 			require.NotEqual(t, catalogEvidenceBlobHash, testSHA256(record.InputGeneration.EvidenceJSON))
-			rows, err := snapshot.QueryContext(t.Context(), BackupBlobAuthorityCTE+
+			rows, err := snapshot.QueryContext(t.Context(), BackupBlobAuthorityCTE()+
 				`SELECT hash FROM backup_authorized_blobs`)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, rows.Close()) }()
