@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,12 +98,12 @@ func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *t
 	tests := []struct {
 		name     string
 		path     []string
-		want     int
+		wantErr  string
 		setItems func(*document.SourceEvidenceV1, int)
 	}{
 		{
 			name: "heading_path", path: []string{"$defs", "unit", "properties", "heading_path"},
-			want: 64,
+			wantErr: "heading depth",
 			setItems: func(source *document.SourceEvidenceV1, count int) {
 				source.Units[0].HeadingPath = make([]string, count)
 				for index := range source.Units[0].HeadingPath {
@@ -112,7 +113,7 @@ func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *t
 		},
 		{
 			name: "geometry boxes", path: []string{"$defs", "geometry", "properties", "boxes"},
-			want: 10_000,
+			wantErr: "too many boxes",
 			setItems: func(source *document.SourceEvidenceV1, count int) {
 				geometry := source.Units[0].Regions[0].Geometry
 				geometry.Boxes = make([]document.EvidenceBoxV1, count)
@@ -123,7 +124,7 @@ func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *t
 		},
 		{
 			name: "geometry polygons", path: []string{"$defs", "geometry", "properties", "polygons"},
-			want: 10_000,
+			wantErr: "too many polygons",
 			setItems: func(source *document.SourceEvidenceV1, count int) {
 				geometry := source.Units[0].Regions[0].Geometry
 				geometry.Polygons = make([]document.EvidencePolygonV1, count)
@@ -134,26 +135,35 @@ func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *t
 				}
 			},
 		},
+		{
+			name: "polygon points", path: []string{"$defs", "polygon", "properties", "points"},
+			wantErr: "too many polygon points",
+			setItems: func(source *document.SourceEvidenceV1, count int) {
+				source.Units[0].Regions[0].Geometry.Polygons = []document.EvidencePolygonV1{{
+					Points: make([]document.EvidencePointV1, count),
+				}}
+			},
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.want, contractMaxItems(t, schema, test.path...))
+			limit := contractMaxItems(t, schema, test.path...)
 
 			for _, boundary := range []struct {
 				name    string
 				count   int
 				wantErr bool
 			}{
-				{name: "at limit", count: test.want},
-				{name: "over limit", count: test.want + 1, wantErr: true},
+				{name: "at limit", count: limit},
+				{name: "over limit", count: limit + 1, wantErr: true},
 			} {
 				t.Run(boundary.name, func(t *testing.T) {
 					source := contractSourceEvidence()
 					test.setItems(&source, boundary.count)
 					err := document.ValidateSourceEvidenceV1(source)
 					if boundary.wantErr {
-						require.Error(t, err)
+						require.ErrorContains(t, err, test.wantErr)
 						return
 					}
 					require.NoError(t, err)
@@ -161,6 +171,139 @@ func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *t
 			}
 		})
 	}
+}
+
+func TestBridgeContractNormativeDocumentsScalarBoundsMatchValidator(t *testing.T) {
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(sourceEvidenceSchema, &schema))
+	type scalarBound struct {
+		definition string
+		field      string
+		wantErr    string
+		set        func(*document.SourceEvidenceV1, float64)
+	}
+	tests := []scalarBound{
+		{"geometry", "width", "geometry frame", func(s *document.SourceEvidenceV1, n float64) { s.Units[0].Regions[0].Geometry.Width = int64(n) }},
+		{"geometry", "height", "geometry frame", func(s *document.SourceEvidenceV1, n float64) { s.Units[0].Regions[0].Geometry.Height = int64(n) }},
+		{"geometry", "scale", "geometry frame", func(s *document.SourceEvidenceV1, n float64) { s.Units[0].Regions[0].Geometry.Scale = int64(n) }},
+		{"table", "rows", "invalid dimensions", func(s *document.SourceEvidenceV1, n float64) {
+			s.Units[0].Tables = []document.SourceEvidenceTableV1{{ProviderID: "table", Rows: int(n), Columns: 1, Cells: []document.SourceEvidenceTableCellV1{}}}
+		}},
+		{"table", "columns", "invalid dimensions", func(s *document.SourceEvidenceV1, n float64) {
+			s.Units[0].Tables = []document.SourceEvidenceTableV1{{ProviderID: "table", Rows: 1, Columns: int(n), Cells: []document.SourceEvidenceTableCellV1{}}}
+		}},
+		{"locator", "end", "invalid range", func(s *document.SourceEvidenceV1, n float64) {
+			s.Family = "text"
+			s.UnitKind = document.EvidenceUnitLine
+			s.Units[0].Locator.Kind = document.EvidenceLocatorLine
+			s.Units[0].Locator.IndexOrigin = document.EvidenceIndexOriginZero
+			s.Units[0].Locator.Start = 0
+			s.Units[0].Locator.End = int64(n)
+		}},
+		{"locator", "start", "invalid range", func(s *document.SourceEvidenceV1, n float64) {
+			s.Completeness = document.EvidencePartial
+			s.Units[0].Locator.Start = int64(n)
+			s.Units[0].Locator.End = int64(n)
+			s.Omissions = []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionUnit, Reason: "omitted pages", Locator: &document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginZero, Start: 0, End: max(0, int64(n)-1),
+			}}}
+			s.Units[0].Locator.IndexOrigin = document.EvidenceIndexOriginZero
+			if n == 0 {
+				s.Completeness = document.EvidenceComplete
+				s.Omissions = nil
+			}
+		}},
+	}
+	for _, field := range []string{"minimum", "maximum", "value"} {
+		tests = append(tests, scalarBound{"confidence", field, "confidence is invalid", func(s *document.SourceEvidenceV1, n float64) {
+			c := &document.SourceEvidenceConfidenceV1{Interpretation: document.EvidenceConfidenceHigherIsBetter, Minimum: -1000000, Maximum: 1000000}
+			switch field {
+			case "minimum":
+				c.Minimum = n
+				c.Value = n
+			case "maximum":
+				c.Maximum = n
+				c.Value = n
+			case "value":
+				c.Value = n
+			}
+			s.Units[0].Confidence = c
+		}})
+	}
+	for _, test := range tests {
+		t.Run(test.definition+"/"+test.field, func(t *testing.T) {
+			field := contractObject(t, schema, "$defs", test.definition, "properties", test.field)
+			for _, bound := range []string{"minimum", "maximum"} {
+				limit, ok := field[bound].(float64)
+				require.True(t, ok, "missing %s", bound)
+				// Confidence scales need distinct endpoints, so the minimum cannot
+				// equal the largest endpoint, nor the maximum the smallest.
+				invalidEndpoint := test.definition == "confidence" &&
+					(test.field == "minimum" && bound == "maximum" || test.field == "maximum" && bound == "minimum")
+				t.Run(bound, func(t *testing.T) {
+					source := contractSourceEvidence()
+					test.set(&source, limit)
+					if invalidEndpoint {
+						require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), test.wantErr)
+					} else {
+						require.NoError(t, document.ValidateSourceEvidenceV1(source))
+					}
+					step := 1.0
+					if bound == "minimum" {
+						step = -1
+					}
+					test.set(&source, limit+step)
+					require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), test.wantErr)
+				})
+			}
+		})
+	}
+}
+
+func TestBridgeContractNormativeDocumentsAggregateAndByteLimits(t *testing.T) {
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(sourceEvidenceSchema, &schema))
+	t.Run("polygon point budget spans polygons", func(t *testing.T) {
+		limit := contractMaxItems(t, schema, "$defs", "polygon", "properties", "points")
+		source := contractSourceEvidence()
+		geometry := source.Units[0].Regions[0].Geometry
+		geometry.Polygons = []document.EvidencePolygonV1{
+			{Points: make([]document.EvidencePointV1, limit/2)},
+			{Points: make([]document.EvidencePointV1, limit-limit/2)},
+		}
+		require.NoError(t, document.ValidateSourceEvidenceV1(source))
+		geometry.Polygons[1].Points = append(geometry.Polygons[1].Points, document.EvidencePointV1{})
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "too many polygon points")
+	})
+	t.Run("heading byte budget spans units", func(t *testing.T) {
+		value, ok := contractObject(t, schema, "$defs", "unit", "properties", "heading_path", "items")["maxLength"].(float64)
+		require.True(t, ok)
+		limit := int(value)
+		source := contractSourceEvidence()
+		source.Units[0].HeadingPath = []string{strings.Repeat("h", limit)}
+		require.NoError(t, document.ValidateSourceEvidenceV1(source))
+		source.Units[0].HeadingPath[0] += "h"
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "heading bytes")
+		source.Units[0].HeadingPath[0] = strings.Repeat("h", limit/2)
+		second := source.Units[0]
+		second.Order = 1
+		second.Locator.Start, second.Locator.End = 2, 2
+		second.HeadingPath = []string{strings.Repeat("h", limit-limit/2)}
+		source.Units = append(source.Units, second)
+		require.NoError(t, document.ValidateSourceEvidenceV1(source))
+		source.Units[1].HeadingPath[0] += "h"
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "heading bytes")
+	})
+	t.Run("identifier limit counts UTF-8 bytes", func(t *testing.T) {
+		value, ok := contractObject(t, schema, "$defs", "region", "properties", "provider_id")["maxLength"].(float64)
+		require.True(t, ok)
+		limit := int(value)
+		source := contractSourceEvidence()
+		source.Units[0].Regions[0].ProviderID = strings.Repeat("界", limit/3) + strings.Repeat("x", limit%3)
+		require.NoError(t, document.ValidateSourceEvidenceV1(source))
+		source.Units[0].Regions[0].ProviderID += "x"
+		require.ErrorContains(t, document.ValidateSourceEvidenceV1(source), "provider ID")
+	})
 }
 
 func contractMaxItems(t *testing.T, schema map[string]any, path ...string) int {

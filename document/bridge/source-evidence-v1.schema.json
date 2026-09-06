@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docbank.dev/schemas/source-evidence-v1.schema.json",
   "title": "Docbank source-evidence/v1",
-  "description": "Wire-shape schema. document.ValidateSourceEvidenceV1 is authoritative for semantic, aggregate, sequence, normalization, and referential constraints.",
+  "description": "Wire-shape schema. document.ValidateSourceEvidenceV1 is authoritative for semantic, aggregate, sequence, normalization, and referential constraints. String limits in Go count UTF-8 bytes; JSON Schema maxLength counts Unicode code points and is only a necessary bound. Non-ASCII strings may pass this schema and exceed the byte limit in Go.",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "completeness", "family", "unit_kind", "units"],
@@ -30,7 +30,7 @@
     "polygon": {
       "type": "object", "additionalProperties": false,
       "required": ["points"],
-      "properties": {"points": {"type": "array", "minItems": 3, "maxItems": 10000, "items": {"$ref": "#/$defs/point"}}}
+      "properties": {"points": {"type": "array", "minItems": 3, "maxItems": 100000, "items": {"$ref": "#/$defs/point"}}}
     },
     "box": {
       "type": "object", "additionalProperties": false,
@@ -47,12 +47,12 @@
         "boxes": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/box"}},
         "coordinate_origin": {"enum": ["bottom_left", "top_left"]},
         "coordinate_space": {"enum": ["image", "page", "unit"]},
-        "height": {"type": "integer", "minimum": 0},
+        "height": {"type": "integer", "minimum": 1, "maximum": 1000000000000000},
         "orientation": {"type": "integer"},
-        "polygons": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/polygon"}},
-        "scale": {"type": "integer", "minimum": 1},
+        "polygons": {"description": "Go enforces a total of at most 100,000 points across all polygons in this geometry.", "type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/polygon"}},
+        "scale": {"type": "integer", "minimum": 1, "maximum": 1000000000},
         "unit": {"enum": ["normalized", "pixel", "point"]},
-        "width": {"type": "integer", "minimum": 0}
+        "width": {"type": "integer", "minimum": 1, "maximum": 1000000000000000}
       }
     },
     "confidence": {
@@ -60,7 +60,7 @@
       "required": ["interpretation", "maximum", "minimum", "value"],
       "properties": {
         "interpretation": {"enum": ["higher_is_better", "lower_is_better", "probability"]},
-        "maximum": {"type": "number"}, "minimum": {"type": "number"}, "value": {"type": "number"}
+        "maximum": {"type": "number", "minimum": -1000000, "maximum": 1000000}, "minimum": {"type": "number", "minimum": -1000000, "maximum": 1000000}, "value": {"type": "number", "minimum": -1000000, "maximum": 1000000}
       }
     },
     "artifact": {
@@ -89,11 +89,11 @@
       "type": "object", "additionalProperties": false,
       "required": ["end", "index_origin", "kind", "start"],
       "properties": {
-        "end": {"type": "integer", "minimum": 0},
+        "end": {"type": "integer", "minimum": 0, "maximum": 1000000000000000},
         "index_origin": {"enum": ["none", "one", "zero"]},
         "kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
         "name": {"type": "string", "maxLength": 1024},
-        "start": {"type": "integer", "minimum": 0}
+        "start": {"type": "integer", "minimum": 0, "maximum": 1000000000000000}
       }
     },
     "region": {
@@ -129,11 +129,11 @@
       "required": ["cells", "columns", "order", "provider_id", "rows"],
       "properties": {
         "cells": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/table_cell"}},
-        "columns": {"type": "integer", "minimum": 1},
+        "columns": {"type": "integer", "minimum": 1, "maximum": 1000000},
         "order": {"type": "integer", "minimum": 0},
         "provider_id": {"type": "string", "minLength": 1, "maxLength": 1024},
         "region_provider_id": {"type": "string", "maxLength": 1024},
-        "rows": {"type": "integer", "minimum": 1}
+        "rows": {"type": "integer", "minimum": 1, "maximum": 1000000}
       }
     },
     "unit": {
@@ -141,7 +141,7 @@
       "required": ["locator", "order", "text"],
       "properties": {
         "confidence": {"$ref": "#/$defs/confidence"},
-        "heading_path": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1}},
+        "heading_path": {"description": "Go enforces a document-wide budget of 1,048,576 UTF-8 bytes across all heading strings.", "type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 1048576}},
         "locator": {"$ref": "#/$defs/locator"},
         "omissions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/omission"}},
         "order": {"type": "integer", "minimum": 0},
