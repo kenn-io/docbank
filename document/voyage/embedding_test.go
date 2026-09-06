@@ -462,8 +462,21 @@ func TestDirectFileEmbeddingValidatesNormalization(t *testing.T) {
 
 func TestDirectFileEmbeddingRejectsOversizedUploadBeforeReading(t *testing.T) {
 	data := mediatest.PNG(2, 2, color.White)
-	for _, oversized := range []bool{false, true} {
-		t.Run(strconv.FormatBool(oversized), func(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		oversized    bool
+		count        int
+		requestBytes int64
+		wantError    bool
+	}{
+		{"media_at_limit", false, 1, voyage.MaxRequestBytes, false},
+		{"media_over_limit", true, 1, voyage.MaxRequestBytes, true},
+		{"request_envelope", false, 1, 100, true},
+		{"base64_expansion", false, 1, 790, true},
+		{"combined_batch", false, 2, 1000, true},
+		{"batch_fits", false, 2, 1200, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			mediaPolicy := media.DefaultPolicy()
 			mediaPolicy.MaxBytes = int64(len(data))
 			policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: mediaPolicy})
@@ -471,35 +484,52 @@ func TestDirectFileEmbeddingRejectsOversizedUploadBeforeReading(t *testing.T) {
 			manifest, err := voyagetest.SyntheticManifest(policy)
 			require.NoError(t, err)
 			profile := voyageDirectFileProfile(t, policy, manifest)
+			profile.MaxRequestBytes = test.requestBytes
+			profile = refingerprintVoyageProfile(t, profile)
 			provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, failingEmbeddingResolver{})
 			require.NoError(t, err)
 			requests := 0
 			voyage.SetEmbeddingTestTransport(provider, roundTripFunc(func(*http.Request) (*http.Response, error) {
 				requests++
 				response := httptest.NewRecorder()
-				writeVectors(t, response, [][]float32{unitVector(0, 1)}, 1)
+				vectors := make([][]float32, test.count)
+				for index := range vectors {
+					vectors[index] = unitVector(index, 1)
+				}
+				writeVectors(t, response, vectors, 1)
 				return response.Result(), nil
 			}))
 			input := append([]byte(nil), data...)
-			if oversized {
+			if test.oversized {
 				input = append(input, 0)
 			}
-			source := &embeddingUpload{Reader: bytes.NewReader(input), metadata: document.AuthorizedUploadMetadata{
-				MediaFamily: "image", MediaType: "image/png", ByteLength: int64(len(input)), SHA256: fmt.Sprintf("%x", sha256.Sum256(input)),
-				CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile,
-			}}
-			_, err = document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "image", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}, voyageAuthorization(profile.Descriptor))
-			if oversized {
-				require.Error(t, err)
-				position, seekErr := source.Seek(0, io.SeekCurrent)
-				require.NoError(t, seekErr)
-				require.Zero(t, position, "oversized input must be refused before its first read")
+			sources := make([]*embeddingUpload, test.count)
+			inputs := make([]document.EmbeddingInput, test.count)
+			for index := range sources {
+				source := &embeddingUpload{Reader: bytes.NewReader(input), metadata: document.AuthorizedUploadMetadata{
+					MediaFamily: "image", MediaType: "image/png", ByteLength: int64(len(input)), SHA256: fmt.Sprintf("%x", sha256.Sum256(input)),
+					CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile,
+				}}
+				sources[index] = source
+				inputs[index] = document.EmbeddingInput{Key: strconv.Itoa(index), Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}
+			}
+
+			_, err = document.ExecuteEmbedding(t.Context(), provider, inputs, voyageAuthorization(profile.Descriptor))
+			if test.wantError {
+				require.ErrorIs(t, err, voyage.ErrBatchTooLarge)
+				for _, source := range sources {
+					position, seekErr := source.Seek(0, io.SeekCurrent)
+					require.NoError(t, seekErr)
+					require.Zero(t, position, "oversized input must be refused before its first read")
+				}
 				require.Zero(t, requests)
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, 1, requests)
 			}
-			require.True(t, source.closed)
+			for _, source := range sources {
+				require.True(t, source.closed)
+			}
 		})
 	}
 }

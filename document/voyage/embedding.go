@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	json "encoding/json/v2"
 	"errors"
@@ -333,12 +334,24 @@ func (client *EmbeddingClient) embedDirectFiles(ctx context.Context, inputs []do
 	if err != nil {
 		return document.EmbeddingResult{}, errors.New("voyage embedding: direct-file capability authority is invalid")
 	}
-	// Refuse oversized sources before buffering any upload. The core already
-	// checks the batch's input authorization; direct-file policy may be tighter.
+	// Match estimatedRequestBytes for one media part per input, before buffering
+	// any upload. Charge against the remaining budget to avoid sum overflow.
+	remaining := policy.values.MaxRequestBytes - requestOverheadBytes
+	if remaining < 0 {
+		return document.EmbeddingResult{}, &ProviderError{Kind: ErrBatchTooLarge}
+	}
 	for _, input := range inputs {
-		if input.Source.Metadata().ByteLength > min(policy.MediaPolicy().MaxBytes, policy.values.MaxRequestBytes) {
+		size := input.Source.Metadata().ByteLength
+		if size > policy.MediaPolicy().MaxBytes {
 			return document.EmbeddingResult{}, &ProviderError{Kind: ErrBatchTooLarge}
 		}
+		// The validated media ceiling is at most 20 MiB, so EncodedLen and
+		// the input/part overhead fit even on 32-bit platforms.
+		encodedBytes := int64(base64.StdEncoding.EncodedLen(int(size))) + 2*partOverheadBytes
+		if encodedBytes > remaining {
+			return document.EmbeddingResult{}, &ProviderError{Kind: ErrBatchTooLarge}
+		}
+		remaining -= encodedBytes
 	}
 	direct := make([]Input, len(inputs))
 	for index, input := range inputs {
