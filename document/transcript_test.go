@@ -1,6 +1,8 @@
 package document_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 
@@ -72,7 +74,7 @@ func TestBuildTranscriptEvidenceV1RejectsInvalidInput(t *testing.T) {
 
 	for name, input := range map[string]document.SuppliedTranscript{
 		"blank":            {Provider: "beeper", Text: " \n\t"},
-		"invalid provider": {Provider: "Beeper", Text: "words"},
+		"invalid provider": {Provider: "Beeper", Text: "word"},
 		"invalid UTF-8":    {Provider: "beeper", Text: string([]byte{0xff})},
 		"NUL":              {Provider: "beeper", Text: "a\x00b"},
 		"over policy":      {Provider: "beeper", Text: "12345"},
@@ -108,6 +110,8 @@ func TestBuildTranscriptEvidenceV1KeepsArtifactIdentitySeparateFromNormalizedTex
 	assert.Equal(t, first.Checksum, repeat.Checksum)
 	assert.NotEqual(t, firstArtifact.SHA256, secondArtifact.SHA256)
 	assert.NotEqual(t, first.Checksum, second.Checksum)
+	digest := sha256.Sum256(firstArtifact.Payload)
+	assert.Equal(t, hex.EncodeToString(digest[:]), firstArtifact.SHA256)
 	var payload struct {
 		Provider string `json:"provider"`
 		Text     string `json:"text"`
