@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/document/voyage"
@@ -106,6 +110,9 @@ func TestEmbeddingProviderRejectsMalformedIndexedResponsesPrivately(t *testing.T
 		{"duplicate index", valid([]int{0, 0}, [][]float32{one, two})},
 		{"out of range", valid([]int{0, 2}, [][]float32{one, two})},
 		{"wrong dimension", valid([]int{0, 1}, [][]float32{one[:255], two})},
+		{"null element", []byte(strings.Replace(string(valid([]int{0, 1}, [][]float32{one, two})), `,0`, `,null`, 1))},
+		{"string element", []byte(strings.Replace(string(valid([]int{0, 1}, [][]float32{one, two})), `,0`, `,"0"`, 1))},
+		{"boolean element", []byte(strings.Replace(string(valid([]int{0, 1}, [][]float32{one, two})), `,0`, `,false`, 1))},
 		{"zero vector", valid([]int{0, 1}, [][]float32{make([]float32, 256), two})},
 		{"non finite", []byte(`{"object":"list","data":[{"object":"embedding","embedding":[1e999],"index":0}],"model":"voyage-4"}`)},
 	}
@@ -419,4 +426,80 @@ type embeddingSecretFunc func(context.Context, string) (string, error)
 
 func (resolve embeddingSecretFunc) ResolveSecret(ctx context.Context, binding string) (string, error) {
 	return resolve(ctx, binding)
+}
+
+func TestDirectFileEmbeddingValidatesNormalization(t *testing.T) {
+	for _, scale := range []float32{1, 2} {
+		t.Run(fmt.Sprint(scale), func(t *testing.T) {
+			policy := testPolicy(t)
+			manifest, err := voyagetest.SyntheticManifest(policy)
+			require.NoError(t, err)
+			profile := voyageDirectFileProfile(t, policy, manifest)
+			provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, failingEmbeddingResolver{})
+			require.NoError(t, err)
+			voyage.SetEmbeddingTestTransport(provider, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				response := httptest.NewRecorder()
+				writeVectors(t, response, [][]float32{unitVector(0, scale)}, 1)
+				return response.Result(), nil
+			}))
+			data := mediatest.PNG(2, 2, color.White)
+			source := &embeddingUpload{Reader: bytes.NewReader(data), metadata: document.AuthorizedUploadMetadata{
+				MediaFamily: "image", MediaType: "image/png", ByteLength: int64(len(data)), SHA256: fmt.Sprintf("%x", sha256.Sum256(data)),
+				CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile,
+			}}
+			result, err := document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "image", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}, voyageAuthorization(profile.Descriptor))
+			if scale == 1 {
+				require.NoError(t, err)
+				require.Equal(t, unitVector(0, scale), result.Vectors[0].Values)
+			} else {
+				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+				require.Empty(t, result.Vectors)
+			}
+			require.True(t, source.closed)
+		})
+	}
+}
+
+func TestDirectFileEmbeddingRejectsOversizedUploadBeforeReading(t *testing.T) {
+	data := mediatest.PNG(2, 2, color.White)
+	for _, oversized := range []bool{false, true} {
+		t.Run(strconv.FormatBool(oversized), func(t *testing.T) {
+			mediaPolicy := media.DefaultPolicy()
+			mediaPolicy.MaxBytes = int64(len(data))
+			policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: mediaPolicy})
+			require.NoError(t, err)
+			manifest, err := voyagetest.SyntheticManifest(policy)
+			require.NoError(t, err)
+			profile := voyageDirectFileProfile(t, policy, manifest)
+			provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, failingEmbeddingResolver{})
+			require.NoError(t, err)
+			requests := 0
+			voyage.SetEmbeddingTestTransport(provider, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				requests++
+				response := httptest.NewRecorder()
+				writeVectors(t, response, [][]float32{unitVector(0, 1)}, 1)
+				return response.Result(), nil
+			}))
+			input := append([]byte(nil), data...)
+			if oversized {
+				input = append(input, 0)
+			}
+			source := &embeddingUpload{Reader: bytes.NewReader(input), metadata: document.AuthorizedUploadMetadata{
+				MediaFamily: "image", MediaType: "image/png", ByteLength: int64(len(input)), SHA256: fmt.Sprintf("%x", sha256.Sum256(input)),
+				CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile,
+			}}
+			_, err = document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "image", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}, voyageAuthorization(profile.Descriptor))
+			if oversized {
+				require.Error(t, err)
+				position, seekErr := source.Seek(0, io.SeekCurrent)
+				require.NoError(t, seekErr)
+				require.Zero(t, position, "oversized input must be refused before its first read")
+				require.Zero(t, requests)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 1, requests)
+			}
+			require.True(t, source.closed)
+		})
+	}
 }

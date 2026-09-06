@@ -85,6 +85,9 @@ func TestContextualEmbeddingStrictlyRejectsDocumentedShapeDrift(t *testing.T) {
 		name string
 		body []byte
 	}{
+		{"null element", []byte(strings.Replace(string(valid), `,0`, `,null`, 1))},
+		{"string element", []byte(strings.Replace(string(valid), `,0`, `,"0"`, 1))},
+		{"boolean element", []byte(strings.Replace(string(valid), `,0`, `,false`, 1))},
 		{"unknown", []byte(strings.Replace(string(valid), `"chunker_version":`, `"unknown":"PRIVATE_RAW_BODY","chunker_version":`, 1))},
 		{"duplicate", []byte(strings.Replace(string(valid), `"model":`, `"model":"duplicate","model":`, 1))},
 		{"model drift", []byte(strings.Replace(string(valid), voyage.ContextualModel, "voyage-context-drift", 1))},

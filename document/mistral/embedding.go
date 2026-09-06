@@ -319,7 +319,7 @@ func (client *EmbeddingClient) embeddingAttempt(ctx context.Context, payload []b
 		return document.EmbeddingResult{}, "", false, true, fmt.Errorf("%w: duplicate response member", ErrPermanentResponse)
 	}
 	var decoded embeddingWireResponse
-	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 		return document.EmbeddingResult{}, "", false, true, fmt.Errorf("%w: malformed response", ErrPermanentResponse)
 	}
 	result, err := client.validateAndOrder(decoded, inputs)

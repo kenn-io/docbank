@@ -19,3 +19,9 @@ func TrustEmbeddingTestCertificate(t *testing.T, client *EmbeddingClient, certif
 	transport.TLSClientConfig.RootCAs = roots
 	t.Cleanup(client.http.CloseIdleConnections)
 }
+
+// SetEmbeddingTestTransport substitutes only the HTTP exchange for direct-file
+// tests; profile, upload, request, and response validation still run.
+func SetEmbeddingTestTransport(client *EmbeddingClient, transport http.RoundTripper) {
+	client.http.Transport = transport
+}

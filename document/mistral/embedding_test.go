@@ -99,6 +99,9 @@ func TestMistralEmbeddingRejectsMalformedAndPartialResponsesPrivately(t *testing
 	}{
 		{"malformed", []byte(`{"object":`)}, {"unknown", []byte(`{"unknown":"PRIVATE_RAW_BODY"}`)}, {"duplicate", []byte(`{"model":"mistral-embed","model":"PRIVATE_RAW_BODY"}`)},
 		{"partial indices", valid([]int{0}, [][]float32{one})}, {"duplicate index", valid([]int{0, 0}, [][]float32{one, two})}, {"out of range", valid([]int{0, 2}, [][]float32{one, two})}, {"wrong dimension", valid([]int{0, 1}, [][]float32{one[:1023], two})},
+		{"null element", []byte(strings.Replace(string(valid([]int{0, 1}, [][]float32{one, two})), `,0`, `,null`, 1))},
+		{"string element", []byte(strings.Replace(string(valid([]int{0, 1}, [][]float32{one, two})), `,0`, `,"0"`, 1))},
+		{"boolean element", []byte(strings.Replace(string(valid([]int{0, 1}, [][]float32{one, two})), `,0`, `,false`, 1))},
 		{"zero vector", valid([]int{0, 1}, [][]float32{make([]float32, 1024), two})}, {"non finite", []byte(`{"id":"x","object":"list","data":[{"object":"embedding","embedding":[1e999],"index":0}],"model":"mistral-embed","usage":{"prompt_tokens":1,"completion_tokens":0,"total_tokens":1,"prompt_audio_seconds":null}}`)},
 	}
 	inputs := []document.EmbeddingInput{{Key: "a", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "PRIVATE_INPUT"}, {Key: "b", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "other"}}

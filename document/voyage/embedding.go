@@ -333,6 +333,13 @@ func (client *EmbeddingClient) embedDirectFiles(ctx context.Context, inputs []do
 	if err != nil {
 		return document.EmbeddingResult{}, errors.New("voyage embedding: direct-file capability authority is invalid")
 	}
+	// Refuse oversized sources before buffering any upload. The core already
+	// checks the batch's input authorization; direct-file policy may be tighter.
+	for _, input := range inputs {
+		if input.Source.Metadata().ByteLength > min(policy.MediaPolicy().MaxBytes, policy.values.MaxRequestBytes) {
+			return document.EmbeddingResult{}, &ProviderError{Kind: ErrBatchTooLarge}
+		}
+	}
 	direct := make([]Input, len(inputs))
 	for index, input := range inputs {
 		metadata := input.Source.Metadata()
@@ -366,6 +373,9 @@ func (client *EmbeddingClient) embedDirectFiles(ctx context.Context, inputs []do
 	}
 	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(inputs))}
 	for index, vector := range providerResult.Vectors {
+		if err := client.validateEmbeddingVector(vector); err != nil {
+			return document.EmbeddingResult{}, &ProviderError{Kind: ErrMalformedResponse}
+		}
 		result.Vectors[index] = document.EmbeddingVector{Key: inputs[index].Key, Values: slices.Clone(vector)}
 	}
 	if err := document.ValidateEmbeddingProviderResult(client.descriptor, inputs, authorization, result); err != nil {
@@ -499,7 +509,7 @@ func (client *EmbeddingClient) embeddingAttempt(ctx context.Context, route strin
 
 func (client *EmbeddingClient) decodeText(body []byte, want int) ([][]float32, error) {
 	var response embeddingWireResponse
-	if err := json.Unmarshal(body, &response, json.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(body, &response, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 		return nil, &ProviderError{Kind: ErrMalformedResponse}
 	}
 	vectors, err := client.orderItems(response.Object, response.Model, response.Data, want)
@@ -511,7 +521,7 @@ func (client *EmbeddingClient) decodeText(body []byte, want int) ([][]float32, e
 
 func (client *EmbeddingClient) decodeContextual(body []byte, rendered []string) ([][]float32, error) {
 	var response contextualWireResponse
-	if err := json.Unmarshal(body, &response, json.RejectUnknownMembers(true)); err != nil || response.Model != client.descriptor.Model || response.ChunkerVersion != client.profile.ChunkerVersion {
+	if err := json.Unmarshal(body, &response, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil || response.Model != client.descriptor.Model || response.ChunkerVersion != client.profile.ChunkerVersion {
 		return nil, &ProviderError{Kind: ErrMalformedResponse}
 	}
 	if len(response.Data) != 1 || response.Data[0].Index == nil || *response.Data[0].Index != 0 || len(response.Data[0].Data) != len(rendered) {
