@@ -1132,7 +1132,7 @@ func (embeddingIntegrationTokenizer) Tokenize(text string, limit int) ([]documen
 	return result, nil
 }
 
-func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
+func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
 	t.Helper()
 	fixture := newPublicationFixture(t)
 	fake := newEmbeddingWorkerFixture(t)
@@ -1147,6 +1147,11 @@ func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind) (pub
 	}
 	binding.MaxBatchItems = 1
 	portable.Embeddings = []document.EmbeddingBindingV1{binding}
+	for _, name := range additionalBindings {
+		additional := binding
+		additional.Name = name
+		portable.Embeddings = append(portable.Embeddings, additional)
+	}
 	canonical, fingerprints, err := document.CanonicalProfile(portable)
 	require.NoError(t, err)
 	fixture.profile.CanonicalProfile, fixture.profile.Fingerprint = canonical, fingerprints.Profile

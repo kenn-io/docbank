@@ -1,15 +1,15 @@
 package retrieval
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.kenn.io/docbank/document/embedding"
 )
 
 func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, bool, error) {
-	if limit < 1 || limit > MaxCandidateLimit {
-		return nil, false, fmt.Errorf("retrieval candidate limit must be between 1 and %d", MaxCandidateLimit)
-	}
 	if err := validateOneSemanticVectorSpace(semantic); err != nil {
 		return nil, false, err
 	}
@@ -20,19 +20,55 @@ func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, boo
 	if err := addLane(byDocument, semantic, LaneSemantic); err != nil {
 		return nil, false, fmt.Errorf("semantic lane: %w", err)
 	}
-	results := make([]Result, 0, len(byDocument))
-	for _, result := range byDocument {
-		results = append(results, *result)
+	identities := make([]DocumentIdentity, 0, len(byDocument))
+	for identity := range byDocument {
+		identities = append(identities, identity)
 	}
-	slices.SortFunc(results, compareResults)
-	for index := range results {
-		results[index].Rank = index + 1
+	slices.SortFunc(identities, func(left, right DocumentIdentity) int {
+		return cmp.Or(cmp.Compare(left.VaultID, right.VaultID),
+			cmp.Compare(left.NodeID, right.NodeID), cmp.Compare(left.ContentVersionID, right.ContentVersionID))
+	})
+	// Shared fusion orders string keys before truncation. Ordinals preserve
+	// the document order, including numeric node IDs, without encoding evidence.
+	keys := make(map[DocumentIdentity]string, len(identities))
+	metadata := make(map[string]*Result, len(identities))
+	for index, identity := range identities {
+		key := fmt.Sprintf("%020d", index)
+		keys[identity], metadata[key] = key, byDocument[identity]
 	}
-	truncated := len(results) > limit
-	if truncated {
-		results = results[:limit]
+	rankLane := func(candidates []Candidate) embedding.ScopedCandidates {
+		lane := embedding.ScopedCandidates{Candidates: make([]embedding.RankedCandidate, len(candidates))}
+		for index, candidate := range candidates {
+			lane.Candidates[index] = embedding.RankedCandidate{
+				Key: keys[candidate.Document], Rank: candidate.Rank, Score: candidate.Score,
+			}
+		}
+		return lane
 	}
-	return results, truncated, nil
+	fused, err := embedding.FuseReciprocalRank(embedding.FusionInput{
+		Lexical: rankLane(lexical), Semantic: rankLane(semantic),
+	}, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	results := make([]Result, len(fused.Candidates))
+	for index, candidate := range fused.Candidates {
+		result := *metadata[candidate.Key]
+		result.Rank, result.Score = candidate.Rank, candidate.Score
+		for _, signal := range []struct {
+			lane   Lane
+			signal *embedding.CandidateSignal
+		}{{LaneLexical, candidate.Lexical}, {LaneSemantic, candidate.Semantic}} {
+			if signal.signal != nil {
+				result.Explanation = append(result.Explanation, Contribution{
+					Lane: signal.lane, Rank: signal.signal.Rank,
+					Contribution: 1 / float64(ReciprocalRankK+signal.signal.Rank),
+				})
+			}
+		}
+		results[index] = result
+	}
+	return results, fused.Truncated, nil
 }
 
 func validateOneSemanticVectorSpace(candidates []Candidate) error {
@@ -56,20 +92,13 @@ func validateOneSemanticVectorSpace(candidates []Candidate) error {
 }
 
 func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane Lane) error {
-	lastRank := 0
-	seen := make(map[DocumentIdentity]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.Lane != lane || candidate.Rank <= lastRank {
-			return errors.New("candidate lane and ranks must be ordered and exact")
+		if candidate.Lane != lane {
+			return errors.New("candidate belongs to the wrong lane")
 		}
 		if candidate.Document.VaultID == "" || candidate.Document.NodeID <= 0 || candidate.Document.ContentVersionID == "" {
 			return errors.New("candidate document identity is incomplete")
 		}
-		if _, duplicate := seen[candidate.Document]; duplicate {
-			return errors.New("candidate document identity is duplicated within one lane")
-		}
-		seen[candidate.Document] = struct{}{}
-		lastRank = candidate.Rank
 		result := results[candidate.Document]
 		if result == nil {
 			result = &Result{Document: candidate.Document, Path: candidate.Path}
@@ -79,11 +108,6 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 		} else if result.Path == "" {
 			result.Path = candidate.Path
 		}
-		contribution := 1 / float64(ReciprocalRankK+candidate.Rank)
-		result.Score += contribution
-		result.Explanation = append(result.Explanation, Contribution{
-			Lane: lane, Rank: candidate.Rank, Contribution: contribution,
-		})
 		if lane == LaneLexical {
 			result.LexicalRank = candidate.Rank
 			result.Excerpt = candidate.Excerpt
@@ -93,27 +117,4 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 		result.Evidence = append(result.Evidence, candidate.Evidence...)
 	}
 	return nil
-}
-
-func compareResults(left, right Result) int {
-	switch {
-	case left.Score > right.Score:
-		return -1
-	case left.Score < right.Score:
-		return 1
-	case left.Document.VaultID < right.Document.VaultID:
-		return -1
-	case left.Document.VaultID > right.Document.VaultID:
-		return 1
-	case left.Document.NodeID < right.Document.NodeID:
-		return -1
-	case left.Document.NodeID > right.Document.NodeID:
-		return 1
-	case left.Document.ContentVersionID < right.Document.ContentVersionID:
-		return -1
-	case left.Document.ContentVersionID > right.Document.ContentVersionID:
-		return 1
-	default:
-		return 0
-	}
 }

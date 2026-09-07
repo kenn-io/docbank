@@ -2,13 +2,14 @@ package retrieval
 
 import (
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const (
-	DefaultCandidateLimit = 100
-	MaxCandidateLimit     = document.MaxRetrievalCandidateLimit
-	ReciprocalRankK       = 60
+	DefaultCandidateLimit = embedding.DefaultCandidateLimit
+	MaxCandidateLimit     = embedding.MaxCandidateLimit
+	ReciprocalRankK       = embedding.DefaultReciprocalRankConstant
 )
 
 type Mode string
@@ -92,15 +93,6 @@ type Coverage struct {
 	State             CoverageState
 }
 
-type Degradation string
-
-const (
-	DegradationNone                Degradation = ""
-	DegradationIncompleteCoverage  Degradation = "incomplete_semantic_coverage"
-	DegradationProviderUnavailable Degradation = "query_provider_unavailable"
-	DegradationSemanticUnavailable Degradation = "semantic_authority_unavailable"
-)
-
 type TraceCode string
 
 const (
@@ -118,7 +110,6 @@ type Report struct {
 	RequestedMode Mode
 	ActualMode    Mode
 	Coverage      Coverage
-	Degradation   Degradation
 	Results       []Result
 	Truncated     bool
 	Trace         []TraceEvent

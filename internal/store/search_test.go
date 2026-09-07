@@ -47,7 +47,6 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
 	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
 	assert.Equal(t, document.EmbeddingInputOriginalFile, resolution.Candidates[0].InputKind)
-	assert.Empty(t, resolution.Candidates[0].Excerpt, "direct-file semantic evidence cannot fabricate text")
 
 	filtered, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
@@ -141,10 +140,9 @@ func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing
 	key := semanticEligibilityKey{
 		VectorSetID: "eligible", InputID: "eligible-input", InputChecksum: fakeHash("eligible"),
 	}
-	eligible := map[semanticEligibilityKey]semanticEligibility{
-		key: {Node: Node{ID: 42, CurrentVersionID: "version-42"}, Path: "/later.pdf",
-			Candidate: SemanticSearchCandidate{EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
-				InputKind: document.EmbeddingInputOriginalFile}},
+	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
+		key: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputOriginalFile},
 	}
 
 	candidates, truncated := reduceSemanticCandidates("vault", fakeHash("space"), neighbors, 10, eligible)
@@ -159,13 +157,11 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 	spaceID := fakeHash("space")
 	firstKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-1", InputChecksum: fakeHash("chunk-1")}
 	secondKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-2", InputChecksum: fakeHash("chunk-2")}
-	eligible := map[semanticEligibilityKey]semanticEligibility{
-		firstKey: {Node: Node{ID: 42, CurrentVersionID: "version-42"}, Path: "/chunked.pdf",
-			Candidate: SemanticSearchCandidate{EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
-				InputKind: document.EmbeddingInputRenditionChunk}},
-		secondKey: {Node: Node{ID: 42, CurrentVersionID: "version-42"}, Path: "/chunked.pdf",
-			Candidate: SemanticSearchCandidate{EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
-				InputKind: document.EmbeddingInputRenditionChunk}},
+	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
+		firstKey: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputRenditionChunk},
+		secondKey: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputRenditionChunk},
 	}
 
 	candidates, truncated := reduceSemanticCandidates("vault", spaceID, []vectorindex.Neighbor{

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
@@ -74,13 +75,13 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	requested := query.Mode
 	switch requested {
 	case ModeLexical, ModeAuto:
-		return searcher.lexical(ctx, query, requested, DegradationNone, Coverage{State: CoverageUnknown})
+		return searcher.lexical(ctx, query, requested, Coverage{State: CoverageUnknown})
 	case ModeSemantic:
 		semantic, coverage, truncated, err := searcher.semantic(ctx, query)
 		if err != nil {
 			return Report{}, err
 		}
-		return laneReport(requested, ModeSemantic, coverage, DegradationNone, semantic, truncated), nil
+		return laneReport(requested, ModeSemantic, coverage, semantic, truncated), nil
 	case ModeHybrid:
 		return searcher.hybrid(ctx, query, requested)
 	}
@@ -215,18 +216,14 @@ func normalizeQuery(query Query) (Query, error) {
 	if query.Text == "" {
 		return Query{}, errors.New("retrieval query text is required")
 	}
-	if query.Mode == "" || query.Mode == ModeAuto {
-		query.Mode = ModeLexical
+	options, err := embedding.NormalizeSearchOptions(embedding.SearchOptions{
+		Mode: embedding.SearchMode(query.Mode), CandidateLimit: query.Limit,
+	})
+	if err != nil {
+		return Query{}, err
 	}
-	if query.Mode != ModeLexical && query.Mode != ModeSemantic && query.Mode != ModeHybrid {
-		return Query{}, fmt.Errorf("unsupported retrieval mode %q", query.Mode)
-	}
-	if query.Limit == 0 {
-		query.Limit = DefaultCandidateLimit
-	}
-	if query.Limit < 1 || query.Limit > MaxCandidateLimit {
-		return Query{}, fmt.Errorf("retrieval candidate limit must be between 1 and %d", MaxCandidateLimit)
-	}
+	query.Mode, query.Limit = Mode(options.Mode), options.CandidateLimit
+
 	return query, nil
 }
 
@@ -247,7 +244,7 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 	return candidates, truncated, nil
 }
 
-func laneReport(requested, actual Mode, coverage Coverage, degradation Degradation,
+func laneReport(requested, actual Mode, coverage Coverage,
 	candidates []Candidate, truncated bool,
 ) Report {
 	results := make([]Result, len(candidates))
@@ -269,7 +266,7 @@ func laneReport(requested, actual Mode, coverage Coverage, degradation Degradati
 		traceCode = TraceSemanticCandidates
 	}
 	return Report{RequestedMode: requested, ActualMode: actual, Coverage: coverage,
-		Degradation: degradation, Results: results, Truncated: truncated,
+		Results: results, Truncated: truncated,
 		Trace: []TraceEvent{{Code: traceCode, Count: len(results)}}}
 }
 
@@ -288,11 +285,11 @@ func makeHybridReport(requested Mode, coverage Coverage, lexical, semantic []Can
 }
 
 func (searcher *Searcher) lexical(ctx context.Context, query Query, requested Mode,
-	degradation Degradation, coverage Coverage,
+	coverage Coverage,
 ) (Report, error) {
 	candidates, truncated, err := searcher.collectLexical(ctx, query)
 	if err != nil {
 		return Report{}, err
 	}
-	return laneReport(requested, ModeLexical, coverage, degradation, candidates, truncated), nil
+	return laneReport(requested, ModeLexical, coverage, candidates, truncated), nil
 }

@@ -29,7 +29,7 @@ type SearchHit struct {
 }
 
 // ExplainedLexicalCandidate adds stable evidence identity and a bounded
-// display excerpt without changing the established SearchHit ordering.
+// display excerpt for files, preserving name-before-content ordering.
 type ExplainedLexicalCandidate struct {
 	Node         Node
 	Path         string
@@ -43,7 +43,7 @@ type ExplainedLexicalCandidate struct {
 
 const maxExplainedSearchExcerptRunes = 512
 
-// SearchExplainedLexicalCandidates preserves SearchPageWithOptions ordering.
+// SearchExplainedLexicalCandidates preserves SearchPageWithOptions file ordering.
 // Content selection and evidence resolution share one lexical-generation read.
 func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
 	opts SearchOptions,
@@ -229,8 +229,7 @@ func SearchNeedsQuery(query string, opts SearchOptions) bool {
 }
 
 // SemanticSearchCandidate is one vector neighbor reduced to a current,
-// scope-eligible document. Excerpt is intentionally empty: only an independent
-// lexical lane may supply text to an explained retrieval report.
+// scope-eligible document. Only the lexical lane supplies excerpts.
 type SemanticSearchCandidate struct {
 	VaultID           string
 	NodeID            int64
@@ -242,8 +241,6 @@ type SemanticSearchCandidate struct {
 	InputID           string
 	InputKind         document.EmbeddingInputKind
 	Score             float64
-	Distance          float64
-	Excerpt           string
 }
 
 // SemanticSearchResolution binds ranked candidates and coverage to the same
@@ -411,6 +408,13 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		}
 		result.Candidates, result.Truncated = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
 			neighbors, limit, eligible)
+		for index := range result.Candidates {
+			candidate := &result.Candidates[index]
+			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -425,27 +429,16 @@ type semanticEligibilityKey struct {
 	InputChecksum string
 }
 
-type semanticEligibility struct {
-	Node      Node
-	Path      string
-	Candidate SemanticSearchCandidate
-}
-
 // loadSemanticEligibility performs the only catalog query needed while the
 // exact index's ordered neighbors are reduced. Its result is bounded by the
 // active vector-space catalog (at most one million rows), not by neighbor rank.
 func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
-) (_ map[semanticEligibilityKey]semanticEligibility, retErr error) {
+) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
 	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
-	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE node_paths(id,path) AS (
-		SELECT id,'' FROM nodes WHERE parent_id IS NULL
-		UNION ALL
-		SELECT child.id,parent.path || '/' || child.name
-		FROM nodes child JOIN node_paths parent ON child.parent_id=parent.id
-	)
-		SELECT `+nodeCols+`,es.embedding_set_id,es.input_generation_id,es.input_kind,
-			evr.vector_set_id,evr.input_id,evr.checksum,COALESCE(NULLIF(node_paths.path,''),'/')
+	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.current_version_id,
+			es.embedding_set_id,es.input_generation_id,es.input_kind,
+			evr.vector_set_id,evr.input_id,evr.checksum
 		FROM `+nodeFrom+`
 		JOIN embedding_sets es ON es.content_version_id=cv.version_id
 		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
@@ -456,7 +449,6 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 		JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
 		 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
 		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
-		JOIN node_paths ON node_paths.id=n.id
 		WHERE es.vector_space_id=?
 		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
 		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
@@ -471,25 +463,23 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	eligible := make(map[semanticEligibilityKey]semanticEligibility)
+	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
 	for rows.Next() {
 		var (
-			entry semanticEligibility
+			entry SemanticSearchCandidate
 			key   semanticEligibilityKey
 		)
-		node, scanErr := scanSemanticCandidate(rows, &entry.Candidate,
-			&key.VectorSetID, &key.InputID, &key.InputChecksum, &entry.Path)
-		if scanErr != nil {
-			return nil, scanErr
+		if err := rows.Scan(&entry.NodeID, &entry.ContentVersionID, &entry.EmbeddingSetID,
+			&entry.InputGenerationID, &entry.InputKind, &key.VectorSetID, &key.InputID, &key.InputChecksum); err != nil {
+			return nil, err
 		}
-		entry.Node = node
 		eligible[key] = entry
 	}
 	return eligible, rows.Err()
 }
 
 func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectorindex.Neighbor,
-	limit int, eligible map[semanticEligibilityKey]semanticEligibility,
+	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate,
 ) ([]SemanticSearchCandidate, bool) {
 	seen := make(map[int64]struct{}, limit+1)
 	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(eligible)))
@@ -499,42 +489,21 @@ func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectori
 		if !ok {
 			continue
 		}
-		if _, duplicate := seen[entry.Node.ID]; duplicate {
+		if _, duplicate := seen[entry.NodeID]; duplicate {
 			continue
 		}
-		seen[entry.Node.ID] = struct{}{}
-		candidate := entry.Candidate
+		seen[entry.NodeID] = struct{}{}
+		candidate := entry
 		candidate.VaultID = vaultID
-		candidate.NodeID = entry.Node.ID
-		candidate.ContentVersionID = entry.Node.CurrentVersionID
 		candidate.VectorSpaceID = vectorSpaceID
 		candidate.InputID = neighbor.InputKey
-		candidate.Score, candidate.Distance = neighbor.Score, neighbor.Distance
-		candidate.Path = entry.Path
+		candidate.Score = neighbor.Score
 		candidates = append(candidates, candidate)
 		if len(candidates) == limit+1 {
 			return candidates[:limit], true
 		}
 	}
 	return candidates, false
-}
-
-func scanSemanticCandidate(row interface{ Scan(dest ...any) error }, candidate *SemanticSearchCandidate,
-	dest ...any,
-) (Node, error) {
-	var node Node
-	fields := []any{&node.ID, &node.ParentID, &node.Name, &node.Kind,
-		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
-		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.EmbeddingSetID, &candidate.InputGenerationID, &candidate.InputKind}
-	err := row.Scan(append(fields, dest...)...)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Node{}, ErrNotFound
-	}
-	if err != nil {
-		return Node{}, fmt.Errorf("scanning semantic search candidate: %w", err)
-	}
-	return node, nil
 }
 
 const (

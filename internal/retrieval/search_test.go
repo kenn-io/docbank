@@ -314,6 +314,8 @@ func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 }
 
 type retrievalBackendStub struct {
+	lexicalTruncated       bool
+	semanticTruncated      bool
 	vaultID                string
 	lexical                []store.ExplainedLexicalCandidate
 	authority              store.SemanticSearchAuthority
@@ -349,6 +351,7 @@ func (backend *retrievalBackendStub) ResolveSemanticCandidates(_ context.Context
 		scoped, complete = backend.authority.ScopedDocuments, backend.authority.CompleteDocuments
 	}
 	return store.SemanticSearchResolution{
+		Truncated:              backend.semanticTruncated,
 		SourceManifestChecksum: sourceManifest,
 		Candidates:             append([]store.SemanticSearchCandidate(nil), backend.semantic...),
 		ScopedDocuments:        scoped, CompleteDocuments: complete,
@@ -449,7 +452,46 @@ func (backend *retrievalBackendStub) SearchExplainedLexicalCandidates(context.Co
 	store.SearchOptions,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
 	backend.lexicalCalls++
-	return append([]store.ExplainedLexicalCandidate(nil), backend.lexical...), false, nil
+	return append([]store.ExplainedLexicalCandidate(nil), backend.lexical...), backend.lexicalTruncated, nil
+}
+
+func TestSearcherHybridReportsLaneAndFusionTruncation(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		lexical, semantic bool
+		limit             int
+	}{
+		{"lexical lane", true, false, 3},
+		{"semantic lane", false, true, 3},
+		{"fused union", false, false, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+			backend.lexicalTruncated, backend.semanticTruncated = test.lexical, test.semantic
+			backend.lexical = []store.ExplainedLexicalCandidate{{
+				Node: store.Node{ID: 5, CurrentVersionID: "version-lexical"}, Path: "/notes.pdf",
+			}}
+			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeHybrid,
+				Limit: test.limit, Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			assert.True(t, report.Truncated)
+			assert.Len(t, report.Results, min(test.limit, 2))
+		})
+	}
+}
+
+func TestFuseReciprocalRankTruncatesAfterNumericIdentityTieBreak(t *testing.T) {
+	results, truncated, err := FuseReciprocalRank([]Candidate{{
+		Document: DocumentIdentity{VaultID: "vault", NodeID: 10, ContentVersionID: "version-a"},
+		Lane:     LaneLexical, Rank: 1,
+	}}, []Candidate{{
+		Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-b"},
+		Lane:     LaneSemantic, Rank: 1, VectorSpaceID: "space",
+	}}, 1)
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	require.Len(t, results, 1)
+	assert.Equal(t, int64(2), results[0].Document.NodeID)
 }
 
 func TestFuseReciprocalRankPreservesExactLaneContributions(t *testing.T) {
