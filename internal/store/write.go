@@ -176,6 +176,15 @@ func (s *Store) mkdirTx(
 	return nodeByIDTx(tx, id)
 }
 
+// ChildByName returns the live child of parentID named name.
+func (s *Store) ChildByName(ctx context.Context, parentID int64, name string) (Node, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return Node{}, err
+	}
+	return s.childByName(ctx, parentID, name)
+}
+
 // childByName returns the live child of dirID named name (name must already
 // be normalized).
 func (s *Store) childByName(ctx context.Context, dirID int64, name string) (Node, error) {

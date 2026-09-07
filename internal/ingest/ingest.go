@@ -448,11 +448,13 @@ func (ing *Ingester) AddPathsWithSelection(
 				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addOne(ctx, &rep, ingestID, dest.ID, src, src, progress); err != nil {
+			if err := ing.addOne(ctx, &rep, ingestID, dest.ID, src, src, opts.Replace, progress); err != nil {
 				return rep, err
 			}
 		case info.IsDir():
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, selection, progress); err != nil {
+			if err := ing.addTree(
+				ctx, &rep, ingestID, dest.ID, src, src, selection, opts.Replace, progress,
+			); err != nil {
 				return rep, err
 			}
 		case info.Mode()&fs.ModeSymlink != 0:
@@ -491,7 +493,9 @@ func (ing *Ingester) AddPathsWithSelection(
 				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addTree(ctx, &rep, ingestID, dest.ID, src, walkRoot, selection, progress); err != nil {
+			if err := ing.addTree(
+				ctx, &rep, ingestID, dest.ID, src, walkRoot, selection, opts.Replace, progress,
+			); err != nil {
 				return rep, err
 			}
 		default:
@@ -527,6 +531,7 @@ func (ing *Ingester) addTree(
 	destDirID int64,
 	sourceRoot, walkRoot string,
 	selection sourceSelection,
+	replace bool,
 	progress *progressTracker,
 ) error {
 	// Absolutize first. WalkDir hands back the root spelled exactly as given
@@ -623,7 +628,7 @@ func (ing *Ingester) addTree(
 				}
 				return fs.SkipDir
 			}
-			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, progress); err != nil {
+			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, replace, progress); err != nil {
 				return err
 			}
 		default:
@@ -693,9 +698,10 @@ func (ing *Ingester) addOne(
 	ingestRun store.IngestRun,
 	parentID int64,
 	openPath, sourcePath string,
+	replace bool,
 	progress *progressTracker,
 ) error {
-	added, err := ing.importFile(ctx, ingestRun, parentID, openPath, sourcePath, progress)
+	added, err := ing.importFile(ctx, ingestRun, parentID, openPath, sourcePath, replace, progress)
 	switch {
 	case err != nil:
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -716,10 +722,34 @@ func (ing *Ingester) importFile(
 	ingestRun store.IngestRun,
 	parentID int64,
 	openPath, sourcePath string,
+	replace bool,
 	progress *progressTracker,
 ) (added bool, retErr error) {
 	if err := validateSourcePath(sourcePath); err != nil {
 		return false, err
+	}
+	var observed struct {
+		node    store.Node
+		present bool
+	}
+	var name string
+	var err error
+	if replace {
+		name, err = store.NormalizeName(filepath.Base(sourcePath))
+		if err != nil {
+			return false, fmt.Errorf("normalizing destination name for %s: %w", sourcePath, err)
+		}
+		observed.node, err = ing.Store.ChildByName(ctx, parentID, name)
+		switch {
+		case err == nil:
+			observed.present = true
+			if observed.node.IsDir() {
+				return false, fmt.Errorf("destination %s: %w", sourcePath, store.ErrNotFile)
+			}
+		case errors.Is(err, store.ErrNotFound):
+		default:
+			return false, fmt.Errorf("resolving destination %s: %w", sourcePath, err)
+		}
 	}
 	content, err := ing.readLocalFile(ctx, openPath, sourcePath, progress, nil)
 	if err != nil {
@@ -728,6 +758,31 @@ func (ing *Ingester) importFile(
 	defer func() {
 		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
 	}()
+	if replace {
+		if observed.present {
+			if content.hash == observed.node.BlobHash && content.size == observed.node.Size {
+				_, err = ing.Store.ConfirmContentWithReceipt(ctx, observed.node.ID,
+					observed.node.Revision, content.hash, content.size, observed.node.MimeType,
+					content.physical)
+				if err != nil {
+					return false, fmt.Errorf("recording %s: %w", sourcePath, err)
+				}
+				return false, nil
+			}
+			_, _, err = ing.Store.ReplaceContent(ctx, observed.node.ID, observed.node.Revision,
+				content.hash, content.size, content.mimeType, content.physical)
+			if err != nil {
+				return false, fmt.Errorf("recording %s: %w", sourcePath, err)
+			}
+			return true, nil
+		}
+		_, err = ing.Store.IngestFileExact(ctx, ingestRun, parentID, filepath.Base(sourcePath), content.hash,
+			content.size, content.mimeType, sourcePath, content.mtime, content.physical)
+		if err != nil {
+			return false, fmt.Errorf("recording %s: %w", sourcePath, err)
+		}
+		return true, nil
+	}
 	_, added, err = ing.Store.IngestFile(ctx, ingestRun, parentID,
 		filepath.Base(sourcePath), content.hash, content.size, content.mimeType,
 		sourcePath, content.mtime, content.physical)

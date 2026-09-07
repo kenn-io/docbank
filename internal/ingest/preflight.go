@@ -25,6 +25,10 @@ const (
 type Options struct {
 	Include []string
 	Exclude []string
+	// Replace versions the live file already at a source's destination path
+	// instead of importing the source under an auto-suffixed name. Preflight
+	// ignores it because it never resolves a destination.
+	Replace bool
 	// Progress receives bounded updates while a real ingest reads and commits
 	// files. Preflight ignores it because it never opens file content.
 	Progress func(ProgressEvent)

@@ -76,6 +76,24 @@ func TestMkdirAndLookup(t *testing.T) {
 	assert.Equal(t, "/docs", p)
 }
 
+func TestChildByNameNormalizesAndExcludesTrash(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.Mkdir(ctx, s.RootID(), "café")
+	require.NoError(t, err)
+
+	got, err := s.ChildByName(ctx, s.RootID(), "cafe\u0301")
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, got.ID)
+
+	trashed, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("child-trash"), 1, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	_, err = s.ChildByName(ctx, s.RootID(), "old.txt")
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestPathOnMissingNodeReturnsNotFound(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

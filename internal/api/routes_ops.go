@@ -305,7 +305,7 @@ func ingestParams(body IngestRequest) (string, ingest.Options, ingest.Selection,
 	if err := validateIngestPaths(body.Paths); err != nil {
 		return "", ingest.Options{}, ingest.Selection{}, err
 	}
-	opts := ingest.Options{Include: body.Include, Exclude: body.Exclude}
+	opts := ingest.Options{Include: body.Include, Exclude: body.Exclude, Replace: body.Replace}
 	selection, err := ingest.CompileSelection(opts)
 	if err != nil {
 		return "", ingest.Options{}, ingest.Selection{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())

@@ -1992,22 +1992,34 @@ func canonicalDirectoryPath(path string) (string, error) {
 	return "/" + strings.Join(segments, "/"), nil
 }
 
-func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.IngestReport, error) {
-	return c.IngestWithOptions(ctx, paths, dest, nil, nil)
+// IngestOptions selects source filters and the destination policy for a
+// server-side import. The zero value keeps ordinary suffixing semantics.
+type IngestOptions struct {
+	Include []string
+	Exclude []string
+	Replace bool
 }
 
-// IngestWithOptions imports server-side paths with the same selection rules
-// accepted by PreflightIngest.
+func (o IngestOptions) requestBody(paths []string, dest string) map[string]any {
+	return map[string]any{
+		"paths": paths, "dest": dest, "include": o.Include, "exclude": o.Exclude, "replace": o.Replace,
+	}
+}
+
+func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.IngestReport, error) {
+	return c.IngestWithOptions(ctx, paths, dest, IngestOptions{})
+}
+
+// IngestWithOptions imports server-side paths under the selected options.
 func (c *Client) IngestWithOptions(
 	ctx context.Context,
 	paths []string,
 	dest string,
-	include []string,
-	exclude []string,
+	opts IngestOptions,
 ) (api.IngestReport, error) {
 	var rep api.IngestReport
 	err := c.do(ctx, http.MethodPost, "/api/v1/ingest", nil,
-		map[string]any{"paths": paths, "dest": dest, "include": include, "exclude": exclude}, &rep)
+		opts.requestBody(paths, dest), &rep)
 	return rep, err
 }
 
@@ -2018,13 +2030,10 @@ func (c *Client) IngestStream(
 	ctx context.Context,
 	paths []string,
 	dest string,
-	include []string,
-	exclude []string,
+	opts IngestOptions,
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
-	body, err := marshalJSONRequest(map[string]any{
-		"paths": paths, "dest": dest, "include": include, "exclude": exclude,
-	})
+	body, err := marshalJSONRequest(opts.requestBody(paths, dest))
 	if err != nil {
 		return api.IngestReport{}, fmt.Errorf("encoding ingest request: %w", err)
 	}
