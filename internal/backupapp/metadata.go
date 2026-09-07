@@ -11,11 +11,11 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 
 	"go.kenn.io/kit/backup"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -55,6 +55,7 @@ type derivativeClassAccumulator struct {
 
 func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*DerivativeAuthorityStats, bool, error) {
 	classes := make(map[string]*derivativeClassAccumulator)
+	roleOrder := store.PersistedRenditionArtifactRoles()
 	get := func(classification, class string) *derivativeClassAccumulator {
 		item := classes[class]
 		if item != nil {
@@ -85,6 +86,9 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 			var size int64
 			if err := rows.Scan(&role, &buildID, &artifactID, &blobHash, &size, &checksum); err != nil {
 				return fmt.Errorf("scanning derivative artifact: %w", err)
+			}
+			if !slices.Contains(roleOrder, role) {
+				return fmt.Errorf("derivative artifact class %q is not catalog-authorized", role)
 			}
 			item := get("included", role)
 			if err := addDerivativeClassBytes(&item.LogicalBytes, size); err != nil {
@@ -180,22 +184,12 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	if len(classes) == 0 {
 		return nil, false, nil
 	}
-	// Class names are the exact rendition_artifacts.role values the catalog
-	// persists (document.EvidenceArtifact* constants plus the two catalog-local
-	// roles); lexical_projection is synthesized above from segment rows.
-	ordered := []string{
-		"normalized_evidence", "sanitized_markdown",
-		string(document.EvidenceArtifactImage),
-		string(document.EvidenceArtifactMarkdown),
-		string(document.EvidenceArtifactStructured),
-		string(document.EvidenceArtifactTranscript),
-		"visual_preview",
-		"lexical_projection",
-	}
+	// Synthetic classes are local to backupapp and follow persisted roles.
+	roleOrder = append(roleOrder, "visual_preview", "lexical_projection")
 	result := &DerivativeAuthorityStats{
 		Version: derivativeAuthorityVersion, ProviderDependent: []string{},
 	}
-	for _, class := range ordered {
+	for _, class := range roleOrder {
 		item := classes[class]
 		if item == nil {
 			continue
@@ -203,10 +197,6 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 		item.BlobCount = int64(len(item.blobs))
 		item.Checksum = hex.EncodeToString(item.checksum.Sum(nil))
 		result.Classes = append(result.Classes, item.DerivativeClassStats)
-		delete(classes, class)
-	}
-	if len(classes) != 0 {
-		return nil, false, errors.New("backupapp: derivative artifact class is not catalog-authorized")
 	}
 	return result, true, nil
 }

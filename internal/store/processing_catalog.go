@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -45,6 +46,21 @@ const (
 	catalogArtifactNormalizedEvidence = "normalized_evidence"
 	catalogArtifactSanitizedMarkdown  = "sanitized_markdown"
 )
+
+var persistedRenditionArtifactRoles = []string{
+	catalogArtifactNormalizedEvidence,
+	catalogArtifactSanitizedMarkdown,
+	string(document.EvidenceArtifactImage),
+	string(document.EvidenceArtifactMarkdown),
+	string(document.EvidenceArtifactStructured),
+	string(document.EvidenceArtifactTranscript),
+}
+
+// PersistedRenditionArtifactRoles returns the recognized rendition roles in
+// their stable backup order.
+func PersistedRenditionArtifactRoles() []string {
+	return slices.Clone(persistedRenditionArtifactRoles)
+}
 
 type capturedArtifactPolicyV1 struct {
 	Roles   []capturedArtifactRoleV1 `json:"roles"`
@@ -1152,14 +1168,7 @@ func normalizeCapturedArtifactPolicyV1(raw jsontext.Value) (normalizedCapturedAr
 }
 
 func validCapturedArtifactRole(role string) bool {
-	switch role {
-	case catalogArtifactNormalizedEvidence, catalogArtifactSanitizedMarkdown,
-		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
-		string(document.EvidenceArtifactStructured), string(document.EvidenceArtifactTranscript):
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(persistedRenditionArtifactRoles, role)
 }
 
 func validateCatalogLocatorV1(locator document.EvidenceLocatorV1) error {

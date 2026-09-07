@@ -2630,9 +2630,5 @@ func TestDerivativeAuthorityCoversEveryProviderArtifactRole(t *testing.T) {
 		assert.Equal(t, want, class.Classification)
 		assert.Equal(t, int64(1), class.Count)
 	}
-	assert.Equal(t, []string{
-		"normalized_evidence", "sanitized_markdown",
-		"provider_image", "provider_markdown", "structured_evidence",
-		"provider_transcript", "lexical_projection",
-	}, classes)
+	assert.Equal(t, append(store.PersistedRenditionArtifactRoles(), "lexical_projection"), classes)
 }
