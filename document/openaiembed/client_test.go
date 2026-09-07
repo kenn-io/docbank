@@ -2,6 +2,7 @@ package openaiembed
 
 import (
 	"context"
+	"crypto/x509"
 	_ "embed"
 	"encoding/json/v2"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 //go:embed testdata/success-indexed.json
@@ -222,6 +225,77 @@ func TestProfilePolicyFingerprintCoversEndpointIdentityAndBounds(t *testing.T) {
 	}
 }
 
+func TestProfilePolicyFingerprintCoversExactEgressAuthority(t *testing.T) {
+	base := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	base.EgressPolicy = providerhttp.EgressPolicy{
+		Scheme: "http", Host: "127.0.0.1", Port: 11434,
+		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+		ProxyMode:    providerhttp.ProxyDisabled,
+	}
+	want, err := PolicyFingerprint(base)
+	require.NoError(t, err)
+	changed := base
+	changed.EgressPolicy.AllowedCIDRs = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	got, err := PolicyFingerprint(changed)
+	require.NoError(t, err)
+	assert.NotEqual(t, want, got)
+
+	mismatched := base
+	mismatched.EgressPolicy.Port++
+	_, err = PolicyFingerprint(mismatched)
+	require.ErrorContains(t, err, "origin")
+}
+
+func TestProfileRejectsCustomTrustRoots(t *testing.T) {
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	profile.Origin = "https://embedding.example:443"
+	profile.EgressPolicy = providerhttp.EgressPolicy{
+		Scheme: "https", Host: "embedding.example", Port: 443,
+		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
+		ProxyMode:    providerhttp.ProxyDisabled,
+	}
+	_, err := PolicyFingerprint(profile)
+	require.NoError(t, err)
+	profile.EgressPolicy.TLS.RootCAs = x509.NewCertPool()
+	_, err = PolicyFingerprint(profile)
+	require.ErrorContains(t, err, "custom trust roots")
+}
+
+func TestEmbedReturnsClassifiedProviderFailures(t *testing.T) {
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	tests := []struct {
+		name      string
+		status    int
+		want      error
+		retry     string
+		wantDelay time.Duration
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, want: ErrUnauthorized},
+		{name: "forbidden", status: http.StatusForbidden, want: ErrUnauthorized},
+		{name: "capacity", status: http.StatusRequestEntityTooLarge, want: ErrCapacityResponse},
+		{name: "permanent", status: http.StatusBadRequest, want: ErrPermanentResponse},
+		{name: "transient", status: http.StatusServiceUnavailable, want: ErrTransientResponse},
+		{name: "request timeout", status: http.StatusRequestTimeout, want: ErrTransientResponse, retry: "1", wantDelay: time.Second},
+		{name: "retry after", status: http.StatusTooManyRequests, want: ErrTransientResponse, retry: "2", wantDelay: 2 * time.Second},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := newTestClient(t, profile, nil, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				response := jsonResponse(request, testCase.status, []byte(`{"error":"synthetic"}`))
+				if testCase.retry != "" {
+					response.Header.Set("Retry-After", testCase.retry)
+				}
+				return response, nil
+			}))
+			_, err := client.Embed(t.Context(), testInputs()[:1], testAuthorization(profile.Descriptor))
+			require.ErrorIs(t, err, testCase.want)
+			delay, set := RetryAfter(err)
+			assert.Equal(t, testCase.retry != "", set)
+			assert.Equal(t, testCase.wantDelay, delay)
+		})
+	}
+}
+
 func TestEmbedEnforcesProfileAuthorizationAndTextOnlyBoundsBeforeNetwork(t *testing.T) {
 	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
 	profile.MaxBatchItems = 2
@@ -296,7 +370,7 @@ func TestEmbedUsesOptionalNamedBearerSecretWithoutAmbientCookies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client = newTestClient(t, profile, testSecrets{"local-embedding-key": secret}, base.Transport)
 			_, err = client.Embed(t.Context(), testInputs(), testAuthorization(profile.Descriptor))
-			require.ErrorContains(t, err, "credential")
+			require.ErrorIs(t, err, ErrUnauthorized)
 			assert.NotContains(t, err.Error(), "bad")
 		})
 	}
@@ -368,7 +442,7 @@ func TestEmbedRequiresModelAndProviderRevisionEcho(t *testing.T) {
 				return response, nil
 			}))
 			_, err := client.Embed(t.Context(), testInputs()[:1], testAuthorization(profile.Descriptor))
-			require.Error(t, err)
+			require.ErrorIs(t, err, ErrMalformedResponse)
 		})
 	}
 
@@ -416,7 +490,12 @@ func TestEmbedRejectsSchemaVectorAndTransportDriftWithoutLeakingBodies(t *testin
 				inputs = testInputs()
 			}
 			_, err := client.Embed(t.Context(), inputs, testAuthorization(profile.Descriptor))
-			require.Error(t, err)
+			if testCase.status == http.StatusOK {
+				require.ErrorIs(t, err, ErrMalformedResponse)
+			} else {
+				require.NotErrorIs(t, err, ErrMalformedResponse)
+				require.Error(t, err)
+			}
 			assert.NotContains(t, err.Error(), "private request text")
 			assert.NotContains(t, err.Error(), "[9,8,7]")
 		})
@@ -430,6 +509,7 @@ func TestEmbedRejectsSchemaVectorAndTransportDriftWithoutLeakingBodies(t *testin
 	}))
 	_, err := client.Embed(t.Context(), one, mutateAuthorization(testAuthorization(bounded.Descriptor), func(value *document.EmbeddingAuthorization) { value.MaxResponseBytes = 64 }))
 	require.ErrorContains(t, err, "response byte")
+	require.ErrorIs(t, err, ErrMalformedResponse)
 }
 
 func TestEmbedRefusesRedirectsAndHonorsCancellation(t *testing.T) {
@@ -482,6 +562,7 @@ func TestEmbedBoundsRequestBodyAndPreservesDescriptorSnapshot(t *testing.T) {
 	input := []document.EmbeddingInput{{Key: "large", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: strings.Repeat("x", 100)}}
 	authorization := mutateAuthorization(testAuthorization(profile.Descriptor), func(value *document.EmbeddingAuthorization) { value.MaxInputBytes = 200 })
 	_, err := client.Embed(t.Context(), input, authorization)
+	require.ErrorIs(t, err, ErrCapacityResponse)
 	require.ErrorContains(t, err, "request byte")
 	assert.Zero(t, requests.Load())
 
@@ -581,4 +662,54 @@ func singleVectorResponse(model string, vector []float32) []byte {
 		panic(err)
 	}
 	return body
+}
+
+func TestNewEnforcesConfiguredEgress(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(singleVectorResponse("synthetic-model", []float32{1, 0, 0}))
+	}))
+	t.Cleanup(server.Close)
+	address, err := netip.ParseAddrPort(strings.TrimPrefix(server.URL, "http://"))
+	require.NoError(t, err)
+	for _, allowed := range []bool{true, false} {
+		profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileGTE}))
+		cidr := "192.0.2.0/24"
+		if allowed {
+			cidr = "127.0.0.0/8"
+		}
+		profile.Origin = server.URL
+		profile.EgressPolicy = providerhttp.EgressPolicy{Scheme: "http", Host: address.Addr().String(), Port: address.Port(), AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix(cidr)}, ProxyMode: providerhttp.ProxyDisabled}
+		profile.Descriptor = descriptorFor(t, profile)
+		before := requests.Load()
+		client, err := New(profile, nil, server.Client())
+		require.NoError(t, err)
+		_, err = client.Embed(t.Context(), testInputs()[:1], testAuthorization(profile.Descriptor))
+		if allowed {
+			require.NoError(t, err)
+			require.Equal(t, before+1, requests.Load())
+		} else {
+			require.Error(t, err)
+			require.Equal(t, before, requests.Load(), "denied destination must receive no request")
+		}
+	}
+}
+
+func TestEmbedClassifiesTruncatedHTTPResponseAsTransient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1000")
+		_, _ = io.WriteString(w, `{"object":"list"`)
+	}))
+	t.Cleanup(server.Close)
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	profile.Origin = server.URL
+	profile.Descriptor = descriptorFor(t, profile)
+	client, err := New(profile, nil, server.Client())
+	require.NoError(t, err)
+	_, err = client.Embed(t.Context(), testInputs()[:1], testAuthorization(profile.Descriptor))
+	require.ErrorIs(t, err, ErrTransientResponse)
+	require.NotErrorIs(t, err, ErrMalformedResponse)
 }

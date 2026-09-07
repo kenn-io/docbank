@@ -81,6 +81,34 @@ type Profile struct {
 	MaxInputBytes          int64
 	MaxRequestBytes        int64
 	MaxResponseBytes       int64
+	EgressPolicy           providerhttp.EgressPolicy
+}
+
+var (
+	ErrMalformedResponse = errors.New("openaiembed: malformed provider response")
+	ErrUnauthorized      = errors.New("openaiembed: credential is unavailable or unauthorized")
+	ErrTransientResponse = errors.New("openaiembed: transient provider response")
+	ErrCapacityResponse  = errors.New("openaiembed: provider capacity exceeded")
+	ErrPermanentResponse = errors.New("openaiembed: permanent provider response")
+)
+
+type ProviderError struct {
+	Kind       error
+	StatusCode int
+	RetryDelay time.Duration
+	RetrySet   bool
+}
+
+func (err *ProviderError) Error() string {
+	return fmt.Sprintf("openaiembed: HTTP %d: %v", err.StatusCode, err.Kind)
+}
+func (err *ProviderError) Unwrap() error { return err.Kind }
+func RetryAfter(err error) (time.Duration, bool) {
+	providerErr, ok := errors.AsType[*ProviderError](err)
+	if !ok || !providerErr.RetrySet {
+		return 0, false
+	}
+	return providerErr.RetryDelay, true
 }
 
 type policyIdentity struct {
@@ -97,6 +125,19 @@ type policyIdentity struct {
 	MaxInputBytes          int64                        `json:"max_input_bytes"`
 	MaxRequestBytes        int64                        `json:"max_request_bytes"`
 	MaxResponseBytes       int64                        `json:"max_response_bytes"`
+	Egress                 *openAIEgressIdentity        `json:"egress,omitempty"`
+}
+
+type openAIEgressIdentity struct {
+	Scheme              string   `json:"scheme"`
+	Host                string   `json:"host"`
+	Port                uint16   `json:"port"`
+	AllowedCIDRs        []string `json:"allowed_cidrs"`
+	ProxyMode           string   `json:"proxy_mode"`
+	ConnectTimeout      int64    `json:"connect_timeout_nanos"`
+	KeepAlive           int64    `json:"keep_alive_nanos"`
+	TLSHandshakeTimeout int64    `json:"tls_handshake_timeout_nanos"`
+	SPKISHA256          []string `json:"spki_sha256,omitempty"`
 }
 
 // Client calls exactly POST /v1/embeddings on the profile origin.
@@ -146,6 +187,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		RequestTimeoutNanos:    int64(normalized.RequestTimeout), MaxBatchItems: normalized.MaxBatchItems,
 		MaxInputBytes: normalized.MaxInputBytes, MaxRequestBytes: normalized.MaxRequestBytes,
 		MaxResponseBytes: normalized.MaxResponseBytes,
+		Egress:           openAIEgressPolicyIdentity(normalized.EgressPolicy),
 	}
 	encoded, err := json.Marshal(identity, json.Deterministic(true))
 	if err != nil {
@@ -156,7 +198,8 @@ func PolicyFingerprint(profile Profile) (string, error) {
 }
 
 // New validates an immutable profile and isolates the supplied HTTP client
-// from ambient cookies, timeouts, and redirect behavior. It performs no I/O.
+// from ambient cookies, timeouts, and redirect behavior. A configured egress
+// policy owns the transport and replaces any supplied transport. It performs no I/O.
 func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Client, error) {
 	normalized, _, err := normalizeProfile(profile)
 	if err != nil {
@@ -187,6 +230,13 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		return nil, errors.New("openaiembed: HTTP client is required")
 	}
 	isolate := *httpClient
+	if normalized.EgressPolicy.Scheme != "" {
+		transport, err := providerhttp.NewTransport(normalized.EgressPolicy, nil)
+		if err != nil {
+			return nil, err
+		}
+		isolate.Transport = transport
+	}
 	isolate.CheckRedirect = providerhttp.RefuseRedirects
 	isolate.Jar = nil
 	isolate.Timeout = 0
@@ -244,7 +294,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		return document.EmbeddingResult{}, errors.New("openaiembed: could not encode embedding request")
 	}
 	if int64(len(payload)) > client.profile.MaxRequestBytes {
-		return document.EmbeddingResult{}, errors.New("openaiembed: embedding request byte limit exceeded")
+		return document.EmbeddingResult{}, fmt.Errorf("%w: embedding request byte limit exceeded", ErrCapacityResponse)
 	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, client.profile.RequestTimeout)
@@ -261,10 +311,10 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 			if contextErr := requestCtx.Err(); contextErr != nil {
 				return document.EmbeddingResult{}, fmt.Errorf("openaiembed: credential resolution canceled: %w", contextErr)
 			}
-			return document.EmbeddingResult{}, errors.New("openaiembed: could not resolve credential")
+			return document.EmbeddingResult{}, ErrUnauthorized
 		}
 		if !validSecret(secret) {
-			return document.EmbeddingResult{}, errors.New("openaiembed: resolved credential is invalid")
+			return document.EmbeddingResult{}, ErrUnauthorized
 		}
 		request.Header.Set("Authorization", "Bearer "+secret)
 	}
@@ -274,20 +324,32 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		if contextErr := requestCtx.Err(); contextErr != nil {
 			return document.EmbeddingResult{}, fmt.Errorf("openaiembed: embedding request canceled: %w", contextErr)
 		}
-		return document.EmbeddingResult{}, errors.New("openaiembed: provider request failed")
+		return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse}
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: provider redirect refused with HTTP status %d", response.StatusCode)
+		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: provider redirect refused: %w",
+			&ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode})
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return document.EmbeddingResult{}, &ProviderError{Kind: ErrUnauthorized, StatusCode: response.StatusCode}
+	}
+	if response.StatusCode == http.StatusRequestEntityTooLarge {
+		return document.EmbeddingResult{}, &ProviderError{Kind: ErrCapacityResponse, StatusCode: response.StatusCode}
+	}
+	if response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		delay, set := openAIRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
+		return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse, StatusCode: response.StatusCode,
+			RetryDelay: delay, RetrySet: set}
 	}
 	if response.StatusCode != http.StatusOK {
-		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: provider returned HTTP status %d", response.StatusCode)
+		return document.EmbeddingResult{}, &ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode}
 	}
 	if err := validateResponseContentType(response.Header.Get("Content-Type")); err != nil {
-		return document.EmbeddingResult{}, err
+		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
 	}
 	if err := client.validateRevisionEcho(response.Header); err != nil {
-		return document.EmbeddingResult{}, err
+		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
 	}
 	body, err := readBounded(requestCtx, response.Body, client.profile.MaxResponseBytes)
 	if err != nil {
@@ -295,14 +357,14 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	var decoded wireResponse
 	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
-		return document.EmbeddingResult{}, errors.New("openaiembed: provider response does not match the bounded embedding schema")
+		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
 	}
 	result, err := client.validateAndOrder(decoded, inputs)
 	if err != nil {
-		return document.EmbeddingResult{}, err
+		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
 	}
 	if err := document.ValidateEmbeddingProviderResult(client.descriptor, inputs, authorization, result); err != nil {
-		return document.EmbeddingResult{}, err
+		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
 	}
 	return result, nil
 }
@@ -374,6 +436,12 @@ func (client *Client) validateVector(vector []float32) error {
 }
 
 func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, error) {
+	// CertPool does not expose certificate contents for a canonical identity.
+	// A subject-only hash would conflate distinct trust roots.
+	if profile.EgressPolicy.TLS.RootCAs != nil {
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("embedding policy does not support custom trust roots")
+	}
+
 	origin, err := validateOrigin(profile.Origin)
 	if err != nil {
 		return Profile{}, document.EmbeddingDescriptor{}, err
@@ -404,6 +472,38 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 	if profile.SecretBinding != "" && !validIdentityToken(profile.SecretBinding) {
 		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: secret binding is invalid")
 	}
+	if profile.EgressPolicy.Scheme != "" {
+		if profile.EgressPolicy.ConnectTimeout == 0 {
+			profile.EgressPolicy.ConnectTimeout = providerhttp.DefaultConnectTimeout
+		}
+		if profile.EgressPolicy.KeepAlive == 0 {
+			profile.EgressPolicy.KeepAlive = providerhttp.DefaultKeepAlive
+		}
+		if profile.EgressPolicy.TLSHandshakeTimeout == 0 {
+			profile.EgressPolicy.TLSHandshakeTimeout = providerhttp.DefaultTLSHandshakeTimeout
+		}
+		if profile.EgressPolicy.ProxyMode == "" {
+			profile.EgressPolicy.ProxyMode = providerhttp.ProxyDisabled
+		}
+		if _, err := providerhttp.NewTransport(profile.EgressPolicy, nil); err != nil {
+			return Profile{}, document.EmbeddingDescriptor{}, fmt.Errorf("openaiembed: invalid sealed egress policy: %w", err)
+		}
+		parsed, _ := url.Parse(profile.Origin)
+		port := parsed.Port()
+		if port == "" {
+			if parsed.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		if profile.EgressPolicy.Scheme != parsed.Scheme || !strings.EqualFold(profile.EgressPolicy.Host, parsed.Hostname()) ||
+			strconv.Itoa(int(profile.EgressPolicy.Port)) != port || profile.EgressPolicy.ProxyMode != providerhttp.ProxyDisabled {
+			return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: origin and sealed egress authority differ")
+		}
+		slices.SortFunc(profile.EgressPolicy.AllowedCIDRs, func(a, b netip.Prefix) int { return strings.Compare(a.Masked().String(), b.Masked().String()) })
+		slices.Sort(profile.EgressPolicy.TLS.SPKISHA256)
+	}
 
 	descriptorIdentity := profile.Descriptor
 	descriptorIdentity.PolicyFingerprint = strings.Repeat("0", sha256.Size*2)
@@ -428,6 +528,32 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: provider revision header is not a canonical safe response header")
 	}
 	return profile, descriptorIdentity, nil
+}
+
+func openAIEgressPolicyIdentity(policy providerhttp.EgressPolicy) *openAIEgressIdentity {
+	if policy.Scheme == "" {
+		return nil
+	}
+	cidrs := make([]string, len(policy.AllowedCIDRs))
+	for index, prefix := range policy.AllowedCIDRs {
+		cidrs[index] = prefix.Masked().String()
+	}
+	return &openAIEgressIdentity{Scheme: policy.Scheme, Host: strings.ToLower(policy.Host), Port: policy.Port,
+		AllowedCIDRs: cidrs, ProxyMode: string(policy.ProxyMode), ConnectTimeout: int64(policy.ConnectTimeout),
+		KeepAlive: int64(policy.KeepAlive), TLSHandshakeTimeout: int64(policy.TLSHandshakeTimeout),
+		SPKISHA256: slices.Clone(policy.TLS.SPKISHA256)}
+}
+
+func openAIRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		return min(time.Duration(seconds)*time.Second, time.Hour), true
+	}
+	when, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	return min(max(when.Sub(now), 0), time.Hour), true
 }
 
 func validateDescriptorContract(descriptor document.EmbeddingDescriptor, modelInput document.ModelInputContract) error {
@@ -568,10 +694,10 @@ func readBounded(ctx context.Context, reader io.Reader, maximum int64) ([]byte, 
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, fmt.Errorf("openaiembed: response read canceled: %w", contextErr)
 		}
-		return nil, errors.New("openaiembed: could not read provider response")
+		return nil, fmt.Errorf("openaiembed: could not read provider response: %w", ErrTransientResponse)
 	}
 	if int64(len(body)) > maximum {
-		return nil, errors.New("openaiembed: provider response byte limit exceeded")
+		return nil, fmt.Errorf("openaiembed: provider response byte limit exceeded: %w", ErrMalformedResponse)
 	}
 	return body, nil
 }

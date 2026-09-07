@@ -311,7 +311,7 @@ func (client *EmbeddingClient) embedDirectFiles(ctx context.Context, inputs []do
 		if secretContextErr != nil {
 			return document.EmbeddingResult{}, fmt.Errorf("voyage embedding: credential resolution canceled: %w", secretContextErr)
 		}
-		return document.EmbeddingResult{}, errors.New("voyage embedding: credential is unavailable")
+		return document.EmbeddingResult{}, ErrUnauthorized
 	}
 	values := client.profile.Policy.Values()
 	policy, err := NewPolicy(PolicyConfig{
@@ -456,7 +456,7 @@ func (client *EmbeddingClient) embeddingAttempt(ctx context.Context, route strin
 		if contextErr := attemptCtx.Err(); contextErr != nil {
 			return nil, -1, true, false, &ProviderError{Kind: ErrTransientResponse, cause: contextErr}
 		}
-		return nil, -1, false, false, &ProviderError{Kind: ErrPermanentResponse}
+		return nil, -1, false, false, &ProviderError{Kind: ErrUnauthorized}
 	}
 	request, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, client.profile.Endpoint+route, bytes.NewReader(payload))
 	if err != nil {
@@ -485,7 +485,7 @@ func (client *EmbeddingClient) embeddingAttempt(ctx context.Context, route strin
 	if response.StatusCode == http.StatusRequestEntityTooLarge {
 		return nil, -1, false, true, &ProviderError{Kind: ErrBatchTooLarge, StatusCode: response.StatusCode}
 	}
-	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+	if response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
 		delay, set := parseRetryAfter(response.Header.Get("Retry-After"), client.now())
 		if !set {
 			delay = -1

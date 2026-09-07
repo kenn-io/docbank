@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -867,29 +866,14 @@ func (s *Store) BeginRenditionProvider(
 	return authorization, nil
 }
 
-// RenditionProviderEgressFence orders consent revocation against provider
-// execution. Close releases the fence after the provider call finishes or
-// when an invocation never reaches the provider boundary.
-type RenditionProviderEgressFence struct {
-	once    sync.Once
-	release func()
-}
-
-// Close releases a provider-egress fence.
-func (fence *RenditionProviderEgressFence) Close() {
-	if fence != nil {
-		fence.once.Do(fence.release)
-	}
-}
-
 // BeginRenditionProviderEgress rechecks durable authority while holding a
 // narrow fence that the caller must release after provider execution.
 func (s *Store) BeginRenditionProviderEgress(
 	ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
-) (ProviderOperationAuthorization, *RenditionProviderEgressFence, error) {
-	s.renditionEgressMu.RLock()
-	fence := &RenditionProviderEgressFence{release: s.renditionEgressMu.RUnlock}
+) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
+	s.providerEgressMu.RLock()
+	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	authorization, err := s.BeginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
 	if err != nil {
 		fence.Close()

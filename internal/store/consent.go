@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -79,8 +80,8 @@ type ProviderOperationAuthorizationRequest struct {
 	DisclosureFingerprint   string
 	InputClasses            []string
 	RetainedArtifactClasses []string
-	// PriorAuthorization is set only for atomic publication. A later replacement
-	// grant cannot revive work authorized below an earlier revocation fence.
+	// PriorAuthorization binds atomic publication and fenced provider retries
+	// to the original grant. A replacement grant cannot revive revoked work.
 	PriorAuthorization *ProviderOperationAuthorization
 }
 
@@ -205,8 +206,8 @@ func (s *Store) GrantConsent(
 func (s *Store) RevokeConsent(
 	ctx context.Context, request ProcessingConsentRevocationRequest,
 ) (ProcessingConsentRevocation, error) {
-	s.renditionEgressMu.Lock()
-	defer s.renditionEgressMu.Unlock()
+	s.providerEgressMu.Lock()
+	defer s.providerEgressMu.Unlock()
 
 	principal, err := normalizeConsentLabel("principal", request.Principal)
 	if err != nil {
@@ -446,4 +447,19 @@ func normalizeConsentClasses(subject string, values []string, required bool) ([]
 		return nil, "", fmt.Errorf("encoding processing consent %s classes: %w", subject, err)
 	}
 	return result, string(encoded), nil
+}
+
+// ProviderEgressFence orders consent revocation against provider
+// execution. Close releases the fence after the provider call finishes or
+// when an invocation never reaches the provider boundary.
+type ProviderEgressFence struct {
+	once    sync.Once
+	release func()
+}
+
+// Close releases a provider-egress fence.
+func (fence *ProviderEgressFence) Close() {
+	if fence != nil {
+		fence.once.Do(fence.release)
+	}
 }

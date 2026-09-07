@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 )
@@ -27,6 +28,9 @@ const (
 	maxEmbeddingCatalogIDBytes = 1 << 10
 	maxEmbeddingDescriptorJSON = 1 << 16
 )
+
+// ErrEmbeddingAuthorityStale identifies a superseded source, attachment, or publication token.
+var ErrEmbeddingAuthorityStale = errors.New("embedding authority is stale")
 
 // EmbeddingInputKind is the canonical E1 evidence-kind vocabulary. Keep the
 // alias so store callers do not need to translate a document contract token.
@@ -172,66 +176,63 @@ const (
 // StageEmbeddingSet atomically records or exactly reuses every immutable
 // authority named by a completed embedding set.
 func (s *Store) StageEmbeddingSet(ctx context.Context, record EmbeddingSetRecord) error {
-	var err error
-	record, err = normalizeEmbeddingSetRecord(record)
+	record, err := s.prepareEmbeddingSetRecord(record)
 	if err != nil {
-		return fmt.Errorf("staging embedding set: %w", err)
-	}
-	if err := validateEmbeddingSetRecord(record); err != nil {
-		return fmt.Errorf("staging embedding set: %w", err)
-	}
-	if record.VaultID != s.vaultID {
-		return errors.New("staging embedding set: vault identity does not match store")
+		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := validateEmbeddingSetFencesTx(ctx, tx, record); err != nil {
-			return err
-		}
-		if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, record); err != nil {
-			return err
-		}
-		if err := requireEmbeddingPhysicalAuthorityTx(ctx, tx, record); err != nil {
-			return err
-		}
-		// Payload bytes are validated before the transaction writes catalog
-		// authority. SQLite retains only the immutable blob reference and the
-		// canonical row projection derived from those bytes.
-		record.VectorSet.Payload = nil
-		record.InputGeneration.GenerationJSON = nil
-		record.InputGeneration.EvidenceJSON = nil
-		if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace); err != nil {
-			return err
-		}
-		if err := insertInputGenerationTx(ctx, tx, record.InputGeneration); err != nil {
-			return err
-		}
-		if err := insertVectorSetTx(ctx, tx, record.VectorSet); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_sets(
-			embedding_set_id,vault_uid,binding_id,input_kind,content_version_id,
-			profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,vector_set_id,created_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.VaultID, record.BindingID,
-			record.InputKind, record.ContentVersionID, record.ProcessingProfileFingerprint,
-			record.EmbeddingInputFingerprint, record.VectorSpace.ID, record.InputGeneration.ID, record.VectorSet.ID, record.CreatedAt)
-		if err != nil {
-			return fmt.Errorf("inserting embedding set %s: %w", record.ID, err)
-		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking embedding set insertion: %w", err)
-		}
-		if inserted == 0 {
-			stored, err := loadEmbeddingSetTx(ctx, tx, record.ID)
-			if err != nil {
-				return err
-			}
-			if !reflect.DeepEqual(stored, record) {
-				return fmt.Errorf("embedding set %s names different immutable authority", record.ID)
-			}
-		}
-		return nil
+		return stageEmbeddingSetTx(ctx, tx, record)
 	})
+}
+
+func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
+	if err := validateEmbeddingSetFencesTx(ctx, tx, record); err != nil {
+		return err
+	}
+	if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, record); err != nil {
+		return err
+	}
+	if err := requireEmbeddingPhysicalAuthorityTx(ctx, tx, record); err != nil {
+		return err
+	}
+	// Payload bytes are validated before the transaction writes catalog
+	// authority. SQLite retains only the immutable blob reference and the
+	// canonical row projection derived from those bytes.
+	record.VectorSet.Payload = nil
+	record.InputGeneration.GenerationJSON = nil
+	record.InputGeneration.EvidenceJSON = nil
+	if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace); err != nil {
+		return err
+	}
+	if err := insertInputGenerationTx(ctx, tx, record.InputGeneration); err != nil {
+		return err
+	}
+	if err := insertVectorSetTx(ctx, tx, record.VectorSet); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_sets(
+		embedding_set_id,vault_uid,binding_id,input_kind,content_version_id,
+		profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,vector_set_id,created_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.VaultID, record.BindingID,
+		record.InputKind, record.ContentVersionID, record.ProcessingProfileFingerprint,
+		record.EmbeddingInputFingerprint, record.VectorSpace.ID, record.InputGeneration.ID, record.VectorSet.ID, record.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("inserting embedding set %s: %w", record.ID, err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking embedding set insertion: %w", err)
+	}
+	if inserted == 0 {
+		stored, err := loadEmbeddingSetTx(ctx, tx, record.ID)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(stored, record) {
+			return fmt.Errorf("embedding set %s names different immutable authority", record.ID)
+		}
+	}
+	return nil
 }
 
 func normalizeEmbeddingSetRecord(record EmbeddingSetRecord) (EmbeddingSetRecord, error) {
@@ -469,68 +470,72 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 		return fmt.Errorf("publishing embedding head: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
-		if err != nil {
-			return fmt.Errorf("publishing embedding head: %w", err)
-		}
-		if set.ContentVersionID != record.Key.ContentVersionID || set.BindingID != record.Key.BindingID ||
-			set.InputKind != record.Key.InputKind || set.VectorSpace.ID != record.VectorSpaceID ||
-			set.ProcessingProfileFingerprint != record.ProcessingProfileFingerprint {
-			return errors.New("publishing embedding head: stale source, profile, binding, or vector-space fence")
-		}
-		if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, set); err != nil {
-			return err
-		}
-		if err := requireEmbeddingPhysicalAuthorityTx(ctx, tx, set); err != nil {
-			return err
-		}
-		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
-		if err != nil {
-			return err
-		}
-		if !eligible {
-			return errors.New("publishing embedding head: source or attachment is not eligible")
-		}
-		var newerFailure bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_failures
-			WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
-			AND fencing_token>=?)`, record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
-			record.Key.BindingID, record.Key.InputKind, record.FencingToken).Scan(&newerFailure); err != nil {
-			return fmt.Errorf("checking embedding failure fence: %w", err)
-		}
-		if newerFailure {
-			return errors.New("publishing embedding head: stale or reused fencing token")
-		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
-			content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
-			profile_fingerprint,published_at,fencing_token
-		) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
-		DO UPDATE SET embedding_set_id=excluded.embedding_set_id,
-		vector_space_id=excluded.vector_space_id,profile_fingerprint=excluded.profile_fingerprint,
-		published_at=excluded.published_at,fencing_token=excluded.fencing_token
-		WHERE excluded.fencing_token>embedding_heads.fencing_token OR (
-			excluded.fencing_token=embedding_heads.fencing_token AND
-			excluded.embedding_set_id=embedding_heads.embedding_set_id AND
-			excluded.published_at=embedding_heads.published_at
-		)`, record.Key.ContentVersionID, record.Key.BindingID,
-			record.Key.InputKind, record.SetID, record.VectorSpaceID,
-			record.ProcessingProfileFingerprint, record.PublishedAt, record.FencingToken)
-		if err != nil {
-			return fmt.Errorf("publishing embedding head: %w", err)
-		}
-		changed, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking embedding publication: %w", err)
-		}
-		if changed != 1 {
-			return errors.New("publishing embedding head: stale or reused fencing token")
-		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM embedding_failures
-			WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
-			record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
-			record.Key.BindingID, record.Key.InputKind)
-		return err
+		return publishEmbeddingHeadTx(ctx, tx, record)
 	})
+}
+
+func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHeadRecord) error {
+	set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
+	if err != nil {
+		return fmt.Errorf("publishing embedding head: %w", err)
+	}
+	if set.ContentVersionID != record.Key.ContentVersionID || set.BindingID != record.Key.BindingID ||
+		set.InputKind != record.Key.InputKind || set.VectorSpace.ID != record.VectorSpaceID ||
+		set.ProcessingProfileFingerprint != record.ProcessingProfileFingerprint {
+		return fmt.Errorf("publishing embedding head: stale source, profile, binding, or vector-space fence: %w", ErrEmbeddingAuthorityStale)
+	}
+	if err := requireEmbeddingPurgeAuthorityTx(ctx, tx, set); err != nil {
+		return err
+	}
+	if err := requireEmbeddingPhysicalAuthorityTx(ctx, tx, set); err != nil {
+		return err
+	}
+	eligible, err := embeddingSetEligibleTx(ctx, tx, set)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return fmt.Errorf("publishing embedding head: source or attachment is not eligible: %w", ErrEmbeddingAuthorityStale)
+	}
+	var newerFailure bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_failures
+		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
+		AND fencing_token>=?)`, record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
+		record.Key.BindingID, record.Key.InputKind, record.FencingToken).Scan(&newerFailure); err != nil {
+		return fmt.Errorf("checking embedding failure fence: %w", err)
+	}
+	if newerFailure {
+		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
+		content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
+		profile_fingerprint,published_at,fencing_token
+	) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+	DO UPDATE SET embedding_set_id=excluded.embedding_set_id,
+	vector_space_id=excluded.vector_space_id,profile_fingerprint=excluded.profile_fingerprint,
+	published_at=excluded.published_at,fencing_token=excluded.fencing_token
+	WHERE excluded.fencing_token>embedding_heads.fencing_token OR (
+		excluded.fencing_token=embedding_heads.fencing_token AND
+		excluded.embedding_set_id=embedding_heads.embedding_set_id AND
+		excluded.published_at=embedding_heads.published_at
+	)`, record.Key.ContentVersionID, record.Key.BindingID,
+		record.Key.InputKind, record.SetID, record.VectorSpaceID,
+		record.ProcessingProfileFingerprint, record.PublishedAt, record.FencingToken)
+	if err != nil {
+		return fmt.Errorf("publishing embedding head: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking embedding publication: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM embedding_failures
+		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+		record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
+		record.Key.BindingID, record.Key.InputKind)
+	return err
 }
 
 // RecordEmbeddingFailure records provider-neutral plan status without
@@ -540,56 +545,58 @@ func (s *Store) RecordEmbeddingFailure(ctx context.Context, record EmbeddingFail
 	if err := validateEmbeddingFailureRecord(record); err != nil {
 		return err
 	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := validateEmbeddingFailureBinding(ctx, tx, record); err != nil {
-			return err
-		}
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
-			JOIN processing_profiles p ON p.profile_fingerprint=? WHERE v.version_id=?`,
-			record.ProcessingProfileFingerprint, record.ContentVersionID).Scan(&count); err != nil {
-			return err
-		}
-		if count != 1 {
-			return ErrNotFound
-		}
-		suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
-			EmbeddingHeadKey{record.ContentVersionID, record.BindingID, record.InputKind},
-			record.ProcessingProfileFingerprint)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("checking embedding failure purge suppression: %w", err)
-		}
-		if err == nil && suppression.active {
-			return errors.New("embedding failure binding has an active purge suppression")
-		}
-		if err := validateEmbeddingFailureEligibility(ctx, tx, record); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
-			content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at,fencing_token,attachment_id
-		) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
-		DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at,
-		fencing_token=excluded.fencing_token,attachment_id=excluded.attachment_id
-		WHERE excluded.fencing_token>embedding_failures.fencing_token OR (
-			excluded.fencing_token=embedding_failures.fencing_token AND
-			excluded.failure_code=embedding_failures.failure_code AND
-			excluded.attachment_id=embedding_failures.attachment_id AND
-			excluded.failed_at=embedding_failures.failed_at
-		)`, record.ContentVersionID,
-			record.ProcessingProfileFingerprint, record.BindingID, record.InputKind,
-			record.FailureCode, record.FailedAt, record.FencingToken, record.AttachmentID)
-		if err != nil {
-			return fmt.Errorf("recording embedding failure: %w", err)
-		}
-		changed, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("checking embedding failure write: %w", err)
-		}
-		if changed != 1 {
-			return errors.New("recording embedding failure: stale or reused fencing token")
-		}
-		return nil
-	})
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error { return recordEmbeddingFailureTx(ctx, tx, record) })
+}
+
+func recordEmbeddingFailureTx(ctx context.Context, tx *sql.Tx, record EmbeddingFailureRecord) error {
+	if err := validateEmbeddingFailureBinding(ctx, tx, record); err != nil {
+		return err
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
+		JOIN processing_profiles p ON p.profile_fingerprint=? WHERE v.version_id=?`,
+		record.ProcessingProfileFingerprint, record.ContentVersionID).Scan(&count); err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
+		EmbeddingHeadKey{record.ContentVersionID, record.BindingID, record.InputKind},
+		record.ProcessingProfileFingerprint)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("checking embedding failure purge suppression: %w", err)
+	}
+	if err == nil && suppression.active {
+		return errors.New("embedding failure binding has an active purge suppression")
+	}
+	if err := validateEmbeddingFailureEligibility(ctx, tx, record); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
+		content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at,fencing_token,attachment_id
+	) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+	DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at,
+	fencing_token=excluded.fencing_token,attachment_id=excluded.attachment_id
+	WHERE excluded.fencing_token>embedding_failures.fencing_token OR (
+		excluded.fencing_token=embedding_failures.fencing_token AND
+		excluded.failure_code=embedding_failures.failure_code AND
+		excluded.attachment_id=embedding_failures.attachment_id AND
+		excluded.failed_at=embedding_failures.failed_at
+	)`, record.ContentVersionID,
+		record.ProcessingProfileFingerprint, record.BindingID, record.InputKind,
+		record.FailureCode, record.FailedAt, record.FencingToken, record.AttachmentID)
+	if err != nil {
+		return fmt.Errorf("recording embedding failure: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking embedding failure write: %w", err)
+	}
+	if changed != 1 {
+		return errors.New("recording embedding failure: stale or reused fencing token")
+	}
+	return nil
 }
 
 func validateEmbeddingFailureEligibility(ctx context.Context, query metadataQuerier, record EmbeddingFailureRecord) error {
@@ -1482,4 +1489,115 @@ func embeddingCatalogSchemaColumns(
 		return nil, err
 	}
 	return columns, nil
+}
+
+func (s *Store) prepareEmbeddingSetRecord(record EmbeddingSetRecord) (EmbeddingSetRecord, error) {
+	record, err := normalizeEmbeddingSetRecord(record)
+	if err != nil {
+		return EmbeddingSetRecord{}, fmt.Errorf("staging embedding set: %w", err)
+	}
+	if err := validateEmbeddingSetRecord(record); err != nil {
+		return EmbeddingSetRecord{}, fmt.Errorf("staging embedding set: %w", err)
+	}
+	if record.VaultID != s.vaultID {
+		return EmbeddingSetRecord{}, errors.New("staging embedding set: vault identity does not match store")
+	}
+	return record, nil
+}
+
+func (s *Store) StageEmbeddingSetWithLease(ctx context.Context, record EmbeddingSetRecord,
+	rootID string, fencingToken int64, at time.Time,
+) error {
+	record, err := s.prepareEmbeddingSetRecord(record)
+	if err != nil {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken,
+			record.InputGeneration.ID, at); err != nil {
+			return err
+		}
+		// Retrying publication may stage the same content again. Its first
+		// creation time remains authoritative; every other immutable field is
+		// still compared by stageEmbeddingSetTx.
+		var createdAt string
+		err := tx.QueryRowContext(ctx, `SELECT created_at FROM embedding_sets WHERE embedding_set_id=?`, record.ID).Scan(&createdAt)
+		if err == nil {
+			record.CreatedAt = createdAt
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return stageEmbeddingSetTx(ctx, tx, record)
+	})
+}
+
+func HydrateEmbeddingInputGeneration(record EmbeddingInputGenerationRecord, data, evidence []byte) (EmbeddingInputGenerationRecord, error) {
+	if err := validateExactEmbeddingGenerationArtifact(record, data); err != nil {
+		return EmbeddingInputGenerationRecord{}, fmt.Errorf("hydrating exact artifact: %w", err)
+	}
+	if err := validateEmbeddingGenerationEvidence(record, data, evidence); err != nil {
+		return EmbeddingInputGenerationRecord{}, err
+	}
+	record.GenerationJSON = bytes.Clone(data)
+	record.EvidenceJSON = bytes.Clone(evidence)
+	return record, nil
+}
+
+func (s *Store) PublishEmbeddingHeadWithLease(ctx context.Context, record EmbeddingHeadRecord,
+	consent ProviderOperationAuthorizationRequest, prior ProviderOperationAuthorization,
+	rootID string, fencingToken int64, at time.Time,
+) (ProviderOperationAuthorization, error) {
+	if err := validateEmbeddingHeadRecord(record); err != nil {
+		return ProviderOperationAuthorization{}, fmt.Errorf("publishing leased embedding head: %w", err)
+	}
+	var authorization ProviderOperationAuthorization
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		authorization, err = publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, record, consent, prior, rootID, fencingToken, at)
+		return err
+	})
+	return authorization, err
+}
+
+func publishEmbeddingHeadWithLeaseTx(ctx context.Context, tx *sql.Tx, vaultID string, record EmbeddingHeadRecord,
+	consent ProviderOperationAuthorizationRequest, prior ProviderOperationAuthorization,
+	rootID string, fencingToken int64, at time.Time,
+) (ProviderOperationAuthorization, error) {
+	set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
+	if err != nil {
+		return ProviderOperationAuthorization{}, err
+	}
+	if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken, set.InputGeneration.ID, at); err != nil {
+		return ProviderOperationAuthorization{}, err
+	}
+	consent.PriorAuthorization = &prior
+	authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, consent, at.UTC())
+	if err != nil {
+		return ProviderOperationAuthorization{}, err
+	}
+	return authorization, publishEmbeddingHeadTx(ctx, tx, record)
+}
+
+func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID string,
+	fencingToken int64, generationID string, at time.Time,
+) error {
+	if rootID == "" || fencingToken <= 0 || generationID == "" || at.IsZero() {
+		return ErrCurrentRenditionRootFenced
+	}
+	var expiresAt string
+	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM current_rendition_roots
+		WHERE root_id=? AND root_kind=? AND target_kind=? AND target_id=?
+		  AND fencing_token=? AND active=1`, rootID, RenditionRootWorkerLease,
+		RenditionRootEmbeddingGeneration, generationID, fencingToken).Scan(&expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCurrentRenditionRootFenced
+	}
+	if err != nil {
+		return fmt.Errorf("checking embedding worker lease: %w", err)
+	}
+	expires, err := time.Parse(timestampLayout, expiresAt)
+	if err != nil || !expires.After(at.UTC()) {
+		return ErrCurrentRenditionRootFenced
+	}
+	return nil
 }

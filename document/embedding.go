@@ -249,6 +249,10 @@ func ValidateEmbeddingProviderResult(descriptor EmbeddingDescriptor, inputs []Em
 	return nil
 }
 
+// ErrEmbeddingInvalidResult identifies a provider result or consumed source that
+// does not match the authorized request.
+var ErrEmbeddingInvalidResult = errors.New("embedding result does not match authorized input")
+
 // ExecuteEmbedding is the validated execution entry point for core callers.
 // It takes ownership of original-file uploads and closes them before returning.
 // The provider receives its own copy of the validated inputs; the result is
@@ -312,12 +316,12 @@ func ExecuteEmbedding(
 		return EmbeddingResult{}, err
 	}
 	if err := ValidateEmbeddingProviderResult(descriptor, authorized, authorization, result); err != nil {
-		return EmbeddingResult{}, err
+		return EmbeddingResult{}, errors.Join(ErrEmbeddingInvalidResult, err)
 	}
 	result = cloneEmbeddingResult(result)
 	for _, upload := range sealedUploads {
 		if err := upload.verify(ctx); err != nil {
-			return EmbeddingResult{}, err
+			return EmbeddingResult{}, errors.Join(ErrEmbeddingInvalidResult, err)
 		}
 	}
 	return result, nil

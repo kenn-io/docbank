@@ -731,6 +731,42 @@ CREATE TABLE IF NOT EXISTS embedding_input_generations (
         OR (generation_blob_hash IS NOT NULL AND generation_encoded_size > 0))
 );
 
+-- Embedding jobs are rebuildable operational state. Immutable input
+-- generations, vector spaces, consent grants, failures, and published heads
+-- remain the portable authority; this table only resumes bounded execution.
+CREATE TABLE IF NOT EXISTS embedding_jobs (
+    job_id              TEXT PRIMARY KEY,
+    vault_uid           TEXT NOT NULL,
+    content_version_id  TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    profile_fingerprint TEXT NOT NULL REFERENCES processing_profiles(profile_fingerprint),
+    binding_id          TEXT NOT NULL,
+    input_kind          TEXT NOT NULL,
+    generation_id       TEXT NOT NULL REFERENCES embedding_input_generations(generation_id) ON DELETE CASCADE,
+    vector_space_id     TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id) ON DELETE CASCADE,
+    principal           TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    state               TEXT NOT NULL,
+    claim_owner         TEXT,
+    claim_epoch         INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    claim_count         INTEGER NOT NULL DEFAULT 0,
+    lease_expires_at    TEXT,
+    available_at        TEXT NOT NULL,
+    failure_code        TEXT,
+    receipt_json        TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    UNIQUE (content_version_id,profile_fingerprint,binding_id,input_kind,generation_id)
+);
+
+CREATE INDEX IF NOT EXISTS embedding_jobs_ready
+    ON embedding_jobs(state,available_at,job_id);
+
+CREATE INDEX IF NOT EXISTS embedding_jobs_generation
+    ON embedding_jobs(generation_id);
+
+CREATE INDEX IF NOT EXISTS embedding_jobs_vector_space
+    ON embedding_jobs(vector_space_id);
+
 CREATE TABLE IF NOT EXISTS embedding_generation_inputs (
     generation_id     TEXT NOT NULL REFERENCES embedding_input_generations(generation_id) ON DELETE CASCADE,
     input_id          TEXT NOT NULL CHECK (length(CAST(input_id AS BLOB)) > 0),

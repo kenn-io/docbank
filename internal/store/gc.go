@@ -911,6 +911,19 @@ func purgeEmbeddingCatalogTx(
 			return nil, err
 		}
 		report.RemovedEmbeddingHeads += count
+		// A collected set no longer needs its terminal execution record. Pending
+		// work still owns its inputs, including jobs waiting to retry.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs
+			WHERE generation_id=? AND state IN ('completed','failed','abandoned') AND EXISTS (
+				SELECT 1 FROM embedding_sets s WHERE s.embedding_set_id=?
+				  AND s.content_version_id=embedding_jobs.content_version_id
+				  AND s.profile_fingerprint=embedding_jobs.profile_fingerprint
+				  AND s.binding_id=embedding_jobs.binding_id AND s.input_kind=embedding_jobs.input_kind
+				  AND s.input_generation_id=embedding_jobs.generation_id
+				  AND s.vector_space_id=embedding_jobs.vector_space_id
+			)`, candidate.generationID, candidate.id); err != nil {
+			return nil, fmt.Errorf("removing collected embedding jobs: %w", err)
+		}
 		result, err = tx.ExecContext(ctx,
 			`DELETE FROM embedding_sets WHERE embedding_set_id=?`, candidate.id)
 		if err != nil {
