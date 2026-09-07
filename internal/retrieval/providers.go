@@ -131,16 +131,22 @@ type RerankingProvider interface {
 	Rerank(ctx context.Context, request RerankingRequest) ([]RerankScore, error)
 }
 
-// ExpansionAuthorizer is the separate consent/authorization boundary for one
-// expansion operation. Implementations must authorize before provider egress.
-type ExpansionAuthorizer interface {
-	AuthorizeExpansion(ctx context.Context, operation ProviderOperation) error
+// ProviderEgressLease keeps authorization valid until the provider returns.
+// Revocation must acquire the corresponding exclusive fence. Close only releases
+// the lease and must not fail.
+type ProviderEgressLease interface {
+	Close()
 }
 
-// RerankingAuthorizer is the separate consent/authorization boundary for one
-// reranking operation. Implementations must authorize before provider egress.
+// ExpansionAuthorizer authorizes while acquiring an egress lease. Success must
+// return a non-nil lease; failure must release any acquired resources.
+type ExpansionAuthorizer interface {
+	AuthorizeExpansion(ctx context.Context, operation ProviderOperation) (ProviderEgressLease, error)
+}
+
+// RerankingAuthorizer has the same lease contract as ExpansionAuthorizer.
 type RerankingAuthorizer interface {
-	AuthorizeReranking(ctx context.Context, operation ProviderOperation) error
+	AuthorizeReranking(ctx context.Context, operation ProviderOperation) (ProviderEgressLease, error)
 }
 
 type ExpansionConfig struct {
@@ -208,12 +214,14 @@ func (searcher *Searcher) expand(ctx context.Context, query Query) ([]string, *P
 	operation := ProviderOperation{Stage: ProviderStageExpansion, ProfileID: config.Profile.ID,
 		Scope: query.Scope, InputClass: ProviderInputQueryText, VariantLimit: config.Profile.MaxVariants,
 		QueryBytes: len(query.Text), QueryByteLimit: maxProviderQueryBytes}
-	if err := config.Authorizer.AuthorizeExpansion(stageCtx, operation); err != nil {
+	lease, err := config.Authorizer.AuthorizeExpansion(stageCtx, operation)
+	if err != nil || lease == nil {
 		if ctx.Err() != nil {
 			return nil, nil, DegradationNone, ctx.Err()
 		}
 		return searcher.expandFailure(config, ProviderOutcomeAuthorizationDenied)
 	}
+	defer lease.Close()
 	if err := stageCtx.Err(); err != nil {
 		if ctx.Err() != nil {
 			return nil, nil, DegradationNone, ctx.Err()
@@ -275,12 +283,14 @@ func (searcher *Searcher) rerank(ctx context.Context, query Query, report Report
 		EvidenceTotalLimit: boundedProviderTotal(maxRerankingEvidenceReferences, len(candidates)),
 		EvidenceBytes:      evidenceBytes, EvidenceBytesPerCandidateLimit: maxRerankingEvidenceBytes,
 		EvidenceBytesTotalLimit: boundedProviderTotal(maxRerankingEvidenceBytes, len(candidates))}
-	if err := config.Authorizer.AuthorizeReranking(stageCtx, operation); err != nil {
+	lease, err := config.Authorizer.AuthorizeReranking(stageCtx, operation)
+	if err != nil || lease == nil {
 		if ctx.Err() != nil {
 			return Report{}, nil, DegradationNone, ctx.Err()
 		}
 		return searcher.rerankFailure(config, report, ProviderOutcomeAuthorizationDenied, len(candidates))
 	}
+	defer lease.Close()
 	if err := stageCtx.Err(); err != nil {
 		if ctx.Err() != nil {
 			return Report{}, nil, DegradationNone, ctx.Err()

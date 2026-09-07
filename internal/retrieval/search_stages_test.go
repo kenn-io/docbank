@@ -463,14 +463,20 @@ type stageAuthorizer struct {
 	operations []ProviderOperation
 }
 
-func (authorizer *stageAuthorizer) AuthorizeExpansion(_ context.Context, operation ProviderOperation) error {
+func (authorizer *stageAuthorizer) AuthorizeExpansion(_ context.Context, operation ProviderOperation) (ProviderEgressLease, error) {
 	authorizer.operations = append(authorizer.operations, operation)
-	return authorizer.err
+	if authorizer.err != nil {
+		return nil, authorizer.err
+	}
+	return authorizer, nil
 }
 
-func (authorizer *stageAuthorizer) AuthorizeReranking(_ context.Context, operation ProviderOperation) error {
+func (authorizer *stageAuthorizer) AuthorizeReranking(_ context.Context, operation ProviderOperation) (ProviderEgressLease, error) {
 	authorizer.operations = append(authorizer.operations, operation)
-	return authorizer.err
+	if authorizer.err != nil {
+		return nil, authorizer.err
+	}
+	return authorizer, nil
 }
 
 type stageExpander struct {
@@ -516,3 +522,5 @@ func (provider *stageReranker) Rerank(ctx context.Context, request RerankingRequ
 func (backend *stageBackend) NormalizeSearchOptions(_ context.Context, options store.SearchOptions) (store.SearchOptions, error) {
 	return options, nil
 }
+
+func (authorizer *stageAuthorizer) Close() {}
