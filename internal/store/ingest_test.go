@@ -78,7 +78,7 @@ func TestIngestFileIdempotency(t *testing.T) {
 func TestFilesystemIngestDoesNotAdoptEmbeddedOpaqueReference(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
-	embedded, err := s.BeginEmbeddedIngest(ctx, "cli", "application archive")
+	embedded, err := s.BeginCallerSuppliedIngest(ctx, "cli", "application archive")
 	require.NoError(t, err)
 	embeddedNode, err := s.IngestFileExact(
 		ctx, embedded, s.RootID(), "archived.pdf", fakeHash("a1"), 10,
@@ -101,7 +101,7 @@ func TestFilesystemIngestDoesNotAdoptEmbeddedOpaqueReference(t *testing.T) {
 func TestEmbeddedWatchKindIsPortableProvenanceNotOperationalState(t *testing.T) {
 	ctx := t.Context()
 	source := newTestStore(t)
-	run, err := source.BeginEmbeddedIngest(ctx, "watch", "application archive")
+	run, err := source.BeginCallerSuppliedIngest(ctx, "watch", "application archive")
 	require.NoError(t, err)
 	node, err := source.IngestFileExact(
 		ctx, run, source.RootID(), "record.jsonl", fakeHash("a1"), 10,

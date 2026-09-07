@@ -281,6 +281,8 @@ the fact. `original_path` is opaque evidence and is never opened. A
 supersession must point to an active fact on the same node, while the old fact
 stays visible and immutable.
 
+The encoded request body must be smaller than 1 MiB (1,048,576 bytes). A body at or above that limit receives `413` before the append runs.
+
 `GET /content-references` is the inverse identity lookup. It accepts one
 canonical lowercase SHA-256 and returns only logical `content_versions`
 references backed by blob-catalog authority; it never infers a match from a

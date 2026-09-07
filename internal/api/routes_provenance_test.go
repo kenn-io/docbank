@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -172,20 +173,33 @@ func TestAppendNodeProvenanceEndpointRejectsMaintenanceAndBrowserSessions(t *tes
 	assert.Contains(t, body, `"code":"web_session_read_only"`)
 }
 
-func TestAppendNodeProvenanceEndpointRejectsOversizedRequestBody(t *testing.T) {
-	ts, s := newTestServer(t, nil)
-	node := createFileWithContent(t, ts, s, "/report.txt", "report")
-	request := map[string]any{
-		"source_kind":        "agent",
-		"source_description": "triage",
-		"original_path":      "opaque://report",
-		"padding":            strings.Repeat("x", 2<<20),
+func TestAppendNodeProvenanceEndpointRequestBodyLimit(t *testing.T) {
+	for _, size := range []int{(1 << 20) - 1, 1 << 20, (1 << 20) + 1} {
+		t.Run(fmt.Sprintf("%d bytes", size), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			node := createFileWithContent(t, ts, s, "/report.txt", "report")
+			body := `{"source_kind":"agent","source_description":"triage","original_path":"opaque://report"}`
+			body += strings.Repeat(" ", size-len(body))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				fmt.Sprintf("%s/api/v1/nodes/%d/provenance", ts.URL, node.ID), strings.NewReader(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("If-Match", `"1"`)
+			resp, err := ts.Client().Do(req)
+			require.NoError(t, err)
+			responseBody, err := io.ReadAll(resp.Body)
+			require.NoError(t, resp.Body.Close())
+			require.NoError(t, err)
+			wantStatus := http.StatusRequestEntityTooLarge
+			wantRevision := node.Revision
+			if size < 1<<20 {
+				wantStatus = http.StatusCreated
+				wantRevision++
+			}
+			assert.Equal(t, wantStatus, resp.StatusCode, string(responseBody))
+			current, err := s.NodeByID(t.Context(), node.ID)
+			require.NoError(t, err)
+			assert.Equal(t, wantRevision, current.Revision)
+		})
 	}
-	resp, body := do(t, ts, http.MethodPost,
-		fmt.Sprintf("/api/v1/nodes/%d/provenance", node.ID),
-		map[string]string{"If-Match": `"1"`}, request)
-	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, body)
-	current, err := s.NodeByID(t.Context(), node.ID)
-	require.NoError(t, err)
-	assert.Equal(t, node.Revision, current.Revision)
 }

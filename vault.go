@@ -1092,7 +1092,7 @@ func (v *Vault) write(
 					ctx, parent.ID, name, hash, size, opts.MediaType, physical,
 				)
 			} else {
-				run, beginErr := v.metadata.BeginEmbeddedIngest(
+				run, beginErr := v.metadata.BeginCallerSuppliedIngest(
 					ctx, provenance.Kind, provenance.Description,
 				)
 				if beginErr != nil {

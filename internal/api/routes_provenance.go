@@ -50,6 +50,7 @@ func registerProvenanceRoutes(api huma.API, d Deps, g *gate) {
 		Description: "Adds post-ingest provenance under the node's If-Match revision. " +
 			"The original path remains opaque evidence and is never opened by the daemon.",
 		DefaultStatus: http.StatusCreated,
+		MaxBodyBytes:  1 << 20,
 	}, func(ctx context.Context, in *struct {
 		ID      int64  `path:"id" minimum:"1"`
 		IfMatch string `header:"If-Match"`

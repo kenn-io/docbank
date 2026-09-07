@@ -53,7 +53,7 @@ func (s *Store) AppendNodeProvenance(
 	if input.Supersedes != nil && *input.Supersedes == "" {
 		return ProvenanceAppendResult{}, fmt.Errorf("superseded provenance identity is empty: %w", ErrProvenanceMismatch)
 	}
-	run, err := s.beginIngest(ctx, embeddedSourceKindPrefix+input.SourceKind, input.SourceDescription, false)
+	run, err := s.BeginCallerSuppliedIngest(ctx, input.SourceKind, input.SourceDescription)
 	if err != nil {
 		return ProvenanceAppendResult{}, err
 	}
