@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"strconv"
 	"time"
 )
@@ -456,7 +455,7 @@ func (s *Store) ReadVectorIndexVectorSet(ctx context.Context, reader RenditionBl
 		return nil, errors.New("vector index payload size exceeds bounds")
 	}
 	data, err := readEmbeddingArtifact(ctx, reader, importedProcessingBlob{hash: member.PayloadBlobHash, size: member.PayloadSize})
-	if errors.Is(err, ErrPhysicalAuthorityMissing) || errors.Is(err, fs.ErrNotExist) {
+	if isMissingVectorPayload(err) {
 		return nil, fmt.Errorf("%w: vector set %s blob %s", ErrVectorSetUnavailable,
 			member.VectorSetID, member.PayloadBlobHash)
 	}

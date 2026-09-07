@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kitlogging "go.kenn.io/kit/logging"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -94,6 +95,15 @@ func startVectorIndexWorker(starter embeddingJobStarter,
 		return errors.New("vector index worker builder returned nil")
 	}
 	return starter.Start("process:vector-indexes", worker.Run)
+}
+
+func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
+	return func(err error) bool {
+		if errors.Is(err, packstore.ErrPhysicalCorrupt) || errors.Is(err, packstore.ErrStoreFenced) {
+			return false
+		}
+		return isBusy(err) || errors.Is(err, packstore.ErrStoreUnavailable)
+	}
 }
 
 func runServe(ctx context.Context) (retErr error) {
@@ -226,7 +236,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
 		worker, workerErr := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 			Mutate:    operationGate.MutateContext,
-			Retryable: s.SQLiteDriver().IsBusy,
+			Retryable: vectorIndexRetryPolicy(s.SQLiteDriver().IsBusy),
 			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 				return s.ReadVectorIndexVectorSet(ctx, blobs, member)
 			},

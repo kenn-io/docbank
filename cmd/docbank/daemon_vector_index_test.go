@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestStartVectorIndexWorkerUsesSupervisorLifecycle(t *testing.T) {
@@ -28,4 +31,22 @@ func TestStartVectorIndexWorkerUsesSupervisorLifecycle(t *testing.T) {
 		return nil, want
 	})
 	require.ErrorIs(t, err, want)
+}
+
+func TestVectorIndexRetryPolicyClassifiesStoreFailures(t *testing.T) {
+	retryable := vectorIndexRetryPolicy(store.DefaultSQLiteDriver().IsBusy)
+	for _, testCase := range []struct {
+		name  string
+		cause error
+		want  bool
+	}{
+		{"temporarily unavailable", fmt.Errorf("reading vector payload: %w", packstore.ErrStoreUnavailable), true},
+		{"physically missing", packstore.ErrPhysicalMissing, false},
+		{"corrupt", packstore.ErrPhysicalCorrupt, false},
+		{"fenced", packstore.ErrStoreFenced, false},
+		{"unavailable and corrupt", errors.Join(packstore.ErrStoreUnavailable, packstore.ErrPhysicalCorrupt), false},
+		{"unavailable and fenced", errors.Join(packstore.ErrStoreUnavailable, packstore.ErrStoreFenced), false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) { require.Equal(t, testCase.want, retryable(testCase.cause)) })
+	}
 }

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -375,4 +377,31 @@ func TestVectorIndexRetirementPreservesReadersUntilLeaseRelease(t *testing.T) {
 	removed, err = s.ReclaimVectorIndexGenerations(t.Context(), now)
 	require.NoError(t, err)
 	require.Equal(t, 1, removed)
+}
+
+func TestVectorIndexPayloadClassifiesBackendFailures(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		cause   error
+		missing bool
+	}{
+		{"missing object", fmt.Errorf("remote object: %w", packstore.ErrPhysicalMissing), true},
+		{"unavailable store", packstore.ErrStoreUnavailable, false},
+		{"fenced store", packstore.ErrStoreFenced, false},
+		{"corrupt object", packstore.ErrPhysicalCorrupt, false},
+		{"missing and corrupt copies", errors.Join(packstore.ErrPhysicalMissing, packstore.ErrPhysicalCorrupt), false},
+		{"missing and unavailable copies", errors.Join(packstore.ErrPhysicalMissing, packstore.ErrStoreUnavailable), false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			s, record, source := newPublishedVectorIndexFixture(t)
+			reader := &embeddingRestoreReader{errorHash: record.VectorSet.PayloadBlobHash, readError: testCase.cause}
+			_, err := s.ReadVectorIndexVectorSet(t.Context(), reader, source.Members[0])
+			if testCase.missing {
+				require.ErrorIs(t, err, ErrVectorSetUnavailable)
+			} else {
+				require.NotErrorIs(t, err, ErrVectorSetUnavailable)
+				require.ErrorIs(t, err, testCase.cause)
+			}
+		})
+	}
 }

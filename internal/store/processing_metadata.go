@@ -1900,7 +1900,7 @@ func verifyEmbeddingArtifacts(
 			return err
 		}
 		data, err := read(ctx, vectorSet.PayloadBlobHash, vectorSet.PayloadSize)
-		if allowMissingVectorPayloads && (errors.Is(err, ErrPhysicalAuthorityMissing) || errors.Is(err, fs.ErrNotExist)) {
+		if allowMissingVectorPayloads && isMissingVectorPayload(err) {
 			continue
 		}
 		if err != nil {
@@ -1911,6 +1911,17 @@ func verifyEmbeddingArtifacts(
 		}
 	}
 	return nil
+}
+
+// Managed reads retain failures from every physical candidate. Do not turn
+// corruption, ownership fencing, or an unreachable copy into missing coverage.
+func isMissingVectorPayload(err error) bool {
+	if errors.Is(err, packstore.ErrPhysicalCorrupt) || errors.Is(err, packstore.ErrStoreFenced) ||
+		errors.Is(err, packstore.ErrStoreUnavailable) {
+		return false
+	}
+	return errors.Is(err, ErrPhysicalAuthorityMissing) || errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, packstore.ErrPhysicalMissing)
 }
 
 func readEmbeddingArtifact(

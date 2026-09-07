@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -433,13 +434,18 @@ func TestEmbeddingCatalogRestoreVerifiesArtifactsRetainedAfterVersionPrune(t *te
 }
 
 type embeddingRestoreReader struct {
-	store   *Store
-	backend *packstore.FilesystemBackend
+	store     *Store
+	backend   *packstore.FilesystemBackend
+	errorHash string
+	readError error
 }
 
 func (r *embeddingRestoreReader) OpenStreamContext(
 	ctx context.Context, rawHash string,
 ) (packstore.VerifiedReadCloser, int64, error) {
+	if rawHash == r.errorHash && r.readError != nil {
+		return nil, 0, r.readError
+	}
 	hash, err := packstore.ParseHash(rawHash)
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse embedding artifact hash: %w", err)
@@ -588,10 +594,11 @@ func TestEmbeddingCatalogFailureCodesAreClosedProviderNeutralTokens(t *testing.T
 
 func TestEmbeddingCatalogRestoreVerificationAllowsOnlyMissingVectorPayloads(t *testing.T) {
 	for _, testCase := range []struct {
-		name          string
-		omit          func(EmbeddingSetRecord) string
-		corruptVector bool
-		wantError     bool
+		name            string
+		omit            func(EmbeddingSetRecord) string
+		corruptVector   bool
+		vectorReadError error
+		wantError       bool
 	}{
 		{name: "missing vector payload", omit: func(record EmbeddingSetRecord) string {
 			return record.VectorSet.PayloadBlobHash
@@ -600,6 +607,9 @@ func TestEmbeddingCatalogRestoreVerificationAllowsOnlyMissingVectorPayloads(t *t
 			return record.InputGeneration.GenerationBlobHash
 		}, wantError: true},
 		{name: "corrupt vector payload", corruptVector: true, wantError: true},
+		{name: "backend missing vector", vectorReadError: fmt.Errorf("remote object: %w", packstore.ErrPhysicalMissing)},
+		{name: "backend unavailable", vectorReadError: packstore.ErrStoreUnavailable, wantError: true},
+		{name: "missing and corrupt copies", vectorReadError: errors.Join(packstore.ErrPhysicalMissing, packstore.ErrPhysicalCorrupt), wantError: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
@@ -625,7 +635,7 @@ func TestEmbeddingCatalogRestoreVerificationAllowsOnlyMissingVectorPayloads(t *t
 			backend, err := packstore.NewFilesystemBackend(*layout, packstore.FilesystemBackendOptions{})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, backend.Close()) })
-			reader := &embeddingRestoreReader{store: target, backend: backend}
+			reader := &embeddingRestoreReader{store: target, backend: backend, errorHash: record.VectorSet.PayloadBlobHash, readError: testCase.vectorReadError}
 			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 			if testCase.corruptVector {
 				hash, err := packstore.ParseHash(record.VectorSet.PayloadBlobHash)
