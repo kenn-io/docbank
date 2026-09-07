@@ -28,6 +28,11 @@ and provider-request authorization remain separate policy checks. The
 `rendition_artifacts.role` column remains unconstrained text; unknown values
 fail closed in Go.
 
+Visual-preview generations use the canonical recipe fingerprint. The local
+processor descriptor names byte-producing choices without treating the ambient
+Go runtime version as identity; a descriptor revision is the deliberate
+re-render signal.
+
 Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.
