@@ -58,6 +58,22 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
 
+Search accepts an optional `q` query. An omitted, empty, or whitespace-only
+query requires `tag_id`, `modified_since`, or `modified_before`. This is a
+request rule; `limit` bounds the response size, not the database work.
+Filter-only hits include live files and directories except the vault root.
+They are ordered by current `modified_at` descending, then name and ID, and
+identify their source with `match: "filter"`. `mime_type` and `under_node_id`
+narrow a page but cannot anchor a blank query alone. A blank unanchored query
+returns `422 search_query_required`.
+
+Tag selection uses the tag index; time-window selection has a live-node index
+matching the result ordering. Combined filters can still require substantial
+work before reaching `limit`. The normal `limit` and `truncated` contract
+remains in force, without a cursor. If `truncated` is true, the page is
+incomplete. Narrowing time bounds cannot split a group with identical
+modification timestamps, such as nodes restored together.
+
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hidden `POST
@@ -581,6 +597,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
+| `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
 | `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |

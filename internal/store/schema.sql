@@ -40,6 +40,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS live_sibling_names
 
 CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
+CREATE INDEX IF NOT EXISTS nodes_live_modified ON nodes(modified_at DESC, name, id)
+    WHERE trashed_at IS NULL;
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (

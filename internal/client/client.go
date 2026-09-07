@@ -267,6 +267,7 @@ func (c *Client) Close() error {
 // codeToTypedErr preserves server problem codes that have a stable local
 // sentinel for callers using errors.Is.
 var codeToTypedErr = map[string]error{
+	"search_query_required":        store.ErrSearchQueryRequired,
 	"not_found":                    store.ErrNotFound,
 	"exists":                       store.ErrExists,
 	"cycle":                        store.ErrCycle,
@@ -827,7 +828,7 @@ func (c *Client) Search(ctx context.Context, query string, limit int) (api.Searc
 	return c.SearchWithOptions(ctx, query, limit, SearchOptions{})
 }
 
-// SearchWithOptions returns one bounded ranked result set.
+// SearchWithOptions returns one bounded ranked or filter-only result set.
 func (c *Client) SearchWithOptions(
 	ctx context.Context, query string, limit int, opts SearchOptions,
 ) (api.SearchReport, error) {

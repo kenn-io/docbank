@@ -13,6 +13,8 @@ docbank search report --mime-type application/pdf
 docbank search receipt --under /taxes/2026
 docbank search report --modified-since 2026-01-01T00:00:00Z
 docbank search report --modified-before 2026-04-01T00:00:00Z
+docbank search --modified-since 2026-01-01T00:00:00Z --modified-before 2026-04-01T00:00:00Z
+docbank search --tag taxes
 docbank search report --limit 200
 docbank search report --json
 ```
@@ -35,6 +37,19 @@ id:198     content  /taxes/2026/car-insurance-notes.md
   first. Content-only matches follow in their own BM25 order; both groups use
   deterministic name/ID tie-breaks. The default limit is 50; `--limit` accepts
   1–1000, and truncation is always reported.
+- **Bounded filter pages.** The query may be omitted when `--tag`,
+  `--modified-since`, or `--modified-before` supplies an anchor. Filter-only
+  results are ordered by `modified_at` descending and each hit reports
+  `filter` in the `MATCH` column. The default limit and truncation behavior
+  are unchanged. A blank query with only `--mime-type` or `--under` is rejected;
+  those options narrow an anchored search but don't anchor one. Blank includes
+  whitespace-only queries. Results include live files and directories, excluding
+  the vault root. The limit bounds the response size, not database work.
+- **Truncation is not pagination.** If `truncated` is true, the page is incomplete.
+  Increasing the limit or narrowing filters may help, but time bounds cannot
+  split results with identical modification timestamps. For example, restoring
+  more than 1,000 nodes together can leave some unreachable through time bounds
+  alone, even at the maximum limit. Search has no continuation cursor.
 - **Live nodes only.** Trashed documents don't appear; restore returns
   them to the index. Renames update the index immediately.
 - **Current content only.** Retained prior versions stay available through

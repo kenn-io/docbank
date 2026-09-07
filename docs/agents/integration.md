@@ -179,7 +179,7 @@ curl --fail-with-body \
 
 Search is bounded separately. Always inspect `truncated`; increase the limit
 or refine the query rather than assuming the returned array is complete.
-Each result's `match` is `name` or `content`. Name matches keep their established
+Each result's `match` is `name`, `content`, or `filter`. Name matches keep their established
 ranking and always precede content-only matches, so adding content indexing does
 not reorder an agent's filename-based workflow. Content search covers only the
 current version of verified UTF-8 plain text, Markdown, JSON, and JSONL documents
@@ -204,6 +204,19 @@ RFC3339 offsets; the response echoes canonical UTC values. These fields refer
 to the live node's `modified_at`, not source-file provenance or historical
 content-version time.
 
+The `q` parameter may be omitted when `tag_id`, `modified_since`, or
+`modified_before` is present. This returns a bounded filter page ordered by
+`modified_at` descending, with `match: "filter"` on every hit. A MIME or
+subtree filter can narrow that page but cannot anchor an empty query by itself;
+a blank or whitespace-only query without a tag or time bound returns
+`422 search_query_required`. Results include live files and directories, but
+exclude the vault root. The limit bounds response size, not database work.
+Always inspect `truncated`: a true value means the page is incomplete.
+Increasing `limit` or narrowing filters may help, but time bounds cannot split
+nodes with identical modification timestamps, such as a restored subtree.
+Search has no continuation cursor and cannot guarantee complete enumeration
+of a time window.
+
 ```bash
 curl --fail-with-body --get \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
@@ -211,6 +224,17 @@ curl --fail-with-body --get \
   --data 'tag_id=<tag-uuid>' \
   --data-urlencode 'mime_type=application/pdf' \
   --data 'under_node_id=42' \
+  --data-urlencode 'modified_since=2026-01-01T00:00:00Z' \
+  --data-urlencode 'modified_before=2026-04-01T00:00:00Z' \
+  --data 'limit=100' \
+  "$DOCBANK_URL/api/v1/search"
+```
+
+To list every live node changed in a window, leave out `q`:
+
+```bash
+curl --fail-with-body --get \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
   --data-urlencode 'modified_since=2026-01-01T00:00:00Z' \
   --data-urlencode 'modified_before=2026-04-01T00:00:00Z' \
   --data 'limit=100' \
