@@ -751,19 +751,23 @@ func TestClientDistinguishesPreEgressContextFailures(t *testing.T) {
 	})
 
 	t.Run("wall timeout resolving secret", func(t *testing.T) {
-		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("secret wall source"))
-		fixture.profile.MaxWallTime = time.Millisecond
-		client, err := NewProvider(fixture.profile, blockingSecrets{}, completedTransport(t))
-		require.NoError(t, err)
-		descriptor := client.Descriptor()
-		fixture.authorization.ProviderID = descriptor.ID
-		fixture.authorization.DescriptorFingerprint = descriptor.Fingerprint
-		fixture.authorization.PolicyFingerprint = descriptor.PolicyFingerprint
-		fixture.authorization.AllowedArtifactRoles = nil
-		fixture.authorization.MaxArtifacts = 0
-		fixture.authorization.MaxArtifactBytes = 0
-		_, err = client.Render(t.Context(), fixture.upload(), fixture.authorization)
-		assertCode(t, err, document.RenditionErrorAuthentication)
+		// Advance time only once credential resolution blocks, so source reading
+		// cannot consume the deadline on a busy runner.
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("secret wall source"))
+			fixture.profile.MaxWallTime = time.Millisecond
+			client, err := NewProvider(fixture.profile, blockingSecrets{}, completedTransport(t))
+			require.NoError(t, err)
+			descriptor := client.Descriptor()
+			fixture.authorization.ProviderID = descriptor.ID
+			fixture.authorization.DescriptorFingerprint = descriptor.Fingerprint
+			fixture.authorization.PolicyFingerprint = descriptor.PolicyFingerprint
+			fixture.authorization.AllowedArtifactRoles = nil
+			fixture.authorization.MaxArtifacts = 0
+			fixture.authorization.MaxArtifactBytes = 0
+			_, err = client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			assertCode(t, err, document.RenditionErrorAuthentication)
+		})
 	})
 
 	t.Run("caller cancellation resolving secret", func(t *testing.T) {
