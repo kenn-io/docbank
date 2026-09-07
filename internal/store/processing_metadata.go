@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -1617,6 +1618,16 @@ type RenditionBlobReader interface {
 // artifact through the restored mixed-storage catalog, including builds that
 // are staged but not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
+	return s.verifyRenditionBlobBytes(ctx, reader, false)
+}
+
+// VerifyRestoredRenditionBlobBytes allows omitted vector payloads during restore.
+// Source, evidence, and rendition bytes remain required; corrupt vectors fail.
+func (s *Store) VerifyRestoredRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
+	return s.verifyRenditionBlobBytes(ctx, reader, true)
+}
+
+func (s *Store) verifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader, allowMissingVectorPayloads bool) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
 		FROM rendition_builds b
@@ -1661,7 +1672,7 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 		ctx context.Context, hash string, size int64,
 	) ([]byte, error) {
 		return readEmbeddingArtifact(ctx, reader, importedProcessingBlob{hash: hash, size: size})
-	}); err != nil {
+	}, allowMissingVectorPayloads); err != nil {
 		return fmt.Errorf("verifying exact embedding artifacts: %w", err)
 	}
 	return nil
@@ -1671,7 +1682,17 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 // location authority for every retained rendition source and artifact,
 // including staged builds that are not currently attached to a document
 // version. VerifyRenditionBlobBytes separately reads and verifies each location.
-func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error) {
+func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) error {
+	return s.verifyRenditionBlobAuthority(ctx, false)
+}
+
+// VerifyRestoredRenditionBlobAuthority allows vector payload locations to be
+// omitted during restore. All other physical catalog authority remains required.
+func (s *Store) VerifyRestoredRenditionBlobAuthority(ctx context.Context) error {
+	return s.verifyRenditionBlobAuthority(ctx, true)
+}
+
+func (s *Store) verifyRenditionBlobAuthority(ctx context.Context, allowMissingVectorPayloads bool) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return fmt.Errorf("starting processing blob verification: %w", err)
@@ -1683,14 +1704,14 @@ func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error)
 	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
 		return fmt.Errorf("validating embedding blob authority: %w", err)
 	}
-	if err := verifyRenditionBlobCatalogAuthority(ctx, tx); err != nil {
+	if err := verifyRenditionBlobCatalogAuthority(ctx, tx, allowMissingVectorPayloads); err != nil {
 		return fmt.Errorf("verifying processing blob authority: %w", err)
 	}
 	return nil
 }
 
-func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retErr error) {
-	rows, err := tx.QueryContext(ctx, `
+func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowMissingVectorPayloads bool) (retErr error) {
+	query := `
 		SELECT source_sha256 FROM rendition_builds
 		UNION
 		SELECT blob_hash FROM rendition_artifacts
@@ -1704,10 +1725,12 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		WHERE generation_blob_hash IS NOT NULL
 		UNION
 		SELECT evidence_fingerprint FROM embedding_input_generations
-		WHERE generation_blob_hash IS NOT NULL
-		UNION
-		SELECT payload_blob_hash FROM embedding_vector_sets
-		ORDER BY source_sha256`)
+		WHERE generation_blob_hash IS NOT NULL`
+	if !allowMissingVectorPayloads {
+		query += ` UNION SELECT payload_blob_hash FROM embedding_vector_sets`
+	}
+	query += ` ORDER BY source_sha256`
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)
 	}
@@ -1808,7 +1831,7 @@ func verifyRenditionBlob(
 type embeddingArtifactReader func(context.Context, string, int64) ([]byte, error)
 
 func verifyEmbeddingArtifacts(
-	ctx context.Context, tx *sql.Tx, read embeddingArtifactReader,
+	ctx context.Context, tx *sql.Tx, read embeddingArtifactReader, allowMissingVectorPayloads bool,
 ) error {
 	generationIDs, err := loadProcessingMetadataIDs(ctx, tx, "embedding generation", `
 		SELECT generation_id FROM embedding_input_generations
@@ -1877,6 +1900,9 @@ func verifyEmbeddingArtifacts(
 			return err
 		}
 		data, err := read(ctx, vectorSet.PayloadBlobHash, vectorSet.PayloadSize)
+		if allowMissingVectorPayloads && isMissingVectorPayload(err) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("reading vector-set artifact %s: %w", id, err)
 		}
@@ -1885,6 +1911,17 @@ func verifyEmbeddingArtifacts(
 		}
 	}
 	return nil
+}
+
+// Managed reads retain failures from every physical candidate. Do not turn
+// corruption, ownership fencing, or an unreachable copy into missing coverage.
+func isMissingVectorPayload(err error) bool {
+	if errors.Is(err, packstore.ErrPhysicalCorrupt) || errors.Is(err, packstore.ErrStoreFenced) ||
+		errors.Is(err, packstore.ErrStoreUnavailable) {
+		return false
+	}
+	return errors.Is(err, ErrPhysicalAuthorityMissing) || errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, packstore.ErrPhysicalMissing)
 }
 
 func readEmbeddingArtifact(

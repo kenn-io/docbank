@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	kitdaemon "go.kenn.io/kit/daemon"
 	kitlogging "go.kenn.io/kit/logging"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -34,6 +35,7 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 	docweb "go.kenn.io/docbank/internal/web"
 )
 
@@ -80,6 +82,28 @@ func startEmbeddingWorkerIfReady(starter embeddingJobStarter, readiness embeddin
 		return errors.New("embedding worker builder returned nil")
 	}
 	return starter.Start("process:embeddings", worker.Run)
+}
+
+func startVectorIndexWorker(starter embeddingJobStarter,
+	build func() (embeddingJobRunner, error),
+) error {
+	worker, err := build()
+	if err != nil {
+		return err
+	}
+	if worker == nil {
+		return errors.New("vector index worker builder returned nil")
+	}
+	return starter.Start("process:vector-indexes", worker.Run)
+}
+
+func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
+	return func(err error) bool {
+		if errors.Is(err, packstore.ErrPhysicalCorrupt) || errors.Is(err, packstore.ErrStoreFenced) {
+			return false
+		}
+		return isBusy(err) || errors.Is(err, packstore.ErrStoreUnavailable)
+	}
 }
 
 func runServe(ctx context.Context) (retErr error) {
@@ -207,6 +231,23 @@ func runServe(ctx context.Context) (retErr error) {
 			}
 			return worker, nil
 		}); err != nil {
+		return err
+	}
+	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
+		worker, workerErr := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+			Mutate:    operationGate.MutateContext,
+			Retryable: vectorIndexRetryPolicy(s.SQLiteDriver().IsBusy),
+			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+				return s.ReadVectorIndexVectorSet(ctx, blobs, member)
+			},
+			Catalog: s, Owner: "daemon-vector-index-worker", BuildLease: 30 * time.Minute,
+			ReaderLease: 5 * time.Minute, IdleDelay: time.Second,
+		})
+		if workerErr != nil {
+			return nil, fmt.Errorf("configuring vector index worker: %w", workerErr)
+		}
+		return worker, nil
+	}); err != nil {
 		return err
 	}
 	placementRunner := blob.PlacementRunner{

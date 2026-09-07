@@ -27,7 +27,7 @@ const (
 	generationChecksumBytes = 32
 	maxIdentityBytes        = 1 << 16
 	defaultMaxRows          = 1_000_000
-	defaultMaxDimension     = 16_384
+	defaultMaxDimension     = 1_048_576
 	defaultMaxBytes         = int64(512 << 20)
 )
 

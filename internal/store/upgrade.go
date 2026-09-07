@@ -247,6 +247,21 @@ func validateCurrentSchemaColumns(
 			columnBlobHash, "crc32c", "flags", "pack_id", "pack_offset",
 			"raw_len", "store_id", "stored_len",
 		},
+		"vector_index_generations": {
+			"built_at", "byte_size", "generation_bytes", "generation_id", "index_manifest_checksum", "row_count", "source_manifest_checksum", "vector_space_id",
+		},
+		"vector_index_heads": {
+			"generation_id", "source_manifest_checksum", "vector_space_id",
+		},
+		"vector_index_build_jobs": {
+			"fencing_token", "lease_expires_at", "owner", "source_manifest_checksum", "vector_space_id",
+		},
+		"vector_index_reader_leases": {
+			"fencing_token", "generation_id", "lease_expires_at", "lease_id", "owner",
+		},
+		"vector_index_unavailable_coverage": {
+			"embedding_set_id", "external_reembedding_required", "payload_blob_hash", "source_manifest_checksum", "vector_set_id", "vector_space_id",
+		},
 	}
 	for table, want := range wantTables {
 		got, err := tableColumns(db, table)

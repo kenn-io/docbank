@@ -948,6 +948,59 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_superseded (
         REFERENCES rendition_lexical_generations(generation_id) ON DELETE CASCADE
 );
 
+-- Vector indexes are disposable, vault-local projection state. These rows are
+-- deliberately absent from metadata-v1 export/import: restore reconstructs
+-- them from current logical embedding authority and retained vector-set blobs.
+CREATE TABLE IF NOT EXISTS vector_index_generations (
+    generation_id             TEXT PRIMARY KEY,
+    vector_space_id           TEXT NOT NULL,
+    source_manifest_checksum  TEXT NOT NULL,
+    index_manifest_checksum   TEXT NOT NULL,
+    generation_bytes          BLOB NOT NULL,
+    byte_size                 INTEGER NOT NULL
+        CHECK (byte_size = length(generation_bytes)),
+    row_count                 INTEGER NOT NULL CHECK (row_count > 0),
+    built_at                  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS vector_index_generations_space
+    ON vector_index_generations(vector_space_id, source_manifest_checksum, generation_id);
+
+CREATE TABLE IF NOT EXISTS vector_index_heads (
+    vector_space_id          TEXT PRIMARY KEY,
+    generation_id           TEXT NOT NULL REFERENCES vector_index_generations(generation_id),
+    source_manifest_checksum TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vector_index_build_jobs (
+    vector_space_id          TEXT PRIMARY KEY,
+    source_manifest_checksum TEXT NOT NULL,
+    owner                    TEXT NOT NULL,
+    fencing_token            INTEGER NOT NULL CHECK (fencing_token > 0),
+    lease_expires_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vector_index_reader_leases (
+    lease_id          TEXT PRIMARY KEY,
+    generation_id     TEXT NOT NULL REFERENCES vector_index_generations(generation_id) ON DELETE CASCADE,
+    owner             TEXT NOT NULL,
+    fencing_token     INTEGER NOT NULL CHECK (fencing_token > 0),
+    lease_expires_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS vector_index_reader_leases_generation
+    ON vector_index_reader_leases(generation_id, lease_expires_at);
+
+CREATE TABLE IF NOT EXISTS vector_index_unavailable_coverage (
+    vector_space_id           TEXT NOT NULL,
+    source_manifest_checksum  TEXT NOT NULL,
+    embedding_set_id          TEXT NOT NULL,
+    vector_set_id             TEXT NOT NULL,
+    payload_blob_hash         TEXT NOT NULL,
+    external_reembedding_required INTEGER NOT NULL,
+    PRIMARY KEY (vector_space_id, source_manifest_checksum, embedding_set_id)
+);
+
 -- Rendition jobs are restart authority, not immutable artifact authority.
 -- Provider-specific payloads never enter these tables. Continuation authority
 -- is only the provider-neutral sealed execution snapshot plus an optional
