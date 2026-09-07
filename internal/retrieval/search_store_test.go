@@ -1,6 +1,7 @@
 package retrieval
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,73 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestRerankingOnlyRevalidatesCurrentCandidates(t *testing.T) {
+	for _, change := range []string{"unchanged", "ancestor moved", "moved outside scope", "trashed", "content changed"} {
+		t.Run(change, func(t *testing.T) {
+			catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+			ancestor, err := catalog.Mkdir(t.Context(), catalog.RootID(), "before")
+			require.NoError(t, err)
+			file, err := catalog.CreateFile(t.Context(), ancestor.ID, "needle.txt", strings.Repeat("a", 64), 1, "text/plain")
+			require.NoError(t, err)
+			backend := &changingSearchBackend{Store: catalog, afterSearch: func() {
+				switch change {
+				case "ancestor moved":
+					ancestor, err = catalog.NodeByID(t.Context(), ancestor.ID)
+					require.NoError(t, err)
+					_, _, err = catalog.Move(t.Context(), ancestor.ID, catalog.RootID(), "after", ancestor.Revision)
+				case "moved outside scope":
+					_, _, err = catalog.Move(t.Context(), file.ID, catalog.RootID(), file.Name, file.Revision)
+				case "trashed":
+					_, _, err = catalog.Trash(t.Context(), file.ID, file.Revision)
+				case "content changed":
+					_, _, err = catalog.ReplaceContent(t.Context(), file.ID, file.Revision, strings.Repeat("b", 64), 2, "text/plain")
+				}
+				require.NoError(t, err)
+			}}
+			provider := &stageReranker{}
+			searcher, err := NewSearcher(SearcherConfig{Backend: backend, Owner: "search-test", LeaseDuration: time.Minute,
+				Reranking: RerankingConfig{Enabled: true, Profile: RerankingProfile{ID: "reranking", MaxCandidates: 10},
+					Provider: provider, Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}})
+			require.NoError(t, err)
+			report, err := searcher.Search(t.Context(), Query{Text: "needle", Mode: ModeLexical,
+				Scope: store.SearchOptions{UnderNodeID: ancestor.ID}})
+			require.NoError(t, err)
+			if change == "unchanged" || change == "ancestor moved" {
+				require.Len(t, report.Results, 1)
+				require.Len(t, provider.candidates, 1)
+				assert.Equal(t, file.ID, provider.candidates[0].Document.NodeID)
+				wantPath := "/before/needle.txt"
+				if change == "ancestor moved" {
+					wantPath = "/after/needle.txt"
+				}
+				assert.Equal(t, wantPath, report.Results[0].Path)
+			} else {
+				assert.Empty(t, provider.candidates)
+				assert.Empty(t, report.Results)
+				assert.True(t, report.Truncated)
+			}
+		})
+	}
+}
+
+type changingSearchBackend struct {
+	*store.Store
+
+	afterSearch func()
+}
+
+func (backend *changingSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
+	options store.SearchOptions,
+) ([]store.ExplainedLexicalCandidate, bool, error) {
+	candidates, truncated, err := backend.Store.SearchExplainedLexicalCandidates(ctx, query, limit, options)
+	if err == nil {
+		backend.afterSearch()
+	}
+	return candidates, truncated, err
+}
 
 func TestExpandedSearchRefreshesPathsAfterAncestorMove(t *testing.T) {
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
@@ -35,7 +103,7 @@ func TestExpandedSearchRefreshesPathsAfterAncestorMove(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, file.Revision, current.Revision)
 
-	revalidated, err := searcher.revalidateExpandedReport(t.Context(), query, report)
+	revalidated, err := searcher.revalidateReport(t.Context(), query, report)
 	require.NoError(t, err)
 	require.Len(t, revalidated.Results, 1)
 	assert.Equal(t, "/after/needle.txt", revalidated.Results[0].Path)

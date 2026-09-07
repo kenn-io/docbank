@@ -408,7 +408,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			WHERE CASE json_extract(evidence.value,'$.kind')
 			WHEN 'node_name' THEN 0
 			WHEN 'content_blob' THEN NOT (
-				json_extract(evidence.value,'$.blob_hash')<>'' AND
+				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
 				json_extract(evidence.value,'$.blob_hash')=scoped.blob_hash)
 			`+renditionEvidenceSQL+`
 			WHEN 'embedding' THEN NOT EXISTS (

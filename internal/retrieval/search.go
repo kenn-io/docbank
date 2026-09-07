@@ -128,13 +128,16 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if expansionDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, expansionDegradation)
 	}
-	if searcher.expansion.Enabled {
-		revalidated, err := searcher.revalidateExpandedReport(ctx, query, report)
+	if searcher.expansion.Enabled || searcher.reranking.Enabled {
+		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
 				return Report{}, ctx.Err()
 			}
-			return Report{}, ErrExpandedSearchFailed
+			if searcher.expansion.Enabled {
+				return Report{}, ErrExpandedSearchFailed
+			}
+			return Report{}, ErrRerankingFailed
 		}
 		report = revalidated
 	}
@@ -151,10 +154,10 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	return report, nil
 }
 
-func (searcher *Searcher) revalidateExpandedReport(ctx context.Context, query Query, report Report) (Report, error) {
+func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, report Report) (Report, error) {
 	backend, ok := searcher.backend.(CandidateRevalidationBackend)
 	if !ok {
-		return Report{}, errors.New("expanded retrieval revalidation is unavailable")
+		return Report{}, errors.New("retrieval candidate revalidation is unavailable")
 	}
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {

@@ -324,7 +324,7 @@ func TestExpandedSemanticSearchReportsCoverageChangesAtFinalFence(t *testing.T) 
 		Results: []Result{{Document: DocumentIdentity{VaultID: "vault", NodeID: 1,
 			ContentVersionID: "version-1"}, Evidence: []EvidenceReference{{Kind: "node_name"}}}}}
 
-	revalidated, err := searcher.revalidateExpandedReport(t.Context(), Query{
+	revalidated, err := searcher.revalidateReport(t.Context(), Query{
 		ProcessingProfileFingerprint: "profile", BindingID: "required"}, report)
 
 	require.NoError(t, err)

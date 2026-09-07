@@ -177,6 +177,11 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.NoError(t, err)
 	require.Len(t, revalidation.Candidates, 1)
 	assert.Equal(t, text.ID, revalidation.Candidates[0].NodeID)
+	requested[1].Evidence[0].BlobHash = ""
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Len(t, revalidation.Candidates, 1, "content evidence without a hash must be discarded")
+	assert.Equal(t, text.ID, revalidation.Candidates[0].NodeID)
 	_, _, err = s.Move(t.Context(), text.ID, s.RootID(), "renamed.txt", text.Revision)
 	require.NoError(t, err)
 	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested[:1], SearchOptions{}, "", "")
