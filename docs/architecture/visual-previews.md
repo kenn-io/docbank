@@ -26,7 +26,14 @@ Every preview records the complete recipe that can affect its bytes:
 
 The canonical recipe bytes produce a stable fingerprint. Changing any of these
 choices creates a new immutable generation instead of rewriting an earlier
-result.
+result. The processor fingerprint is a maintained descriptor independent of
+the Go runtime. Changing a byte-producing implementation or policy requires a
+deliberate descriptor revision.
+
+A Go upgrade alone does not invalidate existing previews. If a standard-library
+decoder or encoder change affects preview output, maintainers must revise the
+descriptor to trigger regeneration. Without that revision, matching previews
+are reused; publishing a different result under the same recipe is rejected.
 
 ## Durable outcomes
 
