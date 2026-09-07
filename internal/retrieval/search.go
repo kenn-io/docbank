@@ -73,39 +73,18 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	}
 	requested := query.Mode
 	switch requested {
-	case ModeLexical:
+	case ModeLexical, ModeAuto:
 		return searcher.lexical(ctx, query, requested, DegradationNone, Coverage{State: CoverageUnknown})
 	case ModeSemantic:
-		semantic, coverage, truncated, err := searcher.semantic(ctx, query, false)
+		semantic, coverage, truncated, err := searcher.semantic(ctx, query)
 		if err != nil {
 			return Report{}, err
 		}
 		return laneReport(requested, ModeSemantic, coverage, DegradationNone, semantic, truncated), nil
 	case ModeHybrid:
 		return searcher.hybrid(ctx, query, requested)
-	case ModeAuto:
-		semantic, coverage, semanticTruncated, semanticErr := searcher.semantic(ctx, query, true)
-		if semanticErr != nil {
-			degradable := &semanticDegradationError{}
-			ok := errors.As(semanticErr, &degradable)
-			if !ok {
-				return Report{}, semanticErr
-			}
-			return searcher.lexical(ctx, query, requested, degradable.degradation, coverage)
-		}
-		lexical, lexicalTruncated, err := searcher.collectLexical(ctx, query)
-		if err != nil {
-			return Report{}, err
-		}
-		return makeHybridReport(requested, coverage, lexical, semantic,
-			lexicalTruncated || semanticTruncated, query.Limit)
 	}
 	return Report{}, errors.New("unreachable retrieval mode")
-}
-
-type semanticDegradationError struct {
-	degradation Degradation
-	cause       error
 }
 
 type semanticReleaseError struct {
@@ -119,19 +98,12 @@ func (failure *semanticReleaseError) Error() string {
 
 func (failure *semanticReleaseError) Unwrap() error { return failure.release }
 
-func (failure *semanticDegradationError) Error() string { return failure.cause.Error() }
-func (failure *semanticDegradationError) Unwrap() error { return failure.cause }
-
-func degradableSemanticFailure(degradation Degradation, cause error) error {
-	return &semanticDegradationError{degradation: degradation, cause: cause}
-}
-
 func (searcher *Searcher) hybrid(ctx context.Context, query Query, requested Mode) (Report, error) {
 	lexical, lexicalTruncated, err := searcher.collectLexical(ctx, query)
 	if err != nil {
 		return Report{}, err
 	}
-	semantic, coverage, semanticTruncated, err := searcher.semantic(ctx, query, false)
+	semantic, coverage, semanticTruncated, err := searcher.semantic(ctx, query)
 	if err != nil {
 		return Report{}, err
 	}
@@ -139,22 +111,15 @@ func (searcher *Searcher) hybrid(ctx context.Context, query Query, requested Mod
 		lexicalTruncated || semanticTruncated, query.Limit)
 }
 
-func (searcher *Searcher) semantic(ctx context.Context, query Query,
-	degradeIncompleteRequired bool,
-) (_ []Candidate, coverage Coverage, truncated bool, retErr error) {
+func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candidate, coverage Coverage, truncated bool, retErr error) {
 	backend, ok := searcher.backend.(SemanticBackend)
 	if !ok || searcher.encoders == nil {
-		return nil, Coverage{State: CoverageUnknown}, false, degradableSemanticFailure(
-			DegradationSemanticUnavailable, errors.New("semantic retrieval is not configured"))
+		return nil, Coverage{State: CoverageUnknown}, false, errors.New("semantic retrieval is not configured")
 	}
 	authority, err := backend.AcquireSemanticSearchAuthority(ctx,
 		query.ProcessingProfileFingerprint, query.BindingID, searcher.owner,
 		searcher.clock().UTC(), searcher.leaseDuration, query.Scope)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, Coverage{State: CoverageUnknown}, false, degradableSemanticFailure(
-				DegradationSemanticUnavailable, err)
-		}
 		return nil, Coverage{State: CoverageUnknown}, false, err
 	}
 	defer func() {
@@ -163,8 +128,6 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query,
 			if retErr == nil {
 				retErr = releaseErr
 			} else {
-				// A failed release makes the whole operation non-degradable even
-				// when the earlier provider stage could have fallen back safely.
 				retErr = &semanticReleaseError{operation: retErr, release: releaseErr}
 			}
 		}
@@ -174,18 +137,13 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query,
 		State: CoverageComplete}
 	if authority.CompleteDocuments != authority.ScopedDocuments {
 		coverage.State = CoverageIncomplete
-		if authority.BindingRequired && degradeIncompleteRequired {
-			return nil, coverage, false, degradableSemanticFailure(DegradationIncompleteCoverage,
-				errors.New("required semantic coverage is incomplete"))
-		}
 	}
 	provider, err := searcher.encoders.ResolveQueryEncoder(ctx, authority.VectorSpace.Descriptor)
 	if err != nil {
-		return nil, coverage, false, degradableSemanticFailure(DegradationProviderUnavailable, err)
+		return nil, coverage, false, err
 	}
 	if provider == nil {
-		return nil, coverage, false, degradableSemanticFailure(DegradationSemanticUnavailable,
-			errors.New("query encoder runtime is unavailable"))
+		return nil, coverage, false, errors.New("query encoder runtime is unavailable")
 	}
 	if !reflect.DeepEqual(provider.Descriptor(), authority.VectorSpace.Descriptor) {
 		return nil, coverage, false, errors.New("query encoder does not reproduce the active vector-space descriptor")
@@ -201,7 +159,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query,
 	}
 	embedded, err := document.ExecuteEmbedding(ctx, provider, inputs, query.Authorization)
 	if err != nil {
-		return nil, coverage, false, degradableSemanticFailure(DegradationProviderUnavailable, err)
+		return nil, coverage, false, err
 	}
 	stored := authority.Lease.Generation
 	generation, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
@@ -233,10 +191,6 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query,
 	coverage.State = CoverageComplete
 	if coverage.CompleteDocuments != coverage.ScopedDocuments {
 		coverage.State = CoverageIncomplete
-		if authority.BindingRequired && degradeIncompleteRequired {
-			return nil, coverage, false, degradableSemanticFailure(DegradationIncompleteCoverage,
-				errors.New("required semantic coverage became incomplete during retrieval"))
-		}
 	}
 	resolved := resolution.Candidates
 	candidates := make([]Candidate, len(resolved))
@@ -261,10 +215,10 @@ func normalizeQuery(query Query) (Query, error) {
 	if query.Text == "" {
 		return Query{}, errors.New("retrieval query text is required")
 	}
-	if query.Mode == "" {
-		query.Mode = ModeAuto
+	if query.Mode == "" || query.Mode == ModeAuto {
+		query.Mode = ModeLexical
 	}
-	if query.Mode != ModeAuto && query.Mode != ModeLexical && query.Mode != ModeSemantic && query.Mode != ModeHybrid {
+	if query.Mode != ModeLexical && query.Mode != ModeSemantic && query.Mode != ModeHybrid {
 		return Query{}, fmt.Errorf("unsupported retrieval mode %q", query.Mode)
 	}
 	if query.Limit == 0 {

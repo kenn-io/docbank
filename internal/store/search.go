@@ -404,7 +404,8 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		if err != nil {
 			return err
 		}
-		eligible, loadErr := loadSemanticEligibility(ctx, tx, vectorSpaceID, filterSQL, filterArgs)
+		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
+			inputKind, vectorSpaceID, filterSQL, filterArgs)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -433,10 +434,10 @@ type semanticEligibility struct {
 // loadSemanticEligibility performs the only catalog query needed while the
 // exact index's ordered neighbors are reduced. Its result is bounded by the
 // active vector-space catalog (at most one million rows), not by neighbor rank.
-func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, vectorSpaceID, filterSQL string,
-	filterArgs []any,
+func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
 ) (_ map[semanticEligibilityKey]semanticEligibility, retErr error) {
-	args := append([]any{vectorSpaceID}, filterArgs...)
+	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE node_paths(id,path) AS (
 		SELECT id,'' FROM nodes WHERE parent_id IS NULL
 		UNION ALL
@@ -457,6 +458,7 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, vectorSpac
 		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
 		JOIN node_paths ON node_paths.id=n.id
 		WHERE es.vector_space_id=?
+		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
 		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
 		  AND (es.input_kind='original_file' OR EXISTS(
 		    SELECT 1 FROM rendition_heads rh

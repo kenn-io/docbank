@@ -59,6 +59,56 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.Empty(t, filtered.Candidates, "scope filters apply before the semantic document cutoff")
 }
 
+func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	otherProfile := embeddingCatalogProfileVariant(t)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, otherProfile)
+	}))
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name    string
+		profile string
+		binding string
+		kind    document.EmbeddingInputKind
+		want    bool
+	}{
+		{"matching authority", profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, true},
+		{"other profile", otherProfile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, false},
+		{"other binding", profile.Fingerprint, "required", document.EmbeddingInputOriginalFile, false},
+		{"other input kind", profile.Fingerprint, "chunk", document.EmbeddingInputRenditionChunk, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, fingerprints, err := embeddingProfileBindingAuthority(t.Context(), s.db, test.profile, test.binding)
+			require.NoError(t, err)
+			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
+			result, err := s.ResolveSemanticCandidates(t.Context(), test.profile, test.binding, test.kind,
+				record.VectorSpace.ID, source.ManifestChecksum, []vectorindex.Neighbor{{
+					SetID: record.VectorSet.ID, InputKey: versionID,
+					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9,
+				}}, 1, SearchOptions{})
+			require.NoError(t, err)
+			if test.want {
+				require.Len(t, result.Candidates, 1)
+				assert.Equal(t, record.ID, result.Candidates[0].EmbeddingSetID)
+			} else {
+				assert.Zero(t, result.CompleteDocuments)
+				assert.Empty(t, result.Candidates)
+			}
+		})
+	}
+}
+
 func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,

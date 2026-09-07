@@ -15,6 +15,35 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+func TestSearcherEmbedsQueryOnlyForExplicitSemanticModes(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []Mode{"", ModeAuto, ModeLexical, ModeSemantic, ModeHybrid} {
+		t.Run(string(mode), func(t *testing.T) {
+			searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 1)
+			backend.lexical = []store.ExplainedLexicalCandidate{{
+				Node: store.Node{ID: 5, CurrentVersionID: "version-lexical", Name: "notes.pdf"},
+				Path: "/notes.pdf", EvidenceKind: "node_name", Excerpt: "notes.pdf",
+			}}
+			report, err := searcher.Search(t.Context(), Query{Text: "synthetic query", Mode: mode,
+				ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
+				Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			if mode == ModeSemantic || mode == ModeHybrid {
+				assert.Equal(t, 1, provider.calls)
+				assert.Equal(t, descriptor.ModelInput.EncodeQuery("synthetic query"), provider.rendered)
+				assert.Equal(t, mode, report.ActualMode)
+			} else {
+				assert.Zero(t, provider.calls)
+				assert.Empty(t, provider.rendered)
+				assert.True(t, backend.acquiredAt.IsZero(), "lexical requests must not acquire semantic authority")
+				assert.Equal(t, ModeLexical, report.ActualMode)
+				require.Len(t, report.Results, 1)
+				assert.Equal(t, "/notes.pdf", report.Results[0].Path)
+			}
+		})
+	}
+}
+
 func TestSearcherLexicalModePreservesStoreOrderAndStableEvidence(t *testing.T) {
 	t.Parallel()
 	backend := &retrievalBackendStub{vaultID: "vault", lexical: []store.ExplainedLexicalCandidate{
@@ -134,22 +163,7 @@ func TestSearcherHybridUsesRRFWithoutComparingRawScores(t *testing.T) {
 	assert.InDelta(t, 2.0/61.0, report.Results[0].Score, 1e-12)
 }
 
-func TestSearcherAutoDegradesRequiredCoverageBeforeProvider(t *testing.T) {
-	t.Parallel()
-	searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 2)
-	backend.lexical = []store.ExplainedLexicalCandidate{{Node: store.Node{ID: 5,
-		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
-		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
-	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
-		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
-		Authorization: retrievalAuthorization(descriptor)})
-	require.NoError(t, err)
-	assert.Equal(t, ModeLexical, report.ActualMode)
-	assert.Equal(t, DegradationIncompleteCoverage, report.Degradation)
-	assert.Zero(t, provider.calls)
-}
-
-func TestSearcherAutoDegradesProviderOutageButOptionalIncompleteCanHybrid(t *testing.T) {
+func TestSearcherExplicitSemanticModesReportProviderFailureAndCoverage(t *testing.T) {
 	t.Parallel()
 	t.Run("provider outage", func(t *testing.T) {
 		searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 1)
@@ -157,16 +171,14 @@ func TestSearcherAutoDegradesProviderOutageButOptionalIncompleteCanHybrid(t *tes
 		backend.lexical = []store.ExplainedLexicalCandidate{{Node: store.Node{ID: 5,
 			CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
 			Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
-		report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
+		_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
 			ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
 			Authorization: retrievalAuthorization(descriptor)})
-		require.NoError(t, err)
-		assert.Equal(t, ModeLexical, report.ActualMode)
-		assert.Equal(t, DegradationProviderUnavailable, report.Degradation)
+		require.ErrorIs(t, err, provider.err)
 	})
 	t.Run("optional incomplete", func(t *testing.T) {
 		searcher, _, provider, descriptor := retrievalSearcherFixture(t, false, 2)
-		report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
+		report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeHybrid, Limit: 3,
 			ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "optional",
 			Authorization: retrievalAuthorization(descriptor)})
 		require.NoError(t, err)
@@ -176,7 +188,7 @@ func TestSearcherAutoDegradesProviderOutageButOptionalIncompleteCanHybrid(t *tes
 	})
 }
 
-func TestSearcherAutoPropagatesCorruptLeasedIndex(t *testing.T) {
+func TestSearcherSemanticPropagatesCorruptLeasedIndex(t *testing.T) {
 	t.Parallel()
 	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
 	backend.authority.Lease.Generation.Bytes = []byte("corrupt-index")
@@ -184,7 +196,7 @@ func TestSearcherAutoPropagatesCorruptLeasedIndex(t *testing.T) {
 		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
 		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
 
-	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
 		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
 		Authorization: retrievalAuthorization(descriptor)})
 
@@ -192,7 +204,7 @@ func TestSearcherAutoPropagatesCorruptLeasedIndex(t *testing.T) {
 	assert.Zero(t, backend.lexicalCalls, "local index corruption must not be hidden by lexical degradation")
 }
 
-func TestSearcherAutoPropagatesLeaseReleaseFailure(t *testing.T) {
+func TestSearcherSemanticPropagatesLeaseReleaseFailure(t *testing.T) {
 	t.Parallel()
 	searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 1)
 	provider.err = errors.New("synthetic provider outage")
@@ -201,7 +213,7 @@ func TestSearcherAutoPropagatesLeaseReleaseFailure(t *testing.T) {
 		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
 		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
 
-	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
 		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
 		Authorization: retrievalAuthorization(descriptor)})
 
@@ -236,7 +248,7 @@ func TestSearcherRejectsWrongStoredIndexManifestBeforeSearch(t *testing.T) {
 	assert.Zero(t, backend.neighborCount)
 }
 
-func TestSearcherAutoDegradesAbsentSemanticAuthority(t *testing.T) {
+func TestSearcherSemanticReportsAbsentAuthority(t *testing.T) {
 	t.Parallel()
 	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
 	backend.acquireErr = store.ErrNotFound
@@ -244,16 +256,15 @@ func TestSearcherAutoDegradesAbsentSemanticAuthority(t *testing.T) {
 		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
 		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
 
-	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
 		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
 		Authorization: retrievalAuthorization(descriptor)})
 
-	require.NoError(t, err)
-	assert.Equal(t, ModeLexical, report.ActualMode)
-	assert.Equal(t, DegradationSemanticUnavailable, report.Degradation)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	assert.Zero(t, backend.lexicalCalls)
 }
 
-func TestSearcherAutoDegradesWhenFinalCoverageBecomesIncomplete(t *testing.T) {
+func TestSearcherSemanticReportsFinalCoverage(t *testing.T) {
 	t.Parallel()
 	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
 	backend.finalScopedDocuments = 2
@@ -263,13 +274,13 @@ func TestSearcherAutoDegradesWhenFinalCoverageBecomesIncomplete(t *testing.T) {
 		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
 		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
 
-	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeAuto, Limit: 3,
+	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
 		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
 		Authorization: retrievalAuthorization(descriptor)})
 
 	require.NoError(t, err)
-	assert.Equal(t, ModeLexical, report.ActualMode)
-	assert.Equal(t, DegradationIncompleteCoverage, report.Degradation)
+	assert.Equal(t, ModeSemantic, report.ActualMode)
+	assert.Equal(t, CoverageIncomplete, report.Coverage.State)
 	assert.Equal(t, 2, report.Coverage.ScopedDocuments)
 	assert.Equal(t, 1, report.Coverage.CompleteDocuments)
 }
