@@ -967,3 +967,43 @@ func v090UpgradeDrivers() []struct {
 	}
 	return result
 }
+
+func TestOpenRejectsIncompleteVectorIndexSchema(t *testing.T) {
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`DROP TABLE vector_index_unavailable_coverage`)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			reopened, err := Open(path, driver.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "vector_index_unavailable_coverage")
+		})
+	}
+}
+
+func TestVectorIndexSchemaHasDistinctVersion(t *testing.T) {
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			var version int
+			require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
+			require.Greater(t, version, 5, "vector indexes must be distinguishable from the parent embedding layout")
+			// Schema 5 was never released and has no supported on-disk upgrade path.
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=5 WHERE singleton=1`)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			reopened, err := Open(path, driver.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "no supported JSONL cutover")
+		})
+	}
+}

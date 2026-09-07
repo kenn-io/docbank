@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -135,4 +136,57 @@ func TestVectorIndexWorkerRetiresTrashedSource(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = fixture.catalog.LoadVectorIndexGeneration(t.Context(), active.ID)
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T) {
+	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	_, err := embedding.ScanOnce(t.Context())
+	require.NoError(t, err)
+	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	require.Len(t, spaces, 1)
+	gate := api.NewOperationGate()
+	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+		Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+			maintenanceCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			defer cancel()
+			if err := gate.MaintainContext(maintenanceCtx, func() error { return nil }); err != nil {
+				return nil, err
+			}
+			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
+		},
+	})
+	require.NoError(t, err)
+	_, err = worker.Rebuild(t.Context(), spaces[0])
+	require.NoError(t, err, "payload reads must not hold maintenance admission")
+}
+
+func TestVectorIndexMissingPayloadWaitsForMaintenanceBeforeAbandoning(t *testing.T) {
+	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	_, err := embedding.ScanOnce(t.Context())
+	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		gate := api.NewOperationGate()
+		held, done := make(chan struct{}), make(chan error, 1)
+		worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+			Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+			ReadVectorSet: func(ctx context.Context, _ store.VectorIndexMember) ([]byte, error) {
+				go func() {
+					done <- gate.MaintainContext(ctx, func() error {
+						close(held)
+						time.Sleep(6 * time.Second)
+						return nil
+					})
+				}()
+				<-held
+				return nil, store.ErrVectorSetUnavailable
+			},
+		})
+		require.NoError(t, err)
+		report, restoreErr := worker.Restore(t.Context())
+		require.NoError(t, <-done)
+		require.NoError(t, restoreErr, "maintenance admission must not turn unavailable coverage into a terminal cleanup timeout")
+		require.Len(t, report.Unavailable, 1)
+	})
 }

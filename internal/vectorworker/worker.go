@@ -35,6 +35,7 @@ type Catalog interface {
 	StageVectorIndexGeneration(ctx context.Context, claim store.VectorIndexBuildClaim, record store.VectorIndexGenerationRecord, at time.Time) error
 	LoadVectorIndexGeneration(ctx context.Context, generationID string) (store.VectorIndexGenerationRecord, error)
 	PublishVectorIndexGeneration(ctx context.Context, claim store.VectorIndexBuildClaim, generationID string, at time.Time) error
+	ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string) (store.VectorIndexHead, error)
 	ActiveVectorIndexGeneration(ctx context.Context, vectorSpaceID string) (store.VectorIndexGenerationRecord, error)
 	AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string, at time.Time, lease time.Duration) (store.VectorIndexReaderLease, error)
 	ReleaseVectorIndexGeneration(ctx context.Context, leaseID string, fencingToken int64, at time.Time) error
@@ -118,11 +119,7 @@ func (worker *IndexWorker) Rebuild(ctx context.Context, vectorSpaceID string) (s
 	worker.inflight[vectorSpaceID] = call
 	worker.mu.Unlock()
 
-	call.err = worker.mutate(ctx, func() error {
-		var err error
-		call.record, err = worker.rebuild(ctx, vectorSpaceID)
-		return err
-	})
+	call.record, call.err = worker.rebuild(ctx, vectorSpaceID)
 	worker.mu.Lock()
 	delete(worker.inflight, vectorSpaceID)
 	close(call.done)
@@ -145,11 +142,14 @@ func (err *unavailableVectorSourceError) Error() string {
 func (worker *IndexWorker) rebuild(ctx context.Context, vectorSpaceID string) (_ store.VectorIndexGenerationRecord, retErr error) {
 	source, err := worker.catalog.CaptureVectorIndexSource(ctx, vectorSpaceID)
 	if errors.Is(err, store.ErrNotFound) {
-		if retireErr := worker.catalog.RetireEmptyVectorIndexHead(ctx, vectorSpaceID, worker.clock().UTC()); retireErr != nil {
-			return store.VectorIndexGenerationRecord{}, retireErr
-		}
-		if _, reclaimErr := worker.catalog.ReclaimVectorIndexGenerations(ctx, worker.clock().UTC()); reclaimErr != nil {
-			return store.VectorIndexGenerationRecord{}, reclaimErr
+		if err := worker.mutate(ctx, func() error {
+			if err := worker.catalog.RetireEmptyVectorIndexHead(ctx, vectorSpaceID, worker.clock().UTC()); err != nil {
+				return err
+			}
+			_, err := worker.catalog.ReclaimVectorIndexGenerations(ctx, worker.clock().UTC())
+			return err
+		}); err != nil {
+			return store.VectorIndexGenerationRecord{}, err
 		}
 		return store.VectorIndexGenerationRecord{}, store.ErrNotFound
 	}
@@ -162,8 +162,14 @@ func (worker *IndexWorker) rebuild(ctx context.Context, vectorSpaceID string) (_
 			return active, nil
 		}
 	}
-	claim, claimed, err := worker.catalog.ClaimVectorIndexBuild(ctx, vectorSpaceID,
-		source.ManifestChecksum, worker.owner, worker.clock().UTC(), worker.buildLease)
+	var claim store.VectorIndexBuildClaim
+	var claimed bool
+	err = worker.mutate(ctx, func() error {
+		var err error
+		claim, claimed, err = worker.catalog.ClaimVectorIndexBuild(ctx, vectorSpaceID,
+			source.ManifestChecksum, worker.owner, worker.clock().UTC(), worker.buildLease)
+		return err
+	})
 	if err != nil {
 		return store.VectorIndexGenerationRecord{}, err
 	}
@@ -172,9 +178,20 @@ func (worker *IndexWorker) rebuild(ctx context.Context, vectorSpaceID string) (_
 	}
 	defer func() {
 		if retErr != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if cleanupErr := worker.catalog.AbandonVectorIndexBuild(cleanupCtx, claim, worker.clock().UTC()); cleanupErr != nil {
+			// Live work waits for maintenance with its own context. Start the
+			// cleanup timeout only after admission; a long repack is not a
+			// failed catalog write. Cancelled work gets bounded best effort.
+			admissionCtx := ctx
+			if ctx.Err() != nil {
+				var cancel context.CancelFunc
+				admissionCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+			}
+			if cleanupErr := worker.mutate(admissionCtx, func() error {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				return worker.catalog.AbandonVectorIndexBuild(cleanupCtx, claim, worker.clock().UTC())
+			}); cleanupErr != nil {
 				// Keep cleanup failure authoritative; lifecycle errors must not hide it.
 				retErr = fmt.Errorf("abandoning failed vector index build (%v): %w", retErr, cleanupErr) //nolint:errorlint // Only cleanup remains classifiable.
 			}
@@ -209,7 +226,9 @@ func (worker *IndexWorker) rebuild(ctx context.Context, vectorSpaceID string) (_
 		VectorSpaceID: vectorSpaceID, SourceManifestChecksum: source.ManifestChecksum,
 		IndexManifestChecksum: metadata.Manifest.Checksum, Bytes: encoded,
 		RowCount: metadata.RowCount, BuiltAt: indexWorkerTimestamp(worker.clock().UTC())}
-	if err := worker.catalog.StageVectorIndexGeneration(ctx, claim, record, worker.clock().UTC()); err != nil {
+	if err := worker.mutate(ctx, func() error {
+		return worker.catalog.StageVectorIndexGeneration(ctx, claim, record, worker.clock().UTC())
+	}); err != nil {
 		return store.VectorIndexGenerationRecord{}, err
 	}
 	stored, err := worker.catalog.LoadVectorIndexGeneration(ctx, record.ID)
@@ -219,11 +238,16 @@ func (worker *IndexWorker) rebuild(ctx context.Context, vectorSpaceID string) (_
 	if err := validateStoredVectorIndex(stored, source, firstQuery); err != nil {
 		return store.VectorIndexGenerationRecord{}, errors.Join(ErrVectorIndexCandidateInvalid, err)
 	}
-	if err := worker.catalog.PublishVectorIndexGeneration(ctx, claim, record.ID, worker.clock().UTC()); err != nil {
+	if err := worker.mutate(ctx, func() error {
+		if err := worker.catalog.PublishVectorIndexGeneration(ctx, claim, record.ID, worker.clock().UTC()); err != nil {
+			return err
+		}
+		if _, err := worker.catalog.ReclaimVectorIndexGenerations(ctx, worker.clock().UTC()); err != nil {
+			return fmt.Errorf("reclaiming vector index generations: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return store.VectorIndexGenerationRecord{}, err
-	}
-	if _, err := worker.catalog.ReclaimVectorIndexGenerations(ctx, worker.clock().UTC()); err != nil {
-		return stored, fmt.Errorf("reclaiming vector index generations: %w", err)
 	}
 	return stored, nil
 }
@@ -421,14 +445,22 @@ func (worker *IndexWorker) scan(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing vector index spaces: %w", err)
 	}
+	var unavailable []UnavailableVectorCoverage
 	for _, space := range spaces {
-		if _, err := worker.Rebuild(ctx, space); err != nil &&
-			!errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrVectorIndexBuildInProgress) &&
+		err := worker.refresh(ctx, space)
+		if missing, ok := errors.AsType[*unavailableVectorSourceError](err); ok {
+			unavailable = append(unavailable, missing.coverage)
+			continue
+		}
+		if err != nil && !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrVectorIndexBuildInProgress) &&
 			!errors.Is(err, store.ErrVectorIndexBuildFenced) && !errors.Is(err, store.ErrVectorIndexSourceStale) {
 			return fmt.Errorf("rebuilding vector index %s: %w", space, err)
 		}
 	}
 	err = worker.mutate(ctx, func() error {
+		if err := worker.catalog.ReplaceVectorIndexUnavailableCoverage(ctx, unavailable); err != nil {
+			return err
+		}
 		_, err := worker.catalog.ReclaimVectorIndexGenerations(ctx, worker.clock().UTC())
 		return err
 	})
@@ -436,6 +468,26 @@ func (worker *IndexWorker) scan(ctx context.Context) error {
 		return fmt.Errorf("reclaiming vector index generations: %w", err)
 	}
 	return nil
+}
+
+// refresh checks immutable publication metadata before loading any generation
+// bytes. Full validation remains at candidate publication and reader acquisition.
+func (worker *IndexWorker) refresh(ctx context.Context, space string) error {
+	source, err := worker.catalog.CaptureVectorIndexSource(ctx, space)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if err == nil {
+		head, err := worker.catalog.ActiveVectorIndexHead(ctx, space)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if err == nil && head.SourceManifestChecksum == source.ManifestChecksum {
+			return nil
+		}
+	}
+	_, err = worker.Rebuild(ctx, space)
+	return err
 }
 
 func indexGenerationID(sourceChecksum string, data []byte) string {

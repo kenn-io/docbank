@@ -125,6 +125,7 @@ func TestIndexWorkerRestoreSkipsSpacesWithoutEligibleMembership(t *testing.T) {
 var indexWorkerNow = time.Date(2026, 8, 26, 14, 0, 0, 0, time.UTC)
 
 type fakeIndexCatalog struct {
+	activeLoads                                        int
 	listErr                                            error
 	listFailures                                       int
 	listTimes                                          []time.Time
@@ -252,6 +253,7 @@ func (c *fakeIndexCatalog) PublishVectorIndexGeneration(_ context.Context, _ sto
 }
 func (c *fakeIndexCatalog) ActiveVectorIndexGeneration(context.Context, string) (store.VectorIndexGenerationRecord, error) {
 	c.mu.Lock()
+	c.activeLoads++
 	defer c.mu.Unlock()
 	if c.active.ID == "" {
 		return store.VectorIndexGenerationRecord{}, store.ErrNotFound
@@ -370,4 +372,39 @@ func TestIndexWorkerRunDoesNotHideCleanupFailureBehindMembershipDrift(t *testing
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, worker.Run(ctx), catalog.abandonErr)
+}
+
+func TestIndexWorkerScanDoesNotReloadUnchangedGeneration(t *testing.T) {
+	catalog, space := newIndexCatalogFixture(t)
+	worker := newIndexWorkerForTest(t, catalog)
+	_, err := worker.Rebuild(t.Context(), space)
+	require.NoError(t, err)
+	catalog.activeLoads = 0
+	require.NoError(t, worker.scan(t.Context()))
+	require.NoError(t, worker.scan(t.Context()))
+	require.Zero(t, catalog.activeLoads, "idle scans must not load and decode the active generation")
+	require.Equal(t, 1, catalog.publishCalls)
+}
+
+func TestIndexWorkerScanRecoversWhenMissingPayloadReturns(t *testing.T) {
+	catalog, _ := newIndexCatalogFixture(t)
+	member := catalog.source.Members[0]
+	catalog.unavailable[member.PayloadBlobHash] = true
+	worker := newIndexWorkerForTest(t, catalog)
+	require.NoError(t, worker.scan(t.Context()), "missing coverage must leave the worker running")
+	require.Len(t, catalog.recordedUnavailable, 1)
+	require.Empty(t, catalog.active.ID)
+	delete(catalog.unavailable, member.PayloadBlobHash)
+	require.NoError(t, worker.scan(t.Context()))
+	require.NotEmpty(t, catalog.active.ID)
+	require.Empty(t, catalog.recordedUnavailable, "recovered coverage must clear the unavailable report")
+}
+
+func (c *fakeIndexCatalog) ActiveVectorIndexHead(_ context.Context, space string) (store.VectorIndexHead, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active.ID == "" || c.active.VectorSpaceID != space {
+		return store.VectorIndexHead{}, store.ErrNotFound
+	}
+	return store.VectorIndexHead{GenerationID: c.active.ID, SourceManifestChecksum: c.active.SourceManifestChecksum}, nil
 }

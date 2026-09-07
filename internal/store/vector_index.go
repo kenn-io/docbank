@@ -353,11 +353,18 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 		if err := requireVectorIndexBuildClaimTx(ctx, tx, claim, at); err != nil {
 			return err
 		}
-		record, err := loadVectorIndexGenerationTx(ctx, tx, generationID)
+		// Candidate bytes were validated before publication. Only read their
+		// immutable source metadata while holding mutation admission.
+		var space, source string
+		err := tx.QueryRowContext(ctx, `SELECT vector_space_id,source_manifest_checksum
+			FROM vector_index_generations WHERE generation_id=?`, generationID).Scan(&space, &source)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		if err != nil {
 			return err
 		}
-		if record.VectorSpaceID != claim.VectorSpaceID || record.SourceManifestChecksum != claim.SourceManifestChecksum {
+		if space != claim.VectorSpaceID || source != claim.SourceManifestChecksum {
 			return ErrVectorIndexBuildFenced
 		}
 		current, err := captureVectorIndexSourceTx(ctx, tx, claim.VectorSpaceID)
@@ -398,6 +405,23 @@ func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, gen
 		return VectorIndexGenerationRecord{}, errors.New("vector index generation byte size is corrupt")
 	}
 	return record, validateVectorIndexGenerationRecord(record)
+}
+
+// VectorIndexHead is the publication metadata needed by an idle worker scan.
+// Generation bytes are immutable and validated before this head is published.
+type VectorIndexHead struct {
+	GenerationID           string
+	SourceManifestChecksum string
+}
+
+func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string) (VectorIndexHead, error) {
+	var head VectorIndexHead
+	err := s.db.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
+		FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum)
+	if errors.Is(err, sql.ErrNoRows) {
+		return head, ErrNotFound
+	}
+	return head, err
 }
 
 func (s *Store) ActiveVectorIndexGeneration(ctx context.Context, vectorSpaceID string) (VectorIndexGenerationRecord, error) {
