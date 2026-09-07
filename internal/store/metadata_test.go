@@ -1101,6 +1101,31 @@ func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 			countQuery: `SELECT COUNT(*) FROM derivative_pack_purge_pending`,
 			input:      header + root,
 		},
+		{
+			name: "vector index generation",
+			insert: `INSERT INTO vector_index_generations(generation_id,vector_space_id,
+				source_manifest_checksum,index_manifest_checksum,generation_bytes,byte_size,row_count,built_at)
+				VALUES('` + metadataHashCurrent + `','` + metadataHashCurrent + `','` + metadataHashCurrent + `',
+					'` + metadataHashCurrent + `',X'01',1,1,'2026-01-01T00:00:00.000000000Z')`,
+			countQuery: `SELECT COUNT(*) FROM vector_index_generations`,
+			input:      header + root,
+		},
+		{
+			name: "vector index build claim",
+			insert: `INSERT INTO vector_index_build_jobs(vector_space_id,source_manifest_checksum,owner,fencing_token,lease_expires_at)
+				VALUES('` + metadataHashCurrent + `','` + metadataHashCurrent + `','index-worker',1,'2026-01-01T00:00:00.000000000Z')`,
+			countQuery: `SELECT COUNT(*) FROM vector_index_build_jobs`,
+			input:      header + root,
+		},
+		{
+			name: "vector index unavailable coverage",
+			insert: `INSERT INTO vector_index_unavailable_coverage(vector_space_id,source_manifest_checksum,
+				embedding_set_id,vector_set_id,payload_blob_hash,external_reembedding_required)
+				VALUES('` + metadataHashCurrent + `','` + metadataHashCurrent + `','` + metadataHashCurrent + `',
+					'` + metadataHashCurrent + `','` + metadataHashCurrent + `',1)`,
+			countQuery: `SELECT COUNT(*) FROM vector_index_unavailable_coverage`,
+			input:      header + root,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
