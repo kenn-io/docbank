@@ -192,14 +192,15 @@ func (searcher *Searcher) revalidateExpandedReport(ctx context.Context, query Qu
 		nodeID  int64
 		version string
 	}
-	set := make(map[documentKey]struct{}, len(revalidation.Candidates))
+	set := make(map[documentKey]string, len(revalidation.Candidates))
 	for _, candidate := range revalidation.Candidates {
-		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = struct{}{}
+		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = candidate.Path
 	}
 	results := report.Results[:0]
 	for _, result := range report.Results {
-		if _, ok := set[documentKey{nodeID: result.Document.NodeID,
+		if currentPath, ok := set[documentKey{nodeID: result.Document.NodeID,
 			version: result.Document.ContentVersionID}]; ok {
+			result.Path = currentPath
 			results = append(results, result)
 		}
 	}

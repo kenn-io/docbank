@@ -301,7 +301,7 @@ func TestSearcherExpandedVariantsRevalidateCurrentScopeBeforeReranking(t *testin
 			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 2}, Provider: reranker,
 			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
 	})
-	backend.revalidated = []store.SearchCandidateIdentity{{NodeID: 1, ContentVersionID: "version-1"}}
+	backend.revalidated = []store.RevalidatedSearchCandidate{{NodeID: 1, ContentVersionID: "version-1"}}
 
 	report, err := searcher.Search(t.Context(), Query{Text: "original", Mode: ModeLexical, Limit: 2,
 		Scope: store.SearchOptions{TagID: "tag"}})
@@ -316,7 +316,7 @@ func TestExpandedSemanticSearchReportsCoverageChangesAtFinalFence(t *testing.T) 
 	t.Parallel()
 
 	searcher, backend := stageSearcher(t, func(config *SearcherConfig) {})
-	backend.revalidated = []store.SearchCandidateIdentity{{NodeID: 1, ContentVersionID: "version-1"}}
+	backend.revalidated = []store.RevalidatedSearchCandidate{{NodeID: 1, ContentVersionID: "version-1"}}
 	backend.revalidationCoverage = &store.SearchCoverageSnapshot{ScopedDocuments: 2, CompleteDocuments: 1}
 	report := Report{RequestedMode: ModeSemantic, ActualMode: ModeSemantic,
 		Coverage: Coverage{BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1,
@@ -403,7 +403,7 @@ type stageBackend struct {
 	queries              []string
 	scopes               []store.SearchOptions
 	hits                 []store.ExplainedLexicalCandidate
-	revalidated          []store.SearchCandidateIdentity
+	revalidated          []store.RevalidatedSearchCandidate
 	revalidationCoverage *store.SearchCoverageSnapshot
 	revalidationCalls    int
 	errForQuery          map[string]error
@@ -443,7 +443,7 @@ func (backend *stageBackend) RevalidateSearchCandidates(_ context.Context,
 		return store.SearchCandidateRevalidation{Candidates: backend.revalidated,
 			Coverage: backend.revalidationCoverage}, nil
 	}
-	return store.SearchCandidateRevalidation{Candidates: []store.SearchCandidateIdentity{
+	return store.SearchCandidateRevalidation{Candidates: []store.RevalidatedSearchCandidate{
 		{NodeID: 1, ContentVersionID: "version-1"}, {NodeID: 2, ContentVersionID: "version-2"}},
 		Coverage: backend.revalidationCoverage}, nil
 }

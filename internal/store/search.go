@@ -248,8 +248,15 @@ type SearchCoverageSnapshot struct {
 // SearchCandidateRevalidation returns allowed candidates and, when semantic
 // authority was supplied, coverage from the same storage snapshot.
 type SearchCandidateRevalidation struct {
-	Candidates []SearchCandidateIdentity
+	Candidates []RevalidatedSearchCandidate
 	Coverage   *SearchCoverageSnapshot
+}
+
+// RevalidatedSearchCandidate includes the current path captured with its evidence.
+type RevalidatedSearchCandidate struct {
+	SearchCandidateIdentity
+
+	Path string
 }
 
 // SearchEvidenceIdentity is the text-free stable authority needed to prove
@@ -431,7 +438,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		if queryErr != nil {
 			return queryErr
 		}
-		return func() (retErr error) {
+		err = func() (retErr error) {
 			defer func() { retErr = errors.Join(retErr, rows.Close()) }()
 			for rows.Next() {
 				var position int
@@ -442,13 +449,24 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 			return rows.Err()
 		}()
+		if err != nil {
+			return err
+		}
+		result.Candidates = make([]RevalidatedSearchCandidate, 0, len(allowedPositions))
+		for _, position := range allowedPositions {
+			candidate := candidates[position]
+			currentPath, pathErr := pathOf(ctx, tx, candidate.NodeID)
+			if pathErr != nil {
+				return pathErr
+			}
+			result.Candidates = append(result.Candidates, RevalidatedSearchCandidate{
+				SearchCandidateIdentity: candidate, Path: currentPath,
+			})
+		}
+		return nil
 	})
 	if err != nil {
 		return SearchCandidateRevalidation{}, err
-	}
-	result.Candidates = make([]SearchCandidateIdentity, 0, len(allowedPositions))
-	for _, position := range allowedPositions {
-		result.Candidates = append(result.Candidates, candidates[position])
 	}
 	return result, nil
 }
