@@ -512,3 +512,7 @@ func (provider *stageReranker) Rerank(ctx context.Context, request RerankingRequ
 	}
 	return scores, nil
 }
+
+func (backend *stageBackend) NormalizeSearchOptions(_ context.Context, options store.SearchOptions) (store.SearchOptions, error) {
+	return options, nil
+}

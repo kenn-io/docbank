@@ -19,6 +19,7 @@ import (
 
 type Backend interface {
 	VaultID() string
+	NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error)
 	SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
 		options store.SearchOptions) ([]store.ExplainedLexicalCandidate, bool, error)
 }
@@ -90,6 +91,10 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 
 func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, error) {
 	query, err := normalizeQuery(query)
+	if err != nil {
+		return Report{}, err
+	}
+	query.Scope, err = searcher.backend.NormalizeSearchOptions(ctx, query.Scope)
 	if err != nil {
 		return Report{}, err
 	}

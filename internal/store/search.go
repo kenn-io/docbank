@@ -53,7 +53,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		limit = 50
 	}
 	var err error
-	opts, err = s.normalizeSearchOptions(ctx, opts)
+	opts, err = s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -289,7 +289,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	if len(candidates) > document.MaxRetrievalCandidateLimit {
 		return SearchCandidateRevalidation{}, errors.New("search candidate revalidation exceeds the retrieval limit")
 	}
-	normalized, err := s.normalizeSearchOptions(ctx, opts)
+	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return SearchCandidateRevalidation{}, err
 	}
@@ -514,7 +514,7 @@ type SemanticSearchAuthority struct {
 func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFingerprint,
 	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions,
 ) (SemanticSearchAuthority, error) {
-	normalized, err := s.normalizeSearchOptions(ctx, opts)
+	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -622,7 +622,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	if limit < 1 || limit > document.MaxRetrievalCandidateLimit {
 		return SemanticSearchResolution{}, fmt.Errorf("semantic search limit must be between 1 and %d", document.MaxRetrievalCandidateLimit)
 	}
-	normalized, err := s.normalizeSearchOptions(ctx, opts)
+	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return SemanticSearchResolution{}, err
 	}
@@ -1837,7 +1837,7 @@ func (s *Store) SearchPageWithOptions(
 		limit = 50
 	}
 	var err error
-	opts, err = s.normalizeSearchOptions(ctx, opts)
+	opts, err = s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1967,7 +1967,8 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
-func (s *Store) normalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
+// NormalizeSearchOptions validates scope identities and returns canonical filters.
+func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
 	if opts.TagID != "" {
 		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)

@@ -532,3 +532,7 @@ func TestFuseReciprocalRankRejectsMixedSemanticVectorSpaces(t *testing.T) {
 	}, 2)
 	require.ErrorContains(t, err, "one active vector space")
 }
+
+func (backend *retrievalBackendStub) NormalizeSearchOptions(_ context.Context, options store.SearchOptions) (store.SearchOptions, error) {
+	return options, nil
+}
