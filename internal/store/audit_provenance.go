@@ -393,6 +393,17 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendDelta(
 	if err != nil || !replay.memberSet[nodeID] {
 		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation targets unaudited node %d", nodeID)
 	}
+	topologyIndex, ok := replay.topologyIndex[nodeID]
+	if !ok {
+		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation target %d is absent from topology", nodeID)
+	}
+	nodeKind, err := auditTextField(replay.topology[topologyIndex], "node_kind")
+	if err != nil {
+		return replayedProvenanceAppend{}, err
+	}
+	if nodeKind != nodeKindFile {
+		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation targets non-file node %d", nodeID)
+	}
 	provenanceID, err := auditDigestField(post, "identity")
 	if err != nil {
 		return replayedProvenanceAppend{}, err

@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json/v2"
 	"path/filepath"
 	"testing"
@@ -245,4 +246,56 @@ func rewriteAppendedProvenancePath(t *testing.T, input []byte, nodeID int64) []b
 	}
 	require.True(t, found)
 	return append(bytes.Join(lines, []byte{'\n'}), '\n')
+}
+
+func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	seedMetadataRoundTrip(t, s)
+	dir, err := s.NodeByPath(ctx, "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, dir.ID)
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+		NodeID: dir.ID, IfRevision: dir.Revision, SourceKind: "agent",
+		SourceDescription: "synthetic directory replay", OriginalPath: "opaque://directory",
+	})
+	require.ErrorIs(t, err, ErrNotFile)
+	run, err := s.BeginCallerSuppliedIngest(ctx, "agent", "synthetic directory replay")
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		prior, err := nodeByIDTx(tx, dir.ID)
+		if err != nil {
+			return err
+		}
+		if _, err = ensureIngestRunTx(ctx, tx, run); err != nil {
+			return err
+		}
+		fact := metadataProvenance{
+			Type: metadataProvenanceType, NodeID: dir.ID, IngestID: run.record.ID,
+			OriginalPath: "opaque://directory",
+		}
+		fact.Identity, err = provenanceIdentity(fact)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`,
+			fact.Identity, fact.NodeID, fact.IngestID, fact.OriginalPath); err != nil {
+			return err
+		}
+		if err = bumpRevisionTx(tx, dir.ID, run.record.StartedAt); err != nil {
+			return err
+		}
+		resulting, err := nodeByIDTx(tx, dir.ID)
+		if err != nil {
+			return err
+		}
+		authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, dir.ID)
+		if err != nil {
+			return err
+		}
+		return persistAuditedProvenanceAppend(ctx, tx, s.vaultID, run.record.ID, run.record.StartedAt,
+			sequence, authority, scopes, prior, resulting, run.record, fact)
+	}))
+	err = s.ValidateMetadata(ctx)
+	require.ErrorContains(t, err, "provenance mutation targets non-file node")
 }
