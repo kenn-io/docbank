@@ -408,3 +408,43 @@ func (c *fakeIndexCatalog) ActiveVectorIndexHead(_ context.Context, space string
 	}
 	return store.VectorIndexHead{GenerationID: c.active.ID, SourceManifestChecksum: c.active.SourceManifestChecksum}, nil
 }
+
+func TestIndexWorkerRestoresAndSearchesLargeDimensionVectors(t *testing.T) {
+	catalog, space := newIndexCatalogFixture(t)
+	// Exercise the canonical format's largest supported dimension. The catalog
+	// accepts this vector, so rebuilding its disposable projection must also work.
+	const dimension = 1_000_000
+	values := make([]float64, dimension)
+	values[dimension-1] = 1
+	set, err := document.NewVectorSetV1(document.VectorSetV1Input{
+		VectorSpaceFingerprint: space, Metric: document.VectorMetricDotProduct,
+		Normalization: document.VectorNormalizationNone, Dimension: dimension,
+		InputKeys: []string{"large-dimension-row"}, InputChecksums: []string{indexWorkerHash("large-dimension-input")},
+		Values: [][]float64{values},
+	})
+	require.NoError(t, err)
+	payload, setID, err := document.EncodeVectorSetV1(set)
+	require.NoError(t, err)
+	payloadHash := indexWorkerHashBytes(payload)
+	catalog.payloads = map[string][]byte{payloadHash: payload}
+	catalog.source.Members = []store.VectorIndexMember{{
+		EmbeddingSetID: indexWorkerHash("large-dimension-embedding"), VectorSetID: setID,
+		PayloadBlobHash: payloadHash, PayloadSize: int64(len(payload)),
+	}}
+	catalog.sources[space] = catalog.source
+	worker := newIndexWorkerForTest(t, catalog)
+	report, err := worker.Restore(t.Context())
+	require.NoError(t, err)
+	require.Len(t, report.Rebuilt, 1)
+	require.Empty(t, report.Unavailable)
+	lease, err := worker.Acquire(t.Context(), space, "reader")
+	require.NoError(t, err)
+	query := make([]float32, dimension)
+	query[dimension-1] = 1
+	neighbors, err := lease.Search(query, 1)
+	require.NoError(t, err)
+	require.Len(t, neighbors, 1)
+	require.Equal(t, setID, neighbors[0].SetID)
+	require.InDelta(t, float64(1), neighbors[0].Score, 1e-12)
+	require.NoError(t, lease.Release(t.Context()))
+}

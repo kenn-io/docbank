@@ -287,7 +287,7 @@ func (worker *IndexWorker) loadVectorSets(ctx context.Context, source store.Vect
 			return nil, nil, coverage, err
 		}
 		set, _, err := document.DecodeVectorSetV1(payload, document.VectorBounds{
-			MaxRows: 100_000, MaxDimension: 16_384, MaxBytes: len(payload)})
+			MaxRows: 100_000, MaxDimension: 1_048_576, MaxBytes: len(payload)})
 		if err != nil {
 			return nil, nil, coverage, fmt.Errorf("decoding canonical vector set %s: %w", setID, err)
 		}
