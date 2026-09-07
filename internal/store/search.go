@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/vectorindex"
 )
 
 // SearchHit is a search result with its display path.
@@ -25,6 +26,185 @@ type SearchHit struct {
 	Node  Node
 	Path  string
 	Match string
+}
+
+// ExplainedLexicalCandidate adds stable evidence identity and a bounded
+// display excerpt for files, preserving name-before-content ordering.
+type ExplainedLexicalCandidate struct {
+	Node         Node
+	Path         string
+	Match        string
+	EvidenceKind string
+	BuildID      string
+	SegmentID    string
+	BlobHash     string
+	Excerpt      string
+}
+
+const maxExplainedSearchExcerptRunes = 512
+
+// SearchExplainedLexicalCandidates preserves SearchPageWithOptions file ordering.
+// Content selection and evidence resolution share one lexical-generation read.
+func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
+	opts SearchOptions,
+) ([]ExplainedLexicalCandidate, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var err error
+	opts, err = s.normalizeSearchOptions(ctx, opts)
+	if err != nil {
+		return nil, false, err
+	}
+	fq := ftsQuery(query)
+	if fq == "" {
+		return nil, false, nil
+	}
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	nameArgs := append([]any{fq}, filterArgs...)
+	nameArgs = append(nameArgs, fq, limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+`
+		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
+		  AND n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
+		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid=n.id AND nodes_fts MATCH ?),n.name,n.id
+		LIMIT ?`, nameArgs...)
+	if err != nil {
+		return nil, false, err
+	}
+	nameHits, err := scanSearchRows(rows, SearchMatchName, query)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(nameHits) > limit {
+		nameHits = nameHits[:limit]
+		if err := s.addSearchPaths(ctx, nameHits); err != nil {
+			return nil, false, err
+		}
+		return explainedNameCandidates(nameHits), true, nil
+	}
+	if err := s.addSearchPaths(ctx, nameHits); err != nil {
+		return nil, false, err
+	}
+	remaining := limit - len(nameHits)
+	nameSeen := make(map[int64]struct{}, len(nameHits))
+	for _, hit := range nameHits {
+		nameSeen[hit.Node.ID] = struct{}{}
+	}
+	var content []ExplainedLexicalCandidate
+	queryContent := func(queryer metadataQuerier, generationID string) (retErr error) {
+		args := []any{fq}
+		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
+			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt
+			FROM content_fts JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
+			JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
+			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
+			JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
+			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
+			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
+		if generationID != "" {
+			contentQuery = `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
+				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24)
+				FROM rendition_lexical_fts
+				JOIN rendition_lexical_generation_builds gb
+				 ON gb.build_id=rendition_lexical_fts.build_id
+				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
+				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
+				JOIN content_versions cv ON cv.version_id=a.content_version_id
+				JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
+				 AND n.trashed_at IS NULL ` + filterSQL + `
+				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
+				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
+			args = append(args, generationID)
+		}
+		args = append(args, filterArgs...)
+		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		seenContent := make(map[int64]struct{}, remaining+1)
+		for rows.Next() {
+			var candidate ExplainedLexicalCandidate
+			node, err := scanExplainedLexicalRow(rows, &candidate)
+			if err != nil {
+				return err
+			}
+			candidate.Node, candidate.Match = node, SearchMatchContent
+			if _, duplicate := nameSeen[node.ID]; duplicate {
+				continue
+			}
+			if _, duplicate := seenContent[node.ID]; duplicate {
+				continue
+			}
+			seenContent[node.ID] = struct{}{}
+			if generationID == "" {
+				candidate.EvidenceKind = "content_blob"
+				candidate.BlobHash = node.BlobHash
+			} else {
+				candidate.EvidenceKind = "rendition_segment"
+			}
+			candidate.Path, err = pathOf(ctx, queryer, node.ID)
+			if err != nil {
+				return err
+			}
+			content = append(content, candidate)
+			if len(content) == remaining+1 {
+				break
+			}
+		}
+		return rows.Err()
+	}
+	err = s.withLexicalGenerationRead(ctx, func(queryer metadataQuerier, generation LexicalGeneration) error {
+		return queryContent(queryer, generation.ID)
+	})
+	if errors.Is(err, ErrNotFound) {
+		err = queryContent(s.db, "")
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(content) > remaining
+	if truncated {
+		content = content[:remaining]
+	}
+	result := explainedNameCandidates(nameHits)
+	result = append(result, content...)
+	return result, truncated, nil
+}
+
+func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
+	result := make([]ExplainedLexicalCandidate, len(hits))
+	for index, hit := range hits {
+		result[index] = ExplainedLexicalCandidate{Node: hit.Node, Path: hit.Path,
+			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: hit.Node.Name}
+	}
+	return result
+}
+
+func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
+	var node Node
+	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
+		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
+		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt); err != nil {
+		return Node{}, err
+	}
+	candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
+	return node, nil
+}
+
+func boundedExplainedSearchExcerpt(value string) string {
+	runes := []rune(value)
+	if len(runes) > maxExplainedSearchExcerptRunes {
+		match := max(slices.Index(runes, rune(1)), 0)
+		start := max(0, min(match-maxExplainedSearchExcerptRunes/2,
+			len(runes)-maxExplainedSearchExcerptRunes))
+		runes = runes[start : start+maxExplainedSearchExcerptRunes]
+	}
+	runes = slices.DeleteFunc(runes, func(value rune) bool { return value == 1 || value == 2 })
+	return string(runes)
 }
 
 // SearchOptions selects a filter-only page or narrows ranked search without
@@ -46,6 +226,284 @@ type SearchOptions struct {
 func SearchNeedsQuery(query string, opts SearchOptions) bool {
 	return ftsQuery(query) == "" && opts.TagID == "" &&
 		opts.ModifiedSince == "" && opts.ModifiedBefore == ""
+}
+
+// SemanticSearchCandidate is one vector neighbor reduced to a current,
+// scope-eligible document. Only the lexical lane supplies excerpts.
+type SemanticSearchCandidate struct {
+	VaultID           string
+	NodeID            int64
+	ContentVersionID  string
+	Path              string
+	VectorSpaceID     string
+	EmbeddingSetID    string
+	InputGenerationID string
+	InputID           string
+	InputKind         document.EmbeddingInputKind
+	Score             float64
+}
+
+// SemanticSearchResolution binds ranked candidates and coverage to the same
+// current-head snapshot after query embedding and vector search complete.
+type SemanticSearchResolution struct {
+	SourceManifestChecksum string
+	Candidates             []SemanticSearchCandidate
+	Truncated              bool
+	ScopedDocuments        int
+	CompleteDocuments      int
+}
+
+// SemanticSearchAuthority pins the exact persisted vector-space descriptor and
+// one active local index generation for a query. Required and Complete count
+// current documents after applying the operator scope.
+type SemanticSearchAuthority struct {
+	VectorSpace       EmbeddingVectorSpaceRecord
+	Lease             VectorIndexReaderLease
+	InputKind         document.EmbeddingInputKind
+	BindingRequired   bool
+	ScopedDocuments   int
+	CompleteDocuments int
+}
+
+// AcquireSemanticSearchAuthority resolves the query contract from durable E1
+// authority, never from a runtime default, and leases one exact active index.
+func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFingerprint,
+	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions,
+) (SemanticSearchAuthority, error) {
+	normalized, err := s.normalizeSearchOptions(ctx, opts)
+	if err != nil {
+		return SemanticSearchAuthority{}, err
+	}
+	binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, s.db, profileFingerprint, bindingID)
+	if err != nil {
+		return SemanticSearchAuthority{}, err
+	}
+	vectorSpaceID := fingerprints.VectorSpace[bindingID]
+	var space EmbeddingVectorSpaceRecord
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var loadErr error
+		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
+		return loadErr
+	})
+	if err != nil {
+		return SemanticSearchAuthority{}, err
+	}
+	if space.ID != vectorSpaceID || space.DescriptorFingerprint != binding.Descriptor.Fingerprint ||
+		space.CompatibilityID != binding.CompatibilityID || space.Dimensions != binding.Dimensions ||
+		space.Metric != binding.Metric || space.Normalization != binding.Normalization ||
+		space.ScalarEncoding != binding.ScalarEncoding || space.DocumentFormatter != binding.DocumentFormatter ||
+		space.QueryFormatter != binding.QueryFormatter || space.ModelInputFingerprint != binding.ModelInput.Fingerprint {
+		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
+	}
+	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	if err != nil {
+		return SemanticSearchAuthority{}, err
+	}
+	release := func() {
+		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
+	}
+	current, err := s.CaptureVectorIndexSource(ctx, vectorSpaceID)
+	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+		release()
+		if err != nil {
+			return SemanticSearchAuthority{}, err
+		}
+		return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
+	}
+	required, complete, err := s.semanticSearchCoverage(ctx, profileFingerprint,
+		bindingID, binding.InputKind, vectorSpaceID, normalized)
+	if err != nil {
+		release()
+		return SemanticSearchAuthority{}, err
+	}
+	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
+		BindingRequired: binding.Activation == document.EmbeddingRequired,
+		ScopedDocuments: required, CompleteDocuments: complete}, nil
+}
+
+func (s *Store) semanticSearchCoverage(ctx context.Context, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+) (required, complete int, retErr error) {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var coverageErr error
+		required, complete, coverageErr = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
+			bindingID, inputKind, vectorSpaceID, opts)
+		return coverageErr
+	})
+	return required, complete, err
+}
+
+func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+) (required, complete int, retErr error) {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
+		filterArgs...).Scan(&required); err != nil {
+		return 0, 0, err
+	}
+	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
+	args = append(args, filterArgs...)
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
+		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
+		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
+		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
+		 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
+		 AND es.profile_fingerprint=eh.profile_fingerprint
+		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+		WHERE n.kind='file' AND n.trashed_at IS NULL
+		  AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=?
+		  AND eh.vector_space_id=?
+		  AND (eh.input_kind='original_file' OR EXISTS(
+		    SELECT 1 FROM rendition_heads rh
+		    WHERE rh.content_version_id=eh.content_version_id
+		      AND rh.profile_fingerprint=eh.profile_fingerprint
+		      AND rh.attachment_id=eig.attachment_id
+		  )) `+filterSQL, args...).Scan(&complete)
+	return required, complete, err
+}
+
+// ResolveSemanticCandidates applies current-version, live-head, and operator
+// scope fencing before reducing ordered vector rows to bounded documents.
+func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, expectedSourceManifest string,
+	neighbors []vectorindex.Neighbor, limit int, opts SearchOptions,
+) (_ SemanticSearchResolution, retErr error) {
+	if err := validateCatalogSHA256(vectorSpaceID, "semantic search vector-space ID"); err != nil {
+		return SemanticSearchResolution{}, err
+	}
+	if err := validateCatalogSHA256(expectedSourceManifest, "semantic search source manifest"); err != nil {
+		return SemanticSearchResolution{}, err
+	}
+	if limit < 1 || limit > document.MaxRetrievalCandidateLimit {
+		return SemanticSearchResolution{}, fmt.Errorf("semantic search limit must be between 1 and %d", document.MaxRetrievalCandidateLimit)
+	}
+	normalized, err := s.normalizeSearchOptions(ctx, opts)
+	if err != nil {
+		return SemanticSearchResolution{}, err
+	}
+	filterSQL, filterArgs := searchFilterSQL(normalized)
+	var result SemanticSearchResolution
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		if captureErr != nil {
+			if errors.Is(captureErr, ErrNotFound) {
+				return ErrVectorIndexSourceStale
+			}
+			return captureErr
+		}
+		if current.ManifestChecksum != expectedSourceManifest {
+			return ErrVectorIndexSourceStale
+		}
+		result.SourceManifestChecksum = current.ManifestChecksum
+		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx,
+			profileFingerprint, bindingID, inputKind, vectorSpaceID, normalized)
+		if err != nil {
+			return err
+		}
+		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
+			inputKind, vectorSpaceID, filterSQL, filterArgs)
+		if loadErr != nil {
+			return loadErr
+		}
+		result.Candidates, result.Truncated = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
+			neighbors, limit, eligible)
+		for index := range result.Candidates {
+			candidate := &result.Candidates[index]
+			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return SemanticSearchResolution{}, err
+	}
+	return result, nil
+}
+
+type semanticEligibilityKey struct {
+	VectorSetID   string
+	InputID       string
+	InputChecksum string
+}
+
+// loadSemanticEligibility performs the only catalog query needed while the
+// exact index's ordered neighbors are reduced. Its result is bounded by the
+// active vector-space catalog (at most one million rows), not by neighbor rank.
+func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
+	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
+	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.current_version_id,
+			es.embedding_set_id,es.input_generation_id,es.input_kind,
+			evr.vector_set_id,evr.input_id,evr.checksum
+		FROM `+nodeFrom+`
+		JOIN embedding_sets es ON es.content_version_id=cv.version_id
+		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
+		 AND eh.binding_id=es.binding_id AND eh.input_kind=es.input_kind
+		 AND eh.embedding_set_id=es.embedding_set_id AND eh.vector_space_id=es.vector_space_id
+		 AND eh.profile_fingerprint=es.profile_fingerprint
+		JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
+		JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
+		 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
+		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+		WHERE es.vector_space_id=?
+		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
+		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
+		  AND (es.input_kind='original_file' OR EXISTS(
+		    SELECT 1 FROM rendition_heads rh
+		    WHERE rh.content_version_id=es.content_version_id
+		      AND rh.profile_fingerprint=es.profile_fingerprint
+		      AND rh.attachment_id=eig.attachment_id
+		  ))
+		  `+filterSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	for rows.Next() {
+		var (
+			entry SemanticSearchCandidate
+			key   semanticEligibilityKey
+		)
+		if err := rows.Scan(&entry.NodeID, &entry.ContentVersionID, &entry.EmbeddingSetID,
+			&entry.InputGenerationID, &entry.InputKind, &key.VectorSetID, &key.InputID, &key.InputChecksum); err != nil {
+			return nil, err
+		}
+		eligible[key] = entry
+	}
+	return eligible, rows.Err()
+}
+
+func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectorindex.Neighbor,
+	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate,
+) ([]SemanticSearchCandidate, bool) {
+	seen := make(map[int64]struct{}, limit+1)
+	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(eligible)))
+	for _, neighbor := range neighbors {
+		entry, ok := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
+			InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
+		if !ok {
+			continue
+		}
+		if _, duplicate := seen[entry.NodeID]; duplicate {
+			continue
+		}
+		seen[entry.NodeID] = struct{}{}
+		candidate := entry
+		candidate.VaultID = vaultID
+		candidate.VectorSpaceID = vectorSpaceID
+		candidate.InputID = neighbor.InputKey
+		candidate.Score = neighbor.Score
+		candidates = append(candidates, candidate)
+		if len(candidates) == limit+1 {
+			return candidates[:limit], true
+		}
+	}
+	return candidates, false
 }
 
 const (
@@ -1134,40 +1592,11 @@ func (s *Store) SearchPageWithOptions(
 	if limit <= 0 {
 		limit = 50
 	}
-	if opts.TagID != "" {
-		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
-			return nil, false, fmt.Errorf("search tag %q: %w", opts.TagID, err)
-		}
-	}
-	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
+	var err error
+	opts, err = s.normalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
-	opts.MIMEType = normalizedMIME
-	if opts.UnderNodeID < 0 {
-		return nil, false, errors.New("search directory node ID must be positive")
-	}
-	if opts.UnderNodeID != 0 {
-		directory, err := s.NodeByID(ctx, opts.UnderNodeID)
-		if err != nil {
-			return nil, false, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
-		}
-		if directory.TrashedAt != nil {
-			return nil, false, fmt.Errorf("search directory node %d is trashed: %w",
-				opts.UnderNodeID, ErrNotFound)
-		}
-		if !directory.IsDir() {
-			return nil, false, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
-		}
-	}
-	modifiedSince, modifiedBefore, err := NormalizeSearchTimeBounds(
-		opts.ModifiedSince, opts.ModifiedBefore,
-	)
-	if err != nil {
-		return nil, false, err
-	}
-	opts.ModifiedSince = modifiedSince
-	opts.ModifiedBefore = modifiedBefore
 	fq := ftsQuery(query)
 	if SearchNeedsQuery(query, opts) {
 		return nil, false, ErrSearchQueryRequired
@@ -1292,6 +1721,44 @@ func (s *Store) SearchPageWithOptions(
 		return nil, false, err
 	}
 	return hits, truncated, nil
+}
+
+func (s *Store) normalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
+	if opts.TagID != "" {
+		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
+			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)
+		}
+	}
+	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
+	if err != nil {
+		return SearchOptions{}, err
+	}
+	opts.MIMEType = normalizedMIME
+	if opts.UnderNodeID < 0 {
+		return SearchOptions{}, errors.New("search directory node ID must be positive")
+	}
+	if opts.UnderNodeID != 0 {
+		directory, err := s.NodeByID(ctx, opts.UnderNodeID)
+		if err != nil {
+			return SearchOptions{}, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
+		}
+		if directory.TrashedAt != nil {
+			return SearchOptions{}, fmt.Errorf("search directory node %d is trashed: %w",
+				opts.UnderNodeID, ErrNotFound)
+		}
+		if !directory.IsDir() {
+			return SearchOptions{}, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
+		}
+	}
+	modifiedSince, modifiedBefore, err := NormalizeSearchTimeBounds(
+		opts.ModifiedSince, opts.ModifiedBefore,
+	)
+	if err != nil {
+		return SearchOptions{}, err
+	}
+	opts.ModifiedSince = modifiedSince
+	opts.ModifiedBefore = modifiedBefore
+	return opts, nil
 }
 
 // searchFilterPage selects the limited page before walking its ancestry, so

@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,251 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/vectorindex"
 )
+
+func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "late-unembedded.pdf",
+		fakeHash("late-unembedded"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{
+			SetID: record.VectorSet.ID, InputKey: versionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		10, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	assert.False(t, resolution.Truncated)
+	assert.Equal(t, 3, resolution.ScopedDocuments)
+	assert.Equal(t, 1, resolution.CompleteDocuments)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
+	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
+	assert.Equal(t, document.EmbeddingInputOriginalFile, resolution.Candidates[0].InputKind)
+
+	filtered, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{
+			SetID: record.VectorSet.ID, InputKey: versionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		10, SearchOptions{MIMEType: "text/plain"})
+	require.NoError(t, err)
+	assert.Empty(t, filtered.Candidates, "scope filters apply before the semantic document cutoff")
+}
+
+func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	otherProfile := embeddingCatalogProfileVariant(t)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, otherProfile)
+	}))
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name    string
+		profile string
+		binding string
+		kind    document.EmbeddingInputKind
+		want    bool
+	}{
+		{"matching authority", profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, true},
+		{"other profile", otherProfile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, false},
+		{"other binding", profile.Fingerprint, "required", document.EmbeddingInputOriginalFile, false},
+		{"other input kind", profile.Fingerprint, "chunk", document.EmbeddingInputRenditionChunk, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, fingerprints, err := embeddingProfileBindingAuthority(t.Context(), s.db, test.profile, test.binding)
+			require.NoError(t, err)
+			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
+			result, err := s.ResolveSemanticCandidates(t.Context(), test.profile, test.binding, test.kind,
+				record.VectorSpace.ID, source.ManifestChecksum, []vectorindex.Neighbor{{
+					SetID: record.VectorSet.ID, InputKey: versionID,
+					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9,
+				}}, 1, SearchOptions{})
+			require.NoError(t, err)
+			if test.want {
+				require.Len(t, result.Candidates, 1)
+				assert.Equal(t, record.ID, result.Candidates[0].EmbeddingSetID)
+			} else {
+				assert.Zero(t, result.CompleteDocuments)
+				assert.Empty(t, result.Candidates)
+			}
+		})
+	}
+}
+
+func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+
+	_, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, strings.Repeat("f", 64), nil, 10, SearchOptions{})
+
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+}
+
+func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing.T) {
+	const missed = 10_000
+	neighbors := make([]vectorindex.Neighbor, missed+1)
+	for index := range missed {
+		neighbors[index] = vectorindex.Neighbor{
+			SetID: "filtered", InputKey: fmt.Sprintf("filtered-%d", index), InputChecksum: fakeHash("filtered"),
+		}
+	}
+	neighbors[missed] = vectorindex.Neighbor{
+		SetID: "eligible", InputKey: "eligible-input", InputChecksum: fakeHash("eligible"), Score: 0.75,
+	}
+	key := semanticEligibilityKey{
+		VectorSetID: "eligible", InputID: "eligible-input", InputChecksum: fakeHash("eligible"),
+	}
+	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
+		key: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputOriginalFile},
+	}
+
+	candidates, truncated := reduceSemanticCandidates("vault", fakeHash("space"), neighbors, 10, eligible)
+
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, int64(42), candidates[0].NodeID)
+	assert.InDelta(t, 0.75, candidates[0].Score, 1e-12)
+}
+
+func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
+	spaceID := fakeHash("space")
+	firstKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-1", InputChecksum: fakeHash("chunk-1")}
+	secondKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-2", InputChecksum: fakeHash("chunk-2")}
+	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
+		firstKey: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputRenditionChunk},
+		secondKey: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputRenditionChunk},
+	}
+
+	candidates, truncated := reduceSemanticCandidates("vault", spaceID, []vectorindex.Neighbor{
+		{SetID: firstKey.VectorSetID, InputKey: firstKey.InputID, InputChecksum: firstKey.InputChecksum, Score: 0.9},
+		{SetID: secondKey.VectorSetID, InputKey: secondKey.InputID, InputChecksum: secondKey.InputChecksum, Score: 0.8},
+	}, 10, eligible)
+
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, "chunk-1", candidates[0].InputID)
+	assert.InDelta(t, 0.9, candidates[0].Score, 1e-12)
+}
+
+func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	set, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
+		MaxRows: 100, MaxDimension: record.VectorSpace.Descriptor.Dimension,
+		MaxBytes: len(record.VectorSet.Payload),
+	})
+	require.NoError(t, err)
+	manifest, err := vectorindex.NewManifest([]string{record.VectorSet.ID})
+	require.NoError(t, err)
+	generation, err := vectorindex.BuildGeneration(manifest, []document.VectorSetV1{set}, vectorindex.Options{})
+	require.NoError(t, err)
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	stored := VectorIndexGenerationRecord{ID: hashVectorIndexTest("semantic-search-generation"),
+		VectorSpaceID: record.VectorSpace.ID, SourceManifestChecksum: source.ManifestChecksum,
+		IndexManifestChecksum: generation.Metadata().Manifest.Checksum, Bytes: generation.Bytes(),
+		RowCount: generation.Metadata().RowCount, BuiltAt: embeddingCatalogTime}
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, stored))
+
+	now := time.Now().UTC()
+	authority, err := s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "retrieval-test", now, time.Minute, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	assert.Equal(t, record.VectorSpace.Descriptor, authority.VectorSpace.Descriptor)
+	assert.False(t, authority.BindingRequired)
+	assert.Equal(t, 2, authority.ScopedDocuments)
+	assert.Equal(t, 1, authority.CompleteDocuments)
+	assert.Equal(t, stored.ID, authority.Lease.Generation.ID)
+	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
+		authority.Lease.FencingToken, now))
+}
+
+func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID,
+		strings.Repeat("x", 2048)+" mercury bounded evidence excerpt")
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("e9-lexical"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
+		AttachedAt: embeddingCatalogTime}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 10, SearchOptions{})
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, build.ID, candidates[0].BuildID)
+	assert.Equal(t, build.LexicalSegments[0].ID, candidates[0].SegmentID)
+	assert.Contains(t, candidates[0].Excerpt, "mercury")
+	assert.LessOrEqual(t, len([]rune(candidates[0].Excerpt)), maxExplainedSearchExcerptRunes)
+	assert.Equal(t, versions[0], candidates[0].Node.CurrentVersionID)
+}
+
+func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
+	s := newTestStore(t)
+	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), s.RootID(), "alpha-folder")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), docs.ID, "alpha.pdf", fakeHash("alpha"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{})
+
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
+}
 
 func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	s := newTestStore(t)
