@@ -1150,3 +1150,80 @@ func TestResponseHonorsDescriptorNormalization(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestTimeoutClassification(t *testing.T) {
+	for _, stage := range []string{"secret", "headers", "body"} {
+		for _, callerDeadline := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/caller=%t", stage, callerDeadline), func(t *testing.T) {
+				fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					_, _ = io.Copy(io.Discard, request.Body)
+					if stage == "body" {
+						writer.Header().Set("Content-Type", responseMediaType())
+						writer.WriteHeader(http.StatusOK)
+						assert.NoError(t, http.NewResponseController(writer).Flush())
+					}
+					<-request.Context().Done()
+				}))
+				profile := fixture.profile
+				profile.RequestTimeout = 100 * time.Millisecond
+				fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
+				require.NoError(t, err)
+				profile.Descriptor.PolicyFingerprint = fingerprint
+				profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
+				require.NoError(t, err)
+				var secrets embeddingbridge.SecretResolver = secretMap{"credential:synthetic-bridge": "synthetic-secret"}
+				if stage == "secret" {
+					secrets = &cancelBlockingSecretResolver{started: make(chan struct{})}
+				}
+				client, err := embeddingbridge.New(profile, secrets, fixture.resolver, &http.Client{})
+				require.NoError(t, err)
+				authorization := fixture.authorization(1)
+				authorization.DescriptorFingerprint = profile.Descriptor.Fingerprint
+				authorization.PolicyFingerprint = profile.Descriptor.PolicyFingerprint
+				ctx := t.Context()
+				if callerDeadline {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
+					defer cancel()
+				}
+				_, err = client.Embed(ctx, oneTextInput("alpha"), authorization)
+				require.Error(t, err)
+				if callerDeadline {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+				} else {
+					require.NoError(t, ctx.Err())
+					assert.Equal(t, embeddingbridge.ErrorTransient, embeddingbridge.Category(err))
+					assert.True(t, embeddingbridge.IsRetryable(err))
+				}
+			})
+		}
+	}
+}
+
+func TestConnectionFailuresDistinguishPolicyFromUnavailability(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("denied=%t", denied), func(t *testing.T) {
+			var requests atomic.Int32
+			fixture := newBridgeFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				requests.Add(1)
+			}))
+			resolver := fixture.resolver
+			category := embeddingbridge.ErrorTransient
+			if denied {
+				resolver.address = netip.MustParseAddr("192.0.2.1")
+				category = embeddingbridge.ErrorPermanent
+			} else {
+				require.NoError(t, fixture.server.Close())
+			}
+			client, err := embeddingbridge.New(fixture.profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, resolver, &http.Client{})
+			require.NoError(t, err)
+			_, err = client.Embed(t.Context(), oneTextInput("alpha"), fixture.authorization(1))
+			require.Error(t, err)
+			assert.Equal(t, category, embeddingbridge.Category(err))
+			assert.Equal(t, !denied, embeddingbridge.IsRetryable(err))
+			assert.Zero(t, requests.Load())
+			assert.NotContains(t, err.Error(), "192.0.2.1")
+			assert.NotContains(t, err.Error(), fixture.origin)
+		})
+	}
+}

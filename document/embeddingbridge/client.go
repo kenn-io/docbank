@@ -87,8 +87,8 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		var resolveErr error
 		secret, resolveErr = client.secrets.ResolveSecret(requestCtx, client.secretBinding)
 		if resolveErr != nil || !validSecret(secret) {
-			if contextErr := requestCtx.Err(); contextErr != nil {
-				return document.EmbeddingResult{}, contextErr
+			if requestCtx.Err() != nil {
+				return document.EmbeddingResult{}, requestContextError(ctx)
 			}
 			return document.EmbeddingResult{}, classified(ErrorAuthentication, 0)
 		}
@@ -132,11 +132,11 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	_ = bodyReader.Close()
 	sourceGate.Cancel()
 	writeErr := <-writerDone
-	if contextErr := requestCtx.Err(); contextErr != nil {
+	if requestCtx.Err() != nil {
 		if response != nil {
 			_ = response.Body.Close()
 		}
-		return document.EmbeddingResult{}, contextErr
+		return document.EmbeddingResult{}, requestContextError(ctx)
 	}
 	if errors.Is(writeErr, errSourceChanged) {
 		if response != nil {
@@ -148,10 +148,10 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		if response != nil {
 			_ = response.Body.Close()
 		}
-		if contextErr := requestCtx.Err(); contextErr != nil {
-			return document.EmbeddingResult{}, contextErr
+		if requestCtx.Err() != nil {
+			return document.EmbeddingResult{}, requestContextError(ctx)
 		}
-		return document.EmbeddingResult{}, classified(ErrorAmbiguousSubmission, 0)
+		return document.EmbeddingResult{}, transportError(doErr)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
@@ -165,8 +165,8 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	body, err := readBounded(response.Body, client.maxResponseBytes)
 	if err != nil {
-		if contextErr := requestCtx.Err(); contextErr != nil {
-			return document.EmbeddingResult{}, contextErr
+		if requestCtx.Err() != nil {
+			return document.EmbeddingResult{}, requestContextError(ctx)
 		}
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
 	}

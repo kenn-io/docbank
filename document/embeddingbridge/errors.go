@@ -1,8 +1,12 @@
 package embeddingbridge
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
+
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 // ErrorCategory is a stable, content-free worker classification.
@@ -48,4 +52,28 @@ func IsRetryable(err error) bool {
 
 func classified(category ErrorCategory, status int) error {
 	return &ProviderError{category: category, status: status}
+}
+
+// requestContextError is called after the bridge's request context ends.
+// Caller cancellation stays identifiable; the bridge's own deadline is retryable.
+func requestContextError(parent context.Context) error {
+	if err := parent.Err(); err != nil {
+		return err
+	}
+	return classified(ErrorTransient, 0)
+}
+
+func transportError(err error) error {
+	if errors.Is(err, providerhttp.ErrDestinationDenied) ||
+		errors.Is(err, providerhttp.ErrAddressDenied) ||
+		errors.Is(err, providerhttp.ErrCertificatePin) {
+		return classified(ErrorPermanent, 0)
+	}
+	if dialErr, ok := errors.AsType[*net.OpError](err); ok && dialErr.Op == "dial" {
+		return classified(ErrorTransient, 0)
+	}
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
+		return classified(ErrorTransient, 0)
+	}
+	return classified(ErrorAmbiguousSubmission, 0)
 }
