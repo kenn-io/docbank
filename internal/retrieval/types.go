@@ -35,18 +35,20 @@ type DocumentIdentity struct {
 }
 
 type EvidenceReference struct {
-	Kind              string
-	VaultID           string
-	NodeID            int64
-	ContentVersionID  string
-	VectorSpaceID     string
-	EmbeddingSetID    string
-	InputGenerationID string
-	InputID           string
-	InputKind         document.EmbeddingInputKind
-	BuildID           string
-	SegmentID         string
-	BlobHash          string
+	Kind                   string
+	VaultID                string
+	NodeID                 int64
+	NodeRevision           int64
+	ContentVersionID       string
+	VectorSpaceID          string
+	EmbeddingSetID         string
+	InputGenerationID      string
+	InputID                string
+	InputKind              document.EmbeddingInputKind
+	BuildID                string
+	SegmentID              string
+	BlobHash               string
+	SourceManifestChecksum string
 }
 
 type Candidate struct {
@@ -93,12 +95,21 @@ type Coverage struct {
 	State             CoverageState
 }
 
+type Degradation string
+
+const (
+	DegradationNone              Degradation = ""
+	DegradationExpansionDegraded Degradation = "query_expansion_degraded"
+	DegradationRerankingDegraded Degradation = "reranking_degraded"
+)
+
 type TraceCode string
 
 const (
 	TraceLexicalCandidates  TraceCode = "lexical_candidates"
 	TraceSemanticCandidates TraceCode = "semantic_candidates"
 	TraceFusedCandidates    TraceCode = "fused_candidates"
+	TraceRerankedCandidates TraceCode = "reranked_candidates"
 )
 
 type TraceEvent struct {
@@ -113,6 +124,8 @@ type Report struct {
 	Results       []Result
 	Truncated     bool
 	Trace         []TraceEvent
+	Degradations  []Degradation
+	Receipts      []ProviderReceipt
 }
 
 type Query struct {

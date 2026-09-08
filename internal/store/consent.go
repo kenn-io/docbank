@@ -250,6 +250,19 @@ func (s *Store) RevokeConsent(
 	return result, nil
 }
 
+// BeginProviderEgress checks durable consent while holding the shared revocation
+// fence. The caller must close the returned fence after provider execution.
+func (s *Store) BeginProviderEgress(ctx context.Context, request ProviderOperationAuthorizationRequest) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
+	s.providerEgressMu.RLock()
+	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
+	authorization, err := s.AuthorizeProviderOperation(ctx, request)
+	if err != nil {
+		fence.Close()
+		return ProviderOperationAuthorization{}, nil, err
+	}
+	return authorization, fence, nil
+}
+
 func (s *Store) AuthorizeProviderOperation(
 	ctx context.Context, request ProviderOperationAuthorizationRequest,
 ) (ProviderOperationAuthorization, error) {
