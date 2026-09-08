@@ -440,6 +440,105 @@ func TestTruncatedResponseIsRetryable(t *testing.T) {
 	assert.EqualError(t, err, "embedding bridge: ambiguous_submission (HTTP 200)")
 }
 
+func TestResponseBudgetsAreIndependent(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		semantic  int64
+		wire      int64
+		malformed bool
+	}{
+		{name: "exact vector footprint", semantic: 27, wire: 1024},
+		{name: "authorization exceeds wire cap", semantic: 4096, wire: 1024},
+		{name: "wire cap includes envelope", semantic: 27, wire: 27, malformed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				manifest, _ := readBridgeRequest(t, request)
+				writer.Header().Set("Content-Type", responseMediaType())
+				_, _ = io.WriteString(writer, validResponseBody(manifest))
+			}))
+			profile := fixture.profile
+			profile.MaxResponseBytes = test.wire
+			fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
+			require.NoError(t, err)
+			profile.Descriptor.PolicyFingerprint = fingerprint
+			profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
+			require.NoError(t, err)
+			client, err := embeddingbridge.New(profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, fixture.resolver, &http.Client{})
+			require.NoError(t, err)
+			authorization := fixture.authorization(2)
+			authorization.DescriptorFingerprint = profile.Descriptor.Fingerprint
+			authorization.PolicyFingerprint = profile.Descriptor.PolicyFingerprint
+			authorization.MaxResponseBytes = test.semantic
+			result, err := client.Embed(t.Context(), twoTextInputs(), authorization)
+			if test.malformed {
+				require.Error(t, err)
+				assert.Equal(t, embeddingbridge.ErrorMalformedResponse, embeddingbridge.Category(err))
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, result.Vectors, 2)
+			}
+		})
+	}
+}
+
+func TestEmptyUploadReadsDoNotBlockEmbed(t *testing.T) {
+	for _, probe := range []bool{false, true} {
+		t.Run(fmt.Sprintf("probe=%t", probe), func(t *testing.T) {
+			upload := &emptyReadUpload{reader: bytes.NewReader(nil), stop: make(chan struct{})}
+			if probe {
+				upload.reader = bytes.NewReader([]byte("a"))
+			}
+			fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				_, _ = io.Copy(io.Discard, request.Body)
+			}))
+			done := make(chan error, 1)
+			go func() {
+				_, err := fixture.client.Embed(t.Context(), []document.EmbeddingInput{{
+					Key: "source", Role: document.EmbeddingRoleDocument,
+					Kind: document.EmbeddingInputOriginalFile, Source: upload,
+				}}, fixture.authorization(1))
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				close(upload.stop)
+				require.Error(t, err)
+				assert.Equal(t, embeddingbridge.ErrorAmbiguousSubmission, embeddingbridge.Category(err))
+			case <-time.After(2 * time.Second):
+				close(upload.stop)
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("embedding did not return after releasing the source")
+				}
+				t.Fatal("empty reads kept Embed blocked after its request deadline")
+			}
+		})
+	}
+}
+
+type emptyReadUpload struct {
+	reader *bytes.Reader
+	stop   chan struct{}
+}
+
+func (upload *emptyReadUpload) Read(value []byte) (int, error) {
+	select {
+	case <-upload.stop:
+		return 0, io.EOF
+	default:
+	}
+	n, _ := upload.reader.Read(value)
+	return n, nil
+}
+
+func (*emptyReadUpload) Metadata() document.AuthorizedUploadMetadata {
+	return uploadMetadata([]byte("a"))
+}
+
+func (*emptyReadUpload) Close() error { return nil }
+
 func TestProfileFingerprintFreezesDescriptorModelOriginEgressBindingAndBounds(t *testing.T) {
 	fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		_, _ = io.Copy(io.Discard, request.Body)

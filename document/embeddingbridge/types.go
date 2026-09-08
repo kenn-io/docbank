@@ -31,6 +31,9 @@ type SecretResolver interface {
 
 // Profile freezes the bridge origin, vector-space identity, credential name,
 // egress authority, and synchronous execution bounds.
+// MaxResponseBytes caps the complete JSON response body, including the
+// envelope, escaped keys, and encoded numbers. Configure this independently
+// of EmbeddingAuthorization.MaxResponseBytes, which counts keys and float32s.
 type Profile struct {
 	Origin           string
 	Descriptor       document.EmbeddingDescriptor

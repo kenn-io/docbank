@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	unitLengthTolerance  = 1e-4
-	maxHeadingCharacters = 8192
+	unitLengthTolerance      = 1e-4
+	maxHeadingCharacters     = 8192
+	maxConsecutiveEmptyReads = 100
 )
 
 var (
@@ -59,8 +60,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	if err := document.ValidateEmbeddingProviderRequest(client, frozenInputs, authorization); err != nil {
 		return document.EmbeddingResult{}, err
 	}
-	if authorization.MaxBatchItems > client.maxBatchItems || authorization.MaxInputBytes > client.maxInputBytes ||
-		authorization.MaxResponseBytes > client.maxResponseBytes {
+	if authorization.MaxBatchItems > client.maxBatchItems || authorization.MaxInputBytes > client.maxInputBytes {
 		return document.EmbeddingResult{}, classified(ErrorCapacity, 0)
 	}
 	manifest, encoded, err := client.buildManifest(frozenInputs, authorization)
@@ -68,7 +68,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		return document.EmbeddingResult{}, err
 	}
 	boundary := "docbank-embedding-" + manifest.RequestChecksum[:32]
-	contentLength, err := multipartLength(boundary, encoded, frozenInputs)
+	contentLength, err := multipartLength(ctx, boundary, encoded, frozenInputs)
 	if err != nil || contentLength > client.maxRequestBytes {
 		return document.EmbeddingResult{}, classified(ErrorCapacity, 0)
 	}
@@ -107,7 +107,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 			writerDone <- err
 			return
 		}
-		writeErr := writeMultipart(multipartWriter, encoded, frozenInputs, true, sourceGate)
+		writeErr := writeMultipart(requestCtx, multipartWriter, encoded, frozenInputs, true, sourceGate)
 		if closeErr := multipartWriter.Close(); writeErr == nil {
 			writeErr = closeErr
 		}
@@ -281,13 +281,13 @@ func hasOriginalInput(inputs []document.EmbeddingInput) bool {
 	})
 }
 
-func multipartLength(boundary string, manifest []byte, inputs []document.EmbeddingInput) (int64, error) {
+func multipartLength(ctx context.Context, boundary string, manifest []byte, inputs []document.EmbeddingInput) (int64, error) {
 	counter := new(countingWriter)
 	writer := multipart.NewWriter(counter)
 	if err := writer.SetBoundary(boundary); err != nil {
 		return 0, errors.New("embedding bridge: deterministic multipart boundary is invalid")
 	}
-	if err := writeMultipart(writer, manifest, inputs, false, nil); err != nil {
+	if err := writeMultipart(ctx, writer, manifest, inputs, false, nil); err != nil {
 		return 0, err
 	}
 	if err := writer.Close(); err != nil {
@@ -305,7 +305,7 @@ func multipartLength(boundary string, manifest []byte, inputs []document.Embeddi
 	return total, nil
 }
 
-func writeMultipart(writer *multipart.Writer, manifest []byte, inputs []document.EmbeddingInput, writeFiles bool, sourceGate *activeSourceGate) error {
+func writeMultipart(ctx context.Context, writer *multipart.Writer, manifest []byte, inputs []document.EmbeddingInput, writeFiles bool, sourceGate *activeSourceGate) error {
 	manifestHeader := make(textproto.MIMEHeader)
 	manifestHeader.Set("Content-Disposition", `form-data; name="`+manifestPartName+`"`)
 	manifestHeader.Set("Content-Type", manifestMediaType)
@@ -335,7 +335,7 @@ func writeMultipart(writer *multipart.Writer, manifest []byte, inputs []document
 		if !ok {
 			return errTransferStopped
 		}
-		copyErr := copyAuthorizedFile(part, input.Source, metadata.ByteLength, metadata.SHA256)
+		copyErr := copyAuthorizedFile(ctx, part, input.Source, metadata.ByteLength, metadata.SHA256)
 		sourceGate.End(token)
 		if copyErr != nil {
 			return copyErr
@@ -344,7 +344,8 @@ func writeMultipart(writer *multipart.Writer, manifest []byte, inputs []document
 	return nil
 }
 
-func copyAuthorizedFile(destination io.Writer, source io.Reader, expectedLength int64, expectedSHA256 string) error {
+func copyAuthorizedFile(ctx context.Context, destination io.Writer, source io.Reader, expectedLength int64, expectedSHA256 string) error {
+	source = progressReader{ctx: ctx, source: source}
 	digest := sha256.New()
 	written, err := io.Copy(io.MultiWriter(destination, digest), io.LimitReader(source, expectedLength))
 	if err != nil {
@@ -360,6 +361,26 @@ func copyAuthorizedFile(destination io.Writer, source io.Reader, expectedLength 
 		return errSourceTransferFailed
 	}
 	return nil
+}
+
+// progressReader bounds empty reads in both the file copy and overflow probe.
+// The source gate remains responsible for interrupting a blocked source.Read.
+type progressReader struct {
+	ctx    context.Context
+	source io.Reader
+}
+
+func (reader progressReader) Read(value []byte) (int, error) {
+	for range maxConsecutiveEmptyReads {
+		if err := reader.ctx.Err(); err != nil {
+			return 0, err
+		}
+		n, err := reader.source.Read(value)
+		if n != 0 || err != nil {
+			return n, err
+		}
+	}
+	return 0, io.ErrNoProgress
 }
 
 func (client *Client) validateResponse(envelope Response, manifest RequestManifest, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
