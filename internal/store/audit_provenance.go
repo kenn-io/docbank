@@ -708,8 +708,12 @@ func validateReplayedIngest(record audit.Record) error {
 	if _, err := auditTimestampField(record, "started_at"); err != nil {
 		return err
 	}
-	if _, err := auditTextField(record, "source_kind"); err != nil {
+	sourceKind, err := auditTextField(record, "source_kind")
+	if err != nil {
 		return err
+	}
+	if kind, supplied := strings.CutPrefix(sourceKind, callerSuppliedSourceKindPrefix); !supplied || kind == "" {
+		return errors.New("provenance mutation ingest requires a non-empty caller-supplied source kind")
 	}
 	description, err := auditField(record, "source_desc")
 	if err != nil {

@@ -262,6 +262,94 @@ func TestAuditedProvenanceImportRejectsTamperedFact(t *testing.T) {
 	assert.Zero(t, auditRows)
 }
 
+func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
+	for _, test := range []struct {
+		kind  string
+		valid bool
+	}{
+		{kind: "cli"},
+		{kind: "watch"},
+		{kind: "embedded:"},
+		{kind: "embedded:agent", valid: true},
+		{kind: "embedded:watch", valid: true},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			node, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 7, "text/plain")
+			require.NoError(t, err)
+			seedInitialAuditAuthority(t, s, s.RootID())
+			run, err := s.BeginIngest(ctx, test.kind, "source")
+			require.NoError(t, err)
+
+			// Build a correctly hashed append with the supplied stored kind,
+			// bypassing the writer that always adds the caller-supplied prefix.
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+					return err
+				}
+				fact := metadataProvenance{
+					Type: metadataProvenanceType, NodeID: node.ID, IngestID: run.ID(),
+					OriginalPath: "report.txt",
+				}
+				fact.Identity, err = provenanceIdentity(fact)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`,
+					fact.Identity, fact.NodeID, fact.IngestID, fact.OriginalPath); err != nil {
+					return err
+				}
+				if test.kind == "watch" {
+					if err := insertWatchSourceTx(tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size); err != nil {
+						return err
+					}
+				}
+				if err := bumpRevisionTx(tx, node.ID, run.record.StartedAt); err != nil {
+					return err
+				}
+				resulting, err := nodeByIDTx(tx, node.ID)
+				if err != nil {
+					return err
+				}
+				authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+				if err != nil {
+					return err
+				}
+				return persistAuditedProvenanceAppend(ctx, tx, s.vaultID, run.ID(), run.record.StartedAt,
+					sequence, authority, scopes, node, resulting, run.record, fact)
+			}))
+
+			// Export the fixture's populated tables directly: ExportMetadata
+			// itself validates replay and would reject the malformed source.
+			var exported bytes.Buffer
+			write := newMetadataJSONWriter(&exported)
+			require.NoError(t, write(metadataHeader{
+				Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
+				VaultID: s.VaultID(), NodeSequence: node.ID,
+			}))
+			require.NoError(t, exportBlobs(ctx, s.db, write, false))
+			require.NoError(t, exportNodes(ctx, s.db, write))
+			require.NoError(t, exportIngests(ctx, s.db, write))
+			require.NoError(t, exportContentVersions(ctx, s.db, write))
+			require.NoError(t, exportProvenance(ctx, s.db, write))
+			require.NoError(t, exportWatchSources(ctx, s.db, write))
+			require.NoError(t, exportAuditMetadata(ctx, s.db, write))
+
+			restored := newTestStore(t)
+			err = restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes()))
+			if test.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "provenance mutation ingest requires a non-empty caller-supplied source kind")
+			var auditRows int
+			require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+			assert.Zero(t, auditRows, "rejected import must roll back audit history")
+		})
+	}
+}
+
 func findProvenanceFact(facts []ProvenanceFact, identity string) ProvenanceFact {
 	for _, fact := range facts {
 		if fact.Identity == identity {
