@@ -167,12 +167,15 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	if err := requireResponseMediaType(response.Header.Get("Content-Type")); err != nil {
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
 	}
-	body, err := readBounded(response.Body, client.maxResponseBytes)
-	if err != nil {
+	body, err := io.ReadAll(io.LimitReader(response.Body, client.maxResponseBytes+1))
+	if err != nil || int64(len(body)) > client.maxResponseBytes {
 		if requestCtx.Err() != nil {
 			return document.EmbeddingResult{}, requestContextError(ctx)
 		}
-		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
+		if int64(len(body)) > client.maxResponseBytes {
+			return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
+		}
+		return document.EmbeddingResult{}, classified(ErrorAmbiguousSubmission, response.StatusCode)
 	}
 	if err := manifestjson.RejectDuplicateKeys(body, "embedding bridge response"); err != nil {
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
@@ -417,14 +420,6 @@ func requireResponseMediaType(value string) error {
 		return errors.New("response media type mismatch")
 	}
 	return nil
-}
-
-func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
-	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil || int64(len(value)) > maximum {
-		return nil, errors.New("bounded response read failed")
-	}
-	return value, nil
 }
 
 type countingWriter struct{ written int64 }

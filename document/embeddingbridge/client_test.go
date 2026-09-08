@@ -418,6 +418,26 @@ func TestResponseByteLimitIsEnforcedBeforeDecode(t *testing.T) {
 	_, err := fixture.client.Embed(context.Background(), twoTextInputs(), fixture.authorization(2))
 	require.Error(t, err)
 	assert.Equal(t, embeddingbridge.ErrorMalformedResponse, embeddingbridge.Category(err))
+	assert.False(t, embeddingbridge.IsRetryable(err))
+}
+
+func TestTruncatedResponseIsRetryable(t *testing.T) {
+	fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		manifest, _ := readBridgeRequest(t, request)
+		body := validResponseBody(manifest)
+		writer.Header().Set("Content-Type", responseMediaType())
+		// Even valid JSON is incomplete when the connection ends before the
+		// declared body length. The HTTP transport reports unexpected EOF.
+		writer.Header().Set("Content-Length", strconv.Itoa(len(body)+1))
+		_, err := io.WriteString(writer, body)
+		assert.NoError(t, err)
+	}))
+	result, err := fixture.client.Embed(t.Context(), twoTextInputs(), fixture.authorization(2))
+	require.Error(t, err)
+	assert.Empty(t, result.Vectors)
+	assert.Equal(t, embeddingbridge.ErrorAmbiguousSubmission, embeddingbridge.Category(err))
+	assert.True(t, embeddingbridge.IsRetryable(err))
+	assert.EqualError(t, err, "embedding bridge: ambiguous_submission (HTTP 200)")
 }
 
 func TestProfileFingerprintFreezesDescriptorModelOriginEgressBindingAndBounds(t *testing.T) {
