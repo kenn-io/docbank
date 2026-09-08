@@ -365,6 +365,21 @@ func TestResponseContractFailsClosed(t *testing.T) {
 		{name: "non finite", contentType: responseMediaType(), body: func(manifest requestManifest) string {
 			return responseBody(manifest, `[{"key":"first","index":0,"values":[1e1000,2]},{"key":"second","index":1,"values":[3,4]}]`)
 		}, category: embeddingbridge.ErrorMalformedResponse},
+		{name: "null coordinate", contentType: responseMediaType(), body: func(manifest requestManifest) string {
+			return responseBody(manifest, `[{"key":"first","index":0,"values":[1,null]},{"key":"second","index":1,"values":[3,4]}]`)
+		}, category: embeddingbridge.ErrorMalformedResponse},
+		{name: "string coordinate", contentType: responseMediaType(), body: func(manifest requestManifest) string {
+			return responseBody(manifest, `[{"key":"first","index":0,"values":[1,"0"]},{"key":"second","index":1,"values":[3,4]}]`)
+		}, category: embeddingbridge.ErrorMalformedResponse},
+		{name: "boolean coordinate", contentType: responseMediaType(), body: func(manifest requestManifest) string {
+			return responseBody(manifest, `[{"key":"first","index":0,"values":[1,false]},{"key":"second","index":1,"values":[3,4]}]`)
+		}, category: embeddingbridge.ErrorMalformedResponse},
+		{name: "array coordinate", contentType: responseMediaType(), body: func(manifest requestManifest) string {
+			return responseBody(manifest, `[{"key":"first","index":0,"values":[1,[]]},{"key":"second","index":1,"values":[3,4]}]`)
+		}, category: embeddingbridge.ErrorMalformedResponse},
+		{name: "object coordinate", contentType: responseMediaType(), body: func(manifest requestManifest) string {
+			return responseBody(manifest, `[{"key":"first","index":0,"values":[1,{}]},{"key":"second","index":1,"values":[3,4]}]`)
+		}, category: embeddingbridge.ErrorMalformedResponse},
 		{name: "duplicate key", contentType: responseMediaType(), body: func(manifest requestManifest) string {
 			return responseBody(manifest, `[{"key":"first","index":0,"values":[1,2]},{"key":"first","index":1,"values":[3,4]}]`)
 		}, category: embeddingbridge.ErrorMalformedResponse},
@@ -888,6 +903,71 @@ func TestKnownHTTPStatusDuringBlockedUploadWinsWriterError(t *testing.T) {
 	assert.False(t, embeddingbridge.IsRetryable(err))
 	assert.NotContains(t, err.Error(), "synthetic blocked reader closed")
 	assert.Positive(t, upload.closes.Load())
+}
+
+func TestExecuteEmbeddingInterruptsBlockedUpload(t *testing.T) {
+	for _, earlyResponse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("early_response=%t", earlyResponse), func(t *testing.T) {
+			upload := newBlockingUpload(uploadMetadata([]byte("synthetic blocked sealed source")))
+			fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				reader, err := request.MultipartReader()
+				if !assert.NoError(t, err) {
+					return
+				}
+				manifestPart, err := reader.NextPart()
+				if !assert.NoError(t, err) {
+					return
+				}
+				_, err = io.Copy(io.Discard, manifestPart)
+				if !assert.NoError(t, err) {
+					return
+				}
+				filePart, err := reader.NextPart()
+				if !assert.NoError(t, err) || !assert.Equal(t, "file", filePart.FormName()) {
+					return
+				}
+				<-upload.started
+				if earlyResponse {
+					controller := http.NewResponseController(writer)
+					if !assert.NoError(t, controller.EnableFullDuplex()) {
+						return
+					}
+					writer.WriteHeader(http.StatusRequestEntityTooLarge)
+					assert.NoError(t, controller.Flush())
+				}
+				_, _ = io.Copy(io.Discard, filePart)
+			}))
+			// Release the blocked reader even when testing a broken cancellation path.
+			t.Cleanup(func() { _ = upload.Close() })
+			done := make(chan error, 1)
+			go func() {
+				_, err := document.ExecuteEmbedding(t.Context(), fixture.client, []document.EmbeddingInput{{
+					Key: "source", Role: document.EmbeddingRoleDocument,
+					Kind: document.EmbeddingInputOriginalFile, Source: upload,
+				}}, fixture.authorization(1))
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				require.Error(t, err)
+				require.NoError(t, t.Context().Err())
+				category := embeddingbridge.ErrorTransient
+				if earlyResponse {
+					category = embeddingbridge.ErrorCapacity
+				}
+				assert.Equal(t, category, embeddingbridge.Category(err))
+				assert.Positive(t, upload.closes.Load())
+			case <-time.After(3 * time.Second):
+				_ = upload.Close()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("embedding did not return after releasing the source")
+				}
+				t.Fatal("embedding cancellation blocked on a sealed upload read")
+			}
+		})
+	}
 }
 
 func TestConcurrentRequestsDoNotShareSecretsOrState(t *testing.T) {

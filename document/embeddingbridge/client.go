@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/manifestjson"
+	"go.kenn.io/docbank/document/internal/providerutil"
 )
 
 const (
@@ -177,7 +178,8 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
 	}
 	var envelope Response
-	if err := json.Unmarshal(body, &envelope, json.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(body, &envelope, json.RejectUnknownMembers(true),
+		json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
 	}
 	result, err := client.validateResponse(envelope, manifest, frozenInputs, authorization)
@@ -444,6 +446,12 @@ type frozenUpload struct {
 }
 
 func (upload frozenUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
+
+func (upload frozenUpload) Close() error {
+	// The source gate closes only abandoned uploads. Interrupt the underlying
+	// source before a sealed upload waits for the mutex held by an active read.
+	return document.InterruptAuthorizedUpload(upload.AuthorizedUpload)
+}
 
 func safeMultipartFilename(value string) bool {
 	return utf8.ValidString(value) && strings.IndexFunc(value, unicode.IsControl) < 0
