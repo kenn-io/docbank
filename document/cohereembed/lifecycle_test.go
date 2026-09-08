@@ -96,14 +96,47 @@ func TestEmbedUsesOneFrozenAuthoritySnapshotWithLiveDriftComparisons(t *testing.
 	assert.Equal(t, int32(1), source.closeCalls.Load())
 }
 
+func TestExecuteEmbeddingVerifiesImageAfterProviderCleanup(t *testing.T) {
+	data := tinyPNG(t)
+	source := newLifecycleUpload(t, data, imageMetadata(t, data))
+	client := testClient(t, testProfile(t, 256), &countingSecrets{value: "synthetic-key"}, imageSuccessTransport(t))
+
+	_, err := document.ExecuteEmbedding(t.Context(), client, imageInputs(source), authorization(client.Descriptor(), 1))
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), source.closeCalls.Load())
+}
+
+func TestExecuteEmbeddingRejectsMismatchedImageFamilyBeforeReading(t *testing.T) {
+	data := tinyPNG(t)
+	metadata := imageMetadata(t, data)
+	metadata.MediaFamily = "pdf"
+	source := newLifecycleUpload(t, data, metadata)
+	secrets := &countingSecrets{value: "synthetic-key"}
+	var requests atomic.Int32
+	transport := imageSuccessTransport(t)
+	client := testClient(t, testProfile(t, 256), secrets, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return transport.RoundTrip(request)
+	}))
+
+	_, err := document.ExecuteEmbedding(t.Context(), client, imageInputs(source), authorization(client.Descriptor(), 1))
+	require.Error(t, err)
+	assert.Equal(t, len(data), source.data.Len())
+	assert.Equal(t, int32(1), source.closeCalls.Load())
+	assert.Zero(t, secrets.calls.Load())
+	assert.Zero(t, requests.Load())
+}
+
 func TestEmbedCancellationOrTimeoutClosesBlockedImageAndEveryEnrolledUploadOnce(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		blockIndex int
 		timeout    bool
+		execute    bool
 	}{
 		{name: "cancel first", blockIndex: 0},
 		{name: "timeout middle", blockIndex: 1, timeout: true},
+		{name: "core timeout middle", blockIndex: 1, timeout: true, execute: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			data := tinyPNG(t)
@@ -128,7 +161,12 @@ func TestEmbedCancellationOrTimeoutClosesBlockedImageAndEveryEnrolledUploadOnce(
 			defer cancel()
 			result := make(chan error, 1)
 			go func() {
-				_, err := client.Embed(ctx, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
+				var err error
+				if test.execute {
+					_, err = document.ExecuteEmbedding(ctx, client, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
+				} else {
+					_, err = client.Embed(ctx, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
+				}
 				result <- err
 			}()
 			select {
@@ -144,6 +182,7 @@ func TestEmbedCancellationOrTimeoutClosesBlockedImageAndEveryEnrolledUploadOnce(
 			case err = <-result:
 			case <-time.After(time.Second):
 				blocked.releaseRead()
+				<-result
 				t.Fatal("embedding did not return after cancellation")
 			}
 			if test.timeout {
@@ -209,6 +248,9 @@ func newLifecycleUpload(t *testing.T, data []byte, metadata ...document.Authoriz
 }
 
 func (upload *lifecycleUpload) Read(value []byte) (int, error) {
+	if upload.closeCalls.Load() != 0 {
+		return 0, io.ErrClosedPipe
+	}
 	if upload.block {
 		upload.startOnce.Do(func() { close(upload.readStarted) })
 		<-upload.released

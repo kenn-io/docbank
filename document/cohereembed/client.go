@@ -233,6 +233,9 @@ func (client *Client) prepareRequests(ctx context.Context, inputs []document.Emb
 		switch {
 		case input.Kind == document.EmbeddingInputOriginalFile:
 			metadata := input.Source.Metadata()
+			if metadata.MediaFamily != string(media.KindImage) {
+				return nil, errors.New("cohere embed: original upload must have image media family")
+			}
 			if metadata.ByteLength > client.profile.MaxInputItemBytes || metadata.ByteLength > client.profile.MaxImageBytes-imageBytes {
 				return nil, &ProviderError{Kind: ErrCapacityResponse}
 			}
@@ -337,6 +340,13 @@ func (upload *enrolledUpload) Close() error {
 	return upload.closeErr
 }
 
+func (upload *enrolledUpload) Interrupt() error {
+	// Only abandoned reads interrupt the source behind a sealed upload. Normal
+	// Close leaves that source available for core's final stream verification.
+	upload.closeOnce.Do(func() { upload.closeErr = document.InterruptAuthorizedUpload(upload.source) })
+	return upload.closeErr
+}
+
 func (upload *enrolledUpload) liveMetadata() document.AuthorizedUploadMetadata {
 	return upload.source.Metadata()
 }
@@ -425,7 +435,7 @@ func (gate *activeSourceGate) Cancel() {
 	gate.activeToken = 0
 	gate.mu.Unlock()
 	if active != nil {
-		_ = active.Close()
+		_ = active.Interrupt()
 	}
 }
 
