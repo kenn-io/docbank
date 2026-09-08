@@ -1,4 +1,4 @@
-package coherererank
+package cohere
 
 import (
 	"math"

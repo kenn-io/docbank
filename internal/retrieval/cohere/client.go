@@ -1,4 +1,4 @@
-package coherererank
+package cohere
 
 import (
 	"bytes"
@@ -20,7 +20,6 @@ import (
 
 const (
 	maxSecretBytes = 64 << 10
-	maxUsageValue  = float64(1 << 50)
 )
 
 var _ retrieval.RerankingProvider = (*Client)(nil)
@@ -34,37 +33,14 @@ type wireRequest struct {
 }
 
 type wireResponse struct {
-	ID      string       `json:"id"`
-	Results []wireResult `json:"results"`
-	Meta    *wireMeta    `json:"meta,omitempty"`
+	ID      string              `json:"id"`
+	Results []wireResult        `json:"results"`
+	Meta    *cohereapi.Metadata `json:"meta,omitempty"`
 }
 
 type wireResult struct {
 	Index          *int     `json:"index"`
 	RelevanceScore *float64 `json:"relevance_score"`
-}
-
-type wireMeta struct {
-	APIVersion *struct {
-		Version        string `json:"version"`
-		IsDeprecated   *bool  `json:"is_deprecated,omitempty"`
-		IsExperimental *bool  `json:"is_experimental,omitempty"`
-	} `json:"api_version,omitempty"`
-	BilledUnits *struct {
-		Images          *float64 `json:"images,omitempty"`
-		InputTokens     *float64 `json:"input_tokens,omitempty"`
-		ImageTokens     *float64 `json:"image_tokens,omitempty"`
-		OutputTokens    *float64 `json:"output_tokens,omitempty"`
-		SearchUnits     *float64 `json:"search_units,omitempty"`
-		Classifications *float64 `json:"classifications,omitempty"`
-		Pages           *float64 `json:"pages,omitempty"`
-	} `json:"billed_units,omitempty"`
-	Tokens *struct {
-		InputTokens  *float64 `json:"input_tokens,omitempty"`
-		OutputTokens *float64 `json:"output_tokens,omitempty"`
-	} `json:"tokens,omitempty"`
-	CachedTokens *float64 `json:"cached_tokens,omitempty"`
-	Warnings     []string `json:"warnings,omitempty"`
 }
 
 type Receipt struct {
@@ -73,9 +49,9 @@ type Receipt struct {
 	ModelRevision      string
 	CandidateCount     int
 	BilledImages       float64
-	InputTokens        float64
+	InputTokens        float64 // Billed input tokens; zero when not reported.
 	ImageTokens        float64
-	OutputTokens       float64
+	OutputTokens       float64 // Billed output tokens; zero when not reported.
 	SearchUnits        float64
 	Classifications    float64
 	Pages              float64
@@ -206,7 +182,7 @@ func (client *Client) validateRequest(request retrieval.RerankingRequest) error 
 }
 
 func validateResults(response wireResponse, candidates []retrieval.RerankingCandidate) ([]retrieval.RerankScore, error) {
-	if response.ID != "" && !cohereapi.ValidToken(response.ID, 128) || len(response.Results) != len(candidates) || !validMeta(response.Meta) {
+	if response.ID != "" && !cohereapi.ValidToken(response.ID, 128) || len(response.Results) != len(candidates) || !response.Meta.Valid(0) {
 		return nil, &ProviderError{Kind: ErrPermanentResponse}
 	}
 	scores := make([]retrieval.RerankScore, len(candidates))
@@ -241,14 +217,6 @@ func (client *Client) receipt(response wireResponse, candidates int) (Receipt, b
 	}
 	if response.Meta != nil {
 		copyUsage(&receipt.CachedTokens, response.Meta.CachedTokens)
-		if response.Meta.Tokens != nil {
-			if response.Meta.BilledUnits == nil || response.Meta.BilledUnits.InputTokens == nil {
-				copyUsage(&receipt.InputTokens, response.Meta.Tokens.InputTokens)
-			}
-			if response.Meta.BilledUnits == nil || response.Meta.BilledUnits.OutputTokens == nil {
-				copyUsage(&receipt.OutputTokens, response.Meta.Tokens.OutputTokens)
-			}
-		}
 	}
 	return receipt, validReceipt(receipt)
 }
@@ -262,49 +230,9 @@ func copyUsage(target *float64, value *float64) {
 func validReceipt(receipt Receipt) bool {
 	for _, value := range []float64{receipt.BilledImages, receipt.InputTokens, receipt.ImageTokens,
 		receipt.OutputTokens, receipt.SearchUnits, receipt.Classifications, receipt.Pages, receipt.CachedTokens} {
-		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > maxUsageValue {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > cohereapi.MaxUsageValue {
 			return false
 		}
 	}
 	return true
-}
-
-func validMeta(metadata *wireMeta) bool {
-	if metadata == nil {
-		return true
-	}
-	if metadata.APIVersion != nil && metadata.APIVersion.Version == "" {
-		return false
-	}
-	if metadata.BilledUnits != nil && metadata.Tokens != nil &&
-		(!matchingUsage(metadata.BilledUnits.InputTokens, metadata.Tokens.InputTokens) ||
-			!matchingUsage(metadata.BilledUnits.OutputTokens, metadata.Tokens.OutputTokens)) {
-		return false
-	}
-	if metadata.BilledUnits != nil && metadata.BilledUnits.Images != nil && *metadata.BilledUnits.Images != 0 {
-		return false
-	}
-	if metadata.BilledUnits != nil && metadata.BilledUnits.ImageTokens != nil && *metadata.BilledUnits.ImageTokens != 0 {
-		return false
-	}
-	values := []*float64{}
-	if metadata.BilledUnits != nil {
-		values = append(values, metadata.BilledUnits.Images, metadata.BilledUnits.InputTokens,
-			metadata.BilledUnits.ImageTokens, metadata.BilledUnits.OutputTokens,
-			metadata.BilledUnits.SearchUnits, metadata.BilledUnits.Classifications, metadata.BilledUnits.Pages)
-	}
-	if metadata.Tokens != nil {
-		values = append(values, metadata.Tokens.InputTokens, metadata.Tokens.OutputTokens)
-	}
-	values = append(values, metadata.CachedTokens)
-	for _, value := range values {
-		if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > maxUsageValue) {
-			return false
-		}
-	}
-	return true
-}
-
-func matchingUsage(left, right *float64) bool {
-	return left == nil || right == nil || *left == *right
 }

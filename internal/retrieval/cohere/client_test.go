@@ -1,4 +1,4 @@
-package coherererank
+package cohere
 
 import (
 	"bytes"
@@ -23,6 +23,8 @@ import (
 
 func TestRerankSendsOnlyBoundedTextAndMapsIndicesLocally(t *testing.T) {
 	profile := testProfile(ModelPro)
+	profile.MaxExcerptBytes = 8192
+	profile.MaxTokensPerDocument = 1024
 	client := testClient(t, profile, testSecrets{"secret:cohere-rerank": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		assert.Equal(t, http.MethodPost, request.Method)
 		assert.Equal(t, "https://api.cohere.com/v2/rerank", request.URL.String())
@@ -44,7 +46,7 @@ func TestRerankSendsOnlyBoundedTextAndMapsIndicesLocally(t *testing.T) {
 		assert.Equal(t, "private query", payload.Query)
 		assert.Equal(t, []string{"first excerpt", "second excerpt"}, payload.Documents)
 		assert.Equal(t, 2, payload.TopN)
-		assert.Equal(t, 4096, payload.MaxTokensPerDoc)
+		assert.Equal(t, 1024, payload.MaxTokensPerDoc)
 		response := []byte(`{"id":"response-id","results":[{"index":1,"relevance_score":0.9},{"index":0,"relevance_score":0.2}],"meta":{"api_version":{"version":"2","is_deprecated":false,"is_experimental":false},"billed_units":{"search_units":1},"tokens":{"input_tokens":7}}}`)
 		return jsonResponse(request, http.StatusOK, response), nil
 	}))
@@ -58,17 +60,19 @@ func TestRerankSendsOnlyBoundedTextAndMapsIndicesLocally(t *testing.T) {
 	}, execution.Scores)
 	assert.Equal(t, Receipt{PolicyFingerprint: client.PolicyFingerprint(),
 		Model: ModelPro, ModelRevision: profile.ModelRevision, CandidateCount: 2,
-		InputTokens: 7, SearchUnits: 1, ProviderResponseID: "response-id"}, execution.Receipt)
+		SearchUnits: 1, ProviderResponseID: "response-id"}, execution.Receipt)
 }
 
-func TestRerankRejectsInconsistentProviderUsage(t *testing.T) {
+func TestRerankAcceptsDistinctBilledAndTotalUsage(t *testing.T) {
 	client := testClient(t, testProfile(ModelPro), testSecrets{"secret:cohere-rerank": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		body := []byte(`{"id":"response-id","results":[{"index":0,"relevance_score":0.5},{"index":1,"relevance_score":0.4}],"meta":{"billed_units":{"input_tokens":7},"tokens":{"input_tokens":8}}}`)
+		body := []byte(`{"id":"response-id","results":[{"index":0,"relevance_score":0.5},{"index":1,"relevance_score":0.4}],"meta":{"billed_units":{"input_tokens":7,"output_tokens":3},"tokens":{"input_tokens":8,"output_tokens":4}}}`)
 		return jsonResponse(request, http.StatusOK, body), nil
 	}))
 
-	_, err := client.Rerank(context.Background(), rerankingRequest())
-	require.ErrorIs(t, err, ErrPermanentResponse)
+	execution, err := client.RerankWithReceipt(context.Background(), rerankingRequest())
+	require.NoError(t, err)
+	assert.InDelta(t, 7, execution.Receipt.InputTokens, 0)
+	assert.InDelta(t, 3, execution.Receipt.OutputTokens, 0)
 }
 
 func TestRerankAcceptsDocumentedFractionalUsageAndPreservesItInReceipt(t *testing.T) {

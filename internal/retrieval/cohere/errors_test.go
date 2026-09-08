@@ -1,4 +1,4 @@
-package cohereembed
+package cohere
 
 import (
 	"math"

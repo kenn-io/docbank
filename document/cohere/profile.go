@@ -1,5 +1,5 @@
-// Package cohereembed implements the fixed hosted Cohere Embed v4 contract.
-package cohereembed
+// Package cohere implements the fixed hosted Cohere Embed v4 contract.
+package cohere
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -27,7 +26,6 @@ const (
 	QueryFormatterV1      = "cohere-embed-v4/search-query/v1"
 	ScalarEncodingFloat32 = "float32"
 	modelCompatibilityID  = "cohere/embed-v4/search/v1"
-	host                  = "api.cohere.com"
 	origin                = "https://api.cohere.com"
 	embedPath             = "/v2/embed"
 	adapterContract       = "docbank-cohere-embed-v4/v1"
@@ -89,19 +87,7 @@ type policyIdentity struct {
 	MaxResponseBytes   int64                        `json:"max_response_bytes"`
 	AcceptedImageTypes []string                     `json:"accepted_image_types"`
 	MediaPolicy        media.Policy                 `json:"media_policy"`
-	Egress             egressIdentity               `json:"egress"`
-}
-
-type egressIdentity struct {
-	Scheme              string   `json:"scheme"`
-	Host                string   `json:"host"`
-	Port                uint16   `json:"port"`
-	AllowedCIDRs        []string `json:"allowed_cidrs"`
-	ProxyMode           string   `json:"proxy_mode"`
-	ConnectTimeout      int64    `json:"connect_timeout_nanos"`
-	KeepAlive           int64    `json:"keep_alive_nanos"`
-	TLSHandshakeTimeout int64    `json:"tls_handshake_timeout_nanos"`
-	SPKISHA256          []string `json:"spki_sha256,omitempty"`
+	Egress             cohereapi.EgressIdentity     `json:"egress"`
 }
 
 func PolicyFingerprint(profile Profile) (string, error) {
@@ -116,7 +102,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxInputItemBytes: normalized.MaxInputItemBytes, MaxInputBytes: normalized.MaxInputBytes,
 		MaxImageBytes: normalized.MaxImageBytes, MaxRequestBytes: normalized.MaxRequestBytes,
 		MaxResponseBytes: normalized.MaxResponseBytes, AcceptedImageTypes: slices.Clone(acceptedImageFormats),
-		MediaPolicy: normalized.MediaPolicy, Egress: egressPolicyIdentity(normalized.EgressPolicy),
+		MediaPolicy: normalized.MediaPolicy, Egress: cohereapi.IdentifyEgress(normalized.EgressPolicy),
 	}, json.Deterministic(true))
 	if err != nil {
 		return "", errors.New("cohere embed: policy identity encoding failed")
@@ -144,7 +130,7 @@ func New(profile Profile, secrets SecretResolver, resolver providerhttp.Resolver
 	if descriptor.PolicyFingerprint != fingerprint {
 		return nil, errors.New("cohere embed: descriptor policy fingerprint does not match profile")
 	}
-	if nilInterface(secrets) {
+	if cohereapi.IsNil(secrets) {
 		return nil, errors.New("cohere embed: named API-key resolver is required")
 	}
 	transport, err := providerhttp.NewTransport(normalized.EgressPolicy, resolver)
@@ -211,7 +197,7 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 		profile.MediaPolicy.AllowVideo || !profile.MediaPolicy.AllowStill || !profile.MediaPolicy.AllowAnimated {
 		return Profile{}, document.EmbeddingDescriptor{}, errors.New("cohere embed: media policy must admit bounded still and animated images only")
 	}
-	if err := normalizeEgress(&profile.EgressPolicy); err != nil {
+	if err := cohereapi.NormalizeEgress(&profile.EgressPolicy); err != nil {
 		return Profile{}, document.EmbeddingDescriptor{}, err
 	}
 	descriptor := cloneDescriptor(profile.Descriptor)
@@ -256,73 +242,8 @@ func modelInputContract() (document.ModelInputContract, error) {
 	})
 }
 
-func normalizeEgress(policy *providerhttp.EgressPolicy) error {
-	if policy.ConnectTimeout == 0 {
-		policy.ConnectTimeout = providerhttp.DefaultConnectTimeout
-	}
-	if policy.KeepAlive == 0 {
-		policy.KeepAlive = providerhttp.DefaultKeepAlive
-	}
-	if policy.TLSHandshakeTimeout == 0 {
-		policy.TLSHandshakeTimeout = providerhttp.DefaultTLSHandshakeTimeout
-	}
-	if policy.ProxyMode == "" {
-		policy.ProxyMode = providerhttp.ProxyDisabled
-	}
-	if policy.Scheme != "https" || policy.Host != host || policy.Port != 443 ||
-		policy.ProxyMode != providerhttp.ProxyDisabled || policy.TLS.RootCAs != nil {
-		return errors.New("cohere embed: egress authority must be exactly api.cohere.com:443")
-	}
-	for index := range policy.AllowedCIDRs {
-		policy.AllowedCIDRs[index] = policy.AllowedCIDRs[index].Masked()
-	}
-	slices.SortFunc(policy.AllowedCIDRs, func(left, right netip.Prefix) int { return strings.Compare(left.String(), right.String()) })
-	for index := 1; index < len(policy.AllowedCIDRs); index++ {
-		if policy.AllowedCIDRs[index] == policy.AllowedCIDRs[index-1] {
-			return errors.New("cohere embed: egress policy has a duplicate CIDR")
-		}
-	}
-	for index := range policy.TLS.SPKISHA256 {
-		policy.TLS.SPKISHA256[index] = strings.ToLower(policy.TLS.SPKISHA256[index])
-	}
-	slices.Sort(policy.TLS.SPKISHA256)
-	for index := 1; index < len(policy.TLS.SPKISHA256); index++ {
-		if policy.TLS.SPKISHA256[index] == policy.TLS.SPKISHA256[index-1] {
-			return errors.New("cohere embed: egress policy has a duplicate SPKI pin")
-		}
-	}
-	if _, err := providerhttp.NewTransport(*policy, nil); err != nil {
-		return errors.New("cohere embed: sealed egress policy is invalid")
-	}
-	return nil
-}
-
-func egressPolicyIdentity(policy providerhttp.EgressPolicy) egressIdentity {
-	cidrs := make([]string, len(policy.AllowedCIDRs))
-	for index, prefix := range policy.AllowedCIDRs {
-		cidrs[index] = prefix.String()
-	}
-	return egressIdentity{Scheme: policy.Scheme, Host: policy.Host, Port: policy.Port,
-		AllowedCIDRs: cidrs, ProxyMode: string(policy.ProxyMode), ConnectTimeout: int64(policy.ConnectTimeout),
-		KeepAlive: int64(policy.KeepAlive), TLSHandshakeTimeout: int64(policy.TLSHandshakeTimeout),
-		SPKISHA256: slices.Clone(policy.TLS.SPKISHA256)}
-}
-
 func cloneDescriptor(value document.EmbeddingDescriptor) document.EmbeddingDescriptor {
 	value.InputKinds = slices.Clone(value.InputKinds)
 	value.SupportedRequestModes = slices.Clone(value.SupportedRequestModes)
 	return value
-}
-
-func nilInterface(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

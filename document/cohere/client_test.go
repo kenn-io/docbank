@@ -1,4 +1,4 @@
-package cohereembed
+package cohere
 
 import (
 	"bytes"
@@ -226,14 +226,14 @@ func TestEmbedPreservesFractionalImageTokensForImageRequest(t *testing.T) {
 	assert.InDelta(t, 2.25, execution.Receipt.ImageTokens, 0)
 }
 
-func TestEmbedRejectsContradictoryDocumentedUsage(t *testing.T) {
+func TestEmbedAcceptsDistinctBilledAndTotalUsage(t *testing.T) {
 	profile := testProfile(t, 256)
 	client := testClient(t, profile, &countingSecrets{value: "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		vector := make([]float32, 256)
 		body, err := json.Marshal(map[string]any{
 			"id": "synthetic-id", "embeddings": map[string]any{"float": [][]float32{vector}},
-			"meta": map[string]any{"billed_units": map[string]any{"input_tokens": 1.5},
-				"tokens": map[string]any{"input_tokens": 2.5}},
+			"meta": map[string]any{"billed_units": map[string]any{"input_tokens": 1.5, "output_tokens": 3.5},
+				"tokens": map[string]any{"input_tokens": 2.5, "output_tokens": 4.5}},
 		})
 		require.NoError(t, err)
 		return jsonResponse(request, http.StatusOK, body), nil
@@ -241,8 +241,10 @@ func TestEmbedRejectsContradictoryDocumentedUsage(t *testing.T) {
 	input := document.EmbeddingInput{Key: "document", Role: document.EmbeddingRoleDocument,
 		Kind: document.EmbeddingInputRenditionChunk, Text: "document text"}
 
-	_, err := client.Embed(context.Background(), []document.EmbeddingInput{input}, authorization(client.Descriptor(), 1))
-	require.ErrorIs(t, err, ErrPermanentResponse)
+	execution, err := client.EmbedWithReceipt(context.Background(), []document.EmbeddingInput{input}, authorization(client.Descriptor(), 1))
+	require.NoError(t, err)
+	assert.InDelta(t, 1.5, execution.Receipt.InputTokens, 0)
+	assert.InDelta(t, 3.5, execution.Receipt.OutputTokens, 0)
 }
 
 func TestEmbedAcceptsOnlyLocallyVerifiedCohereImageFormats(t *testing.T) {
@@ -272,6 +274,20 @@ func TestEmbedAcceptsOnlyLocallyVerifiedCohereImageFormats(t *testing.T) {
 			assert.True(t, source.closed)
 		})
 	}
+}
+
+func TestEmbedAcceptsProcessedDimensionsForNonSquareImage(t *testing.T) {
+	// Cohere's v2 multimodal guide shows a 1080x1350 JPEG returning 1080x1080 metadata.
+	data := mediatest.JPEG(1080, 1350, color.Black)
+	client := testClient(t, testProfile(t, 256), &countingSecrets{value: "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body := []byte(`{"id":"synthetic","embeddings":{"float":[` + vectorJSON() + `]},"images":[{"width":1080,"height":1080,"format":"jpeg","bit_depth":24}]}`)
+		return jsonResponse(request, http.StatusOK, body), nil
+	}))
+	input := document.EmbeddingInput{Key: "image", Role: document.EmbeddingRoleDocument,
+		Kind: document.EmbeddingInputOriginalFile, Source: imageUpload(t, data, "image/jpeg")}
+	result, err := document.ExecuteEmbedding(t.Context(), client, []document.EmbeddingInput{input}, authorization(client.Descriptor(), 1))
+	require.NoError(t, err)
+	require.Len(t, result.Vectors, 1)
 }
 
 func TestEmbedClosesEverySourceAndMakesNoEgressWhenSourceAuthorityFails(t *testing.T) {

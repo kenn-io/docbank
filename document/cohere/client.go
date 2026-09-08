@@ -1,4 +1,4 @@
-package cohereembed
+package cohere
 
 import (
 	"bytes"
@@ -25,7 +25,6 @@ import (
 
 const (
 	maxSecretBytes = 64 << 10
-	maxUsageValue  = float64(1 << 50)
 )
 
 var _ document.EmbeddingProvider = (*Client)(nil)
@@ -64,9 +63,9 @@ type wireResponse struct {
 		UBinary [][]uint8   `json:"ubinary,omitempty"`
 		Base64  []string    `json:"base64,omitempty"`
 	} `json:"embeddings"`
-	Texts  []string          `json:"texts,omitempty"`
-	Images []wireImage       `json:"images,omitempty"`
-	Meta   *wireResponseMeta `json:"meta,omitempty"`
+	Texts  []string            `json:"texts,omitempty"`
+	Images []wireImage         `json:"images,omitempty"`
+	Meta   *cohereapi.Metadata `json:"meta,omitempty"`
 }
 
 type wireImage struct {
@@ -76,34 +75,10 @@ type wireImage struct {
 	BitDepth int    `json:"bit_depth"`
 }
 
-type wireResponseMeta struct {
-	APIVersion *struct {
-		Version        string `json:"version"`
-		IsDeprecated   *bool  `json:"is_deprecated,omitempty"`
-		IsExperimental *bool  `json:"is_experimental,omitempty"`
-	} `json:"api_version,omitempty"`
-	BilledUnits *struct {
-		Images          *float64 `json:"images,omitempty"`
-		InputTokens     *float64 `json:"input_tokens,omitempty"`
-		ImageTokens     *float64 `json:"image_tokens,omitempty"`
-		OutputTokens    *float64 `json:"output_tokens,omitempty"`
-		SearchUnits     *float64 `json:"search_units,omitempty"`
-		Classifications *float64 `json:"classifications,omitempty"`
-		Pages           *float64 `json:"pages,omitempty"`
-	} `json:"billed_units,omitempty"`
-	Tokens *struct {
-		InputTokens  *float64 `json:"input_tokens,omitempty"`
-		OutputTokens *float64 `json:"output_tokens,omitempty"`
-	} `json:"tokens,omitempty"`
-	CachedTokens *float64 `json:"cached_tokens,omitempty"`
-	Warnings     []string `json:"warnings,omitempty"`
-}
-
 type preparedRequest struct {
 	positions []int
 	payload   []byte
 	texts     []string
-	images    []string
 	imageMeta []wireImage
 }
 
@@ -118,9 +93,9 @@ type Receipt struct {
 	RequestCount          int
 	ImageInputs           int
 	BilledImages          float64
-	InputTokens           float64
+	InputTokens           float64 // Billed input tokens; zero when not reported.
 	ImageTokens           float64
-	OutputTokens          float64
+	OutputTokens          float64 // Billed output tokens; zero when not reported.
 	SearchUnits           float64
 	Classifications       float64
 	Pages                 float64
@@ -187,9 +162,6 @@ func (client *Client) embed(ctx context.Context, inputs []document.EmbeddingInpu
 	defer func() {
 		for index := range prepared {
 			clear(prepared[index].payload)
-			for image := range prepared[index].images {
-				prepared[index].images[image] = ""
-			}
 		}
 	}()
 	secret, err := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
@@ -260,12 +232,10 @@ func (client *Client) prepareRequests(ctx context.Context, inputs []document.Emb
 	for local := range sources {
 		source := sources[local]
 		if source.liveMetadata() != source.metadata {
-			clearStrings(images)
 			return nil, errors.New("cohere embed: image source changed or could not be read exactly")
 		}
 		token, ok := sourceGate.Begin(source)
 		if !ok {
-			clearStrings(images)
 			if contextErr := ctx.Err(); contextErr != nil {
 				return nil, contextErr
 			}
@@ -276,11 +246,9 @@ func (client *Client) prepareRequests(ctx context.Context, inputs []document.Emb
 		metadataChanged := source.liveMetadata() != source.metadata
 		closeErr := source.Close()
 		if contextErr := ctx.Err(); contextErr != nil {
-			clearStrings(images)
 			return nil, contextErr
 		}
 		if readErr != nil || closeErr != nil || metadataChanged {
-			clearStrings(images)
 			return nil, errors.New("cohere embed: image source changed or could not be read exactly")
 		}
 		images[local] = dataURL
@@ -308,7 +276,7 @@ func (client *Client) prepareRequests(ctx context.Context, inputs []document.Emb
 			return nil, &ProviderError{Kind: ErrCapacityResponse}
 		}
 		requests = append(requests, preparedRequest{positions: slices.Clone(candidate.positions), payload: payload,
-			texts: slices.Clone(candidate.texts), images: slices.Clone(candidate.images)})
+			texts: slices.Clone(candidate.texts)})
 		if len(candidate.images) != 0 {
 			requests[len(requests)-1].imageMeta = slices.Clone(imageMeta)
 		}
@@ -369,7 +337,7 @@ func enrollOriginalUploads(inputs []document.EmbeddingInput) ([]document.Embeddi
 	for index := range frozen {
 		frozen[index].HeadingPath = slices.Clone(frozen[index].HeadingPath)
 		frozen[index].SourceSpans = slices.Clone(frozen[index].SourceSpans)
-		if frozen[index].Kind != document.EmbeddingInputOriginalFile || nilInterface(frozen[index].Source) {
+		if frozen[index].Kind != document.EmbeddingInputOriginalFile || cohereapi.IsNil(frozen[index].Source) {
 			continue
 		}
 		upload := &enrolledUpload{source: frozen[index].Source, metadata: frozen[index].Source.Metadata()}
@@ -382,12 +350,6 @@ func enrollOriginalUploads(inputs []document.EmbeddingInput) ([]document.Embeddi
 func closeEnrolledUploads(uploads []*enrolledUpload) {
 	for _, upload := range uploads {
 		_ = upload.Close()
-	}
-}
-
-func clearStrings(values []string) {
-	for index := range values {
-		values[index] = ""
 	}
 }
 
@@ -454,14 +416,8 @@ func (client *Client) readImage(source document.AuthorizedUpload, metadata docum
 		detected.Size != metadata.ByteLength || !slices.Contains(acceptedImageFormats, detected.MediaType) {
 		return "", wireImage{}, errors.New("cohere embed: image source media identity is invalid")
 	}
-	encoded := make([]byte, 0, len("data:")+len(detected.MediaType)+len(";base64,")+base64.StdEncoding.EncodedLen(len(data)))
-	encoded = append(encoded, "data:"...)
-	encoded = append(encoded, detected.MediaType...)
-	encoded = append(encoded, ";base64,"...)
-	encoded = base64.StdEncoding.AppendEncode(encoded, data)
-	result := string(encoded)
-	clear(encoded)
-	return result, wireImage{Width: detected.Width, Height: detected.Height, Format: string(detected.Format)}, nil
+	dataURL := "data:" + detected.MediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
+	return dataURL, wireImage{Width: detected.Width, Height: detected.Height, Format: string(detected.Format)}, nil
 }
 
 func (client *Client) execute(ctx context.Context, prepared preparedRequest, secret string, receipt *Receipt) ([][]float32, error) {
@@ -516,7 +472,7 @@ func (client *Client) execute(ctx context.Context, prepared preparedRequest, sec
 		len(decoded.Embeddings.Int8) != 0 || len(decoded.Embeddings.Uint8) != 0 ||
 		len(decoded.Embeddings.Binary) != 0 || len(decoded.Embeddings.UBinary) != 0 || len(decoded.Embeddings.Base64) != 0 ||
 		decoded.Texts != nil && !slices.Equal(decoded.Texts, prepared.texts) ||
-		!validImageMetadata(decoded.Images, prepared.imageMeta) || !validMeta(decoded.Meta, len(prepared.imageMeta)) {
+		!validImageMetadata(decoded.Images, prepared.imageMeta) || !decoded.Meta.Valid(len(prepared.imageMeta)) {
 		return nil, &ProviderError{Kind: ErrPermanentResponse}
 	}
 	for _, vector := range decoded.Embeddings.Float {
@@ -546,20 +502,12 @@ func addReceipt(receipt *Receipt, response wireResponse, imageInputs int) bool {
 		} else {
 			values[7] = response.Meta.CachedTokens
 		}
-		if response.Meta.Tokens != nil {
-			if values[1] == nil {
-				values[1] = response.Meta.Tokens.InputTokens
-			}
-			if values[3] == nil {
-				values[3] = response.Meta.Tokens.OutputTokens
-			}
-		}
 	}
 	totals := []*float64{&receipt.BilledImages, &receipt.InputTokens, &receipt.ImageTokens,
 		&receipt.OutputTokens, &receipt.SearchUnits, &receipt.Classifications, &receipt.Pages, &receipt.CachedTokens}
 	for index, value := range values {
 		if value != nil {
-			if *value > maxUsageValue-*totals[index] {
+			if *value > cohereapi.MaxUsageValue-*totals[index] {
 				return false
 			}
 			*totals[index] += *value
@@ -579,51 +527,10 @@ func validImageMetadata(actual, expected []wireImage) bool {
 		return false
 	}
 	for index, image := range actual {
-		if image.Width != expected[index].Width || image.Height != expected[index].Height ||
+		if image.Width <= 0 || image.Height <= 0 ||
 			image.Format != expected[index].Format || image.BitDepth < 1 || image.BitDepth > 64 {
 			return false
 		}
 	}
 	return true
-}
-
-func validMeta(metadata *wireResponseMeta, expectedImages int) bool {
-	if metadata == nil {
-		return true
-	}
-	if metadata.APIVersion != nil && metadata.APIVersion.Version == "" {
-		return false
-	}
-	if metadata.BilledUnits != nil && metadata.Tokens != nil &&
-		(!matchingUsage(metadata.BilledUnits.InputTokens, metadata.Tokens.InputTokens) ||
-			!matchingUsage(metadata.BilledUnits.OutputTokens, metadata.Tokens.OutputTokens)) {
-		return false
-	}
-	values := []*float64{}
-	if metadata.BilledUnits != nil {
-		values = append(values, metadata.BilledUnits.Images, metadata.BilledUnits.InputTokens,
-			metadata.BilledUnits.ImageTokens, metadata.BilledUnits.OutputTokens,
-			metadata.BilledUnits.SearchUnits, metadata.BilledUnits.Classifications, metadata.BilledUnits.Pages)
-	}
-	if metadata.BilledUnits != nil && metadata.BilledUnits.Images != nil && *metadata.BilledUnits.Images != float64(expectedImages) {
-		return false
-	}
-	if expectedImages == 0 && metadata.BilledUnits != nil && metadata.BilledUnits.ImageTokens != nil &&
-		*metadata.BilledUnits.ImageTokens != 0 {
-		return false
-	}
-	if metadata.Tokens != nil {
-		values = append(values, metadata.Tokens.InputTokens, metadata.Tokens.OutputTokens)
-	}
-	values = append(values, metadata.CachedTokens)
-	for _, value := range values {
-		if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > maxUsageValue) {
-			return false
-		}
-	}
-	return true
-}
-
-func matchingUsage(left, right *float64) bool {
-	return left == nil || right == nil || *left == *right
 }

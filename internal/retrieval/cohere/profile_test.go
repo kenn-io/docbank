@@ -1,4 +1,4 @@
-package coherererank
+package cohere
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestNewRequiresIndependentFixedRerankV4Profile(t *testing.T) {
 		"epoch":      func(value *Profile) { value.CompatibilityEpoch = "other" },
 		"binding":    func(value *Profile) { value.SecretBinding = "" },
 		"candidates": func(value *Profile) { value.MaxCandidates = 1001 },
-		"tokens":     func(value *Profile) { value.MaxTokensPerDocument = value.MaxExcerptBytes - 1 },
+		"tokens":     func(value *Profile) { value.MaxTokensPerDocument = -1 },
 		"host":       func(value *Profile) { value.EgressPolicy.Host = "example.com" },
 	}
 	for name, mutate := range mutations {
@@ -60,7 +60,6 @@ func TestPolicyFingerprintBindsIndependentRerankAuthorityWithoutMutatingProfile(
 		"request":    func(value *Profile) { value.MaxRequestBytes-- },
 		"response":   func(value *Profile) { value.MaxResponseBytes-- },
 		"tokens": func(value *Profile) {
-			value.MaxExcerptBytes--
 			value.MaxTokensPerDocument--
 		},
 		"egress": func(value *Profile) {
