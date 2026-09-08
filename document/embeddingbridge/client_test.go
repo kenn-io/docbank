@@ -51,6 +51,7 @@ type bridgeFixture struct {
 	t          *testing.T
 	server     *http.Server
 	listener   net.Listener
+	serveDone  <-chan struct{}
 	origin     string
 	resolver   fixedResolver
 	profile    embeddingbridge.Profile
@@ -63,7 +64,11 @@ func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
-	go func() { _ = server.Serve(listener) }()
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		_ = server.Serve(listener)
+	}()
 	t.Cleanup(func() {
 		require.NoError(t, server.Shutdown(context.Background()))
 	})
@@ -105,7 +110,7 @@ func newBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
 	httpClient := &http.Client{}
 	client, err := embeddingbridge.New(profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, fixedResolver{netip.MustParseAddr("127.0.0.1")}, httpClient)
 	require.NoError(t, err)
-	return bridgeFixture{t: t, server: server, listener: listener, origin: origin, resolver: fixedResolver{netip.MustParseAddr("127.0.0.1")}, profile: profile, descriptor: descriptor, client: client}
+	return bridgeFixture{t: t, server: server, listener: listener, serveDone: serveDone, origin: origin, resolver: fixedResolver{netip.MustParseAddr("127.0.0.1")}, profile: profile, descriptor: descriptor, client: client}
 }
 
 func (fixture bridgeFixture) authorization(items int) document.EmbeddingAuthorization {
@@ -1417,7 +1422,10 @@ func TestConnectionFailuresDistinguishPolicyFromUnavailability(t *testing.T) {
 				resolver.address = netip.MustParseAddr("192.0.2.1")
 				category = embeddingbridge.ErrorPermanent
 			} else {
-				require.NoError(t, fixture.server.Close())
+				// Serve may not have registered the listener yet. Close the socket
+				// directly so the request must fail to connect.
+				require.NoError(t, fixture.listener.Close())
+				<-fixture.serveDone
 			}
 			client, err := embeddingbridge.New(fixture.profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, resolver, &http.Client{})
 			require.NoError(t, err)
