@@ -170,7 +170,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
           $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
+          Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
           $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
           if ($actual -ne $env:LLVM_MINGW_SHA256) {
             throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"
