@@ -35,6 +35,9 @@ func TestEmbedRejectsStrictHostedResponseDrift(t *testing.T) {
 		"missing vector":       strings.Replace(valid, `,{"object":"embedding","embedding":[0,1,0],"index":1}`, "", 1),
 		"extra vector":         strings.Replace(valid, `],"model"`, `,{"object":"embedding","embedding":[0,0,1],"index":2}],"model"`, 1),
 		"wrong dimension":      strings.Replace(valid, `[1,0,0]`, `[1,0]`, 1),
+		"null coordinate":      strings.Replace(valid, `[1,0,0]`, `[1,null,0]`, 1),
+		"string coordinate":    strings.Replace(valid, `[1,0,0]`, `[1,"0",0]`, 1),
+		"boolean coordinate":   strings.Replace(valid, `[1,0,0]`, `[1,false,0]`, 1),
 		"non finite":           strings.Replace(valid, `[1,0,0]`, `[1e1000,0,0]`, 1),
 		"non unit":             strings.Replace(valid, `[1,0,0]`, `[1,1,0]`, 1),
 		"base64 vector":        strings.Replace(valid, `[1,0,0]`, `"AQID"`, 1),
@@ -47,9 +50,10 @@ func TestEmbedRejectsStrictHostedResponseDrift(t *testing.T) {
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
 			client := hostedClientReturning(t, http.StatusOK, "application/json", body)
-			_, err := client.Embed(context.Background(), twoHostedInputs(), hostedAuthorization(client.descriptor, 2))
+			result, err := client.Embed(context.Background(), twoHostedInputs(), hostedAuthorization(client.descriptor, 2))
 			require.Error(t, err)
 			require.ErrorIs(t, err, ErrPermanentResponse)
+			assert.Equal(t, document.EmbeddingResult{}, result)
 			assert.NotContains(t, err.Error(), "alpha")
 			assert.NotContains(t, err.Error(), "AQID")
 		})
