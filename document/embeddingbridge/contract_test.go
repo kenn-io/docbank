@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
@@ -465,4 +466,59 @@ func independentInteger(value any) (int64, error) {
 		return 0, fmt.Errorf("independent server: parse integer: %w", err)
 	}
 	return parsed, nil
+}
+
+func TestHeadingLengthMatchesPublishedSchemaBeforeTransmission(t *testing.T) {
+	validator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
+	for _, test := range []struct {
+		name     string
+		heading  string
+		rejected bool
+	}{
+		{"ASCII limit", strings.Repeat("a", 8192), false},
+		{"ASCII overflow", strings.Repeat("a", 8193), true},
+		{"Unicode limit", strings.Repeat("é", 8192), false},
+		{"Unicode overflow", strings.Repeat("é", 8193), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requests.Add(1)
+				manifest, _ := readBridgeRequest(t, request)
+				var wire any
+				if !assert.NoError(t, json.Unmarshal([]byte(mustJSON(t, manifest)), &wire)) {
+					return
+				}
+				if err := validator.Validate(wire); err != nil {
+					writer.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				writeSuccess(t, writer, manifest, []document.EmbeddingVector{{Key: "first", Index: new(0), Values: []float32{1, 0}}})
+			}))
+			profile := fixture.profile
+			profile.MaxRequestBytes = 64 << 10
+			fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
+			require.NoError(t, err)
+			profile.Descriptor.PolicyFingerprint = fingerprint
+			profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
+			require.NoError(t, err)
+			client, err := embeddingbridge.New(profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, fixture.resolver, &http.Client{})
+			require.NoError(t, err)
+			authorization := fixture.authorization(1)
+			authorization.DescriptorFingerprint = profile.Descriptor.Fingerprint
+			authorization.PolicyFingerprint = profile.Descriptor.PolicyFingerprint
+			inputs := oneTextInput("alpha")
+			inputs[0].HeadingPath = []string{test.heading}
+			require.NoError(t, document.ValidateEmbeddingProviderRequest(client, inputs, authorization))
+			_, err = client.Embed(t.Context(), inputs, authorization)
+			if test.rejected {
+				require.Error(t, err)
+				assert.Equal(t, embeddingbridge.ErrorPermanent, embeddingbridge.Category(err))
+				assert.Zero(t, requests.Load())
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, int32(1), requests.Load())
+			}
+		})
+	}
 }

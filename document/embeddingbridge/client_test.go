@@ -1107,18 +1107,22 @@ func sha256Bytes(value []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func TestResponseHonorsDescriptorNormalization(t *testing.T) {
+func TestResponseHonorsDescriptorMetricAndNormalization(t *testing.T) {
 	for _, test := range []struct {
 		name          string
+		metric        string
 		normalization string
 		values        []float32
 		wantError     bool
 	}{
-		{"zero unit", document.VectorNormalizationUnitLength, []float32{0, 0}, true},
-		{"non-unit", document.VectorNormalizationUnitLength, []float32{1, 1}, true},
-		{"unit", document.VectorNormalizationUnitLength, []float32{0.6, 0.8}, false},
-		{"rounding", document.VectorNormalizationUnitLength, []float32{1.00001, 0}, false},
-		{"unnormalized", document.VectorNormalizationNone, []float32{1, 2}, false},
+		{"zero unit", document.VectorMetricCosine, document.VectorNormalizationUnitLength, []float32{0, 0}, true},
+		{"non-unit", document.VectorMetricCosine, document.VectorNormalizationUnitLength, []float32{1, 1}, true},
+		{"unit", document.VectorMetricCosine, document.VectorNormalizationUnitLength, []float32{0.6, 0.8}, false},
+		{"rounding", document.VectorMetricCosine, document.VectorNormalizationUnitLength, []float32{1.00001, 0}, false},
+		{"unnormalized", document.VectorMetricCosine, document.VectorNormalizationNone, []float32{1, 2}, false},
+		{"zero cosine", document.VectorMetricCosine, document.VectorNormalizationNone, []float32{0, 0}, true},
+		{"zero L2", document.VectorMetricL2, document.VectorNormalizationNone, []float32{0, 0}, false},
+		{"zero dot product", document.VectorMetricDotProduct, document.VectorNormalizationNone, []float32{0, 0}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -1126,6 +1130,7 @@ func TestResponseHonorsDescriptorNormalization(t *testing.T) {
 				writeSuccess(t, writer, manifest, []document.EmbeddingVector{{Key: "first", Index: new(0), Values: test.values}})
 			}))
 			profile := fixture.profile
+			profile.Descriptor.Metric = test.metric
 			profile.Descriptor.Normalization = test.normalization
 			fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
 			require.NoError(t, err)

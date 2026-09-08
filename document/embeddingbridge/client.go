@@ -23,7 +23,10 @@ import (
 	"go.kenn.io/docbank/document/internal/manifestjson"
 )
 
-const unitLengthTolerance = 1e-4
+const (
+	unitLengthTolerance  = 1e-4
+	maxHeadingCharacters = 8192
+)
 
 var (
 	_                       document.EmbeddingProvider = (*Client)(nil)
@@ -189,6 +192,11 @@ func freezeInputMetadata(inputs []document.EmbeddingInput, discloseFilename bool
 	for index := range frozen {
 		input := &frozen[index]
 		input.HeadingPath = slices.Clone(input.HeadingPath)
+		for _, heading := range input.HeadingPath {
+			if utf8.RuneCountInString(heading) > maxHeadingCharacters {
+				return nil, classified(ErrorPermanent, 0)
+			}
+		}
 		input.SourceSpans = slices.Clone(input.SourceSpans)
 		if input.Kind != document.EmbeddingInputOriginalFile || nilInterface(input.Source) {
 			continue
@@ -371,6 +379,9 @@ func (client *Client) validateResponse(envelope Response, manifest RequestManife
 				return document.EmbeddingResult{}, errors.New("response non-finite vector")
 			}
 			squaredNorm += float64(value) * float64(value)
+		}
+		if client.descriptor.Metric == document.VectorMetricCosine && squaredNorm == 0 {
+			return document.EmbeddingResult{}, errors.New("response cosine vector is zero")
 		}
 		if client.descriptor.Normalization == document.VectorNormalizationUnitLength && math.Abs(squaredNorm-1) > unitLengthTolerance {
 			return document.EmbeddingResult{}, errors.New("response vector normalization mismatch")
