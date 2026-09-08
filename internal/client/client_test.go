@@ -462,7 +462,7 @@ func TestIngestStreamRoundTrip(t *testing.T) {
 	require.NoError(t, os.WriteFile(src, content, 0o600))
 
 	var events []api.IngestProgress
-	report, err := c.IngestStream(t.Context(), []string{src}, "/inbox", nil, nil,
+	report, err := c.IngestStream(t.Context(), []string{src}, "/inbox", client.IngestOptions{},
 		func(event api.IngestProgress) { events = append(events, event) })
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
@@ -504,15 +504,52 @@ func TestIngestClientCarriesSelectionRulesToEveryRoute(t *testing.T) {
 	exclude := []string{"skip.txt"}
 	_, err := c.PreflightIngest(t.Context(), []string{"/source"}, include, exclude)
 	require.NoError(t, err)
-	_, err = c.IngestWithOptions(t.Context(), []string{"/source"}, "/inbox", include, exclude)
+	_, err = c.IngestWithOptions(t.Context(), []string{"/source"}, "/inbox", client.IngestOptions{Include: include, Exclude: exclude})
 	require.NoError(t, err)
-	_, err = c.IngestStream(t.Context(), []string{"/source"}, "/inbox", include, exclude, nil)
+	_, err = c.IngestStream(t.Context(), []string{"/source"}, "/inbox", client.IngestOptions{Include: include, Exclude: exclude}, nil)
 	require.NoError(t, err)
 	require.Len(t, bodies, 3)
 	for _, body := range bodies {
 		assert.Contains(t, body, `"include":["*.txt"]`)
 		assert.Contains(t, body, `"exclude":["skip.txt"]`)
 	}
+}
+
+func TestIngestOptionsSendReplaceToJSONAndStream(t *testing.T) {
+	var bodies []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		bodies = append(bodies, string(body))
+		if r.URL.Path == "/api/v1/ingest/stream" {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_ = json.MarshalWrite(w, api.IngestEvent{Type: "result", Report: &api.IngestReport{}})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, api.IngestReport{})
+	}))
+	t.Cleanup(ts.Close)
+
+	c := client.New(ts.URL, serverKey)
+	opts := client.IngestOptions{Exclude: []string{"cache"}, Replace: true}
+	_, err := c.IngestWithOptions(t.Context(), []string{"/source"}, "/inbox", opts)
+	require.NoError(t, err)
+	_, err = c.IngestStream(t.Context(), []string{"/source"}, "/inbox", opts, nil)
+	require.NoError(t, err)
+	require.Len(t, bodies, 2)
+	for _, body := range bodies {
+		assert.Contains(t, body, `"replace":true`)
+		assert.Contains(t, body, `"exclude":["cache"]`)
+	}
+}
+
+func TestNewRecordAdvertisesProtocol65(t *testing.T) {
+	record := client.NewRecord("127.0.0.1:7486", "key", "token", "")
+	assert.Equal(t, "65", record.Metadata["protocol_version"])
 }
 
 func TestProgressStreamPreservesProblemCode(t *testing.T) {
@@ -526,7 +563,7 @@ func TestProgressStreamPreservesProblemCode(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	_, err := client.New(ts.URL, "key").IngestStream(
-		t.Context(), []string{"/source"}, "/inbox", nil, nil, nil)
+		t.Context(), []string{"/source"}, "/inbox", client.IngestOptions{}, nil)
 	require.Error(t, err)
 	code, ok := client.ProblemCode(err)
 	assert.True(t, ok)
@@ -567,11 +604,11 @@ func TestJSONMethodsRejectInvalidUTF8BeforeRequest(t *testing.T) {
 		call func() error
 	}{
 		{name: "ordinary", call: func() error {
-			_, err := c.IngestWithOptions(t.Context(), []string{invalidPath}, "/inbox", nil, nil)
+			_, err := c.IngestWithOptions(t.Context(), []string{invalidPath}, "/inbox", client.IngestOptions{})
 			return err
 		}},
 		{name: "stream", call: func() error {
-			_, err := c.IngestStream(t.Context(), []string{invalidPath}, "/inbox", nil, nil, nil)
+			_, err := c.IngestStream(t.Context(), []string{invalidPath}, "/inbox", client.IngestOptions{}, nil)
 			return err
 		}},
 		{name: "preflight", call: func() error {

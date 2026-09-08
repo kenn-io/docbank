@@ -177,6 +177,33 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Equal(t, "hello vault", out)
 }
 
+func TestAddReplaceVersionsExactDestination(t *testing.T) {
+	_ = setupVaultHome(t)
+	src := writeSourceFile(t, "notes.txt", "first draft")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	c, err := client.Ensure(t.Context())
+	require.NoError(t, err)
+	before, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(src, []byte("second draft"), 0o644))
+
+	_, err = runCLI(t, "add", src, "--dest", "/inbox", "--replace")
+	require.NoError(t, err)
+	after, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	require.NoError(t, err)
+	assert.Equal(t, before.ID, after.ID)
+	assert.Equal(t, before.Revision+1, after.Revision)
+	_, err = c.Stat(t.Context(), "/inbox/notes (2).txt")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestAddReplaceRejectsPreflightBeforeEnsure(t *testing.T) {
+	src := writeSourceFile(t, "notes.txt", "synthetic")
+	_, err := runCLI(t, "add", src, "--preflight", "--replace")
+	require.ErrorContains(t, err, "--replace cannot be used with --preflight")
+}
+
 func TestTreeBoundsAndReportsOmissions(t *testing.T) {
 	_ = setupVaultHome(t)
 	c, err := client.Ensure(context.Background())

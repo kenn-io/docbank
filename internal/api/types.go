@@ -524,6 +524,7 @@ type IngestPreflightRequest struct {
 
 // IngestRequest imports server-side paths with optional source selection.
 type IngestRequest struct {
+	Replace bool     `json:"replace,omitempty"`
 	Paths   []string `json:"paths" minItems:"1"`
 	Dest    string   `json:"dest" default:"/inbox"`
 	Include []string `json:"include,omitempty"`
