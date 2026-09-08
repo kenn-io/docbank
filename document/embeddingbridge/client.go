@@ -133,7 +133,10 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 
 	response, doErr := client.http.Do(request)
-	_ = bodyReader.Close()
+	// The transport may still be checking the request body for EOF after
+	// response headers arrive. Close the writer so that check sees EOF,
+	// rather than a reader-close error that tears down the response connection.
+	_ = bodyWriter.Close()
 	sourceGate.Cancel()
 	writeErr := <-writerDone
 	if requestCtx.Err() != nil {
