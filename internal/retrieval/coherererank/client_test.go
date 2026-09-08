@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/retrieval"
 )
 
@@ -185,6 +187,36 @@ func TestRerankClassifiesSanitizedHTTPFailures(t *testing.T) {
 			assert.True(t, ok)
 			assert.Equal(t, time.Hour, delay)
 		}
+	}
+}
+
+func TestRerankClassifiesTransportFailures(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  error
+	}{
+		{name: "sealed DNS rejection", want: ErrPermanentResponse},
+		{name: "wrapped address denial", cause: providerhttp.ErrAddressDenied, want: ErrPermanentResponse},
+		{name: "wrapped destination denial", cause: providerhttp.ErrDestinationDenied, want: ErrPermanentResponse},
+		{name: "wrapped certificate pin failure", cause: providerhttp.ErrCertificatePin, want: ErrPermanentResponse},
+		{name: "transport outage", cause: io.ErrUnexpectedEOF, want: ErrTransientResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// The real transport rejects this DNS answer outside the profile's CIDR.
+			client, err := New(testProfile(ModelPro), testSecrets{"secret:cohere-rerank": "synthetic-key"},
+				testResolver{netip.MustParseAddr("198.51.100.1")}, &http.Client{})
+			require.NoError(t, err)
+			if test.cause != nil {
+				client.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return nil, fmt.Errorf("synthetic transport detail: %w", test.cause)
+				})
+			}
+			scores, err := client.Rerank(t.Context(), rerankingRequest())
+			require.ErrorIs(t, err, test.want)
+			assert.Empty(t, scores)
+			assert.NotContains(t, err.Error(), "synthetic transport detail")
+		})
 	}
 }
 

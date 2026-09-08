@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"image/color"
 	"io"
 	"math"
@@ -23,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 func TestEmbedSendsExactRoleAndImageRequestsAndRestoresCallerOrder(t *testing.T) {
@@ -324,6 +326,7 @@ func TestEmbedRejectsStrictResponseDrift(t *testing.T) {
 		"missing id":      `{"embeddings":{"float":[` + vectorJSON() + `]}}`,
 		"missing vector":  `{"id":"synthetic","embeddings":{"float":[]}}`,
 		"wrong dimension": `{"id":"synthetic","embeddings":{"float":[[0]]}}`,
+		"null coordinate": `{"id":"synthetic","embeddings":{"float":[[null,` + strings.Repeat("0,", 254) + `0]]}}`,
 		"non-finite":      `{"id":"synthetic","embeddings":{"float":[[` + strings.Repeat("0,", 255) + `1e999]]}}`,
 		"negative usage":  `{"id":"synthetic","embeddings":{"float":[` + vectorJSON() + `]},"meta":{"tokens":{"input_tokens":-1}}}`,
 		"unknown meta":    `{"id":"synthetic","embeddings":{"float":[` + vectorJSON() + `]},"meta":{"private":1}}`,
@@ -405,6 +408,38 @@ func TestEmbedClassifiesSanitizedHTTPFailuresAndRetryAfter(t *testing.T) {
 			assert.True(t, ok)
 			assert.Equal(t, time.Hour, delay)
 		}
+	}
+}
+
+func TestEmbedClassifiesTransportFailures(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  error
+	}{
+		{name: "sealed DNS rejection", want: ErrPermanentResponse},
+		{name: "wrapped address denial", cause: providerhttp.ErrAddressDenied, want: ErrPermanentResponse},
+		{name: "wrapped destination denial", cause: providerhttp.ErrDestinationDenied, want: ErrPermanentResponse},
+		{name: "wrapped certificate pin failure", cause: providerhttp.ErrCertificatePin, want: ErrPermanentResponse},
+		{name: "transport outage", cause: io.ErrUnexpectedEOF, want: ErrTransientResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// The real transport rejects this DNS answer outside the profile's CIDR.
+			client, err := New(testProfile(t, 256), &countingSecrets{value: "synthetic-key"},
+				testResolver{netip.MustParseAddr("198.51.100.1")}, &http.Client{})
+			require.NoError(t, err)
+			if test.cause != nil {
+				client.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return nil, fmt.Errorf("synthetic transport detail: %w", test.cause)
+				})
+			}
+			input := document.EmbeddingInput{Key: "document", Role: document.EmbeddingRoleDocument,
+				Kind: document.EmbeddingInputRenditionChunk, Text: "synthetic document"}
+			result, err := client.Embed(t.Context(), []document.EmbeddingInput{input}, authorization(client.Descriptor(), 1))
+			require.ErrorIs(t, err, test.want)
+			assert.Empty(t, result.Vectors)
+			assert.NotContains(t, err.Error(), "synthetic transport detail")
+		})
 	}
 }
 

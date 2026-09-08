@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/cohereapi"
 )
 
@@ -465,6 +467,10 @@ func (client *Client) execute(ctx context.Context, prepared preparedRequest, sec
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, fmt.Errorf("cohere embed: request canceled: %w", contextErr)
 		}
+		if errors.Is(err, providerhttp.ErrDestinationDenied) || errors.Is(err, providerhttp.ErrAddressDenied) ||
+			errors.Is(err, providerhttp.ErrCertificatePin) {
+			return nil, &ProviderError{Kind: ErrPermanentResponse}
+		}
 		return nil, &ProviderError{Kind: ErrTransientResponse}
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -486,7 +492,13 @@ func (client *Client) execute(ctx context.Context, prepared preparedRequest, sec
 	}
 	defer clear(body)
 	var decoded wireResponse
-	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
+	numbers := json.UnmarshalFromFunc(func(decoder *jsontext.Decoder, _ *float32) error {
+		if decoder.PeekKind() != jsontext.KindNumber {
+			return ErrPermanentResponse
+		}
+		return errors.ErrUnsupported // Use the standard float32 decoder for numbers.
+	})
+	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true), json.WithUnmarshalers(numbers)); err != nil {
 		return nil, &ProviderError{Kind: ErrPermanentResponse}
 	}
 	if !cohereapi.ValidToken(decoded.ID, 128) || decoded.ResponseType != "" && decoded.ResponseType != "embeddings_by_type" ||
