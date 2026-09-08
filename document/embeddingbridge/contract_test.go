@@ -109,9 +109,12 @@ func TestIndependentSyntheticServerImplementsPublishedSchema(t *testing.T) {
 		name         string
 		disclose     bool
 		wantFilename string
+		direct       bool
 	}{
 		{name: "withheld"},
 		{name: "disclosed", disclose: true, wantFilename: "contract.bin"},
+		{name: "direct-withheld", direct: true},
+		{name: "direct-disclosed", direct: true, disclose: true, wantFilename: "contract.bin"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			requestValidator := compileContractSchema(t, "https://docbank.invalid/contracts/docbank-embedding/v1/request.schema.json", requestSchema)
@@ -143,7 +146,13 @@ func TestIndependentSyntheticServerImplementsPublishedSchema(t *testing.T) {
 			}
 			authorization := fixture.authorization(2)
 			authorization.DiscloseFilename = testCase.disclose
-			result, err := document.ExecuteEmbedding(context.Background(), fixture.client, []document.EmbeddingInput{
+			embed := fixture.client.Embed
+			if !testCase.direct {
+				embed = func(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+					return document.ExecuteEmbedding(ctx, fixture.client, inputs, authorization)
+				}
+			}
+			result, err := embed(context.Background(), []document.EmbeddingInput{
 				{
 					Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk,
 					Text: "synthetic contract fixture", HeadingPath: []string{"Synthetic"},

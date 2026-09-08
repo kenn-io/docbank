@@ -23,6 +23,8 @@ import (
 	"go.kenn.io/docbank/document/internal/manifestjson"
 )
 
+const unitLengthTolerance = 1e-4
+
 var (
 	_                       document.EmbeddingProvider = (*Client)(nil)
 	errSourceChanged                                   = errors.New("embedding bridge source changed")
@@ -46,7 +48,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	if ctx == nil {
 		return document.EmbeddingResult{}, classified(ErrorPermanent, 0)
 	}
-	frozenInputs, err := freezeInputMetadata(inputs)
+	frozenInputs, err := freezeInputMetadata(inputs, authorization.DiscloseFilename)
 	if err != nil {
 		return document.EmbeddingResult{}, err
 	}
@@ -182,7 +184,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	return result, nil
 }
 
-func freezeInputMetadata(inputs []document.EmbeddingInput) ([]document.EmbeddingInput, error) {
+func freezeInputMetadata(inputs []document.EmbeddingInput, discloseFilename bool) ([]document.EmbeddingInput, error) {
 	frozen := slices.Clone(inputs)
 	for index := range frozen {
 		input := &frozen[index]
@@ -194,6 +196,9 @@ func freezeInputMetadata(inputs []document.EmbeddingInput) ([]document.Embedding
 		metadata := input.Source.Metadata()
 		if !safeMultipartFilename(metadata.Filename) {
 			return nil, classified(ErrorPermanent, 0)
+		}
+		if !discloseFilename {
+			metadata.Filename = ""
 		}
 		input.Source = frozenUpload{AuthorizedUpload: input.Source, metadata: metadata}
 	}
@@ -325,12 +330,18 @@ func writeMultipart(writer *multipart.Writer, manifest []byte, inputs []document
 
 func copyAuthorizedFile(destination io.Writer, source io.Reader, expectedLength int64, expectedSHA256 string) error {
 	digest := sha256.New()
-	written, err := io.Copy(io.MultiWriter(destination, digest), io.LimitReader(source, expectedLength+1))
+	written, err := io.Copy(io.MultiWriter(destination, digest), io.LimitReader(source, expectedLength))
 	if err != nil {
 		return errSourceTransferFailed
 	}
 	if written != expectedLength || !strings.EqualFold(hexDigest(digest), expectedSHA256) {
 		return errSourceChanged
+	}
+	var probe [1]byte
+	if n, err := io.ReadFull(source, probe[:]); n != 0 {
+		return errSourceChanged
+	} else if !errors.Is(err, io.EOF) {
+		return errSourceTransferFailed
 	}
 	return nil
 }
@@ -354,10 +365,15 @@ func (client *Client) validateResponse(envelope Response, manifest RequestManife
 		if len(vector.Values) != client.descriptor.Dimension {
 			return document.EmbeddingResult{}, errors.New("response dimension mismatch")
 		}
+		var squaredNorm float64
 		for _, value := range vector.Values {
 			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
 				return document.EmbeddingResult{}, errors.New("response non-finite vector")
 			}
+			squaredNorm += float64(value) * float64(value)
+		}
+		if client.descriptor.Normalization == document.VectorNormalizationUnitLength && math.Abs(squaredNorm-1) > unitLengthTolerance {
+			return document.EmbeddingResult{}, errors.New("response vector normalization mismatch")
 		}
 		vectors[position] = document.EmbeddingVector{Key: vector.Key, Values: slices.Clone(vector.Values)}
 	}

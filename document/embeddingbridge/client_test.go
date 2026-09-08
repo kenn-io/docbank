@@ -318,7 +318,10 @@ func TestMixedTextAndDirectFileRequestStreamsOnlyAuthorizedBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Vectors, 2)
 	require.Len(t, manifest.Inputs, 2)
-	assert.Equal(t, &metadata, manifest.Inputs[0].Upload)
+	expectedMetadata := metadata
+	expectedMetadata.Filename = ""
+	assert.Equal(t, &expectedMetadata, manifest.Inputs[0].Upload)
+	assert.Equal(t, metadata, upload.metadata)
 	assert.Equal(t, "file", manifest.Inputs[0].FilePart)
 	require.NotNil(t, manifest.Inputs[0].FileIndex)
 	assert.Zero(t, *manifest.Inputs[0].FileIndex)
@@ -1102,4 +1105,48 @@ func sha256Text(value string) string { return sha256Bytes([]byte(value)) }
 func sha256Bytes(value []byte) string {
 	digest := sha256.Sum256(value)
 	return hex.EncodeToString(digest[:])
+}
+
+func TestResponseHonorsDescriptorNormalization(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		normalization string
+		values        []float32
+		wantError     bool
+	}{
+		{"zero unit", document.VectorNormalizationUnitLength, []float32{0, 0}, true},
+		{"non-unit", document.VectorNormalizationUnitLength, []float32{1, 1}, true},
+		{"unit", document.VectorNormalizationUnitLength, []float32{0.6, 0.8}, false},
+		{"rounding", document.VectorNormalizationUnitLength, []float32{1.00001, 0}, false},
+		{"unnormalized", document.VectorNormalizationNone, []float32{1, 2}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				manifest, _ := readBridgeRequest(t, request)
+				writeSuccess(t, writer, manifest, []document.EmbeddingVector{{Key: "first", Index: new(0), Values: test.values}})
+			}))
+			profile := fixture.profile
+			profile.Descriptor.Normalization = test.normalization
+			fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
+			require.NoError(t, err)
+			profile.Descriptor.PolicyFingerprint = fingerprint
+			profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
+			require.NoError(t, err)
+			client, err := embeddingbridge.New(profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, fixture.resolver, &http.Client{})
+			require.NoError(t, err)
+			authorization := fixture.authorization(1)
+			authorization.DescriptorFingerprint = profile.Descriptor.Fingerprint
+			authorization.PolicyFingerprint = profile.Descriptor.PolicyFingerprint
+			result, err := client.Embed(t.Context(), oneTextInput("alpha"), authorization)
+			if test.wantError {
+				require.Error(t, err)
+				assert.Equal(t, embeddingbridge.ErrorMalformedResponse, embeddingbridge.Category(err))
+				assert.Empty(t, result.Vectors)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, result.Vectors, 1)
+				assert.Equal(t, test.values, result.Vectors[0].Values)
+			}
+		})
+	}
 }
