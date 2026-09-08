@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/audit"
@@ -374,12 +375,8 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendDelta(
 	if err := validateReplayedIngest(ingestPost); err != nil {
 		return replayedProvenanceAppend{}, err
 	}
-	if err := validateReplayedProvenance(post, replay, ingestID); err != nil {
+	if err := validateReplayedProvenance(post, ingestID); err != nil {
 		return replayedProvenanceAppend{}, err
-	}
-	provenanceIngestID, err := auditUUIDField(post, "ingest_id")
-	if err != nil || provenanceIngestID != ingestID {
-		return replayedProvenanceAppend{}, errors.New("provenance fact does not bind its new ingest")
 	}
 	identity, err := attachedAuditIdentity(post)
 	if err != nil {
@@ -420,7 +417,7 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendDelta(
 		return replayedProvenanceAppend{}, err
 	}
 	if supersedes != nil {
-		if err := replay.requireActiveProvenance(nodeID, *supersedes); err != nil {
+		if err := replay.requireSupersedableProvenance(nodeID, *supersedes); err != nil {
 			return replayedProvenanceAppend{}, err
 		}
 	}
@@ -431,7 +428,7 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendDelta(
 	}, nil
 }
 
-func validateReplayedProvenance(record audit.Record, replay *auditedHistoryReplay, additionalIngest string) error {
+func validateReplayedProvenance(record audit.Record, newIngest string) error {
 	if record.Kind != metadataProvenanceType {
 		return errors.New("provenance attachment has the wrong record kind")
 	}
@@ -442,6 +439,9 @@ func validateReplayedProvenance(record audit.Record, replay *auditedHistoryRepla
 	ingestID, err := auditUUIDField(record, "ingest_id")
 	if err != nil {
 		return err
+	}
+	if ingestID != newIngest {
+		return errors.New("provenance fact does not bind its new ingest")
 	}
 	path, ok := auditFieldBytes(record, "original_path")
 	if !ok || len(path) == 0 || !utf8.Valid(path) {
@@ -489,9 +489,6 @@ func validateReplayedProvenance(record audit.Record, replay *auditedHistoryRepla
 	if digest.text != identity {
 		return errors.New("provenance attachment identity does not match its immutable fields")
 	}
-	if !replay.hasIngest(ingestID) && ingestID != additionalIngest {
-		return fmt.Errorf("provenance attachment references missing ingest %s", ingestID)
-	}
 	return nil
 }
 
@@ -504,22 +501,33 @@ func auditFieldBytes(record audit.Record, name string) ([]byte, bool) {
 	return bytes, ok
 }
 
-func (replay *auditedHistoryReplay) hasIngest(id string) bool {
-	for _, record := range replay.attachments {
-		if record.Kind != metadataIngestType {
-			continue
-		}
-		candidate, err := auditUUIDField(record, "ingest_id")
-		if err == nil && candidate == id {
-			return true
-		}
+func (replay *auditedHistoryReplay) requireSupersedableProvenance(nodeID uint64, identity string) error {
+	predecessor, err := replay.activeProvenanceRecord(nodeID, identity)
+	if err != nil {
+		return err
 	}
-	return false
-}
-
-func (replay *auditedHistoryReplay) requireActiveProvenance(nodeID uint64, identity string) error {
-	_, err := replay.activeProvenanceRecord(nodeID, identity)
-	return err
+	ingestID, err := auditField(predecessor, "ingest_id")
+	if err != nil {
+		return err
+	}
+	key, err := attachedAuditKey(audit.Record{Kind: metadataIngestType, Fields: []audit.Field{
+		{Name: "ingest_id", Value: ingestID},
+	}})
+	if err != nil {
+		return err
+	}
+	ingest, ok := replay.attachments[key]
+	if !ok {
+		return errors.New("provenance predecessor references missing ingest")
+	}
+	sourceKind, err := auditTextField(ingest, "source_kind")
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(sourceKind, callerSuppliedSourceKindPrefix) {
+		return errors.New("operational ingest provenance cannot be superseded")
+	}
+	return nil
 }
 
 func (replay *auditedHistoryReplay) activeProvenanceRecord(

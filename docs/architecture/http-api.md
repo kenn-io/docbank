@@ -273,13 +273,16 @@ has no live `path`. The route is observation only: it neither accesses the
 source nor changes retention authority.
 
 `POST /nodes/{id}/provenance` accepts `source_kind`, `source_description`,
-`original_path`, an optional RFC3339Nano `original_mtime`, and an optional
+`original_path`, an optional canonical UTC RFC3339Nano `original_mtime` (for
+example, `2026-08-26T12:00:00Z`), and an optional
 `supersedes` identity. The caller supplies the node's current revision in
 `If-Match`; a successful response is `201`, advances that node revision once,
 returns the appended fact and its ETag, and records a generic ingest alongside
 the fact. `original_path` is opaque evidence and is never opened. A
-supersession must point to an active fact on the same node, while the old fact
-stays visible and immutable.
+supersession must point to an active caller-supplied fact on the same node,
+while the old fact stays visible and immutable. Operational CLI and
+watched-folder ingest facts cannot be superseded: they keep re-ingest
+idempotent. Record a newly learned origin as an additional fact instead.
 
 The encoded request body must be smaller than 1 MiB (1,048,576 bytes). A body at or above that limit receives `413` before the append runs.
 
@@ -583,7 +586,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `invalid_audit_cursor` | 422 | the history cursor is malformed or belongs to another stable node or scope |
 | `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
-| `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, or is already superseded |
+| `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, is already superseded, or is an operational ingest fact |
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

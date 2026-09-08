@@ -77,7 +77,7 @@ appended, err := vault.AppendProvenance(ctx, receipt.Node.ID,
 The append returns the resulting node, live path, fact, and revision-bound
 receipt. A zero `IfRevision` is an unconditional embedded operation; a
 positive value fences a caller's earlier read. Set `Supersedes` to an active
-same-node fact identity to add a correction. The source reference is opaque
+caller-supplied fact identity on the same node to add a correction. The source reference is opaque
 evidence and is never opened by Docbank.
 
 `Put` creates missing virtual directories. Repeating the same bytes and media
@@ -119,8 +119,16 @@ For a newly created document, the node, first content version, ingest record,
 and provenance fact commit as one metadata transaction. If any part fails,
 none gains authority. An exact `Create` retry succeeds only when its active
 provenance also matches, so a caller cannot accidentally claim source evidence
-that was never recorded. Use `Provenance` to inspect the bounded newest-first
-history:
+that was never recorded. Superseding that matching fact makes the original
+request return `ErrContentConflict` unless another active fact still matches.
+A request matching the corrected provenance remains idempotent when the
+content and media type are unchanged.
+
+`AppendProvenance` may supersede active caller-supplied facts on the same node,
+including facts supplied through `CreateOptions.Provenance`. Operational CLI
+and watched-folder ingest facts cannot be superseded, because they keep
+re-ingest idempotent; append newly learned origins alongside them instead.
+Use `Provenance` to inspect the bounded newest-first history:
 
 ```go
 page, err := vault.Provenance(ctx, receipt.Node.ID, docbank.ProvenanceOptions{

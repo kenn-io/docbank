@@ -645,6 +645,24 @@ func testEmbeddedCreateRecordsGenericProvenance(t *testing.T, driver docsqlite.D
 		t.Context(), "/sessions/01K123.jsonl", bytes.NewReader(content), different,
 	)
 	require.ErrorIs(t, err, ErrContentConflict)
+
+	_, err = vault.AppendProvenance(t.Context(), created.Node.ID, ProvenanceAppendOptions{
+		IfRevision: created.Node.Revision, Source: *different.Provenance,
+		Supersedes: &fact.Identity,
+	})
+	require.NoError(t, err)
+	// A retry must match active evidence, even if its original fact remains
+	// in history. Supersession does not create a new content version.
+	_, err = vault.Create(
+		t.Context(), "/sessions/01K123.jsonl", bytes.NewReader(content), opts,
+	)
+	require.ErrorIs(t, err, ErrContentConflict)
+	retry, err = vault.Create(
+		t.Context(), "/sessions/01K123.jsonl", bytes.NewReader(content), different,
+	)
+	require.NoError(t, err)
+	require.False(t, retry.Created)
+	require.Equal(t, created.Version.ID, retry.Version.ID)
 }
 
 func TestEmbeddedAuditedCreateRecordsProvenance(t *testing.T) {

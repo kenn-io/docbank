@@ -552,8 +552,13 @@ curl --fail-with-body -X POST \
 ```
 
 The response is `201` with the appended fact, resulting node revision, path,
-and ETag. `original_path` remains opaque evidence. To correct an active fact,
-include its `identity` as `supersedes`; the earlier fact remains in history.
+and ETag. `original_path` remains opaque evidence. To correct an active
+caller-supplied fact on the same node, include its `identity` as `supersedes`;
+the earlier fact remains in history. Operational facts recorded by CLI or
+watched-folder ingest cannot be superseded, because they keep re-ingest
+idempotent. Add the newly learned origin alongside them instead.
+If supplied, `original_mtime` must use canonical UTC RFC3339Nano, for example
+`2026-08-26T12:00:00Z`; timestamps with a numeric offset are rejected.
 
 ## Create and ingest safely
 

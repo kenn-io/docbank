@@ -632,10 +632,11 @@ required field are rejected transactionally.
 
 Each provenance fact has a stable identity derived from its canonical immutable
 fields, including that ingest UUID, and may carry an immutable `supersedes`
-identity. A correction appends a new fact that supersedes the currently active
-fact for the same node,
-backed by a new ingest record when its source description changes; it never
-updates or erases the old row. The superseded fact remains visible in history,
+identity. A correction appends a new fact that supersedes an active
+caller-supplied fact for the same node, backed by a new ingest record; it never
+updates or erases the old row. Operational CLI and watched-folder ingest facts
+cannot be superseded, because they keep re-ingest idempotent. Store writes and
+replay enforce this restriction. The superseded fact remains visible in history,
 while the current provenance projection selects the unsuperseded leaves.
 Constraints require the target to exist on the same node, permit at most one
 direct successor, and reject cycles. Replay applies the supersession edge, and

@@ -127,6 +127,61 @@ func TestAppendNodeProvenanceRejectsMissingPredecessor(t *testing.T) {
 	assert.Empty(t, page.Items, "failed append must not record a fact")
 }
 
+func TestAppendNodeProvenancePreservesOperationalIngest(t *testing.T) {
+	for _, kind := range []string{"cli", "watch"} {
+		t.Run(kind, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			run, err := s.BeginIngest(ctx, kind, "source")
+			require.NoError(t, err)
+			originalPath := "/source/report.txt"
+			if kind == "watch" {
+				originalPath = "report.txt"
+			}
+			node, added, err := s.IngestFile(ctx, run, s.RootID(), "report.txt", fakeHash("a1"),
+				7, "text/plain", originalPath, "")
+			require.NoError(t, err)
+			require.True(t, added)
+			seedInitialAuditAuthority(t, s, s.RootID())
+			page, err := s.NodeProvenance(ctx, node.ID, 10, 0)
+			require.NoError(t, err)
+			require.Len(t, page.Items, 1)
+			var before bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &before))
+
+			_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+				NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent",
+				SourceDescription: "reconcile", OriginalPath: "opaque://report",
+				Supersedes: &page.Items[0].Identity,
+			})
+			require.ErrorIs(t, err, ErrProvenanceMismatch)
+			var after bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &after))
+			assert.Equal(t, before.String(), after.String(), "rejection must leave all metadata unchanged")
+
+			appended, err := s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+				NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent",
+				SourceDescription: "reconcile", OriginalPath: "opaque://report",
+			})
+			require.NoError(t, err)
+			_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+				NodeID: node.ID, IfRevision: appended.Node.Revision, SourceKind: "agent",
+				SourceDescription: "correction", OriginalPath: "opaque://corrected",
+				Supersedes: &appended.Fact.Identity,
+			})
+			require.NoError(t, err)
+			retryRun, err := s.BeginIngest(ctx, kind, "source")
+			require.NoError(t, err)
+			retry, added, err := s.IngestFile(ctx, retryRun, s.RootID(), "report.txt", fakeHash("a1"),
+				7, "text/plain", originalPath, "")
+			require.NoError(t, err)
+			assert.False(t, added)
+			assert.Equal(t, node.ID, retry.ID)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+
 func TestAppendNodeProvenanceReturnsEmptyPathForTrashedNodes(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

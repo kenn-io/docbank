@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ProvenanceAppendInput describes one post-ingest origin assertion. A positive
@@ -139,9 +140,11 @@ func validateProvenancePredecessorTx(
 	ctx context.Context, tx *sql.Tx, nodeID int64, identity string,
 ) error {
 	var predecessorNode int64
+	var sourceKind string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT node_id FROM provenance WHERE identity=?`, identity,
-	).Scan(&predecessorNode); errors.Is(err, sql.ErrNoRows) {
+		`SELECT p.node_id, i.source_kind
+		 FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.identity=?`, identity,
+	).Scan(&predecessorNode, &sourceKind); errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("provenance predecessor %s was not found: %w", identity, ErrProvenanceMismatch)
 	} else if err != nil {
 		return fmt.Errorf("reading provenance predecessor %s: %w", identity, err)
@@ -149,6 +152,11 @@ func validateProvenancePredecessorTx(
 	if predecessorNode != nodeID {
 		return fmt.Errorf("provenance predecessor %s belongs to node %d, not %d: %w",
 			identity, predecessorNode, nodeID, ErrProvenanceMismatch)
+	}
+	// Operational facts anchor re-ingest idempotency. Corrections may retire
+	// caller-supplied evidence, but must leave those ingest observations active.
+	if !strings.HasPrefix(sourceKind, callerSuppliedSourceKindPrefix) {
+		return fmt.Errorf("operational ingest provenance cannot be superseded: %w", ErrProvenanceMismatch)
 	}
 	var successor int
 	if err := tx.QueryRowContext(ctx,

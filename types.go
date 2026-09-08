@@ -141,6 +141,8 @@ type ProvenancePage struct {
 // ProvenanceAppendOptions describes one origin assertion added after ingest.
 // A zero IfRevision is unconditional for embedded callers; a positive value
 // must match the node's current revision.
+// Supersedes may name an active caller-supplied fact on the same node,
+// including create-time provenance, but never an operational ingest fact.
 type ProvenanceAppendOptions struct {
 	Source     ProvenanceSource
 	Supersedes *string

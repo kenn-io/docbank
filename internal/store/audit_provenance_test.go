@@ -103,6 +103,65 @@ func TestAuditedProvenanceAppendRollsBackAllMetadata(t *testing.T) {
 	assert.Equal(t, int64(1), sequence)
 }
 
+func TestAuditedProvenanceReplayRejectsOperationalPredecessor(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginCallerSuppliedIngest(ctx, "agent", "source")
+	require.NoError(t, err)
+	node, err := s.IngestFileExact(ctx, run, s.RootID(), "report.txt", fakeHash("a1"),
+		7, "text/plain", "/source/report.txt", "")
+	require.NoError(t, err)
+	page, err := s.NodeProvenance(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	seedInitialAuditAuthority(t, s, s.RootID())
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+		NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent",
+		SourceDescription: "correction", OriginalPath: "opaque://corrected",
+		Supersedes: &page.Items[0].Identity,
+	})
+	require.NoError(t, err)
+
+	authority, scope, err := loadInitialAuditProjection(ctx, s.db)
+	require.NoError(t, err)
+	records, err := loadInitialAuditRecords(ctx, s.db)
+	require.NoError(t, err)
+	initial, err := selectInitialAuditRecords(authority, scope, records)
+	require.NoError(t, err)
+	replay, err := newAuditedHistoryReplay(authority, scope, initial)
+	require.NoError(t, err)
+	mutations, err := auditRecordsByOptionalSequence(records["canonical_mutation"], authority.sequence)
+	require.NoError(t, err)
+	mutation := mutations[2]
+	operationID, err := auditUUIDField(mutation.record, auditOperationIDField)
+	require.NoError(t, err)
+	deltas := auditRecordsByDigest(records["attached_metadata_delta"])
+	_, err = replay.validateProvenanceAppendDelta(mutation.record, operationID, deltas, map[string]bool{})
+	require.NoError(t, err)
+
+	// Keep the same predecessor identity and supersession delta, but make
+	// its baseline ingest operational. Replay must enforce the write policy.
+	operationalKind, err := audit.Text("cli")
+	require.NoError(t, err)
+	changed := false
+	for key, record := range replay.attachments {
+		if record.Kind != metadataIngestType {
+			continue
+		}
+		ingestID, err := auditUUIDField(record, "ingest_id")
+		require.NoError(t, err)
+		if ingestID != run.ID() {
+			continue
+		}
+		replay.attachments[key], err = replaceAuditRecordField(record, "source_kind", operationalKind)
+		require.NoError(t, err)
+		changed = true
+	}
+	require.True(t, changed)
+	_, err = replay.validateProvenanceAppendDelta(mutation.record, operationID, deltas, map[string]bool{})
+	require.ErrorContains(t, err, "operational ingest provenance cannot be superseded")
+}
+
 func TestAuditedProvenanceReplayRejectsTamperedIngestIdentity(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
