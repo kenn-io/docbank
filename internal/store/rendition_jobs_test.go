@@ -430,34 +430,37 @@ func TestEnqueueRenditionJobRejectsUnauthorizedWaiter(t *testing.T) {
 }
 
 func TestRenditionJobWorkChoosesAnAuthorizedWaiter(t *testing.T) {
-	s, versions := newRenditionCatalogFixture(t)
-	profile := catalogProcessingProfile(t, false)
-	firstRequest := renditionJobTestRequest(versions[0], profile)
-	firstRequest.Authorization.Principal = "operator:first-candidate"
-	secondRequest := renditionJobTestRequest(versions[1], profile)
-	secondRequest.Authorization.Principal = "operator:second-candidate"
-	grantRenditionJobConsent(t, s, firstRequest)
-	grantRenditionJobConsent(t, s, secondRequest)
-	job, firstWaiter, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
-	require.NoError(t, err)
-	_, secondWaiter, err := s.EnqueueRenditionJob(t.Context(), secondRequest)
-	require.NoError(t, err)
-	revoked, expected := firstRequest, secondWaiter
-	if secondWaiter.ID < firstWaiter.ID {
-		revoked, expected = secondRequest, firstWaiter
-	}
-	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
-		Principal: revoked.Authorization.Principal,
-		Scope:     revoked.Authorization.Scope,
-	})
-	require.NoError(t, err)
-	now := time.Now().UTC().Add(time.Second)
-	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
-	require.NoError(t, err)
+	for _, cause := range []RenditionFailureCode{
+		RenditionFailureConsent, RenditionFailureStaleAuthority,
+	} {
+		t.Run(string(cause), func(t *testing.T) {
+			fixture := newRenditionWaiterStatusFixture(t)
+			rejectedRequest, rejectedWaiter, _, expected := fixture.orderedWaiters()
+			invalidateRenditionWaiterAuthority(t, fixture.store, rejectedRequest, cause)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := fixture.store.ClaimRenditionJob(
+				t.Context(), fixture.job.ID, "worker:selection-"+string(cause), now, time.Minute)
+			require.NoError(t, err)
 
-	work, err := s.RenditionJobWorkByClaim(t.Context(), claim, now.Add(time.Second))
-	require.NoError(t, err)
-	assert.Equal(t, expected.ID, work.Waiter.ID)
+			work, err := fixture.store.RenditionJobWorkByClaim(
+				t.Context(), claim, now.Add(time.Second))
+			require.NoError(t, err)
+			require.Equal(t, expected.ID, work.Waiter.ID)
+			rejected, err := fixture.store.RenditionJobWaiterByID(
+				t.Context(), rejectedWaiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, "rejected", rejected.State)
+			require.Equal(t, cause, rejected.FailureCode)
+			selected, err := fixture.store.RenditionJobWaiterByID(t.Context(), expected.ID)
+			require.NoError(t, err)
+			require.Equal(t, "waiting", selected.State)
+			require.Empty(t, selected.FailureCode)
+			current, err := fixture.store.RenditionJobByID(t.Context(), fixture.job.ID)
+			require.NoError(t, err)
+			require.Equal(t, RenditionJobRunning, current.State)
+			require.Equal(t, claim.Epoch, current.ClaimEpoch)
+		})
+	}
 }
 
 func TestRenditionJobWorkRejectsNonOriginalWaiterAuthority(t *testing.T) {
@@ -1174,49 +1177,48 @@ func TestRenditionJobStagingIsIdempotentWithinOneClaim(t *testing.T) {
 }
 
 func TestRenditionJobProviderFenceRechecksConsentAndSource(t *testing.T) {
-	t.Run("consent revocation", func(t *testing.T) {
-		s, versions := newRenditionCatalogFixture(t)
-		profile := catalogProcessingProfile(t, false)
-		request := renditionJobTestRequest(versions[0], profile)
-		grantRenditionJobConsent(t, s, request)
-		job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
-		require.NoError(t, err)
-		now := time.Now().UTC().Add(time.Second)
-		claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
-		require.NoError(t, err)
+	for _, cause := range []RenditionFailureCode{
+		RenditionFailureConsent, RenditionFailureStaleAuthority,
+	} {
+		t.Run(string(cause), func(t *testing.T) {
+			fixture := newRenditionWaiterStatusFixture(t)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := fixture.store.ClaimRenditionJob(
+				t.Context(), fixture.job.ID, "worker:provider-fence-"+string(cause), now, time.Minute)
+			require.NoError(t, err)
+			work, err := fixture.store.RenditionJobWorkByClaim(t.Context(), claim, now)
+			require.NoError(t, err)
+			selectedRequest, selectedWaiter, _, successor := fixture.waitersForSelected(work.Waiter.ID)
+			invalidateRenditionWaiterAuthority(t, fixture.store, selectedRequest, cause)
 
-		_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
-			Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+			_, err = fixture.store.BeginRenditionProvider(
+				t.Context(), claim, selectedWaiter.ID, now.Add(time.Second),
+				renditionJobTestSnapshot(selectedRequest))
+			require.ErrorIs(t, err, ErrRenditionJobWaiterReselected)
+			rejected, err := fixture.store.RenditionJobWaiterByID(
+				t.Context(), selectedWaiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, "rejected", rejected.State)
+			require.Equal(t, cause, rejected.FailureCode)
+			waiting, err := fixture.store.RenditionJobWaiterByID(t.Context(), successor.ID)
+			require.NoError(t, err)
+			require.Equal(t, "waiting", waiting.State)
+			require.Empty(t, waiting.FailureCode)
+			current, err := fixture.store.RenditionJobByID(t.Context(), fixture.job.ID)
+			require.NoError(t, err)
+			require.Equal(t, RenditionJobQueued, current.State)
+			require.Equal(t, claim.Epoch+1, current.ClaimEpoch)
+			var selectedID string
+			var providerStarted bool
+			require.NoError(t, fixture.store.db.QueryRowContext(t.Context(), `
+			SELECT selected_waiter_id,provider_started FROM rendition_jobs WHERE job_id=?`,
+				fixture.job.ID).Scan(&selectedID, &providerStarted))
+			require.Equal(t, successor.ID, selectedID)
+			require.False(t, providerStarted)
+			_, err = fixture.store.RenditionJobWorkByClaim(t.Context(), claim, now.Add(time.Second))
+			require.ErrorIs(t, err, ErrRenditionJobFenced)
 		})
-		require.NoError(t, err)
-		_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
-			now.Add(time.Second), renditionJobTestSnapshot(request))
-		require.ErrorIs(t, err, ErrProcessingConsentRevoked)
-	})
-
-	t.Run("source drift", func(t *testing.T) {
-		s, versions := newRenditionCatalogFixture(t)
-		profile := catalogProcessingProfile(t, false)
-		request := renditionJobTestRequest(versions[0], profile)
-		grantRenditionJobConsent(t, s, request)
-		job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
-		require.NoError(t, err)
-		now := time.Now().UTC().Add(time.Second)
-		claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
-		require.NoError(t, err)
-		driftedHash := testSHA256([]byte("synthetic drifted authority"))
-		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-			if err := s.EnsureBlobTx(tx, driftedHash, 20); err != nil {
-				return err
-			}
-			_, err := tx.ExecContext(t.Context(),
-				`UPDATE content_versions SET blob_hash=? WHERE version_id=?`, driftedHash, versions[0])
-			return err
-		}))
-		_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
-			now.Add(time.Second), renditionJobTestSnapshot(request))
-		require.ErrorContains(t, err, "source or profile authority drifted")
-	})
+	}
 }
 
 func renditionJobTestRequest(
@@ -1586,7 +1588,7 @@ func TestPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t *testing.
 	grantRenditionJobConsent(t, s, secondRequest)
 	job, firstWaiter, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
 	require.NoError(t, err)
-	_, _, err = s.EnqueueRenditionJob(t.Context(), secondRequest)
+	_, secondWaiter, err := s.EnqueueRenditionJob(t.Context(), secondRequest)
 	require.NoError(t, err)
 	now := time.Now().UTC().Add(time.Second)
 	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
@@ -1614,6 +1616,14 @@ func TestPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t *testing.
 	require.NoError(t, err)
 	_, err = s.ActiveRendition(t.Context(), versions[1], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
+	published, err := s.RenditionJobWaiterByID(t.Context(), firstWaiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, "published", published.State)
+	require.Empty(t, published.FailureCode)
+	rejected, err := s.RenditionJobWaiterByID(t.Context(), secondWaiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", rejected.State)
+	require.Equal(t, RenditionFailureConsent, rejected.FailureCode)
 }
 
 func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T) {
@@ -1626,7 +1636,7 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	grantRenditionJobConsent(t, s, secondRequest)
 	job, firstWaiter, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
 	require.NoError(t, err)
-	_, _, err = s.EnqueueRenditionJob(t.Context(), secondRequest)
+	_, secondWaiter, err := s.EnqueueRenditionJob(t.Context(), secondRequest)
 	require.NoError(t, err)
 	now := time.Now().UTC().Add(time.Second)
 	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
@@ -1659,4 +1669,12 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	require.NoError(t, err)
 	_, err = s.ActiveRendition(t.Context(), versions[1], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
+	published, err := s.RenditionJobWaiterByID(t.Context(), firstWaiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, "published", published.State)
+	require.Empty(t, published.FailureCode)
+	rejected, err := s.RenditionJobWaiterByID(t.Context(), secondWaiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", rejected.State)
+	require.Equal(t, RenditionFailureStaleAuthority, rejected.FailureCode)
 }

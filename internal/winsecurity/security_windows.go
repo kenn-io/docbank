@@ -35,50 +35,7 @@ func MkdirPrivatePinnedAt(parent *os.Root, component string) (*os.File, error) {
 		return nil, fmt.Errorf("opening held parent directory: %w", err)
 	}
 	defer func() { _ = parentFile.Close() }()
-
-	user, err := currentUserSID()
-	if err != nil {
-		return nil, fmt.Errorf("resolving current Windows user: %w", err)
-	}
-	descriptor, err := windows.SecurityDescriptorFromString(
-		"D:P(A;OICI;GA;;;" + user.String() + ")",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("building private directory security descriptor: %w", err)
-	}
-	name, err := windows.NewNTUnicodeString(component)
-	if err != nil {
-		return nil, fmt.Errorf("encoding vault directory component: %w", err)
-	}
-	attributes := &windows.OBJECT_ATTRIBUTES{
-		Length:             uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})),
-		RootDirectory:      windows.Handle(parentFile.Fd()),
-		ObjectName:         name,
-		Attributes:         windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE,
-		SecurityDescriptor: descriptor,
-	}
-	var handle windows.Handle
-	var status windows.IO_STATUS_BLOCK
-	err = windows.NtCreateFile(
-		&handle,
-		windows.FILE_LIST_DIRECTORY|windows.FILE_TRAVERSE|windows.READ_CONTROL|windows.SYNCHRONIZE,
-		attributes,
-		&status,
-		nil,
-		0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
-		windows.FILE_CREATE,
-		windows.FILE_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_OPEN_REPARSE_POINT,
-		0,
-		0,
-	)
-	if err == windows.STATUS_OBJECT_NAME_COLLISION {
-		return nil, fmt.Errorf("private directory %q: %w", component, os.ErrExist)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return os.NewFile(uintptr(handle), component), nil
+	return MkdirPrivatePinnedFileAt(parentFile, component)
 }
 
 // OpenRestrictedCurrentUserFile opens a regular file without following a

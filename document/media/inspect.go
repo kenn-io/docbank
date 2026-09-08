@@ -178,6 +178,8 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 		record = inspectPDF(data, policy)
 	case baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav":
 		record = inspectWAV(data, policy)
+	case baseType == "audio/mpeg" || ext == ".mp3":
+		record = inspectMP3(data, policy)
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -198,16 +200,22 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 			record.Format = detected.ID
 		}
 	}
-	if record.Eligible && (record.MediaFamily == string(KindImage) ||
-		record.MediaFamily == string(KindVideo)) &&
-		(baseType != record.MediaType || !filenameAllowsVisualFormat(ext, record.Format)) {
-		record.Eligible = false
-		record.Reason = CapabilityReasonMalformed
+	if record.Eligible && (record.MediaFamily == string(KindImage) || record.MediaFamily == string(KindVideo)) {
+		quickTimeIdentity := record.MediaFamily == string(KindVideo) &&
+			baseType == "video/quicktime" && ext == ".mov"
+		if !quickTimeIdentity && (baseType != record.MediaType || !filenameAllowsVisualFormat(ext, record.Format)) {
+			record.Eligible = false
+			record.Reason = CapabilityReasonMalformed
+		}
 	}
-	if record.Eligible && record.MediaFamily == "audio" &&
-		(ext != ".wav" || baseType != "audio/wav" && baseType != "audio/x-wav") {
-		record.Eligible = false
-		record.Reason = CapabilityReasonMalformed
+	if record.Eligible && record.MediaFamily == "audio" {
+		validIdentity := record.Format == "wav" && ext == ".wav" &&
+			(baseType == "audio/wav" || baseType == "audio/x-wav") ||
+			record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg"
+		if !validIdentity {
+			record.Eligible = false
+			record.Reason = CapabilityReasonMalformed
+		}
 	}
 	return sealCapabilityRecord(policy, data, record)
 }
@@ -1312,13 +1320,17 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 	if err != nil {
 		return CapabilityRecord{Reason: CapabilityReasonMalformed, MediaType: declaredType}
 	}
+	if declaredType == "video/quicktime" &&
+		(metadata.Kind != KindVideo || metadata.Container != "quicktime") {
+		return CapabilityRecord{Reason: CapabilityReasonMalformed, MediaType: declaredType}
+	}
 	record := CapabilityRecord{MediaFamily: string(metadata.Kind), MediaType: metadata.MediaType,
 		Format: string(metadata.Format), Measurements: CapabilityMeasurements{
 			Pixels: metadata.Pixels(), Frames: int64(metadata.FrameCount), DurationMS: metadata.DurationMS,
 		}}
 	if metadata.Kind == KindVideo {
 		info, ok := mp4Metadata(data)
-		if !ok {
+		if !ok || !info.sampleAuthority {
 			return CapabilityRecord{Reason: CapabilityReasonMalformed, MediaType: declaredType}
 		}
 		record.Measurements.Frames = info.frameCount

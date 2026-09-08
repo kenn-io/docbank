@@ -804,6 +804,31 @@ func purgeEmbeddingCatalogTx(
 	ctx context.Context, tx *sql.Tx, versionSet, attachmentSet, buildSet map[string]struct{},
 	all bool, asOf string, report *PurgeReport, rootedAttachments map[string]struct{},
 ) (_ []string, retErr error) {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs AS j
+		WHERE j.state IN ('completed','failed','abandoned')
+		  AND NOT EXISTS (
+			SELECT 1 FROM current_rendition_roots r
+			WHERE r.root_id=j.job_id AND r.root_kind=?
+			  AND r.target_kind=? AND r.target_id=j.generation_id
+			  AND r.active=1 AND r.expires_at>?
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM embedding_input_generations g
+			JOIN content_versions v ON v.version_id=g.source_version_id
+			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
+			  AND n.trashed_at IS NULL
+			WHERE g.generation_id=j.generation_id
+			  AND g.source_version_id=j.content_version_id
+			  AND g.profile_fingerprint=j.profile_fingerprint
+			  AND (g.attachment_id IS NULL OR EXISTS (
+				SELECT 1 FROM rendition_heads h
+				WHERE h.content_version_id=g.source_version_id
+				  AND h.profile_fingerprint=g.profile_fingerprint
+				  AND h.attachment_id=g.attachment_id
+			  ))
+		  )`, RenditionRootWorkerLease, RenditionRootEmbeddingGeneration, asOf); err != nil {
+		return nil, fmt.Errorf("removing obsolete terminal embedding jobs: %w", err)
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT s.embedding_set_id,s.content_version_id,
 		s.input_generation_id,s.vector_set_id,v.payload_blob_hash,
 		COALESCE(g.attachment_id,''),COALESCE(a.build_id,'')
@@ -911,6 +936,19 @@ func purgeEmbeddingCatalogTx(
 			return nil, err
 		}
 		report.RemovedEmbeddingHeads += count
+		// A collected set no longer needs its terminal execution record. Pending
+		// work still owns its inputs, including jobs waiting to retry.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs
+			WHERE generation_id=? AND state IN ('completed','failed','abandoned') AND EXISTS (
+				SELECT 1 FROM embedding_sets s WHERE s.embedding_set_id=?
+				  AND s.content_version_id=embedding_jobs.content_version_id
+				  AND s.profile_fingerprint=embedding_jobs.profile_fingerprint
+				  AND s.binding_id=embedding_jobs.binding_id AND s.input_kind=embedding_jobs.input_kind
+				  AND s.input_generation_id=embedding_jobs.generation_id
+				  AND s.vector_space_id=embedding_jobs.vector_space_id
+			)`, candidate.generationID, candidate.id); err != nil {
+			return nil, fmt.Errorf("removing collected embedding jobs: %w", err)
+		}
 		result, err = tx.ExecContext(ctx,
 			`DELETE FROM embedding_sets WHERE embedding_set_id=?`, candidate.id)
 		if err != nil {
@@ -924,6 +962,9 @@ func purgeEmbeddingCatalogTx(
 	}
 	collected, err := collectOrphanEmbeddingArtifactsTx(ctx, tx, asOf)
 	if err != nil {
+		return nil, err
+	}
+	if err := retireIneligibleVectorIndexHeadsTx(ctx, tx); err != nil {
 		return nil, err
 	}
 	report.RemovedEmbeddingInputGenerations += collected.inputGenerations

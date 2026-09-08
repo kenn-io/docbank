@@ -100,8 +100,13 @@ func sniff(data []byte) (Metadata, error) {
 		if !ok {
 			return Metadata{}, ErrMalformedMedia
 		}
+		mediaType := "video/mp4"
+		if info.container == "quicktime" {
+			mediaType = "video/quicktime"
+		}
 		return Metadata{
-			Format: FormatMP4, Kind: KindVideo, MediaType: "video/mp4",
+			Format: FormatMP4, Kind: KindVideo, MediaType: mediaType,
+			Container: info.container, Codec: info.codec,
 			Width: info.width, Height: info.height,
 			DurationMS: info.durationMS, DurationKnown: info.durationKnown,
 			CreatedAt: info.createdAt,
@@ -413,12 +418,19 @@ type mp4Info struct {
 	frameCount                int64
 	durationKnown             bool
 	pictureTracks             int
+	container, codec          string
+	sampleAuthority           bool
 
 	moovCount, mvhdCount int
+	mdatCount            int
 	timescale            uint64
 	movieDuration        uint64
 	trackDurations       []uint64
 	mediaDurations       []mp4Duration
+	mediaDataRanges      []mp4ByteRange
+	mediaDataBounded     bool
+	sampleRanges         []mp4SampleRange
+	source               []byte
 	unknownDuration      bool
 	createdAt            *time.Time
 }
@@ -428,11 +440,18 @@ type mp4Duration struct {
 }
 
 func mp4Metadata(data []byte) (mp4Info, bool) {
-	var info mp4Info
-	if !scanMP4Boxes(data, &info, nil, "", 0) || info.moovCount != 1 || info.mvhdCount > 1 ||
-		info.pictureTracks == 0 || info.width <= 0 || info.height <= 0 {
+	mediaDataRanges, mediaDataBounded, ok := mp4MediaDataRanges(data)
+	if !ok {
 		return mp4Info{}, false
 	}
+	info := mp4Info{mediaDataRanges: mediaDataRanges, mediaDataBounded: mediaDataBounded, source: data}
+	if !scanMP4Boxes(data, &info, nil, "", 0) || info.moovCount != 1 || info.mvhdCount > 1 ||
+		info.pictureTracks == 0 || info.width <= 0 || info.height <= 0 || info.codec == "" {
+		return mp4Info{}, false
+	}
+	info.container = canonicalMP4Container(data)
+	info.sampleAuthority = info.sampleAuthority && info.mdatCount > 0 && info.mediaDataBounded &&
+		mp4SampleRangesDoNotOverlap(info.sampleRanges)
 	info.resolveDuration()
 	return info, true
 }
@@ -443,6 +462,15 @@ type mp4TrackInfo struct {
 	tkhdCount, edtsCount, elstCount                  int
 	hdlrCount, mdhdCount                             int
 	stsdCount, sttsCount, cttsCount, sampleSizeCount int
+	stscCount, chunkOffsetCount                      int
+	chunkOffsets                                     []uint64
+	sampleToChunks                                   []mp4SampleToChunk
+	sampleDescriptionCount                           uint32
+	sampleDescriptions                               []mp4CodecConfiguration
+	sampleDescriptionsBounded                        bool
+	defaultSampleSize                                uint32
+	sampleSizeFieldBits                              byte
+	sampleSizeTable                                  []byte
 	handlerType                                      string
 	presentationWidth, presentationHeight            int64
 	codedWidth, codedHeight                          int64
@@ -451,7 +479,9 @@ type mp4TrackInfo struct {
 	editDuration                                     uint64
 	timedSamples, compositionSamples                 uint64
 	sampleCount                                      uint64
+	inspectedPictures                                int64
 	hasVisualSamples                                 bool
+	codec                                            string
 	unknownSampleEntries                             int
 }
 
@@ -505,6 +535,8 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if info.moovCount > 1 || !scanMP4Boxes(payload, info, nil, kind, depth+1) {
 				return false
 			}
+		case kind == "mdat" && parent == "":
+			info.mdatCount++
 		case kind == "trak" && parent == "moov":
 			trackInfo := &mp4TrackInfo{}
 			if !scanMP4Boxes(payload, info, trackInfo, kind, depth+1) || !trackInfo.finish(info) {
@@ -564,8 +596,22 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if track == nil || !parseSampleSize(kind, payload, track) {
 				return false
 			}
+		case kind == "stsc" && parent == "stbl":
+			if track == nil || !parseSTSC(payload, track) {
+				return false
+			}
+		case (kind == "stco" || kind == "co64") && parent == "stbl":
+			if track == nil || !parseChunkOffsets(kind, payload, track) {
+				return false
+			}
 		case kind == "hdlr" && parent == "mdia":
 			if track == nil || !parseHDLR(payload, track) {
+				return false
+			}
+		case kind == "hdlr" && parent == "minf":
+			// QuickTime may carry a data handler here in addition to the media
+			// handler under mdia. It does not establish the track modality.
+			if len(payload) < 12 || payload[0] != 0 || payload[1] != 0 || payload[2] != 0 || payload[3] != 0 {
 				return false
 			}
 		case kind == "mdhd" && parent == "mdia":
@@ -573,7 +619,8 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 				return false
 			}
 		case kind == "moov" || kind == "trak" || kind == "edts" || kind == "elst" || kind == "mdia" || kind == "minf" ||
-			kind == "stbl" || kind == "stsd" || kind == "stts" || kind == "ctts" || kind == "stsz" || kind == "stz2" || kind == "mvhd" ||
+			kind == "stbl" || kind == "stsd" || kind == "stts" || kind == "ctts" || kind == "stsz" || kind == "stz2" ||
+			kind == "stsc" || kind == "stco" || kind == "co64" || kind == "mvhd" ||
 			kind == "tkhd" || kind == "hdlr" || kind == "mdhd":
 			// A structural header outside its authoritative position is not a
 			// file this package can bound.
@@ -682,6 +729,7 @@ func parseSTSD(payload []byte, track *mp4TrackInfo) bool {
 		return false
 	}
 	want := binary.BigEndian.Uint32(payload[4:8])
+	track.sampleDescriptionsBounded = want <= maxMP4MappedSamples
 	entries := payload[8:]
 	var seen uint32
 	for offset := 0; offset < len(entries); {
@@ -698,18 +746,29 @@ func parseSTSD(payload []byte, track *mp4TrackInfo) bool {
 			}
 			width := int64(binary.BigEndian.Uint16(entry[24:26]))
 			height := int64(binary.BigEndian.Uint16(entry[26:28]))
-			codecWidth, codecHeight, ok := visualCodecDimensions(kind, entry)
+			configuration, codecWidth, codecHeight, ok := visualCodecDimensions(kind, entry)
 			if width <= 0 || height <= 0 || !ok {
 				return false
 			}
+			if track.codec != "" && track.codec != configuration.codec {
+				return false
+			}
 			track.hasVisualSamples = true
+			track.codec = configuration.codec
 			track.codedWidth = max(track.codedWidth, width, codecWidth)
 			track.codedHeight = max(track.codedHeight, height, codecHeight)
+			if track.sampleDescriptionsBounded {
+				track.sampleDescriptions = append(track.sampleDescriptions, configuration)
+			}
 		} else {
 			track.unknownSampleEntries++
+			if track.sampleDescriptionsBounded {
+				track.sampleDescriptions = append(track.sampleDescriptions, mp4CodecConfiguration{})
+			}
 		}
 		offset += size
 	}
+	track.sampleDescriptionCount = seen
 	return seen == want
 }
 
@@ -847,7 +906,7 @@ func parseELST(payload []byte, track *mp4TrackInfo) bool {
 }
 
 func parseSampleSize(kind string, payload []byte, track *mp4TrackInfo) bool {
-	if len(payload) < 12 || payload[0] != 0 {
+	if len(payload) < 12 || payload[0] != 0 || payload[1] != 0 || payload[2] != 0 || payload[3] != 0 {
 		return false
 	}
 	track.sampleSizeCount++
@@ -855,34 +914,35 @@ func parseSampleSize(kind string, payload []byte, track *mp4TrackInfo) bool {
 		return false
 	}
 	count := binary.BigEndian.Uint32(payload[8:12])
-	if count > math.MaxInt32 {
-		return false
-	}
-	samples := int(count) // #nosec G115 -- capped at MaxInt32 above.
 	switch kind {
 	case "stsz":
-		if binary.BigEndian.Uint32(payload[4:8]) == 0 {
-			if len(payload) != 12+samples*4 {
+		track.defaultSampleSize = binary.BigEndian.Uint32(payload[4:8])
+		if track.defaultSampleSize == 0 {
+			if uint64(len(payload)) != 12+uint64(count)*4 {
 				return false
 			}
+			track.sampleSizeFieldBits = 32
+			track.sampleSizeTable = payload[12:]
 		} else if len(payload) != 12 {
 			return false
 		}
 	case "stz2":
-		var tableBytes int
+		var tableBytes uint64
 		switch payload[7] {
 		case 4:
-			tableBytes = (samples + 1) / 2
+			tableBytes = (uint64(count) + 1) / 2
 		case 8:
-			tableBytes = samples
+			tableBytes = uint64(count)
 		case 16:
-			tableBytes = samples * 2
+			tableBytes = uint64(count) * 2
 		default:
 			return false
 		}
-		if len(payload) != 12+tableBytes {
+		if uint64(len(payload)) != 12+tableBytes {
 			return false
 		}
+		track.sampleSizeFieldBits = payload[7]
+		track.sampleSizeTable = payload[12:]
 	default:
 		return false
 	}
@@ -904,7 +964,7 @@ func parseHDLR(payload []byte, track *mp4TrackInfo) bool {
 
 func isVisualSampleEntry(kind string) bool {
 	switch kind {
-	case "avc1", "avc2", "avc3", "avc4", "hvc1", "hev1", "vp08", "vp09", "av01", "mp4v":
+	case "avc1", "hvc1", "vp09", "av01":
 		return true
 	default:
 		return false
@@ -933,18 +993,36 @@ func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 		return isNonVisualHandler(track.handlerType) && !presentation && !track.hasVisualSamples
 	}
 	if !presentation || !track.hasVisualSamples || track.stsdCount != 1 || track.unknownSampleEntries != 0 ||
-		track.codedWidth <= 0 || track.codedHeight <= 0 {
+		track.codedWidth <= 0 || track.codedHeight <= 0 || track.codec == "" {
 		return false
 	}
 	if track.sampleCount > math.MaxInt64 {
 		return false
 	}
+	trackSampleAuthority := track.proveSampleRanges(info)
+	// Modern codecs can change dimensions within samples. Failed sample proof
+	// must not expose unverified container dimensions as measured metadata.
+	if (track.codec == "vp9" || track.codec == "av1") && !trackSampleAuthority {
+		return false
+	}
+	if info.pictureTracks == 0 {
+		info.sampleAuthority = trackSampleAuthority
+	} else {
+		info.sampleAuthority = info.sampleAuthority && trackSampleAuthority
+	}
 	sampleCount := int64(track.sampleCount) // #nosec G115 -- checked against MaxInt64 above.
+	if trackSampleAuthority {
+		sampleCount = track.inspectedPictures
+	}
 	if sampleCount > math.MaxInt64-info.frameCount {
 		return false
 	}
 	info.frameCount += sampleCount
 	info.pictureTracks++
+	if info.codec != "" && info.codec != track.codec {
+		return false
+	}
+	info.codec = track.codec
 	info.width = max(info.width, track.presentationWidth, track.codedWidth)
 	info.height = max(info.height, track.presentationHeight, track.codedHeight)
 	return true

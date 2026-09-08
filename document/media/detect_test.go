@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json/v2"
 	"errors"
 	"hash/crc32"
 	"image/color"
@@ -82,6 +83,56 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 			assert.Equal(t, tt.known, got.DurationKnown)
 			assert.Equal(t, tt.animated, got.Animated)
 			assert.Equal(t, tt.width*tt.height, got.Pixels())
+		})
+	}
+}
+
+func TestDetectReportsLegacyCodecAndContainer(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name, container, codec, mediaType string
+		data                              []byte
+	}{
+		{name: "QuickTime H264", container: "quicktime", codec: "h264", mediaType: "video/quicktime", data: mediatest.H264MOV()},
+		{name: "MP4 H265", container: "mp4", codec: "h265", mediaType: "video/mp4", data: mediatest.H265MP4()},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			metadata, err := media.DetectBytes(testCase.data, testCase.mediaType)
+			require.NoError(t, err)
+			encoded, err := json.Marshal(metadata)
+			require.NoError(t, err)
+			var portable map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &portable))
+			assert.Equal(t, testCase.container, portable["container"])
+			assert.Equal(t, testCase.codec, portable["codec"])
+			assert.Equal(t, testCase.mediaType, metadata.MediaType)
+			assert.Equal(t, int64(1_000), metadata.DurationMS)
+			assert.True(t, metadata.DurationKnown)
+		})
+	}
+}
+
+func TestDetectRejectsInBandParameterSetSampleEntries(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name, from, to string
+		data           func(*testing.T) []byte
+	}{
+		{name: "avc3", from: "avc1", to: "avc3", data: decodableAVCMP4},
+		{name: "hev1", from: "hvc1", to: "hev1", data: decodableHEVCMP4},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			data := testCase.data(t)
+			stsd := bytes.Index(data, []byte("stsd"))
+			require.NotEqual(t, -1, stsd)
+			relative := bytes.Index(data[stsd+4:], []byte(testCase.from))
+			require.NotEqual(t, -1, relative)
+			entry := stsd + 4 + relative
+			copy(data[entry:entry+4], testCase.to)
+			_, err := media.DetectBytes(data, "video/mp4")
+			require.ErrorIs(t, err, media.ErrMalformedMedia)
 		})
 	}
 }

@@ -52,6 +52,49 @@ var daemonRunCmd = &cobra.Command{
 	},
 }
 
+type embeddingRuntimeReadiness interface{ Ready() bool }
+
+type embeddingJobRunner interface {
+	Run(ctx context.Context) error
+}
+
+type embeddingJobStarter interface {
+	Start(name string, run func(context.Context) error) error
+}
+
+// startEmbeddingWorkerIfReady preserves the daemon's normal supervisor-owned
+// cancellation and drain lifecycle. An empty runtime registry leaves durable
+// work untouched. A ready runtime must provide a real worker; configuration
+// failures are not converted into a no-op polling loop.
+func startEmbeddingWorkerIfReady(starter embeddingJobStarter, readiness embeddingRuntimeReadiness,
+	build func() (embeddingJobRunner, error),
+) error {
+	if readiness == nil || !readiness.Ready() {
+		return nil
+	}
+	worker, err := build()
+	if err != nil {
+		return err
+	}
+	if worker == nil {
+		return errors.New("embedding worker builder returned nil")
+	}
+	return starter.Start("process:embeddings", worker.Run)
+}
+
+func startVectorIndexWorker(starter embeddingJobStarter,
+	build func() (embeddingJobRunner, error),
+) error {
+	worker, err := build()
+	if err != nil {
+		return err
+	}
+	if worker == nil {
+		return errors.New("vector index worker builder returned nil")
+	}
+	return starter.Start("process:vector-indexes", worker.Run)
+}
+
 func runServe(ctx context.Context) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
@@ -137,6 +180,9 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	defer func() { _ = blobs.Close() }()
 	// Exclusive lock holder: any stale tmp file is provably abandoned.
+	if err := recoverEmbeddingRuntimeSpool(sigCtx, layout.BlobTmpDir()); err != nil {
+		return err
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
@@ -152,6 +198,41 @@ func runServe(ctx context.Context) (retErr error) {
 	operationGate := api.NewOperationGate()
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
 	if err := startProcessingJobs(jobSupervisor, s, blobs, runtimeRegistry, operationGate, logger); err != nil {
+		return err
+	}
+	embeddingRuntimeRegistry, err := configureEmbeddingRuntimes(cfg, blobs, layout.BlobTmpDir())
+	if err != nil {
+		return fmt.Errorf("configuring embedding runtimes: %w", err)
+	}
+	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
+		func() (embeddingJobRunner, error) {
+			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
+				Catalog: s, Authority: s, Blobs: blobs, GenerationBlobs: blobs, Runtime: embeddingRuntimeRegistry,
+				Gate: operationGate, Owner: "daemon-embedding-worker",
+				LeaseDuration: 5 * time.Minute, IdleDelay: time.Second,
+				RetryLimit: 3, RetryBaseDelay: time.Second, MaxRetryDelay: 30 * time.Second,
+				AttemptLifetime: 30 * time.Minute, MaxRows: 100_000,
+				MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
+				DescriptorFingerprints: embeddingRuntimeRegistry.Fingerprints(),
+			})
+			if workerErr != nil {
+				return nil, fmt.Errorf("configuring embedding worker: %w", workerErr)
+			}
+			return worker, nil
+		}); err != nil {
+		return err
+	}
+	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
+		worker, workerErr := processing.NewIndexWorker(processing.IndexWorkerConfig{
+			Catalog: s, Blobs: blobs, Gate: operationGate,
+			Owner: "daemon-vector-index-worker", BuildLease: 30 * time.Minute,
+			ReaderLease: 5 * time.Minute, IdleDelay: time.Second,
+		})
+		if workerErr != nil {
+			return nil, fmt.Errorf("configuring vector index worker: %w", workerErr)
+		}
+		return worker, nil
+	}); err != nil {
 		return err
 	}
 	placementRunner := blob.PlacementRunner{

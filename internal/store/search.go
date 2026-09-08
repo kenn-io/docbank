@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -33,13 +34,18 @@ type SearchHit struct {
 // media type; UnderNodeID selects
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
+// ContentVersionIDs restricts results to exact current live versions.
 type SearchOptions struct {
-	TagID          string
-	MIMEType       string
-	UnderNodeID    int64
-	ModifiedSince  string
-	ModifiedBefore string
+	TagID             string
+	MIMEType          string
+	UnderNodeID       int64
+	ModifiedSince     string
+	ModifiedBefore    string
+	ContentVersionIDs []string
 }
+
+// MaxSearchSourceFenceIDs bounds one source-restricted search scope.
+const MaxSearchSourceFenceIDs = 4096
 
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS
 // query without the tag or time anchor required for a bounded filter page.
@@ -1134,40 +1140,11 @@ func (s *Store) SearchPageWithOptions(
 	if limit <= 0 {
 		limit = 50
 	}
-	if opts.TagID != "" {
-		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
-			return nil, false, fmt.Errorf("search tag %q: %w", opts.TagID, err)
-		}
-	}
-	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
+	var err error
+	opts, err = s.normalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
-	opts.MIMEType = normalizedMIME
-	if opts.UnderNodeID < 0 {
-		return nil, false, errors.New("search directory node ID must be positive")
-	}
-	if opts.UnderNodeID != 0 {
-		directory, err := s.NodeByID(ctx, opts.UnderNodeID)
-		if err != nil {
-			return nil, false, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
-		}
-		if directory.TrashedAt != nil {
-			return nil, false, fmt.Errorf("search directory node %d is trashed: %w",
-				opts.UnderNodeID, ErrNotFound)
-		}
-		if !directory.IsDir() {
-			return nil, false, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
-		}
-	}
-	modifiedSince, modifiedBefore, err := NormalizeSearchTimeBounds(
-		opts.ModifiedSince, opts.ModifiedBefore,
-	)
-	if err != nil {
-		return nil, false, err
-	}
-	opts.ModifiedSince = modifiedSince
-	opts.ModifiedBefore = modifiedBefore
 	fq := ftsQuery(query)
 	if SearchNeedsQuery(query, opts) {
 		return nil, false, ErrSearchQueryRequired
@@ -1294,6 +1271,75 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
+func (s *Store) normalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
+	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts)
+}
+
+func (s *Store) normalizeSearchOptionsWithQuerier(
+	ctx context.Context, queryer metadataQuerier, opts SearchOptions,
+) (SearchOptions, error) {
+	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
+		return SearchOptions{}, errors.New("search source fence exceeds 4096 content versions")
+	}
+	if len(opts.ContentVersionIDs) != 0 {
+		ids := slices.Clone(opts.ContentVersionIDs)
+		sort.Strings(ids)
+		for index, id := range ids {
+			if err := validateUUIDv4(id); err != nil {
+				return SearchOptions{}, errors.New("search source fence contains an invalid content version ID")
+			}
+			if index > 0 && ids[index-1] == id {
+				return SearchOptions{}, errors.New("search source fence contains a duplicate content version ID")
+			}
+		}
+		opts.ContentVersionIDs = ids
+	}
+	if opts.TagID != "" {
+		if err := validateUUIDv4(opts.TagID); err != nil {
+			return SearchOptions{}, fmt.Errorf("search tag %q: tag %q: %w", opts.TagID, opts.TagID, ErrNotFound)
+		}
+		_, err := scanTag(queryer.QueryRowContext(ctx, `
+			SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
+			FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
+			WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, opts.TagID))
+		if err != nil {
+			return SearchOptions{}, fmt.Errorf("search tag %q: tag %q: %w", opts.TagID, opts.TagID, err)
+		}
+	}
+	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
+	if err != nil {
+		return SearchOptions{}, err
+	}
+	opts.MIMEType = normalizedMIME
+	if opts.UnderNodeID < 0 {
+		return SearchOptions{}, errors.New("search directory node ID must be positive")
+	}
+	if opts.UnderNodeID != 0 {
+		directory, err := scanNode(queryer.QueryRowContext(ctx,
+			`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, opts.UnderNodeID))
+		if err != nil {
+			return SearchOptions{}, fmt.Errorf("search directory node %d: node %d: %w",
+				opts.UnderNodeID, opts.UnderNodeID, err)
+		}
+		if directory.TrashedAt != nil {
+			return SearchOptions{}, fmt.Errorf("search directory node %d is trashed: %w",
+				opts.UnderNodeID, ErrNotFound)
+		}
+		if !directory.IsDir() {
+			return SearchOptions{}, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
+		}
+	}
+	modifiedSince, modifiedBefore, err := NormalizeSearchTimeBounds(
+		opts.ModifiedSince, opts.ModifiedBefore,
+	)
+	if err != nil {
+		return SearchOptions{}, err
+	}
+	opts.ModifiedSince = modifiedSince
+	opts.ModifiedBefore = modifiedBefore
+	return opts, nil
+}
+
 // searchFilterPage selects the limited page before walking its ancestry, so
 // result data and paths come from one read snapshot without per-hit queries.
 func (s *Store) searchFilterPage(
@@ -1351,6 +1397,16 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if len(opts.ContentVersionIDs) != 0 {
+		encoded, err := json.Marshal(opts.ContentVersionIDs)
+		if err != nil {
+			panic(err)
+		}
+		clauses = append(clauses, `AND cv.version_id IN (
+			SELECT value FROM json_each(?)
+		)`)
+		args = append(args, string(encoded))
+	}
 	if opts.TagID != "" {
 		clauses = append(clauses, `AND n.id IN (
 			SELECT node_id FROM node_tags WHERE tag_id=?

@@ -467,8 +467,9 @@ func normalizeProcessingProfileRecord(record ProcessingProfileRecord) (Processin
 	if !bytes.Equal(canonical, wantCanonical) {
 		return ProcessingProfileRecord{}, errors.New("processing profile JSON is not canonical")
 	}
-	if profile.Rendition == nil {
-		return ProcessingProfileRecord{}, errors.New("rendition attachment profile lacks a rendition binding")
+	renditionDisclosure := ""
+	if profile.Rendition != nil {
+		renditionDisclosure = profile.Rendition.DisclosureFingerprint
 	}
 	checks := []struct {
 		name string
@@ -481,7 +482,7 @@ func normalizeProcessingProfileRecord(record ProcessingProfileRecord) (Processin
 		{"retention disclosure fingerprint", record.RetentionDisclosureFingerprint, fingerprints.RetentionDisclosure},
 		{"attachment policy fingerprint", record.AttachmentPolicyFingerprint, profile.RetentionDisclosure.AttachmentPolicyFingerprint},
 		{"consent fingerprint", record.ConsentFingerprint, profile.RetentionDisclosure.ConsentFingerprint},
-		{"rendition disclosure fingerprint", record.RenditionDisclosureFingerprint, profile.Rendition.DisclosureFingerprint},
+		{"rendition disclosure fingerprint", record.RenditionDisclosureFingerprint, renditionDisclosure},
 		{"trust boundary", record.TrustBoundary, profile.RetentionDisclosure.TrustBoundary},
 	}
 	for _, check := range checks {

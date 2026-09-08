@@ -3,25 +3,64 @@ package media
 import (
 	"encoding/binary"
 	"math"
+	"slices"
 )
 
-// visualCodecDimensions reads dimensions from an out-of-band codec
-// configuration. avc3/hev1 and the other recognized visual sample-entry kinds
-// can carry configuration changes in media samples, which this metadata-only
-// detector cannot bound, so they fail closed.
-func visualCodecDimensions(kind string, entry []byte) (int64, int64, bool) {
+type mp4CodecConfiguration struct {
+	codec          string
+	nalLengthBytes int
+	configuration  []byte
+}
+
+type mp4SampleDimensions struct{ width, height, frames int64 }
+
+// ISO/IEC color-code values shared by VP9 configuration and AV1 color_config.
+// Reserved and unspecified future codes are outside the inspected subset.
+func validMP4ColorCodes(primaries, transfer, matrix uint64) bool {
+	p := primaries == 1 || primaries == 2 || primaries >= 4 && primaries <= 12 || primaries == 22
+	t := transfer == 1 || transfer == 2 || transfer >= 4 && transfer <= 18
+	m := matrix <= 2 || matrix >= 4 && matrix <= 14
+	return p && t && m
+}
+
+// mp4HeaderReader keeps failures sticky while walking conditional codec syntax.
+// It uses the same MSB-first checked reader as AVC/HEVC; a missing field can
+// never become an implicit zero-valued authority.
+type mp4HeaderReader struct {
+	mp4BitReader
+
+	failed bool
+}
+
+func (r *mp4HeaderReader) read(count int) uint64 {
+	value, ok := r.readBits(count)
+	r.failed = r.failed || !ok
+	return value
+}
+func (r *mp4HeaderReader) skip(count int) { r.failed = !r.skipBits(count) || r.failed }
+
+// visualCodecDimensions validates the sample-entry codec configuration and
+// returns any out-of-band dimension authority. VP9 and sequence-less AV1 defer
+// dimensions to mapped samples; zero here is not substituted with a dummy bound.
+// avc3/hev1 configuration changes remain outside the supported subset.
+func visualCodecDimensions(kind string, entry []byte) (mp4CodecConfiguration, int64, int64, bool) {
 	if len(entry) < 78 {
-		return 0, 0, false
+		return mp4CodecConfiguration{}, 0, 0, false
 	}
+	var configuration mp4CodecConfiguration
 	var configKind string
 	var parse func([]byte) (int64, int64, bool)
 	switch kind {
 	case "avc1":
-		configKind, parse = "avcC", avcConfigDimensions
+		configuration.codec, configKind, parse = "h264", "avcC", avcConfigDimensions
 	case "hvc1":
-		configKind, parse = "hvcC", hevcConfigDimensions
+		configuration.codec, configKind, parse = "h265", "hvcC", hevcConfigDimensions
+	case "vp09":
+		configuration.codec, configKind = "vp9", "vpcC"
+	case "av01":
+		configuration.codec, configKind = "av1", "av1C"
 	default:
-		return 0, 0, false
+		return mp4CodecConfiguration{}, 0, 0, false
 	}
 	children := entry[78:]
 	var width, height int64
@@ -29,22 +68,142 @@ func visualCodecDimensions(kind string, entry []byte) (int64, int64, bool) {
 	for offset := 0; offset < len(children); {
 		headerLen, size, ok := mp4BoxHeader(children, offset)
 		if !ok {
-			return 0, 0, false
+			return mp4CodecConfiguration{}, 0, 0, false
 		}
 		if string(children[offset+4:offset+8]) == configKind {
 			configs++
 			if configs > 1 {
-				return 0, 0, false
+				return mp4CodecConfiguration{}, 0, 0, false
 			}
-			codecWidth, codecHeight, ok := parse(children[offset+headerLen : offset+size])
+			config := children[offset+headerLen : offset+size]
+			var codecWidth, codecHeight int64
+			var ok bool
+			switch kind {
+			case "vp09":
+				_, ok = newMP4VP9State(config)
+			case "av01":
+				var state *mp4AV1State
+				state, ok = newMP4AV1State(config)
+				if ok {
+					codecWidth, codecHeight = state.sequence.dimensions.width, state.sequence.dimensions.height
+				}
+			default:
+				codecWidth, codecHeight, ok = parse(config)
+			}
 			if !ok {
-				return 0, 0, false
+				return mp4CodecConfiguration{}, 0, 0, false
+			}
+			switch kind {
+			case "avc1":
+				configuration.nalLengthBytes = int(config[4]&0x03) + 1
+			case "hvc1":
+				configuration.nalLengthBytes = int(config[21]&0x03) + 1
+			case "vp09", "av01":
+				configuration.configuration = slices.Clone(config)
 			}
 			width, height = codecWidth, codecHeight
 		}
 		offset += size
 	}
-	return width, height, configs == 1 && width > 0 && height > 0
+	return configuration, width, height, configs == 1 && (kind == "vp09" || kind == "av01" || width > 0 && height > 0)
+}
+
+func validMP4CodecSample(configuration mp4CodecConfiguration, sample []byte) bool {
+	switch configuration.codec {
+	case "h264":
+		return validLengthPrefixedNALSample(sample, configuration.nalLengthBytes, false)
+	case "h265":
+		return validLengthPrefixedNALSample(sample, configuration.nalLengthBytes, true)
+	default:
+		return false
+	}
+}
+
+func validLengthPrefixedNALSample(sample []byte, lengthBytes int, hevc bool) bool {
+	if lengthBytes < 1 || lengthBytes > 4 {
+		return false
+	}
+	hasPicture := false
+	for offset := 0; offset < len(sample); {
+		if offset+lengthBytes > len(sample) {
+			return false
+		}
+		size := uint64(0)
+		for _, value := range sample[offset : offset+lengthBytes] {
+			size = size<<8 | uint64(value)
+		}
+		offset += lengthBytes
+		remaining := uint64(len(sample) - offset) //nolint:gosec // offset is bounded by the sample length
+		if size == 0 || size > remaining {
+			return false
+		}
+		nal := sample[offset : offset+int(size)]
+		if hevc {
+			if len(nal) < 2 || nal[0]&0x80 != 0 || nal[1]&0x07 == 0 {
+				return false
+			}
+			nalType := (nal[0] >> 1) & 0x3f
+			if nalType >= 32 && nalType <= 34 {
+				return false
+			}
+			if nalType <= 31 {
+				if !validHEVCPictureNAL(nal, nalType) {
+					return false
+				}
+				hasPicture = true
+			}
+		} else {
+			if nal[0]&0x80 != 0 {
+				return false
+			}
+			nalType := nal[0] & 0x1f
+			if nalType == 0 || nalType > 23 || nalType == 7 || nalType == 8 || nalType == 13 || nalType == 15 {
+				return false
+			}
+			if nalType >= 1 && nalType <= 5 {
+				if !validAVCPictureNAL(nal, nalType) {
+					return false
+				}
+				hasPicture = true
+			}
+		}
+		offset += int(size)
+	}
+	return len(sample) > 0 && hasPicture
+}
+
+func validAVCPictureNAL(nal []byte, nalType byte) bool {
+	// Data partitions B and C need PPS/SPS state to interpret safely. Fail
+	// closed instead of mistaking their type-only headers for picture proof.
+	if nalType == 3 || nalType == 4 {
+		return false
+	}
+	reader := mp4BitReader{data: removeEmulationPrevention(nal[1:])}
+	if _, ok := reader.readUE(); !ok { // first_mb_in_slice
+		return false
+	}
+	sliceType, ok := reader.readUE()
+	if !ok || sliceType > 9 {
+		return false
+	}
+	_, ok = reader.readUE() // pic_parameter_set_id
+	return ok
+}
+
+func validHEVCPictureNAL(nal []byte, nalType byte) bool {
+	if nalType > 9 && (nalType < 16 || nalType > 21) {
+		return false
+	}
+	reader := mp4BitReader{data: removeEmulationPrevention(nal[2:])}
+	firstSlice, ok := reader.readBits(1)
+	if !ok || firstSlice == 0 {
+		return false
+	}
+	if nalType >= 16 && !reader.skipBits(1) { // no_output_of_prior_pics_flag
+		return false
+	}
+	_, ok = reader.readUE() // slice_pic_parameter_set_id
+	return ok
 }
 
 func avcConfigDimensions(config []byte) (int64, int64, bool) {

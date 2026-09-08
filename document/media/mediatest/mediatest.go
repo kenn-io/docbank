@@ -96,6 +96,14 @@ func MP4(width, height int, durationMS int64) []byte {
 	return append(Box("ftyp", ftypPayload), moov...)
 }
 
+// LengthPrefixedNAL returns one four-byte-length-prefixed synthetic NAL unit.
+// It is suitable for exercising sample-table mapping without a codec runtime.
+func LengthPrefixedNAL(nal ...byte) []byte {
+	data := make([]byte, 4, 4+len(nal))
+	binary.BigEndian.PutUint32(data, uint32(len(nal))) //nolint:gosec // test fixtures are bounded by memory
+	return append(data, nal...)
+}
+
 func visualSampleTable(width, height int, durationMS int64) []byte {
 	entry := make([]byte, 78)
 	binary.BigEndian.PutUint16(entry[24:26], uint16(width))  //nolint:gosec // synthetic dimensions are small

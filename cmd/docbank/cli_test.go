@@ -697,6 +697,7 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	}, 5*time.Second, 25*time.Millisecond)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:source-metadata").Status)
+	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	_, renditions := jobNamed(got, "process:renditions")
 	assert.False(t, renditions, "no rendition provider is bound, so no rendition job is reported")
 }
@@ -756,6 +757,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	require.NoError(t, err)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "storage:pack").Status)
 
 	time.Sleep(100 * time.Millisecond)
@@ -798,6 +800,7 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
+	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "watch:sessions").Status)
 
 	out, err = runCLI(t, "watch", "list", "--json")

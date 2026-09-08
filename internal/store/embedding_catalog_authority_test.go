@@ -387,6 +387,86 @@ func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing
 	}
 }
 
+func TestIndexRestoreVerificationAllowsOnlyMissingVectorPayloads(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		omit          func(EmbeddingSetRecord) string
+		corruptVector bool
+		wantError     bool
+	}{
+		{name: "missing vector payload", omit: func(record EmbeddingSetRecord) string {
+			return record.VectorSet.PayloadBlobHash
+		}},
+		{name: "missing E2 generation", omit: func(record EmbeddingSetRecord) string {
+			return record.InputGeneration.GenerationBlobHash
+		}, wantError: true},
+		{name: "corrupt vector payload", corruptVector: true, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(source, versionID, profile.Fingerprint,
+				document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
+			var metadata bytes.Buffer
+			require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
+
+			artifacts := map[string][]byte{
+				catalogSourceHash:                               catalogBlobContents[catalogSourceHash],
+				catalogEvidenceBlobHash:                         catalogBlobContents[catalogEvidenceBlobHash],
+				catalogMarkdownBlobHash:                         catalogBlobContents[catalogMarkdownBlobHash],
+				record.InputGeneration.GenerationBlobHash:       record.InputGeneration.GenerationJSON,
+				testSHA256(record.InputGeneration.EvidenceJSON): record.InputGeneration.EvidenceJSON,
+				record.VectorSet.PayloadBlobHash:                record.VectorSet.Payload,
+			}
+			if testCase.omit != nil {
+				delete(artifacts, testCase.omit(record))
+			}
+			target := newTestStore(t)
+			layout := materializeEmbeddingRestoreArtifacts(t, target, artifacts)
+			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+			if testCase.omit != nil {
+				missing := testCase.omit(record)
+				require.NoError(t, target.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+					_, err := tx.ExecContext(t.Context(),
+						`DELETE FROM blob_locations WHERE blob_hash=?`, missing)
+					return err
+				}))
+			}
+			if testCase.corruptVector {
+				hash, err := packstore.ParseHash(record.VectorSet.PayloadBlobHash)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(layout.LoosePath(hash),
+					bytes.Repeat([]byte{'x'}, len(record.VectorSet.Payload)), 0o600))
+			}
+			reader := &embeddingRestoreReader{store: target, backend: mustEmbeddingBackend(t, layout)}
+
+			if testCase.name == "missing vector payload" {
+				require.ErrorIs(t, target.VerifyRenditionBlobAuthority(t.Context()),
+					packstore.ErrPhysicalAuthorityMissing,
+					"ordinary verification remains strict outside the staged restore boundary")
+				require.ErrorIs(t, target.VerifyRenditionBlobBytes(t.Context(), reader),
+					packstore.ErrPhysicalAuthorityMissing)
+			}
+			authorityErr := target.VerifyRestoredRenditionBlobAuthority(t.Context())
+			bytesErr := target.VerifyRestoredRenditionBlobBytes(t.Context(), reader)
+			if testCase.wantError {
+				require.Error(t, errors.Join(authorityErr, bytesErr))
+			} else {
+				require.NoError(t, authorityErr)
+				require.NoError(t, bytesErr)
+			}
+		})
+	}
+}
+
+func mustEmbeddingBackend(t *testing.T, layout *packstore.Layout) *packstore.FilesystemBackend {
+	t.Helper()
+	backend, err := packstore.NewFilesystemBackend(*layout, packstore.FilesystemBackendOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, backend.Close()) })
+	return backend
+}
+
 func TestEmbeddingCatalogRestoreVerifiesArtifactsRetainedAfterVersionPrune(t *testing.T) {
 	source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
@@ -465,7 +545,8 @@ func (r *embeddingRestoreReader) OpenStreamContext(
 			return stream, size, nil
 		}
 	}
-	return nil, 0, errors.New("no catalog-authorized embedding artifact location")
+	return nil, 0, fmt.Errorf("no catalog-authorized embedding artifact location: %w",
+		packstore.ErrPhysicalAuthorityMissing)
 }
 
 func materializeEmbeddingRestoreArtifacts(t *testing.T, s *Store, artifacts map[string][]byte) *packstore.Layout {

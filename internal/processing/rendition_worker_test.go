@@ -1380,7 +1380,7 @@ func (catalog *transientRenditionCatalog) RenditionJobWorkByClaim(
 func (catalog *transientRenditionCatalog) BeginRenditionProviderEgress(
 	ctx context.Context, claim store.RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
-) (store.ProviderOperationAuthorization, *store.RenditionProviderEgressFence, error) {
+) (store.ProviderOperationAuthorization, *store.ProviderEgressFence, error) {
 	var hookErr error
 	catalog.beforeBeginOnce.Do(func() {
 		if catalog.beforeBegin != nil {

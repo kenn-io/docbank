@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/uploadproof"
 	"go.kenn.io/docbank/document/media"
 )
 
@@ -53,6 +54,7 @@ type authorizedUpload struct {
 	mu       sync.Mutex
 	reader   *os.File
 	metadata document.AuthorizedUploadMetadata
+	proof    document.VerifiedUploadProof
 	cleanup  func() error
 	stop     func() bool
 	closed   bool
@@ -117,7 +119,15 @@ func (upload *authorizedUpload) Metadata() document.AuthorizedUploadMetadata {
 	return upload.metadata
 }
 
+func (upload *authorizedUpload) VerifiedUploadProof() (document.VerifiedUploadProof, bool) {
+	if upload == nil || !upload.proof.Valid() {
+		return document.VerifiedUploadProof{}, false
+	}
+	return upload.proof, true
+}
+
 var _ document.AuthorizedUpload = (*authorizedUpload)(nil)
+var _ document.VerifiedUploadProofCarrier = (*authorizedUpload)(nil)
 
 // Authorize copies, syncs, independently reopens, rehashes, and reinspects an
 // exact source before returning the core-owned one-shot reader. The named file
@@ -267,8 +277,24 @@ func Authorize(
 	if err := callTestHook(source.testHook, authorizeStageValidated, directory.path(spoolFilename)); err != nil {
 		return nil, err
 	}
+	proof, err := uploadproof.Issue(uploadproof.Facts{
+		SourceBytes: reinspected.SourceBytes, SourceSHA256: reinspected.SourceSHA256,
+		CapabilityRecordChecksum: reinspected.Checksum,
+		DescriptorFingerprint:    reinspected.DescriptorFingerprint,
+		ProfileFingerprint:       reinspected.ProfileFingerprint, DisclosureFingerprint: reinspected.DisclosureFingerprint,
+		InputKind: string(reinspected.InputKind), MediaFamily: reinspected.MediaFamily,
+		MediaType: reinspected.MediaType, Format: reinspected.Format,
+		Pages: reinspected.Measurements.Pages, Pixels: reinspected.Measurements.Pixels,
+		Frames: reinspected.Measurements.Frames, DurationMS: reinspected.Measurements.DurationMS,
+		MaxSourceBytes: reinspected.Policy.MaxSourceBytes, MaxPages: reinspected.Policy.MaxPages,
+		MaxPixels: reinspected.Policy.MaxPixels, MaxFrames: reinspected.Policy.MaxFrames,
+		MaxDurationMS: reinspected.Policy.MaxDurationMS,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upload: issue verified proof: %w", err)
+	}
 	providerDigest := sha256.Sum256(metadata.ProviderMetadata)
-	result := &authorizedUpload{reader: reader, metadata: document.AuthorizedUploadMetadata{
+	result := &authorizedUpload{reader: reader, proof: proof, metadata: document.AuthorizedUploadMetadata{
 		Filename: metadata.Filename, MediaFamily: capability.MediaFamily,
 		MediaType: capability.MediaType, ByteLength: capability.SourceBytes,
 		SHA256: capability.SourceSHA256, CapabilityRecordChecksum: capability.Checksum,

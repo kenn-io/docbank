@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -108,6 +107,7 @@ type RenditionJobWaiter struct {
 	ProfileFingerprint string
 	AttachmentID       string
 	State              string
+	FailureCode        RenditionFailureCode
 }
 
 // RenditionJobClaim is the worker-only fenced lease. ResumeHandle is opaque
@@ -308,11 +308,11 @@ func (s *Store) EnqueueRenditionJob(
 		waiterResult, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_job_waiters(
 				waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-				disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+				disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
 				attachment_id,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,'waiting',?,?,?)
+			) VALUES(?,?,?,?,?,?,?,?,?,'waiting',NULL,?,?,?)
 			ON CONFLICT(waiter_id) DO UPDATE SET
-				state='waiting',updated_at=excluded.updated_at`,
+				state='waiting',failure_code=NULL,updated_at=excluded.updated_at`,
 			waiterID, jobID, request.ContentVersionID, profile.Fingerprint,
 			authority.principal, authority.scope, authority.disclosure,
 			authority.inputsJSON, authority.retainedJSON, attachmentID, now, now)
@@ -334,7 +334,7 @@ func (s *Store) EnqueueRenditionJob(
 		}
 		if alreadyActive {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-					SET state='published',updated_at=? WHERE waiter_id=?`, now, waiterID); err != nil {
+					SET state='published',failure_code=NULL,updated_at=? WHERE waiter_id=?`, now, waiterID); err != nil {
 				return fmt.Errorf("joining active rendition waiter: %w", err)
 			}
 		} else {
@@ -417,6 +417,17 @@ func (s *Store) RenditionJobByID(ctx context.Context, id string) (RenditionJob, 
 		return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, err)
 	}
 	return job, nil
+}
+
+func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (RenditionJobWaiter, error) {
+	if err := validateCatalogSHA256(id, "rendition waiter ID"); err != nil {
+		return RenditionJobWaiter{}, fmt.Errorf("rendition waiter: %w", ErrNotFound)
+	}
+	waiter, err := loadRenditionJobWaiterTx(ctx, s.db, id)
+	if err != nil {
+		return RenditionJobWaiter{}, fmt.Errorf("rendition waiter %s: %w", id, err)
+	}
+	return waiter, nil
 }
 
 // ClaimRenditionJob claims or reclaims one exact job. An expired provider
@@ -664,16 +675,18 @@ func selectRenditionJobWaiterTx(
 		if err == nil {
 			return candidateID, authorization, nil
 		}
+		failureCode := RenditionFailureConsent
 		if errors.Is(err, ErrRenditionJobStaleAuthority) {
 			sawStale = true
+			failureCode = RenditionFailureStaleAuthority
 		} else if !errors.Is(err, ErrProcessingConsentRequired) &&
 			!errors.Is(err, ErrProcessingConsentExpired) &&
 			!errors.Is(err, ErrProcessingConsentRevoked) {
 			return "", ProviderOperationAuthorization{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-			SET state='rejected',updated_at=? WHERE waiter_id=?`,
-			at.Format(timestampLayout), candidateID); err != nil {
+			SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+			failureCode, at.Format(timestampLayout), candidateID); err != nil {
 			return "", ProviderOperationAuthorization{}, fmt.Errorf(
 				"rejecting unauthorized rendition waiter: %w", err)
 		}
@@ -804,9 +817,14 @@ func (s *Store) BeginRenditionProvider(
 			errors.Is(err, ErrProcessingConsentExpired) ||
 			errors.Is(err, ErrProcessingConsentRevoked) ||
 			errors.Is(err, ErrRenditionJobStaleAuthority) {
+			failureCode := RenditionFailureConsent
+			if errors.Is(err, ErrRenditionJobStaleAuthority) {
+				failureCode = RenditionFailureStaleAuthority
+			}
 			if _, rejectErr := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='rejected',updated_at=? WHERE waiter_id=? AND job_id=? AND state='waiting'`,
-				at.UTC().Format(timestampLayout), waiterID, claim.JobID); rejectErr != nil {
+				SET state='rejected',failure_code=?,updated_at=?
+				WHERE waiter_id=? AND job_id=? AND state='waiting'`,
+				failureCode, at.UTC().Format(timestampLayout), waiterID, claim.JobID); rejectErr != nil {
 				return fmt.Errorf("rejecting stale rendition waiter: %w", rejectErr)
 			}
 			nextWaiterID, nextAuthorization, selectErr := selectRenditionJobWaiterTx(
@@ -867,29 +885,14 @@ func (s *Store) BeginRenditionProvider(
 	return authorization, nil
 }
 
-// RenditionProviderEgressFence orders consent revocation against provider
-// execution. Close releases the fence after the provider call finishes or
-// when an invocation never reaches the provider boundary.
-type RenditionProviderEgressFence struct {
-	once    sync.Once
-	release func()
-}
-
-// Close releases a provider-egress fence.
-func (fence *RenditionProviderEgressFence) Close() {
-	if fence != nil {
-		fence.once.Do(fence.release)
-	}
-}
-
 // BeginRenditionProviderEgress rechecks durable authority while holding a
 // narrow fence that the caller must release after provider execution.
 func (s *Store) BeginRenditionProviderEgress(
 	ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
-) (ProviderOperationAuthorization, *RenditionProviderEgressFence, error) {
-	s.renditionEgressMu.RLock()
-	fence := &RenditionProviderEgressFence{release: s.renditionEgressMu.RUnlock}
+) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
+	s.providerEgressMu.RLock()
+	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	authorization, err := s.BeginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
 	if err != nil {
 		fence.Close()
@@ -1299,12 +1302,18 @@ func (s *Store) PublishRenditionJob(
 			return err
 		}
 		authorized := make([]renditionJobWaiterAuthority, 0, len(waiterIDs))
-		rejected := make([]string, 0)
+		type rejectedWaiter struct {
+			id   string
+			code RenditionFailureCode
+		}
+		rejected := make([]rejectedWaiter, 0)
 		for _, waiterID := range waiterIDs {
 			request, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
 			if err != nil {
 				if errors.Is(err, ErrRenditionJobStaleAuthority) {
-					rejected = append(rejected, waiterID)
+					rejected = append(rejected, rejectedWaiter{
+						id: waiterID, code: RenditionFailureStaleAuthority,
+					})
 					continue
 				}
 				return err
@@ -1314,7 +1323,9 @@ func (s *Store) PublishRenditionJob(
 				if errors.Is(err, ErrProcessingConsentRequired) ||
 					errors.Is(err, ErrProcessingConsentExpired) ||
 					errors.Is(err, ErrProcessingConsentRevoked) {
-					rejected = append(rejected, waiterID)
+					rejected = append(rejected, rejectedWaiter{
+						id: waiterID, code: RenditionFailureConsent,
+					})
 					continue
 				}
 				return err
@@ -1355,14 +1366,15 @@ func (s *Store) PublishRenditionJob(
 		}
 		for _, authority := range authorized {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='published',updated_at=? WHERE waiter_id=?`,
+				SET state='published',failure_code=NULL,updated_at=? WHERE waiter_id=?`,
 				publishedAt, authority.waiter.ID); err != nil {
 				return fmt.Errorf("publishing rendition waiter: %w", err)
 			}
 		}
-		for _, waiterID := range rejected {
+		for _, waiter := range rejected {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='rejected',updated_at=? WHERE waiter_id=?`, publishedAt, waiterID); err != nil {
+				SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+				waiter.code, publishedAt, waiter.id); err != nil {
 				return fmt.Errorf("rejecting rendition waiter: %w", err)
 			}
 		}
@@ -1505,11 +1517,12 @@ func loadRenditionJobWaiterTx(
 	ctx context.Context, query rowQuerier, id string,
 ) (RenditionJobWaiter, error) {
 	var waiter RenditionJobWaiter
+	var failure sql.NullString
 	err := query.QueryRowContext(ctx, `
-		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,attachment_id,state
+		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,attachment_id,state,failure_code
 		FROM rendition_job_waiters WHERE waiter_id=?`, id).Scan(
 		&waiter.ID, &waiter.JobID, &waiter.ContentVersionID,
-		&waiter.ProfileFingerprint, &waiter.AttachmentID, &waiter.State)
+		&waiter.ProfileFingerprint, &waiter.AttachmentID, &waiter.State, &failure)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionJobWaiter{}, ErrNotFound
 	}
@@ -1518,6 +1531,15 @@ func loadRenditionJobWaiterTx(
 	}
 	if !validRenditionWaiterState(waiter.State) {
 		return RenditionJobWaiter{}, errors.New("rendition job waiter has invalid durable state")
+	}
+	var failureCode *RenditionFailureCode
+	if failure.Valid {
+		code := RenditionFailureCode(failure.String)
+		failureCode = &code
+		waiter.FailureCode = code
+	}
+	if !validRenditionWaiterFailure(waiter.State, failureCode) {
+		return RenditionJobWaiter{}, errors.New("rendition job waiter has invalid durable failure")
 	}
 	return waiter, nil
 }
@@ -1700,6 +1722,14 @@ func validRenditionFailureCode(value RenditionFailureCode) bool {
 
 func validRenditionWaiterState(value string) bool {
 	return value == "waiting" || value == "published" || value == "rejected"
+}
+
+func validRenditionWaiterFailure(state string, code *RenditionFailureCode) bool {
+	if code == nil {
+		return true
+	}
+	return state == "rejected" &&
+		(*code == RenditionFailureConsent || *code == RenditionFailureStaleAuthority)
 }
 
 func validRenditionResumeHandle(value string) bool {

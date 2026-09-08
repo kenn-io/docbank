@@ -1771,14 +1771,14 @@ func TestInspectRejectsExcessivelyDeepPDFPageTree(t *testing.T) {
 
 func TestInspectBoundsVideoFramesFromValidatedSampleTables(t *testing.T) {
 	t.Parallel()
-	video := mediatest.MP4(64, 48, 1_000)
+	video := mediatest.H264MOV()
 	decoy := make([]byte, 20)
 	binary.BigEndian.PutUint32(decoy[:4], 20)
 	copy(decoy[4:8], "stsz")
 	binary.BigEndian.PutUint32(decoy[16:20], 100)
 	video = append(video, mediatest.Box("free", decoy)...)
-	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
-	policy.MaxPixels = 64 * 48
+	policy := inspectionPolicy(video, "clip.mov", "video/quicktime")
+	policy.MaxPixels = 16 * 16
 	policy.MaxFrames = 1
 	policy.MaxDurationMS = 1_000
 	record, err := media.InspectCapability(bytes.NewReader(video), policy)

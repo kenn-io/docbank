@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,6 +74,459 @@ func TestEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *test
 	assert.NotEqual(t, record.InputGeneration.ID, second.InputGeneration.ID)
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_input_generations`).Scan(&generations))
 	assert.Equal(t, 2, generations, "attachment identities must not share catalog generation authority")
+}
+
+func TestHydrateEmbeddingInputGenerationRequiresExactCanonicalArtifact(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record, err := normalizeEmbeddingSetRecord(record)
+	require.NoError(t, err)
+	projection := record.InputGeneration
+	artifact := append([]byte(nil), projection.GenerationJSON...)
+	projection.GenerationJSON = nil
+
+	hydrated, err := HydrateEmbeddingInputGeneration(projection, artifact, record.InputGeneration.EvidenceJSON)
+	require.NoError(t, err)
+	assert.Equal(t, record.InputGeneration, hydrated)
+
+	corrupt := append([]byte(nil), artifact...)
+	corrupt[len(corrupt)-1] ^= 1
+	_, err = HydrateEmbeddingInputGeneration(projection, corrupt, record.InputGeneration.EvidenceJSON)
+	require.ErrorContains(t, err, "exact artifact")
+}
+
+func TestEmbeddingCatalogLeasedStageAndPublishAreAtomicallyFenced(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+
+	root := CurrentRenditionRoot{
+		ID: "embedding-worker-attempt", Kind: RenditionRootWorkerLease,
+		TargetKind: RenditionRootEmbeddingGeneration, TargetID: record.InputGeneration.ID,
+		FencingToken: 1, RecordedAt: embeddingCatalogTime,
+		ExpiresAt: "2099-08-25T10:00:00.000000000Z",
+	}
+	require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), root))
+	at := time.Now().UTC()
+	require.ErrorIs(t, s.StageEmbeddingSetWithLease(
+		t.Context(), record, root.ID, root.FencingToken+1, at),
+		ErrCurrentRenditionRootFenced)
+	require.NoError(t, s.StageEmbeddingSetWithLease(
+		t.Context(), record, root.ID, root.FencingToken, at))
+
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:embedding-worker", Scope: "embedding:optional",
+		ProfileFingerprint:      profile.Fingerprint,
+		DisclosureFingerprint:   workerOptionalEmbeddingBinding(t, profile).DisclosureFingerprint,
+		InputClasses:            []string{string(document.EmbeddingInputOriginalFile)},
+		RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope,
+		ProfileFingerprint:      consent.ProfileFingerprint,
+		DisclosureFingerprint:   consent.DisclosureFingerprint,
+		InputClasses:            consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	prior, err := s.AuthorizeProviderOperation(t.Context(), consent)
+	require.NoError(t, err)
+	head := EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}
+	mismatchedToken := head
+	mismatchedToken.FencingToken++
+	_, err = s.PublishEmbeddingHeadWithLease(t.Context(), mismatchedToken, consent, prior,
+		root.ID, root.FencingToken, at)
+	require.ErrorIs(t, err, ErrEmbeddingAuthorityStale)
+	var count int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_heads`).Scan(&count))
+	require.Zero(t, count)
+
+	unrelatedConsent := consent
+	unrelatedConsent.ProfileFingerprint = testSHA256([]byte("unrelated-publish-profile"))
+	unrelatedConsent.DisclosureFingerprint = testSHA256([]byte("unrelated-publish-disclosure"))
+	unrelatedConsent.InputClasses = []string{"derived_upload"}
+	unrelatedConsent.RetainedArtifactClasses = []string{"normalized_evidence"}
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: unrelatedConsent.Principal, Scope: unrelatedConsent.Scope,
+		ProfileFingerprint:      unrelatedConsent.ProfileFingerprint,
+		DisclosureFingerprint:   unrelatedConsent.DisclosureFingerprint,
+		InputClasses:            unrelatedConsent.InputClasses,
+		RetainedArtifactClasses: unrelatedConsent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	unrelatedPrior, err := s.AuthorizeProviderOperation(t.Context(), unrelatedConsent)
+	require.NoError(t, err)
+	_, err = s.PublishEmbeddingHeadWithLease(t.Context(), head, unrelatedConsent, unrelatedPrior,
+		root.ID, root.FencingToken, at)
+	require.ErrorContains(t, err, "consent does not match embedding set binding")
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_heads`).Scan(&count))
+	require.Zero(t, count)
+
+	_, err = s.PublishEmbeddingHeadWithLease(t.Context(), head, consent, prior,
+		root.ID, root.FencingToken+1, at)
+	require.ErrorIs(t, err, ErrCurrentRenditionRootFenced)
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_heads`).Scan(&count))
+	require.Zero(t, count)
+
+	_, err = s.PublishEmbeddingHeadWithLease(t.Context(), head, consent, prior,
+		root.ID, root.FencingToken, at)
+	require.NoError(t, err)
+	assert.Equal(t, record.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, record.BindingID, record.InputKind))
+
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
+		Principal: consent.Principal, Scope: consent.Scope,
+	})
+	require.NoError(t, err)
+	_, err = s.PublishEmbeddingHeadWithLease(t.Context(), head, consent, prior,
+		root.ID, root.FencingToken, at.Add(time.Second))
+	require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+	assert.Equal(t, record.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, record.BindingID, record.InputKind))
+}
+
+func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	binding := workerOptionalEmbeddingBinding(t, profile)
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:embedding-worker", Scope: "embedding:optional",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{
+		ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+		Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration,
+		Authorization: consent,
+	})
+	require.NoError(t, err)
+
+	at := time.Now().UTC()
+	_, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "unconfigured-worker", at, 5*time.Minute, []string{fakeHash("different-runtime")})
+	require.NoError(t, err)
+	require.False(t, found, "unconfigured runtimes must leave queued jobs untouched")
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-a", at, 5*time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, job.ID, claim.AttemptID)
+	assert.Equal(t, record.InputGeneration.ID, work.InputGeneration.ID)
+	_, _, found, err = s.ClaimNextEmbeddingWork(t.Context(), "worker-b", at, 5*time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	assert.False(t, found, "a live lease must exclude a concurrent worker")
+
+	_, err = s.RenewEmbeddingWork(t.Context(), EmbeddingJobClaim{
+		AttemptID: claim.AttemptID, Owner: claim.Owner, Epoch: claim.Epoch + 1,
+	}, at.Add(time.Minute), 5*time.Minute)
+	require.ErrorIs(t, err, ErrEmbeddingJobFenced)
+	require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work,
+		EmbeddingFailureProviderUnavailable, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID,
+			ProviderFingerprint: work.Descriptor.Fingerprint, ProfileFingerprint: profile.Fingerprint,
+			BindingID: binding.Name, InputKind: binding.InputKind, Rows: 1, Dimensions: binding.Dimensions,
+			ProviderCalls: 3, Retries: 2, Elapsed: time.Second, FailureCode: string(EmbeddingFailureProviderUnavailable)}, at.Add(time.Minute)))
+
+	_, _, found, err = s.ClaimNextEmbeddingWork(t.Context(), "worker-b", at.Add(time.Minute), 5*time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	assert.False(t, found, "durable retry delay must prevent a hot loop")
+	resumed, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-b", at.Add(2*time.Minute), 5*time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Greater(t, resumed.Epoch, claim.Epoch)
+
+	restored, err := Open(s.path, s.driver)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	_, _, found, err = restored.ClaimNextEmbeddingWork(t.Context(), "worker-c", at.Add(6*time.Minute), 5*time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	assert.False(t, found, "the unexpired resumed lease must survive daemon restart")
+}
+
+func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testing.T) {
+	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	binding := workerOptionalEmbeddingBinding(t, profile)
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:embedding-rebuild", Scope: "embedding:optional",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err := source.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	request := EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+		Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent}
+	_, err = source.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	_, _, found, err := source.ClaimNextEmbeddingWork(t.Context(), "worker-before-backup", at, 5*time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+
+	var metadata bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
+	assert.NotContains(t, metadata.String(), `"type":"embedding_job"`,
+		"jobs are rebuildable operational state, not portable authority")
+	target, err := Open(filepath.Join(t.TempDir(), "embedding-job-restore.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+	var jobs int
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs`).Scan(&jobs))
+	assert.Zero(t, jobs)
+	_, err = target.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err, "restore starts a new consent incarnation before jobs may rebuild")
+	reconciled, err := target.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 100,
+		DescriptorFingerprints: []string{request.Descriptor.Fingerprint},
+	})
+	require.NoError(t, err)
+	assert.Positive(t, reconciled.Enqueued)
+	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs`).Scan(&jobs))
+	assert.Equal(t, reconciled.Enqueued, jobs, "reconciliation deterministically rebuilds operational jobs")
+	resumed, _, found, err := target.ClaimNextEmbeddingWork(t.Context(), "worker-after-restore", at.Add(6*time.Minute), 5*time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Positive(t, resumed.Epoch,
+		"restore rebuilds both the operational job and its vault-local lease sequence")
+}
+
+func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "reconcile")
+	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`DELETE FROM embedding_jobs WHERE job_id=?`, job.ID)
+	require.NoError(t, err)
+
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 1,
+		DescriptorFingerprints: []string{request.Descriptor.Fingerprint},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Examined)
+	assert.Equal(t, 2, result.Enqueued)
+
+	_, err = s.db.Exec(`DELETE FROM embedding_jobs`)
+	require.NoError(t, err)
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
+		Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+	})
+	require.NoError(t, err)
+	result, err = s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 1,
+		DescriptorFingerprints: []string{request.Descriptor.Fingerprint},
+	})
+	require.NoError(t, err)
+	assert.Zero(t, result.Enqueued)
+}
+
+func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	var err error
+	record, err = normalizeEmbeddingSetRecord(record)
+	require.NoError(t, err)
+	binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:chunk-reconcile", Scope: "embedding:chunk",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	_, err = s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID,
+		Profile: profile, BindingID: binding.Name, Descriptor: record.VectorSpace.Descriptor,
+		InputGeneration: record.InputGeneration, Authorization: consent})
+	require.NoError(t, err)
+	_, err = s.db.Exec(`DELETE FROM embedding_jobs`)
+	require.NoError(t, err)
+
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 100,
+		DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint},
+		HydrateGeneration: func(_ context.Context, generation EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error) {
+			return HydrateEmbeddingInputGeneration(generation, record.InputGeneration.GenerationJSON, record.InputGeneration.EvidenceJSON)
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enqueued)
+	var bindingID string
+	require.NoError(t, s.db.QueryRow(`SELECT binding_id FROM embedding_jobs`).Scan(&bindingID))
+	assert.Equal(t, "chunk", bindingID)
+}
+
+func TestEmbeddingJobLeaseCannotRenewAfterExpiry(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "lease-expiry")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-expiry", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = s.RenewEmbeddingWork(t.Context(), claim, at.Add(time.Minute), time.Minute)
+	require.ErrorIs(t, err, ErrEmbeddingJobFenced)
+	err = s.FinishEmbeddingWork(t.Context(), claim, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at.Add(time.Minute))
+	require.ErrorIs(t, err, ErrEmbeddingJobFenced)
+	err = s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureInputRejected,
+		EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at.Add(time.Minute))
+	require.ErrorIs(t, err, ErrEmbeddingJobFenced)
+	resumed, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-resume", at.Add(time.Minute), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Greater(t, resumed.Epoch, claim.Epoch)
+}
+
+func TestEmbeddingJobProviderUnavailableRetryBudgetIsDurable(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "durable-retry-budget")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	for attempt := 1; attempt <= embeddingJobMaxClaims; attempt++ {
+		claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-budget", at, time.Minute, []string{request.Descriptor.Fingerprint})
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, int64(attempt), claim.Epoch)
+		require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work,
+			EmbeddingFailureProviderUnavailable, EmbeddingAttemptReceipt{
+				AttemptID: claim.AttemptID, ProviderFingerprint: work.Descriptor.Fingerprint,
+				ProfileFingerprint: profile.Fingerprint, BindingID: work.Binding.Name,
+				InputKind: work.Binding.InputKind, ProviderCalls: 3, Retries: 2,
+				FailureCode: string(EmbeddingFailureProviderUnavailable),
+			}, at.Add(30*time.Second)))
+		at = at.Add(2 * time.Minute)
+	}
+	_, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-budget", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	assert.False(t, found)
+	var state string
+	require.NoError(t, s.db.QueryRow(`SELECT state FROM embedding_jobs`).Scan(&state))
+	assert.Equal(t, "failed", state)
+}
+
+func TestEmbeddingJobExistingStaleHeadDoesNotSuppressReplacement(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	old := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{ContentVersionID: versionID, BindingID: old.BindingID, InputKind: old.InputKind},
+		SetID:        old.ID, VectorSpaceID: old.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	request := embeddingJobTestRequest(t, s, versionID, profile, "replacement-generation")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-replacement",
+		time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, request.InputGeneration.ID, work.InputGeneration.ID)
+	require.Greater(t, claim.Epoch, int64(1))
+	require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureProviderUnavailable,
+		EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, time.Now().UTC()))
+	assert.Equal(t, old.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, old.BindingID, old.InputKind))
+}
+
+func TestVersionPruneRemovesQueuedEmbeddingJobGenerationAndRoot(t *testing.T) {
+	s, firstVersion, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, firstVersion, profile, "queued-prune")
+	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	_, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-prune",
+		time.Now().UTC(), time.Hour, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	var nodeID, revision int64
+	require.NoError(t, s.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`, firstVersion).Scan(&nodeID, &revision))
+	replacementHash := fakeHash("embedding-job-prune-replacement")
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, replacementHash, 24)
+	}))
+	updated, _, err := s.ReplaceContent(t.Context(), nodeID, revision, replacementHash, 24, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(t.Context(), nodeID, updated.Revision,
+		VersionPruneSelector{VersionIDs: []string{firstVersion}}, true)
+	require.NoError(t, err)
+	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{})
+	require.NoError(t, err)
+	var remaining int
+	require.NoError(t, s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?) +
+		(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
+		(SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?)`,
+		job.ID, request.InputGeneration.ID, job.ID).Scan(&remaining))
+	assert.Zero(t, remaining)
+}
+
+func embeddingJobTestRequest(t *testing.T, s *Store, versionID string,
+	profile ProcessingProfileRecord, generationSeed string,
+) EmbeddingJobRequest {
+	t.Helper()
+	const bindingID = "optional"
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, bindingID, "")
+	record.InputGeneration.ID = testSHA256([]byte(generationSeed))
+	binding := workerOptionalEmbeddingBinding(t, profile)
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:" + generationSeed, Scope: "embedding:" + bindingID,
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	return EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: bindingID,
+		Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent}
+}
+
+func workerOptionalEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord) document.EmbeddingBindingV1 {
+	t.Helper()
+	return workerProfileEmbeddingBinding(t, profile, "optional")
+}
+
+func workerProfileEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord, name string) document.EmbeddingBindingV1 {
+	t.Helper()
+	var canonical document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &canonical))
+	for _, binding := range canonical.Embeddings {
+		if binding.Name == name {
+			return binding
+		}
+	}
+	t.Fatalf("embedding binding %q not found", name)
+	return document.EmbeddingBindingV1{}
 }
 
 func TestEmbeddingCatalogRejectsInvalidRowsAndPublicationFences(t *testing.T) {
@@ -484,6 +938,27 @@ func TestEmbeddingCatalogSchemaCorruptionFailsClosedOnOpen(t *testing.T) {
 	require.ErrorContains(t, err, "embedding catalog schema")
 }
 
+func TestEmbeddingJobSchemaCorruptionFailsClosedOnOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	driver := DefaultSQLiteDriver()
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(`ALTER TABLE embedding_jobs ADD COLUMN unexpected TEXT`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	reopened, err := Open(path, driver)
+	if reopened != nil {
+		t.Cleanup(func() { _ = reopened.Close() })
+	}
+	require.ErrorContains(t, err, "embedding catalog schema")
+}
+
 const embeddingCatalogTime = "2026-08-25T10:00:00.000000000Z"
 
 func embeddingHeadSetIDForTest(
@@ -517,6 +992,14 @@ func newEmbeddingCatalogFixture(t *testing.T) (*Store, string, ProcessingProfile
 func embeddingSetFixture(
 	s *Store, versionID, profileFingerprint string, kind EmbeddingInputKind, bindingID, attachmentID string,
 ) EmbeddingSetRecord {
+	return embeddingSetFixtureForDescriptor(s, versionID, profileFingerprint, kind, bindingID,
+		attachmentID, embeddingCatalogDescriptor())
+}
+
+func embeddingSetFixtureForDescriptor(
+	s *Store, versionID, profileFingerprint string, kind EmbeddingInputKind, bindingID, attachmentID string,
+	descriptor document.EmbeddingDescriptor,
+) EmbeddingSetRecord {
 	seed := bindingID + string(kind) + versionID + attachmentID
 	var canonicalProfile string
 	if err := s.db.QueryRow(`SELECT canonical_profile FROM processing_profiles WHERE profile_fingerprint=?`, profileFingerprint).Scan(&canonicalProfile); err != nil {
@@ -537,7 +1020,6 @@ func embeddingSetFixture(
 			break
 		}
 	}
-	descriptor := embeddingCatalogDescriptor()
 	space := EmbeddingVectorSpaceRecord{
 		ID: fingerprints.VectorSpace[bindingID], ContractVersion: EmbeddingVectorSpaceContractV1,
 		Descriptor: descriptor,
@@ -712,7 +1194,9 @@ func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
 		makeBinding("optional", document.EmbeddingOptional, document.EmbeddingInputOriginalFile),
 		makeBinding("required", document.EmbeddingRequired, document.EmbeddingInputOriginalFile),
 		makeBinding("chunk", document.EmbeddingOptional, document.EmbeddingInputRenditionChunk),
+		makeBinding("chunk-alt", document.EmbeddingOptional, document.EmbeddingInputRenditionChunk),
 	}
+	profile.Embeddings[3].Chunk.MaxTokens = 64
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
 	require.NoError(t, err)
 	return ProcessingProfileRecord{
@@ -779,4 +1263,433 @@ func cloneEmbeddingSetRecord(value EmbeddingSetRecord) EmbeddingSetRecord {
 	clone.VectorSet.Payload = append([]byte(nil), value.VectorSet.Payload...)
 	clone.VectorSet.rows = append([]EmbeddingVectorRowRecord(nil), value.VectorSet.rows...)
 	return clone
+}
+
+func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "queued-retention")
+	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{})
+	require.NoError(t, err)
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "retention-worker", time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found, "ordinary collection must retain queued work and its vector space")
+	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{versionID}})
+	require.NoError(t, err)
+	var remaining int
+	require.NoError(t, s.db.QueryRow(`SELECT
+  (SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?) +
+  (SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?) +
+  (SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?)`, job.ID, claim.AttemptID, request.InputGeneration.ID).Scan(&remaining))
+	require.Zero(t, remaining)
+	require.ErrorIs(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureProviderUnavailable,
+		EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, time.Now().UTC()), ErrEmbeddingJobFenced)
+	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), claim, time.Now().UTC()))
+	_, err = s.EnqueueEmbeddingJob(t.Context(), request)
+	require.ErrorIs(t, err, ErrEmbeddingJobFenced, "purged intent must not be resubmitted to a provider")
+}
+
+func TestEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "abandonment")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	first, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "first-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	at = at.Add(2 * time.Minute)
+	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), first, at))
+	successor, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "successor-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), first, at))
+	require.NoError(t, s.ValidateEmbeddingWork(t.Context(), successor, work, at))
+	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), successor, at))
+	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), successor, work, at), ErrEmbeddingJobFenced)
+	var state string
+	require.NoError(t, s.db.QueryRow(`SELECT state FROM embedding_jobs WHERE job_id=?`, successor.AttemptID).Scan(&state))
+	require.Equal(t, "abandoned", state)
+	var failures int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_failures`).Scan(&failures))
+	require.Zero(t, failures)
+}
+
+func TestEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "egress-consent")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "embedding-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	first, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, at)
+	require.NoError(t, err)
+	fence.Close()
+	second, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, &first, at)
+	require.NoError(t, err)
+	fence.Close()
+	require.Equal(t, first.GrantID, second.GrantID)
+	consent := request.Authorization
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{Principal: consent.Principal, Scope: consent.Scope})
+	require.NoError(t, err)
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	_, fence, err = s.BeginEmbeddingProviderEgress(t.Context(), claim, work, &second, at)
+	require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+	require.Nil(t, fence)
+	// Fresh work can use the replacement grant after a failed prior check.
+	fresh, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, at)
+	require.NoError(t, err)
+	fence.Close()
+	require.NotEqual(t, first.GrantID, fresh.GrantID)
+}
+
+func TestEmbeddingJobReplacementConsentPreservesClaimsAndRetryBudget(t *testing.T) {
+	for _, state := range []string{"queued", "running", "retry_wait", "authorization_failed", "exhausted"} {
+		t.Run(state, func(t *testing.T) {
+			s, version, profile, _ := newEmbeddingCatalogFixture(t)
+			request := embeddingJobTestRequest(t, s, version, profile, "replacement-consent")
+			job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			at := time.Now().UTC()
+			var claim EmbeddingJobClaim
+			var work EmbeddingJobWork
+			count := 0
+			if state != "queued" {
+				attempts := 1
+				if state == "exhausted" {
+					attempts = embeddingJobMaxClaims
+				}
+				for range attempts {
+					var found bool
+					claim, work, found, err = s.ClaimNextEmbeddingWork(t.Context(), "worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+					require.NoError(t, err)
+					require.True(t, found)
+					count++
+					if state != "running" {
+						code := EmbeddingFailureProviderUnavailable
+						if state == "authorization_failed" {
+							code = EmbeddingFailureAuthorization
+						}
+						require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, code, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at))
+					}
+					if state == "exhausted" {
+						at = at.Add(2 * time.Minute)
+					}
+				}
+			}
+			_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
+			require.NoError(t, err)
+			replacement := request
+			replacement.Authorization.Principal = "operator:replacement"
+			replacement.Authorization.Scope = "embedding:replacement"
+			consent := replacement.Authorization
+			_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
+			require.NoError(t, err)
+			same, err := s.EnqueueEmbeddingJob(t.Context(), replacement)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, same.ID)
+			var claims int
+			require.NoError(t, s.db.QueryRow(`SELECT claim_count FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&claims))
+			require.Equal(t, count, claims)
+			if state == "running" {
+				require.NoError(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at))
+				_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, at)
+				fence.Close()
+				require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureAuthorization, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at))
+				_, err = s.EnqueueEmbeddingJob(t.Context(), replacement)
+				require.NoError(t, err)
+			}
+			if state == "retry_wait" {
+				_, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "early-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+				require.NoError(t, err)
+				require.False(t, found, "replacement consent must preserve retry delay")
+			}
+			at = at.Add(2 * time.Minute)
+			next, rebound, found, err := s.ClaimNextEmbeddingWork(t.Context(), "next-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+			require.NoError(t, err)
+			if state == "exhausted" {
+				require.False(t, found, "replacement consent must not restart exhausted provider retries")
+				return
+			}
+			require.True(t, found)
+			require.Equal(t, consent.Principal, rebound.Consent.Principal)
+			require.Equal(t, consent.Scope, rebound.Consent.Scope)
+			_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), next, rebound, nil, at)
+			require.NoError(t, err)
+			fence.Close()
+		})
+	}
+}
+
+func TestEmbeddingJobReconciliationRecoversFreshGrantForSameScope(t *testing.T) {
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, version, profile, "fresh-grant")
+	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	consent := request.Authorization
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{Principal: consent.Principal, Scope: consent.Scope})
+	require.NoError(t, err)
+	require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureAuthorization, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at))
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
+	require.NoError(t, err)
+	_, err = s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
+	require.NoError(t, err)
+	recovered := false
+	for {
+		next, rebound, found, err := s.ClaimNextEmbeddingWork(t.Context(), "next-worker", time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+		require.NoError(t, err)
+		if !found {
+			break
+		}
+		if next.AttemptID != job.ID {
+			continue
+		}
+		_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), next, rebound, nil, time.Now().UTC())
+		require.NoError(t, err)
+		fence.Close()
+		recovered = true
+	}
+	require.True(t, recovered, "reconciliation must revive the original authorization-failed job")
+}
+
+func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "validation-read-error")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker-read-error", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		readErr := requireEmbeddingWorkerLeaseTx(ctx, tx, claim.AttemptID, claim.Epoch, work.InputGeneration.ID, at)
+		require.ErrorIs(t, readErr, context.Canceled)
+		classified := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at)
+		require.NotErrorIs(t, classified, ErrEmbeddingJobFenced)
+		require.ErrorIs(t, classified, context.Canceled)
+		require.NoError(t, validateEmbeddingWorkTx(t.Context(), tx, s.vaultID, claim, work, at))
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
+	for _, state := range []string{"completed", "failed", "abandoned", "queued", "retry_wait", "running"} {
+		t.Run(state, func(t *testing.T) {
+			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			normalized, normalizeErr := normalizeEmbeddingSetRecord(record)
+			require.NoError(t, normalizeErr)
+			record = normalized
+			binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+			consent := ProviderOperationAuthorizationRequest{Principal: "operator:gc-probe", Scope: "embedding:chunk", ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+			_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
+			require.NoError(t, err)
+			job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: binding.Name, Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent})
+			require.NoError(t, err)
+			at := time.Now().UTC()
+			claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "gc-worker", at, time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+			require.NoError(t, err)
+			require.True(t, found)
+			require.NoError(t, s.StageEmbeddingSetWithLease(t.Context(), record, claim.AttemptID, claim.Epoch, at))
+			switch state {
+			case "completed":
+				auth, err := s.AuthorizeProviderOperation(t.Context(), consent)
+				require.NoError(t, err)
+				_, err = s.PublishEmbeddingHeadWithLease(t.Context(), EmbeddingHeadRecord{Key: EmbeddingHeadKey{versionID, binding.Name, binding.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime, FencingToken: claim.Epoch}, consent, auth, claim.AttemptID, claim.Epoch, at)
+				require.NoError(t, err)
+				require.NoError(t, s.FinishEmbeddingWork(t.Context(), claim, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			case "failed":
+				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureInputRejected, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			case "abandoned":
+				require.NoError(t, s.AbandonEmbeddingWork(t.Context(), claim, at))
+			case "retry_wait":
+				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureProviderUnavailable, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			case "queued":
+				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureAuthorization, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+				_, err = s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: binding.Name, Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent})
+				require.NoError(t, err)
+			}
+			build := catalogRenditionBuild(s, profile)
+			build.ID = testSHA256([]byte("gc-probe-replacement-build"))
+			build.CapturedArtifactPolicy = []byte(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":0,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+			build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+			buildID := build.ID
+			replacement := RenditionAttachmentRecord{ID: testSHA256([]byte("gc-probe-replacement-attachment")), VaultID: s.VaultID(), ContentVersionID: versionID, BuildID: buildID, Profile: profile, AttachedAt: embeddingCatalogTime}
+			require.NoError(t, publishRenditionForTest(t, s, replacement, embeddingCatalogTime, testSHA256([]byte("gc-probe-replacement-lexical"))))
+			report, err := s.PurgeDerivatives(t.Context(), PurgeRequest{})
+			require.NoError(t, err)
+			if state == "running" {
+				require.Zero(t, report.RemovedEmbeddingSets)
+			} else {
+				require.Equal(t, 1, report.RemovedEmbeddingSets)
+			}
+			var jobs, generations, spaces int
+			require.NoError(t, s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?),(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),(SELECT COUNT(*) FROM embedding_vector_spaces WHERE vector_space_id=?)`, job.ID, record.InputGeneration.ID, record.VectorSpace.ID).Scan(&jobs, &generations, &spaces))
+			if state == "queued" || state == "retry_wait" || state == "running" {
+				require.Equal(t, 1, jobs)
+				require.Equal(t, 1, generations)
+				require.Equal(t, 1, spaces)
+			} else {
+				require.Zero(t, jobs)
+				require.Zero(t, generations)
+				require.Zero(t, spaces)
+			}
+		})
+	}
+}
+
+func TestEmbeddingGCReleasesObsoleteTerminalJobsWithoutStagedSets(t *testing.T) {
+	for _, state := range []string{"completed", "failed", "abandoned"} {
+		t.Run(state, func(t *testing.T) {
+			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+				document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			normalized, err := normalizeEmbeddingSetRecord(record)
+			require.NoError(t, err)
+			record = normalized
+			binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+			consent := ProviderOperationAuthorizationRequest{
+				Principal: "operator:gc-without-set", Scope: "embedding:chunk",
+				ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+				InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+			}
+			_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+				Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+				DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+				RetainedArtifactClasses: consent.RetainedArtifactClasses,
+			})
+			require.NoError(t, err)
+			job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{
+				ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+				Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration,
+				Authorization: consent,
+			})
+			require.NoError(t, err)
+			at := time.Now().UTC()
+			claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "gc-without-set-worker",
+				at, time.Minute, []string{record.VectorSpace.Descriptor.Fingerprint})
+			require.NoError(t, err)
+			require.True(t, found)
+			switch state {
+			case "completed":
+				require.NoError(t, s.FinishEmbeddingWork(t.Context(), claim,
+					EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			case "failed":
+				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work,
+					EmbeddingFailureInputRejected, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			case "abandoned":
+				require.NoError(t, s.AbandonEmbeddingWork(t.Context(), claim, at))
+			}
+
+			var sets, jobs, generations, spaces int
+			require.NoError(t, s.db.QueryRow(`SELECT
+				(SELECT COUNT(*) FROM embedding_sets),
+				(SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?),
+				(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),
+				(SELECT COUNT(*) FROM embedding_vector_spaces WHERE vector_space_id=?)`,
+				job.ID, record.InputGeneration.ID, record.VectorSpace.ID).Scan(&sets, &jobs, &generations, &spaces))
+			require.Zero(t, sets)
+			require.Equal(t, 1, jobs)
+			require.Equal(t, 1, generations)
+			require.Equal(t, 1, spaces)
+			report, err := s.PurgeDerivatives(t.Context(), PurgeRequest{})
+			require.NoError(t, err)
+			require.Zero(t, report.RemovedEmbeddingSets)
+			require.NoError(t, s.db.QueryRow(`SELECT
+				(SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?),
+				(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),
+				(SELECT COUNT(*) FROM embedding_vector_spaces WHERE vector_space_id=?)`,
+				job.ID, record.InputGeneration.ID, record.VectorSpace.ID).Scan(&jobs, &generations, &spaces))
+			require.Equal(t, 1, jobs, "current terminal intent must remain recoverable")
+			require.Equal(t, 1, generations)
+			require.Equal(t, 1, spaces)
+
+			build := catalogRenditionBuild(s, profile)
+			build.ID = testSHA256([]byte("gc-without-set-replacement-build"))
+			build.CapturedArtifactPolicy = []byte(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":0,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+			build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+			replacement := RenditionAttachmentRecord{
+				ID: testSHA256([]byte("gc-without-set-replacement-attachment")), VaultID: s.VaultID(),
+				ContentVersionID: versionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime,
+			}
+			require.NoError(t, publishRenditionForTest(t, s, replacement, embeddingCatalogTime,
+				testSHA256([]byte("gc-without-set-replacement-lexical"))))
+
+			report, err = s.PurgeDerivatives(t.Context(), PurgeRequest{})
+			require.NoError(t, err)
+			require.Zero(t, report.RemovedEmbeddingSets)
+			require.NoError(t, s.db.QueryRow(`SELECT
+				(SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?),
+				(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),
+				(SELECT COUNT(*) FROM embedding_vector_spaces WHERE vector_space_id=?)`,
+				job.ID, record.InputGeneration.ID, record.VectorSpace.ID).Scan(&jobs, &generations, &spaces))
+			require.Zero(t, jobs)
+			require.Zero(t, generations)
+			require.Zero(t, spaces)
+		})
+	}
+}
+
+func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "restore-abandoned")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "first-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	var nodeID, revision int64
+	require.NoError(t, s.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
+	trashed, _, err := s.Trash(t.Context(), nodeID, revision)
+	require.NoError(t, err)
+	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at), ErrEmbeddingJobFenced)
+	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), claim, at))
+	reconciled, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
+	require.NoError(t, err)
+	require.Zero(t, reconciled.Enqueued, "trashed sources must not reopen jobs")
+	_, _, err = s.Restore(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
+	require.NoError(t, err)
+	reconciled, err = s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
+	require.NoError(t, err)
+	require.Zero(t, reconciled.Enqueued, "restoration alone must not replace consent")
+	request = embeddingJobTestRequest(t, s, versionID, profile, "restore-abandoned")
+	reconciled, err = s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
+	require.NoError(t, err)
+	require.Positive(t, reconciled.Enqueued)
+	resumed := false
+	for i := range 10 {
+		next, _, available, err := s.ClaimNextEmbeddingWork(t.Context(), "restored-worker", time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+		require.NoError(t, err)
+		if !available {
+			break
+		}
+		if next.AttemptID == claim.AttemptID {
+			resumed = true
+			require.Greater(t, next.Epoch, claim.Epoch)
+		}
+		require.Less(t, i, 9)
+	}
+	require.True(t, resumed, "restored source with fresh consent must resume its existing job")
+	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, time.Now().UTC()), ErrEmbeddingJobFenced)
 }

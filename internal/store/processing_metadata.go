@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -230,20 +231,21 @@ type metadataRenditionJob struct {
 }
 
 type metadataRenditionJobWaiter struct {
-	Type                  string   `json:"type"`
-	ID                    string   `json:"waiter_id"`
-	JobID                 string   `json:"job_id"`
-	ContentVersionID      string   `json:"content_version_id"`
-	ProfileFingerprint    string   `json:"profile_fingerprint"`
-	Principal             string   `json:"principal"`
-	Scope                 string   `json:"scope"`
-	DisclosureFingerprint string   `json:"disclosure_fingerprint"`
-	InputClasses          []string `json:"input_classes"`
-	RetainedClasses       []string `json:"retained_classes"`
-	State                 string   `json:"state"`
-	AttachmentID          string   `json:"attachment_id"`
-	CreatedAt             string   `json:"created_at"`
-	UpdatedAt             string   `json:"updated_at"`
+	Type                  string                `json:"type"`
+	ID                    string                `json:"waiter_id"`
+	JobID                 string                `json:"job_id"`
+	ContentVersionID      string                `json:"content_version_id"`
+	ProfileFingerprint    string                `json:"profile_fingerprint"`
+	Principal             string                `json:"principal"`
+	Scope                 string                `json:"scope"`
+	DisclosureFingerprint string                `json:"disclosure_fingerprint"`
+	InputClasses          []string              `json:"input_classes"`
+	RetainedClasses       []string              `json:"retained_classes"`
+	State                 string                `json:"state"`
+	FailureCode           *RenditionFailureCode `json:"failure_code,omitempty"`
+	AttachmentID          string                `json:"attachment_id"`
+	CreatedAt             string                `json:"created_at"`
+	UpdatedAt             string                `json:"updated_at"`
 }
 
 var processingMetadataRequiredFields = map[string][]string{
@@ -430,7 +432,7 @@ func exportRenditionJobWaiters(
 ) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
 		       attachment_id,created_at,updated_at
 		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
 	if err != nil {
@@ -440,9 +442,10 @@ func exportRenditionJobWaiters(
 	for rows.Next() {
 		record := metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}
 		var inputs, retained string
+		var failure sql.NullString
 		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
 			&record.ProfileFingerprint, &record.Principal, &record.Scope,
-			&record.DisclosureFingerprint, &inputs, &retained, &record.State,
+			&record.DisclosureFingerprint, &inputs, &retained, &record.State, &failure,
 			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
 		}
@@ -451,6 +454,10 @@ func exportRenditionJobWaiters(
 		}
 		if err := json.Unmarshal([]byte(retained), &record.RetainedClasses); err != nil {
 			return fmt.Errorf("decoding rendition job waiter retained classes: %w", err)
+		}
+		if failure.Valid {
+			code := RenditionFailureCode(failure.String)
+			record.FailureCode = &code
 		}
 		if _, err := validateMetadataRenditionJobWaiter(record); err != nil {
 			return fmt.Errorf("validating rendition job waiter metadata: %w", err)
@@ -1153,12 +1160,12 @@ func (s *Store) importProcessingMetadataRecord(
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
 			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-			disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
 			attachment_id,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
 			value.ProfileFingerprint, authority.principal, authority.scope,
 			authority.disclosure, authority.inputsJSON, authority.retainedJSON, value.State,
-			value.AttachmentID, value.CreatedAt, value.UpdatedAt)
+			value.FailureCode, value.AttachmentID, value.CreatedAt, value.UpdatedAt)
 		return err
 	case metadataCurrentRenditionRootType:
 		var value metadataCurrentRenditionRoot
@@ -1433,6 +1440,9 @@ func validateMetadataRenditionJobWaiter(
 	if value.Type != metadataRenditionJobWaiterType || !validRenditionWaiterState(value.State) {
 		return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter metadata")
 	}
+	if !validRenditionWaiterFailure(value.State, value.FailureCode) {
+		return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter failure")
+	}
 	for subject, digest := range map[string]string{
 		"rendition waiter ID": value.ID, "rendition waiter job ID": value.JobID,
 		"rendition waiter profile fingerprint":    value.ProfileFingerprint,
@@ -1613,10 +1623,23 @@ type RenditionBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-// VerifyRenditionBlobBytes verifies every retained rendition and embedding
-// artifact through the restored mixed-storage catalog, including builds that
-// are staged but not attached to an active head.
+// VerifyRenditionBlobBytes strictly verifies every retained rendition and
+// embedding artifact through the restored mixed-storage catalog, including
+// builds that are staged but not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
+	return s.verifyRenditionBlobBytes(ctx, reader, false)
+}
+
+// VerifyRestoredRenditionBlobBytes keeps original, rendition, preview, and E2
+// authority strict while allowing missing retained vector payloads to reach
+// the provider-free vector-index restore reporter.
+func (s *Store) VerifyRestoredRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
+	return s.verifyRenditionBlobBytes(ctx, reader, true)
+}
+
+func (s *Store) verifyRenditionBlobBytes(
+	ctx context.Context, reader RenditionBlobReader, allowMissingVectorPayloads bool,
+) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.source_sha256, source.size
 		FROM rendition_builds b
@@ -1661,7 +1684,7 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 		ctx context.Context, hash string, size int64,
 	) ([]byte, error) {
 		return readEmbeddingArtifact(ctx, reader, importedProcessingBlob{hash: hash, size: size})
-	}); err != nil {
+	}, allowMissingVectorPayloads); err != nil {
 		return fmt.Errorf("verifying exact embedding artifacts: %w", err)
 	}
 	return nil
@@ -1672,6 +1695,18 @@ func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 // including staged builds that are not currently attached to a document
 // version. VerifyRenditionBlobBytes separately reads and verifies each location.
 func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error) {
+	return s.verifyRenditionBlobAuthority(ctx, false)
+}
+
+// VerifyRestoredRenditionBlobAuthority keeps non-vector authority strict while
+// allowing missing retained vector payloads to be reported by index restore.
+func (s *Store) VerifyRestoredRenditionBlobAuthority(ctx context.Context) (retErr error) {
+	return s.verifyRenditionBlobAuthority(ctx, true)
+}
+
+func (s *Store) verifyRenditionBlobAuthority(
+	ctx context.Context, allowMissingVectorPayloads bool,
+) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return fmt.Errorf("starting processing blob verification: %w", err)
@@ -1683,14 +1718,16 @@ func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) (retErr error)
 	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
 		return fmt.Errorf("validating embedding blob authority: %w", err)
 	}
-	if err := verifyRenditionBlobCatalogAuthority(ctx, tx); err != nil {
+	if err := verifyRenditionBlobCatalogAuthority(ctx, tx, allowMissingVectorPayloads); err != nil {
 		return fmt.Errorf("verifying processing blob authority: %w", err)
 	}
 	return nil
 }
 
-func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retErr error) {
-	rows, err := tx.QueryContext(ctx, `
+func verifyRenditionBlobCatalogAuthority(
+	ctx context.Context, tx *sql.Tx, allowMissingVectorPayloads bool,
+) (retErr error) {
+	query := `
 		SELECT source_sha256 FROM rendition_builds
 		UNION
 		SELECT blob_hash FROM rendition_artifacts
@@ -1704,10 +1741,12 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx) (retEr
 		WHERE generation_blob_hash IS NOT NULL
 		UNION
 		SELECT evidence_fingerprint FROM embedding_input_generations
-		WHERE generation_blob_hash IS NOT NULL
-		UNION
-		SELECT payload_blob_hash FROM embedding_vector_sets
-		ORDER BY source_sha256`)
+		WHERE generation_blob_hash IS NOT NULL`
+	if !allowMissingVectorPayloads {
+		query += ` UNION SELECT payload_blob_hash FROM embedding_vector_sets`
+	}
+	query += ` ORDER BY source_sha256`
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)
 	}
@@ -1809,6 +1848,7 @@ type embeddingArtifactReader func(context.Context, string, int64) ([]byte, error
 
 func verifyEmbeddingArtifacts(
 	ctx context.Context, tx *sql.Tx, read embeddingArtifactReader,
+	allowMissingVectorPayloads bool,
 ) error {
 	generationIDs, err := loadProcessingMetadataIDs(ctx, tx, "embedding generation", `
 		SELECT generation_id FROM embedding_input_generations
@@ -1877,6 +1917,9 @@ func verifyEmbeddingArtifacts(
 			return err
 		}
 		data, err := read(ctx, vectorSet.PayloadBlobHash, vectorSet.PayloadSize)
+		if allowMissingVectorPayloads && isMissingEmbeddingArtifact(err) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("reading vector-set artifact %s: %w", id, err)
 		}
@@ -1885,6 +1928,14 @@ func verifyEmbeddingArtifacts(
 		}
 	}
 	return nil
+}
+
+func isMissingEmbeddingArtifact(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, packstore.ErrStoreUnavailable) ||
+		errors.Is(err, packstore.ErrStoreFenced) ||
+		errors.Is(err, packstore.ErrPhysicalMissing) ||
+		errors.Is(err, packstore.ErrPhysicalAuthorityMissing)
 }
 
 func readEmbeddingArtifact(

@@ -339,7 +339,10 @@ func RenderRendition(
 	if !sealed.DiscloseFilename {
 		metadata.Filename = ""
 	}
-	providerUpload := newSealedAuthorizedUpload(executionCtx, ownedUpload, metadata)
+	providerUpload, err := newSealedAuthorizedUpload(executionCtx, ownedUpload, metadata)
+	if err != nil {
+		return RenditionResult{}, err
+	}
 	if err := executionCtx.Err(); err != nil {
 		return RenditionResult{}, err
 	}
@@ -874,22 +877,38 @@ type sealedAuthorizedUpload struct {
 	limited        *io.LimitedReader
 	hasher         hash.Hash
 	expectedSHA256 string
+	proof          VerifiedUploadProof
+	proofPresent   bool
 	providerClosed bool
 }
 
 func newSealedAuthorizedUpload(
 	ctx context.Context, source *ownedAuthorizedUpload, metadata AuthorizedUploadMetadata,
-) *sealedAuthorizedUpload {
+) (*sealedAuthorizedUpload, error) {
+	proof, proofPresent := source.VerifiedUploadProof()
+	if proofPresent {
+		if err := validateVerifiedUploadProof(proof, metadata); err != nil {
+			return nil, err
+		}
+	}
 	hasher := sha256.New()
 	limited := &io.LimitedReader{R: source, N: metadata.ByteLength}
 	return &sealedAuthorizedUpload{
 		ctx: ctx, source: source, metadata: metadata, limited: limited,
 		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: metadata.SHA256,
-	}
+		proof: proof, proofPresent: proofPresent,
+	}, nil
 }
 
 func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 	return upload.metadata
+}
+
+func (upload *sealedAuthorizedUpload) VerifiedUploadProof() (VerifiedUploadProof, bool) {
+	if upload == nil || !upload.proofPresent {
+		return VerifiedUploadProof{}, false
+	}
+	return upload.proof, true
 }
 
 func (upload *sealedAuthorizedUpload) Read(buffer []byte) (int, error) {
@@ -987,6 +1006,17 @@ func (upload *ownedAuthorizedUpload) Read(buffer []byte) (int, error) {
 
 func (upload *ownedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 	return upload.upload.Metadata()
+}
+
+func (upload *ownedAuthorizedUpload) VerifiedUploadProof() (VerifiedUploadProof, bool) {
+	if upload == nil || nilInterface(upload.upload) {
+		return VerifiedUploadProof{}, false
+	}
+	carrier, ok := upload.upload.(VerifiedUploadProofCarrier)
+	if !ok {
+		return VerifiedUploadProof{}, false
+	}
+	return carrier.VerifiedUploadProof()
 }
 
 func (upload *ownedAuthorizedUpload) Close() error {

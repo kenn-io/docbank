@@ -1092,7 +1092,9 @@ func (s *Store) importMetadataRecord(
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
-	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
+	if err := requireMetadataFieldsWithOptional(
+		raw, required, metadataNullableFields[kind], metadataOptionalFields[kind],
+	); err != nil {
 		return err
 	}
 	if isProcessingMetadataType(kind) {
@@ -1435,16 +1437,26 @@ var metadataNullableFields = map[string]map[string]bool{
 	},
 }
 
+var metadataOptionalFields = map[string]map[string]bool{
+	metadataRenditionJobWaiterType: {"failure_code": true},
+}
+
 func decodeMetadataRecord(raw jsontext.Value, dst any) error {
 	return json.Unmarshal(raw, dst, json.RejectUnknownMembers(true))
 }
 
 func requireMetadataFields(raw jsontext.Value, required []string, nullable map[string]bool) error {
+	return requireMetadataFieldsWithOptional(raw, required, nullable, nil)
+}
+
+func requireMetadataFieldsWithOptional(
+	raw jsontext.Value, required []string, nullable, optional map[string]bool,
+) error {
 	fields, err := decodeMetadataFields(raw)
 	if err != nil {
 		return err
 	}
-	allowed := make(map[string]bool, len(required))
+	allowed := make(map[string]bool, len(required)+len(optional))
 	for _, field := range required {
 		allowed[field] = true
 		value, ok := fields[field]
@@ -1452,6 +1464,13 @@ func requireMetadataFields(raw jsontext.Value, required []string, nullable map[s
 			return fmt.Errorf("metadata record lacks required field %q", field)
 		}
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !nullable[field] {
+			return fmt.Errorf("metadata field %q cannot be null", field)
+		}
+	}
+	for field, canBeNull := range optional {
+		allowed[field] = true
+		value, ok := fields[field]
+		if ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !canBeNull {
 			return fmt.Errorf("metadata field %q cannot be null", field)
 		}
 	}

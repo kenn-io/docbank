@@ -11,12 +11,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -245,7 +247,7 @@ func verifyRestoredRenditionHeads(
 	defer func() {
 		retErr = errors.Join(retErr, metadata.Close())
 	}()
-	if err := metadata.VerifyRenditionBlobAuthority(ctx); err != nil {
+	if err := metadata.VerifyRestoredRenditionBlobAuthority(ctx); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition authority: %w", err)
 	}
 	physical, err := blob.NewPreparedRestoreReader(
@@ -257,14 +259,42 @@ func verifyRestoredRenditionHeads(
 	defer func() {
 		retErr = errors.Join(retErr, physical.Close())
 	}()
-	if err := metadata.VerifyRenditionBlobBytes(ctx, physical); err != nil {
+	if err := metadata.VerifyRestoredRenditionBlobBytes(ctx, physical); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition bytes: %w", err)
 	}
 	if err := metadata.RebuildRenditionLexicalProjection(ctx); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored lexical projection: %w", err)
 	}
+	if _, err := rebuildRestoredVectorIndexes(ctx, metadata, physical); err != nil {
+		return err
+	}
 	return nil
 }
+
+func rebuildRestoredVectorIndexes(
+	ctx context.Context, metadata *store.Store, physical vectorworker.BlobReader,
+) (vectorworker.IndexRestoreReport, error) {
+	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+		Catalog: metadata, Blobs: physical, Gate: restoreVectorIndexGate{},
+		Owner:      "restore-vector-index-worker",
+		BuildLease: 30 * time.Minute, ReaderLease: 5 * time.Minute,
+		IdleDelay: time.Second,
+	})
+	if err != nil {
+		return vectorworker.IndexRestoreReport{}, fmt.Errorf("backupapp: configuring restored vector indexes: %w", err)
+	}
+	report, err := worker.Restore(ctx)
+	if err != nil {
+		return report, fmt.Errorf("backupapp: rebuilding restored vector indexes: %w", err)
+	}
+	return report, nil
+}
+
+// Restore owns an isolated staged vault under the hierarchy lock, so its
+// physical authority needs no additional daemon coordination.
+type restoreVectorIndexGate struct{}
+
+func (restoreVectorIndexGate) PreserveContext(_ context.Context, fn func() error) error { return fn() }
 
 // RecoverInterruptedPrimaryHandoff resolves a durable restore marker against
 // the database publication boundary before any caller opens SQLite mutably.

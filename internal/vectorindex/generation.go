@@ -337,6 +337,12 @@ func normalizeOptions(options Options) (Options, error) {
 	return options, nil
 }
 
+// EffectiveOptions resolves zero-valued build bounds to the implementation
+// defaults and rejects bounds outside the supported envelope.
+func EffectiveOptions(options Options) (Options, error) {
+	return normalizeOptions(options)
+}
+
 func validateManifest(manifest Manifest) error {
 	if len(manifest.SetIDs) == 0 || len(manifest.SetIDs) > defaultMaxRows {
 		return errors.New("vector index manifest membership exceeds bounds")

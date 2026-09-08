@@ -74,6 +74,17 @@ func (g *OperationGate) PhysicalMutate(fn func() error) error {
 	return fn()
 }
 
+// PreserveContext holds the shared physical-authority side while a daemon job
+// resolves and consumes catalog-authorized blobs. Placement commits and
+// maintenance cannot replace that authority until fn returns.
+func (g *OperationGate) PreserveContext(ctx context.Context, fn func() error) error {
+	if err := g.preservation.Acquire(ctx, 1); err != nil {
+		return fmt.Errorf("acquiring physical-authority preservation gate: %w", err)
+	}
+	defer g.preservation.Release(1)
+	return fn()
+}
+
 func (g *OperationGate) mutate(fn func() error) error {
 	g.admission.RLock()
 	if g.maintenance > 0 {

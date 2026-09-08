@@ -175,7 +175,7 @@ type renditionWorkerCatalog interface {
 		store.RenditionJobClaim, error)
 	BeginRenditionProviderEgress(ctx context.Context, claim store.RenditionJobClaim, waiterID string,
 		at time.Time, snapshots ...document.RenditionExecutionSnapshotV1) (
-		store.ProviderOperationAuthorization, *store.RenditionProviderEgressFence, error)
+		store.ProviderOperationAuthorization, *store.ProviderEgressFence, error)
 	CheckpointRenditionProvider(ctx context.Context, claim store.RenditionJobClaim,
 		handle string, at time.Time) error
 	MarkRenditionJobRetry(ctx context.Context, claim store.RenditionJobClaim,
@@ -194,6 +194,11 @@ type renditionWorkerCatalog interface {
 	PublishRenditionJob(ctx context.Context, claim store.RenditionJobClaim, at time.Time) (
 		store.RenditionJobPublication, error)
 	RenditionJobErrorRetryable(err error) bool
+}
+
+type targetedRenditionWorkerCatalog interface {
+	ClaimRenditionJob(ctx context.Context, jobID, owner string, at time.Time,
+		lease time.Duration) (store.RenditionJobClaim, error)
 }
 
 // RenditionWorkerConfig binds the provider-neutral state machine to one vault.
@@ -334,6 +339,50 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 	return processed, err
 }
 
+// RunJob processes at most one exact rendition job without consuming another
+// ready shared build.
+func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (bool, error) {
+	if worker == nil {
+		return false, errors.New("rendition worker is nil")
+	}
+	target, ok := worker.catalog.(targetedRenditionWorkerCatalog)
+	if !ok {
+		return false, errors.New("rendition catalog does not support targeted claims")
+	}
+	var claim store.RenditionJobClaim
+	var claimErr error
+	err := worker.mutate(ctx, func() error {
+		return worker.catalogOnce(ctx, func() error {
+			claim, claimErr = target.ClaimRenditionJob(ctx, jobID, worker.owner,
+				worker.clock().UTC(), worker.leaseDuration)
+			return claimErr
+		})
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if isExpectedTargetedRenditionClaimError(claimErr) {
+			return false, claimErr
+		}
+		return false, err
+	}
+	processed, err := worker.runClaim(ctx, claim)
+	if err != nil && ctx.Err() == nil && !errors.Is(err, store.ErrRenditionJobFenced) &&
+		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
+		err = renditionWorkerFatal(err)
+	}
+	return processed, err
+}
+
+func isExpectedTargetedRenditionClaimError(err error) bool {
+	return errors.Is(err, store.ErrNotFound) ||
+		errors.Is(err, store.ErrRenditionJobLeaseHeld) ||
+		errors.Is(err, store.ErrRenditionJobTerminal) ||
+		errors.Is(err, store.ErrRenditionJobFenced) ||
+		errors.Is(err, store.ErrRenditionJobOperatorRequired)
+}
+
 // runOne gates each catalog or physical mutation independently. Provider
 // execution remains outside the daemon-wide gate so queued maintenance does
 // not reject unrelated HTTP mutations for the duration of remote processing.
@@ -354,6 +403,12 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	if err != nil || !found {
 		return found, err
 	}
+	return worker.runClaim(ctx, claim)
+}
+
+func (worker *RenditionWorker) runClaim(
+	ctx context.Context, claim store.RenditionJobClaim,
+) (processed bool, retErr error) {
 	leaseCtx, stopLease := worker.keepLease(ctx, claim)
 	defer func() {
 		leaseErr := stopLease()
@@ -364,7 +419,7 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 	}()
 	ctx = leaseCtx
 	var work store.RenditionJobWork
-	err = worker.mutate(ctx, func() error {
+	err := worker.mutate(ctx, func() error {
 		return worker.retryCatalog(ctx, func() error {
 			var workErr error
 			work, workErr = worker.catalog.RenditionJobWorkByClaim(
@@ -390,7 +445,7 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 
 	var execution RenditionExecution
 	var snapshot document.RenditionExecutionSnapshotV1
-	var egressFence *store.RenditionProviderEgressFence
+	var egressFence *store.ProviderEgressFence
 	var durableResume atomic.Bool
 	workerOwnsUpload := false
 	resuming := claim.ResumeHandle != ""
@@ -434,7 +489,6 @@ func (worker *RenditionWorker) runOne(ctx context.Context) (
 			return true, worker.classifyAuthorityError(ctx, claim, err)
 		}
 	} else {
-		var err error
 		prepareWork := renditionProviderRuntimeWork(work)
 		execution, err = worker.runtime.Prepare(ctx, prepareWork, worker.clock().UTC())
 		if err != nil {
@@ -981,6 +1035,10 @@ func buildRenditionJobCandidate(
 		work.Profile.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return StagedRendition{}, fmt.Errorf("decoding rendition profile: %w", err)
 	}
+	rendition, err = envelopeRenditionJobV1(work, profile, result.Evidence.UnitKind, rendition)
+	if err != nil {
+		return StagedRendition{}, fmt.Errorf("enveloping normalized rendition: %w", err)
+	}
 	type retained struct {
 		role    string
 		payload []byte
@@ -1096,11 +1154,11 @@ func renditionBytesSHA256(value []byte) string {
 
 type renditionEgressFencedProvider struct {
 	provider document.RenditionProvider
-	fence    *store.RenditionProviderEgressFence
+	fence    *store.ProviderEgressFence
 }
 
 func renditionProviderWithEgressFence(
-	provider document.RenditionProvider, fence *store.RenditionProviderEgressFence,
+	provider document.RenditionProvider, fence *store.ProviderEgressFence,
 ) document.RenditionProvider {
 	if resumable, ok := provider.(document.ResumableRenditionProvider); ok {
 		return &renditionEgressFencedResumableProvider{

@@ -21,7 +21,7 @@ func collectOrphanEmbeddingArtifactsTx(
 ) (_ embeddingOrphanCollection, retErr error) {
 	var result embeddingOrphanCollection
 	generationRows, err := tx.QueryContext(ctx, `DELETE FROM embedding_input_generations AS g
-		WHERE NOT EXISTS (
+		WHERE NOT EXISTS (SELECT 1 FROM embedding_jobs j WHERE j.generation_id=g.generation_id) AND NOT EXISTS (
 			SELECT 1 FROM embedding_sets s WHERE s.input_generation_id=g.generation_id
 		) AND NOT EXISTS (
 			SELECT 1 FROM current_rendition_roots r
@@ -79,7 +79,8 @@ func collectOrphanEmbeddingArtifactsTx(
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_vector_spaces AS v
-		WHERE NOT EXISTS (SELECT 1 FROM embedding_sets s WHERE s.vector_space_id=v.vector_space_id)
+		WHERE NOT EXISTS (SELECT 1 FROM embedding_jobs j WHERE j.vector_space_id=v.vector_space_id)
+		  AND NOT EXISTS (SELECT 1 FROM embedding_sets s WHERE s.vector_space_id=v.vector_space_id)
 		  AND NOT EXISTS (SELECT 1 FROM embedding_vector_sets s WHERE s.vector_space_id=v.vector_space_id)`); err != nil {
 		return result, fmt.Errorf("collecting orphan embedding vector spaces: %w", err)
 	}
