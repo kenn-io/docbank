@@ -109,6 +109,8 @@ func TestServeRecoversInterruptedRestoreBeforeInitializingVault(t *testing.T) {
 		}
 	})
 	healthClient := &http.Client{Timeout: time.Second}
+	// Recovery and fresh SQLite initialization can exceed ten seconds on
+	// Windows CI. This checks recovery ordering, not startup performance.
 	require.Eventually(t, func() bool {
 		records, listErr := client.RuntimeStore(dir).List()
 		if listErr != nil || len(records) != 1 {
@@ -122,7 +124,7 @@ func TestServeRecoversInterruptedRestoreBeforeInitializingVault(t *testing.T) {
 		}
 		_ = response.Body.Close()
 		return response.StatusCode == http.StatusOK
-	}, 10*time.Second, 50*time.Millisecond)
+	}, time.Minute, 50*time.Millisecond)
 	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(dir, "blobs"))
 	require.NoError(t, err)
 	assert.False(t, pending)
