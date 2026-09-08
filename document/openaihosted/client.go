@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/providerhttp"
 )
 
@@ -131,7 +132,8 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		return document.EmbeddingResult{}, err
 	}
 	var decoded wireResponse
-	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true),
+		json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 		return document.EmbeddingResult{}, &ProviderError{Kind: ErrPermanentResponse}
 	}
 	result, err := client.validateAndOrder(decoded, inputs)
