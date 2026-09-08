@@ -75,6 +75,20 @@ func attachedMutationKind(
 	if len(changes) == 1 {
 		return auditTextField(changes[0], "record_kind")
 	}
+	if len(changes) == 2 {
+		var hasIngest, hasProvenance bool
+		for _, change := range changes {
+			kind, err := auditTextField(change, "record_kind")
+			if err != nil {
+				return "", err
+			}
+			hasIngest = hasIngest || kind == metadataIngestType
+			hasProvenance = hasProvenance || kind == metadataProvenanceType
+		}
+		if hasIngest && hasProvenance {
+			return metadataProvenanceType, nil
+		}
+	}
 	return "", errors.New("attached-metadata mutation has unsupported mixed changes")
 }
 

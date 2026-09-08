@@ -9,11 +9,12 @@ import (
 	"strings"
 )
 
-const embeddedSourceKindPrefix = "embedded:"
+// Keep the stored prefix compatible with existing provenance records.
+const callerSuppliedSourceKindPrefix = "embedded:"
 
 func publicProvenanceSourceKind(kind string) string {
-	if embedded, ok := strings.CutPrefix(kind, embeddedSourceKindPrefix); ok {
-		return embedded
+	if supplied, ok := strings.CutPrefix(kind, callerSuppliedSourceKindPrefix); ok {
+		return supplied
 	}
 	return kind
 }
@@ -36,18 +37,18 @@ func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) 
 	return s.beginIngest(ctx, sourceKind, sourceDesc, sourceKind == "watch")
 }
 
-// BeginEmbeddedIngest prepares generic provenance without interpreting any
+// BeginCallerSuppliedIngest prepares generic provenance without interpreting any
 // source kind as daemon-owned operational state.
-func (s *Store) BeginEmbeddedIngest(
+func (s *Store) BeginCallerSuppliedIngest(
 	ctx context.Context, sourceKind, sourceDesc string,
 ) (IngestRun, error) {
 	if sourceKind == "" {
-		return IngestRun{}, errors.New("embedded provenance source kind is required")
+		return IngestRun{}, errors.New("caller-supplied provenance source kind is required")
 	}
-	if err := validateUTF8Field("embedded provenance source kind", sourceKind); err != nil {
+	if err := validateUTF8Field("caller-supplied provenance source kind", sourceKind); err != nil {
 		return IngestRun{}, err
 	}
-	return s.beginIngest(ctx, embeddedSourceKindPrefix+sourceKind, sourceDesc, false)
+	return s.beginIngest(ctx, callerSuppliedSourceKindPrefix+sourceKind, sourceDesc, false)
 }
 
 func (s *Store) beginIngest(
@@ -267,7 +268,7 @@ func sameOriginTx(
 			return false, fmt.Errorf("scanning provenance of node %d: %w", nodeID, err)
 		}
 		sawProvenance = true
-		if strings.HasPrefix(storedSourceKind, embeddedSourceKindPrefix) {
+		if strings.HasPrefix(storedSourceKind, callerSuppliedSourceKindPrefix) {
 			continue
 		}
 		if storedSourceKind != sourceKind {

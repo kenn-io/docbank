@@ -390,6 +390,15 @@ func validateAuditedHistory(
 						vaultID, mutation, allocation, mutationScopeIDs, scopeEntries,
 						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 					)
+				} else if kind == metadataProvenanceType {
+					if len(mutationScopeIDs) != 1 {
+						err = errors.New("cross-scope provenance mutation is unsupported")
+					} else {
+						err = replay.applyProvenanceAppend(
+							vaultID, mutation, allocation, scopeEntry,
+							attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
+						)
+					}
 				} else if len(mutationScopeIDs) != 1 {
 					err = errors.New("cross-scope attached-metadata mutation is unsupported")
 				} else {

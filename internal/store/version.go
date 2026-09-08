@@ -267,7 +267,7 @@ func (s *Store) ConfirmIngestedContentWithReceipt(
 	); err != nil {
 		return ContentWriteReceipt{}, err
 	}
-	storedSourceKind := embeddedSourceKindPrefix + sourceKind
+	storedSourceKind := callerSuppliedSourceKindPrefix + sourceKind
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
