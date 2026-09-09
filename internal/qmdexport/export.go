@@ -95,20 +95,13 @@ type SourceCatalog interface {
 	QMDExportSources(ctx context.Context, limit int) ([]Source, error)
 }
 
-// PublishActive snapshots the catalog and publishes its complete current set.
+// PublishActive holds the publication lock while snapshotting the catalog and
+// publishing its complete current set, so concurrent exports cannot reorder snapshots.
 func PublishActive(ctx context.Context, root, collection string, catalog SourceCatalog, reader BlobReader, options Options) (Receipt, error) {
 	if catalog == nil {
 		return Receipt{}, errors.New("qmd export requires a source catalog")
 	}
-	bounds, err := normalizeOptions(options)
-	if err != nil {
-		return Receipt{}, err
-	}
-	sources, err := catalog.QMDExportSources(ctx, bounds.MaxDocuments)
-	if err != nil {
-		return Receipt{}, fmt.Errorf("snapshot qmd export sources: %w", err)
-	}
-	return Publish(ctx, root, collection, sources, reader, bounds)
+	return publish(ctx, root, collection, nil, catalog, reader, options, publishHooks{})
 }
 
 // build stages verified source streams and returns their complete manifest.
@@ -145,10 +138,10 @@ func build(ctx context.Context, stage, collection string, sources []Source, read
 // Retired generations remain readable. The caller may remove them only when no
 // consumer uses them; publication cleans up abandoned staging directories only.
 func Publish(ctx context.Context, root, collection string, sources []Source, reader BlobReader, options Options) (Receipt, error) {
-	return publish(ctx, root, collection, sources, reader, options, publishHooks{})
+	return publish(ctx, root, collection, sources, nil, reader, options, publishHooks{})
 }
 
-func publish(ctx context.Context, root, collection string, sources []Source, reader BlobReader, options Options, hooks publishHooks) (_ Receipt, retErr error) {
+func publish(ctx context.Context, root, collection string, sources []Source, catalog SourceCatalog, reader BlobReader, options Options, hooks publishHooks) (_ Receipt, retErr error) {
 	if ctx == nil || reader == nil {
 		return Receipt{}, errors.New("qmd export requires context and blob reader")
 	}
@@ -161,24 +154,6 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 	bounds, err := normalizeOptions(options)
 	if err != nil {
 		return Receipt{}, err
-	}
-	if len(sources) > bounds.MaxDocuments {
-		return Receipt{}, errors.New("qmd export document membership exceeds bound")
-	}
-	canonical := slices.Clone(sources)
-	slices.SortFunc(canonical, compareSource)
-	var total int64
-	for index, source := range canonical {
-		if err := validateSource(source); err != nil {
-			return Receipt{}, fmt.Errorf("qmd export source %d: %w", index, err)
-		}
-		if source.BlobSize > bounds.MaxDocumentBytes || source.BlobSize > bounds.MaxTotalBytes-total {
-			return Receipt{}, errors.New("qmd export source bytes exceed bound")
-		}
-		total += source.BlobSize
-		if index > 0 && compareSource(canonical[index-1], source) == 0 {
-			return Receipt{}, errors.New("qmd export contains duplicate source authority")
-		}
 	}
 
 	root, err = filepath.Abs(root)
@@ -203,6 +178,30 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 		return Receipt{}, err
 	}
 	defer func() { retErr = errors.Join(retErr, release()) }()
+	if catalog != nil {
+		sources, err = catalog.QMDExportSources(ctx, bounds.MaxDocuments)
+		if err != nil {
+			return Receipt{}, fmt.Errorf("snapshot qmd export sources: %w", err)
+		}
+	}
+	if len(sources) > bounds.MaxDocuments {
+		return Receipt{}, errors.New("qmd export document membership exceeds bound")
+	}
+	canonical := slices.Clone(sources)
+	slices.SortFunc(canonical, compareSource)
+	var total int64
+	for index, source := range canonical {
+		if err := validateSource(source); err != nil {
+			return Receipt{}, fmt.Errorf("qmd export source %d: %w", index, err)
+		}
+		if source.BlobSize > bounds.MaxDocumentBytes || source.BlobSize > bounds.MaxTotalBytes-total {
+			return Receipt{}, errors.New("qmd export source bytes exceed bound")
+		}
+		total += source.BlobSize
+		if index > 0 && compareSource(canonical[index-1], source) == 0 {
+			return Receipt{}, errors.New("qmd export contains duplicate source authority")
+		}
+	}
 	if err := validateExistingPrivateFile(filepath.Join(root, "CURRENT")); err != nil {
 		return Receipt{}, fmt.Errorf("inspect qmd export current pointer: %w", err)
 	}

@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,7 +132,7 @@ func TestPublishSerializesCurrentSelection(t *testing.T) {
 	secondResult := make(chan publishResult, 1)
 
 	go func() {
-		receipt, err := publish(t.Context(), root, "docbank", []Source{first}, fakeReader{first.BlobSHA256: firstMarkdown}, Options{}, publishHooks{
+		receipt, err := publish(t.Context(), root, "docbank", []Source{first}, nil, fakeReader{first.BlobSHA256: firstMarkdown}, Options{}, publishHooks{
 			afterCurrent: func() {
 				close(firstCurrent)
 				<-releaseFirst
@@ -140,7 +142,7 @@ func TestPublishSerializesCurrentSelection(t *testing.T) {
 	}()
 	<-firstCurrent
 	go func() {
-		receipt, err := publish(t.Context(), root, "docbank", []Source{second}, fakeReader{second.BlobSHA256: secondMarkdown}, Options{}, publishHooks{
+		receipt, err := publish(t.Context(), root, "docbank", []Source{second}, nil, fakeReader{second.BlobSHA256: secondMarkdown}, Options{}, publishHooks{
 			waitingOnLock: func() { close(secondWaiting) },
 		})
 		secondResult <- publishResult{receipt: receipt, err: err}
@@ -474,4 +476,70 @@ func TestPublishSyncsDirectoriesBeforeSelectingGeneration(t *testing.T) {
 	_, err := Publish(t.Context(), root, "docbank", []Source{item}, fakeReader{item.BlobSHA256: body}, Options{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"collection/documents/" + sourcePathIdentity(item)[:2], "collection/documents", "collection", ".", "generations", "."}, synced)
+}
+
+func TestPublishActiveSerializesSnapshotsWithPublication(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		root := privateExportTestDir(t)
+		item, body := source(1, "version-1", "# Removed document\n")
+		active := []Source{item}
+		firstSnapshot := make(chan struct{})
+		releaseFirst := make(chan struct{})
+		calls := 0
+		catalog := catalogFunc(func(ctx context.Context, _ int) ([]Source, error) {
+			snapshot := slices.Clone(active)
+			calls++
+			if calls == 1 {
+				close(firstSnapshot)
+				select {
+				case <-releaseFirst:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			return snapshot, nil
+		})
+		results := make(chan publishResult, 2)
+		start := func() {
+			go func() {
+				receipt, err := PublishActive(t.Context(), root, "docbank", catalog, fakeReader{item.BlobSHA256: body}, Options{})
+				results <- publishResult{receipt: receipt, err: err}
+			}()
+		}
+		start()
+		<-firstSnapshot
+		active = nil // The document is removed while the first snapshot is delayed.
+		start()
+		synctest.Wait()
+		close(releaseFirst)
+		first, second := <-results, <-results
+		require.NoError(t, first.err)
+		require.NoError(t, second.err)
+		current := strings.TrimSpace(readFile(t, filepath.Join(root, "CURRENT")))
+		var manifest Manifest
+		require.NoError(t, json.Unmarshal([]byte(readFile(t, filepath.Join(root, "generations", current, "manifest.json"))), &manifest))
+		assert.Empty(t, manifest.Entries, "a delayed snapshot must not restore a removed document")
+	})
+}
+
+type catalogFunc func(context.Context, int) ([]Source, error)
+
+func (catalog catalogFunc) QMDExportSources(ctx context.Context, limit int) ([]Source, error) {
+	return catalog(ctx, limit)
+}
+
+func TestPublishActiveCatalogErrorReleasesLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		root := privateExportTestDir(t)
+		catalogErr := errors.New("catalog read failed")
+		_, err := PublishActive(t.Context(), root, "docbank", catalogFunc(func(context.Context, int) ([]Source, error) {
+			return nil, catalogErr
+		}), fakeReader{}, Options{})
+		require.ErrorIs(t, err, catalogErr)
+		// A leaked lock makes this deadline expire instead of publishing.
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		_, err = PublishActive(ctx, root, "docbank", staticCatalog{}, fakeReader{}, Options{})
+		require.NoError(t, err)
+	})
 }
