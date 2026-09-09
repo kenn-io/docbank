@@ -15,7 +15,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/document/openaiembed"
+	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/document/voyage"
@@ -74,7 +74,7 @@ func configureEmbeddingRuntimes(cfg config.Config, blobs embeddingRuntimeBlobSto
 		var classify func(error) (processing.EmbeddingProviderFailure, time.Duration)
 		switch configured.Runtime.AdapterContract {
 		case openAIEmbeddingAdapter:
-			profile := openaiembed.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor,
+			profile := openaicompat.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor,
 				ModelInput: modelInput, SecretBinding: configured.CredentialBinding,
 				DeploymentEpoch:        configured.Runtime.DeploymentEpoch,
 				ProviderRevisionHeader: configured.Runtime.ProviderRevisionHeader,
@@ -85,7 +85,7 @@ func configureEmbeddingRuntimes(cfg config.Config, blobs embeddingRuntimeBlobSto
 			descriptor, profile, err = finalizeOpenAIEmbeddingDescriptor(profile)
 			if err == nil {
 				profile.Descriptor = descriptor
-				provider, err = openaiembed.New(profile, secrets, &http.Client{})
+				provider, err = openaicompat.New(profile, secrets, &http.Client{})
 			}
 			classify = classifyOpenAIEmbeddingError
 		case voyageEmbeddingAdapter:
@@ -140,13 +140,13 @@ func configuredEmbeddingDescriptor(profile config.EmbeddingProfileConfig, modelI
 		ModelInput: modelInput, SupportedRequestModes: modes}
 }
 
-func finalizeOpenAIEmbeddingDescriptor(profile openaiembed.Profile) (document.EmbeddingDescriptor, openaiembed.Profile, error) {
+func finalizeOpenAIEmbeddingDescriptor(profile openaicompat.Profile) (document.EmbeddingDescriptor, openaicompat.Profile, error) {
 	temporary, err := document.NewEmbeddingDescriptor(profile.Descriptor)
 	if err != nil {
 		return document.EmbeddingDescriptor{}, profile, err
 	}
 	profile.Descriptor = temporary
-	fingerprint, err := openaiembed.PolicyFingerprint(profile)
+	fingerprint, err := openaicompat.PolicyFingerprint(profile)
 	if err != nil {
 		return document.EmbeddingDescriptor{}, profile, err
 	}
@@ -224,17 +224,17 @@ func configuredEmbeddingEgress(runtime config.EmbeddingRuntimeConfig) providerht
 }
 
 func classifyOpenAIEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {
-	if errors.Is(err, openaiembed.ErrMalformedResponse) {
+	if errors.Is(err, openaicompat.ErrMalformedResponse) {
 		return processing.EmbeddingProviderInvalidResponse, 0
 	}
-	if errors.Is(err, openaiembed.ErrUnauthorized) {
+	if errors.Is(err, openaicompat.ErrUnauthorized) {
 		return processing.EmbeddingProviderAuthorization, 0
 	}
-	if errors.Is(err, openaiembed.ErrCapacityResponse) {
+	if errors.Is(err, openaicompat.ErrCapacityResponse) {
 		return processing.EmbeddingProviderCapacity, 0
 	}
-	if errors.Is(err, openaiembed.ErrTransientResponse) {
-		delay, _ := openaiembed.RetryAfter(err)
+	if errors.Is(err, openaicompat.ErrTransientResponse) {
+		delay, _ := openaicompat.RetryAfter(err)
 		return processing.EmbeddingProviderTransient, delay
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

@@ -1,5 +1,5 @@
-// Package openaihosted implements the fixed hosted OpenAI embeddings contract.
-package openaihosted
+// Package openai implements the fixed hosted OpenAI embeddings contract.
+package openai
 
 import (
 	"context"
@@ -122,7 +122,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxResponseBytes: normalized.MaxResponseBytes, Egress: profileEgressIdentity(normalized.EgressPolicy),
 	}, json.Deterministic(true))
 	if err != nil {
-		return "", errors.New("openaihosted: policy identity encoding failed")
+		return "", errors.New("openai: policy identity encoding failed")
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
@@ -132,7 +132,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 // authority with the sealed provider HTTP transport.
 func New(profile Profile, secrets SecretResolver, resolver providerhttp.Resolver, supplied *http.Client) (*Client, error) {
 	if supplied == nil {
-		return nil, errors.New("openaihosted: HTTP client settings source is required")
+		return nil, errors.New("openai: HTTP client settings source is required")
 	}
 	normalized, _, err := normalizeProfile(profile)
 	if err != nil {
@@ -140,21 +140,21 @@ func New(profile Profile, secrets SecretResolver, resolver providerhttp.Resolver
 	}
 	descriptor, err := document.NewEmbeddingDescriptor(profile.Descriptor)
 	if err != nil || !reflect.DeepEqual(descriptor, profile.Descriptor) {
-		return nil, errors.New("openaihosted: descriptor is not canonical")
+		return nil, errors.New("openai: descriptor is not canonical")
 	}
 	fingerprint, err := PolicyFingerprint(profile)
 	if err != nil {
 		return nil, err
 	}
 	if descriptor.PolicyFingerprint != fingerprint {
-		return nil, errors.New("openaihosted: descriptor policy fingerprint does not match profile")
+		return nil, errors.New("openai: descriptor policy fingerprint does not match profile")
 	}
 	if nilInterface(secrets) {
-		return nil, errors.New("openaihosted: named API-key resolver is required")
+		return nil, errors.New("openai: named API-key resolver is required")
 	}
 	transport, err := providerhttp.NewTransport(normalized.EgressPolicy, resolver)
 	if err != nil {
-		return nil, errors.New("openaihosted: sealed egress policy is invalid")
+		return nil, errors.New("openai: sealed egress policy is invalid")
 	}
 	isolated := *supplied
 	isolated.Transport = transport
@@ -200,13 +200,13 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 		profile.MaxInputBytes < profile.MaxInputItemBytes || profile.MaxInputBytes > maximumBytes ||
 		profile.MaxRequestBytes < 1 || profile.MaxRequestBytes > maximumBytes ||
 		profile.MaxResponseBytes < 1 || profile.MaxResponseBytes > maximumBytes {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaihosted: execution bounds are invalid")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openai: execution bounds are invalid")
 	}
 	if !validToken(profile.CompatibilityEpoch) || profile.Descriptor.ModelRevision != profile.CompatibilityEpoch {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaihosted: compatibility epoch must exactly match descriptor model revision")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openai: compatibility epoch must exactly match descriptor model revision")
 	}
 	if !validToken(profile.SecretBinding) {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaihosted: named API-key binding is required")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openai: named API-key binding is required")
 	}
 	if err := normalizeEgress(&profile.EgressPolicy); err != nil {
 		return Profile{}, document.EmbeddingDescriptor{}, err
@@ -217,7 +217,7 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 	var err error
 	descriptorIdentity, err = document.NewEmbeddingDescriptor(descriptorIdentity)
 	if err != nil {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaihosted: descriptor identity is invalid")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openai: descriptor identity is invalid")
 	}
 	descriptorIdentity.PolicyFingerprint = ""
 	descriptorIdentity.Fingerprint = ""
@@ -238,7 +238,7 @@ func validateDescriptorContract(descriptor document.EmbeddingDescriptor, epoch s
 		!slices.Equal(descriptor.SupportedRequestModes, []document.ModelInputMode{document.ModelInputModeText}) ||
 		descriptor.ModelInput.Document.Mode != document.ModelInputModeText || descriptor.ModelInput.Query.Mode != document.ModelInputModeText ||
 		descriptor.CompatibilityID != descriptor.ModelInput.CompatibilityID {
-		return errors.New("openaihosted: descriptor does not match the fixed hosted text contract")
+		return errors.New("openai: descriptor does not match the fixed hosted text contract")
 	}
 	return nil
 }
@@ -258,7 +258,7 @@ func normalizeEgress(policy *providerhttp.EgressPolicy) error {
 	}
 	if policy.Scheme != "https" || policy.Host != host || policy.Port != 443 ||
 		policy.ProxyMode != providerhttp.ProxyDisabled || policy.TLS.RootCAs != nil {
-		return errors.New("openaihosted: egress authority must be exactly api.openai.com:443 with system roots and no proxy")
+		return errors.New("openai: egress authority must be exactly api.openai.com:443 with system roots and no proxy")
 	}
 	for index := range policy.AllowedCIDRs {
 		policy.AllowedCIDRs[index] = policy.AllowedCIDRs[index].Masked()
@@ -268,7 +268,7 @@ func normalizeEgress(policy *providerhttp.EgressPolicy) error {
 	})
 	for index := 1; index < len(policy.AllowedCIDRs); index++ {
 		if policy.AllowedCIDRs[index] == policy.AllowedCIDRs[index-1] {
-			return errors.New("openaihosted: egress policy has a duplicate CIDR")
+			return errors.New("openai: egress policy has a duplicate CIDR")
 		}
 	}
 	for index := range policy.TLS.SPKISHA256 {
@@ -277,11 +277,11 @@ func normalizeEgress(policy *providerhttp.EgressPolicy) error {
 	slices.Sort(policy.TLS.SPKISHA256)
 	for index := 1; index < len(policy.TLS.SPKISHA256); index++ {
 		if policy.TLS.SPKISHA256[index] == policy.TLS.SPKISHA256[index-1] {
-			return errors.New("openaihosted: egress policy has a duplicate SPKI pin")
+			return errors.New("openai: egress policy has a duplicate SPKI pin")
 		}
 	}
 	if _, err := providerhttp.NewTransport(*policy, nil); err != nil {
-		return errors.New("openaihosted: sealed egress policy is invalid")
+		return errors.New("openai: sealed egress policy is invalid")
 	}
 	return nil
 }

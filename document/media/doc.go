@@ -5,7 +5,8 @@
 // provider descriptor, processing profile, and disclosure authority. It
 // rejects formats whose expansion, semantic units, external references, or
 // decode work cannot be bounded locally. Visual detection reads container
-// metadata without decoding pixels or samples.
+// metadata without decoding pixels or samples. MP3 inspection requires contiguous
+// audio frames; APEv2 tags and gaps between frames are reported as malformed.
 //
 // The package does not perform filesystem, network, storage, database,
 // queue, daemon, vault, or application work.

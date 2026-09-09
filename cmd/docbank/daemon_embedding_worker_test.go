@@ -19,7 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/document/openaiembed"
+	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
 	"go.kenn.io/docbank/internal/config"
@@ -70,11 +70,11 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 	profile := config.EmbeddingProfileConfig{
 		Activation: string(document.EmbeddingRequired), AuthorizationFingerprint: strings.Repeat("1", 64),
 		CompatibilityID: contract.CompatibilityID, CredentialBinding: "credential:semantic",
-		DescriptorID: openaiembed.ProviderID, Dimensions: 2, DisclosureFingerprint: strings.Repeat("2", 64),
-		DocumentFormatter: openaiembed.DocumentFormatterV1, InputKind: string(document.EmbeddingInputRenditionChunk),
+		DescriptorID: openaicompat.ProviderID, Dimensions: 2, DisclosureFingerprint: strings.Repeat("2", 64),
+		DocumentFormatter: openaicompat.DocumentFormatterV1, InputKind: string(document.EmbeddingInputRenditionChunk),
 		MaxInputTokens: 128, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
 		Metric: document.VectorMetricCosine, Model: "synthetic-model", Normalization: document.VectorNormalizationNone,
-		QueryFormatter: openaiembed.QueryFormatterV1, ScalarEncoding: openaiembed.ScalarEncodingFloat32,
+		QueryFormatter: openaicompat.QueryFormatterV1, ScalarEncoding: openaicompat.ScalarEncodingFloat32,
 		TrustBoundary: string(document.EmbeddingTrustOperatorNetwork),
 		Chunk: config.EmbeddingChunkConfig{ContextFingerprint: strings.Repeat("3", 64), Formatter: "synthetic/v1",
 			MaxTokens: 128, OverlapTokens: 8, Tokenizer: "synthetic", TokenizerRevision: "v1", TruncationPolicy: string(document.TruncationPolicyReject)},
@@ -86,7 +86,7 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 			TLSHandshakeTimeout: config.Duration(time.Second)},
 	}
 	descriptor := configuredEmbeddingDescriptor(profile, contract)
-	final, _, err := finalizeOpenAIEmbeddingDescriptor(openaiembed.Profile{Origin: server.URL, Descriptor: descriptor,
+	final, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{Origin: server.URL, Descriptor: descriptor,
 		ModelInput: contract, SecretBinding: profile.CredentialBinding, DeploymentEpoch: profile.Runtime.DeploymentEpoch,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxBatchItems: profile.MaxBatchItems,
 		MaxInputBytes: profile.MaxInputBytes, MaxRequestBytes: profile.Runtime.MaxRequestBytes,
@@ -105,7 +105,7 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 	require.NoError(t, err)
 	assert.True(t, registry.Ready())
 	assert.Equal(t, []string{final.Fingerprint}, registry.Fingerprints())
-	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaiembed.ErrCapacityResponse))
+	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
 	assert.Equal(t, processing.EmbeddingProviderCapacity, classification)
 }
 
@@ -202,7 +202,7 @@ type embeddingRunnerFunc func(context.Context) error
 func (run embeddingRunnerFunc) Run(ctx context.Context) error { return run(ctx) }
 
 func TestEmbeddingRuntimeClassifiesAuthorizationFailures(t *testing.T) {
-	for _, err := range []error{openaiembed.ErrUnauthorized, &openaiembed.ProviderError{Kind: openaiembed.ErrUnauthorized, StatusCode: http.StatusUnauthorized}} {
+	for _, err := range []error{openaicompat.ErrUnauthorized, &openaicompat.ProviderError{Kind: openaicompat.ErrUnauthorized, StatusCode: http.StatusUnauthorized}} {
 		classification, _ := classifyOpenAIEmbeddingError(err)
 		require.Equal(t, processing.EmbeddingProviderAuthorization, classification)
 	}
@@ -213,7 +213,7 @@ func TestEmbeddingRuntimeClassifiesAuthorizationFailures(t *testing.T) {
 }
 
 func TestEmbeddingRuntimeClassifiesMalformedOpenAIResponses(t *testing.T) {
-	for _, err := range []error{openaiembed.ErrMalformedResponse, fmt.Errorf("schema mismatch: %w", openaiembed.ErrMalformedResponse)} {
+	for _, err := range []error{openaicompat.ErrMalformedResponse, fmt.Errorf("schema mismatch: %w", openaicompat.ErrMalformedResponse)} {
 		classification, delay := classifyOpenAIEmbeddingError(err)
 		require.Equal(t, processing.EmbeddingProviderInvalidResponse, classification)
 		require.Zero(t, delay)

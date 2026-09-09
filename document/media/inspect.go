@@ -36,6 +36,7 @@ const (
 
 	ooxmlWorksheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
 	ooxmlSlideType     = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
+	maxID3v2TagBytes   = 1 << 20
 )
 
 // CapabilityReason is a stable capability inspection outcome.
@@ -110,8 +111,9 @@ type CapabilityMeasurements struct {
 	DurationMS      int64 `json:"duration_ms"`
 }
 
-// CapabilityRecord is a checksum-sealed decision over exact source bytes.
-// Mutating any exported field invalidates Checksum.
+// CapabilityRecord records a decision over exact source bytes. Its public
+// checksum verifies portable integrity; a private inspection seal binds local
+// upload authority to the original decision, including its policy and measurements.
 type CapabilityRecord struct {
 	Version      int                    `json:"version"`
 	Eligible     bool                   `json:"eligible"`
@@ -131,7 +133,8 @@ type CapabilityRecord struct {
 	Policy                InspectionPolicy            `json:"policy"`
 	Checksum              string                      `json:"checksum"`
 
-	localAuthority bool
+	// Captured only by inspection, never from caller-supplied public fields.
+	inspectionChecksum string
 }
 
 type capabilityRecordIdentity CapabilityRecord
@@ -178,6 +181,8 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 		record = inspectPDF(data, policy)
 	case baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav":
 		record = inspectWAV(data, policy)
+	case baseType == "audio/mpeg" || ext == ".mp3":
+		record = inspectMP3(data, policy)
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -199,15 +204,22 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 		}
 	}
 	if record.Eligible && (record.MediaFamily == string(KindImage) ||
-		record.MediaFamily == string(KindVideo)) &&
-		(baseType != record.MediaType || !filenameAllowsVisualFormat(ext, record.Format)) {
-		record.Eligible = false
-		record.Reason = CapabilityReasonMalformed
+		record.MediaFamily == string(KindVideo)) {
+		quickTimeIdentity := record.MediaFamily == string(KindVideo) &&
+			baseType == "video/quicktime" && ext == ".mov"
+		if !quickTimeIdentity && (baseType != record.MediaType || !filenameAllowsVisualFormat(ext, record.Format)) {
+			record.Eligible = false
+			record.Reason = CapabilityReasonMalformed
+		}
 	}
-	if record.Eligible && record.MediaFamily == "audio" &&
-		(ext != ".wav" || baseType != "audio/wav" && baseType != "audio/x-wav") {
-		record.Eligible = false
-		record.Reason = CapabilityReasonMalformed
+	if record.Eligible && record.MediaFamily == "audio" {
+		validIdentity := record.Format == "wav" && ext == ".wav" &&
+			(baseType == "audio/wav" || baseType == "audio/x-wav") ||
+			record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg"
+		if !validIdentity {
+			record.Eligible = false
+			record.Reason = CapabilityReasonMalformed
+		}
 	}
 	return sealCapabilityRecord(policy, data, record)
 }
@@ -248,7 +260,7 @@ func ValidateCapabilityRecord(record CapabilityRecord) error {
 	}
 	identity := record
 	identity.Checksum = ""
-	identity.localAuthority = false
+	identity.inspectionChecksum = ""
 	encoded, err := json.Marshal(capabilityRecordIdentity(identity), json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("media: encode capability record: %w", err)
@@ -264,9 +276,14 @@ func ValidateCapabilityRecord(record CapabilityRecord) error {
 
 // InspectionPolicy returns the policy sealed into a locally produced record.
 // Records decoded from an external representation deliberately lack this
-// authority and cannot authorize an upload.
+// authority and cannot authorize an upload. Recomputing the public checksum
+// after changing source identity, policy, or measurements cannot renew the seal.
 func (record CapabilityRecord) InspectionPolicy() (InspectionPolicy, bool) {
-	return record.Policy, record.localAuthority
+	if record.inspectionChecksum == "" || record.inspectionChecksum != record.Checksum ||
+		ValidateCapabilityRecord(record) != nil {
+		return InspectionPolicy{}, false
+	}
+	return record.Policy, true
 }
 
 // UnmarshalJSON decodes a portable record. Local upload authority is not part
@@ -300,13 +317,13 @@ func sealCapabilityRecord(
 	record.InputKind = policy.InputKind
 	record.Policy = policy
 	record.Checksum = ""
-	record.localAuthority = false
+	record.inspectionChecksum = ""
 	encoded, err := json.Marshal(capabilityRecordIdentity(record), json.Deterministic(true))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: encode capability record: %w", err)
 	}
 	record.Checksum = sha256Hex(encoded)
-	record.localAuthority = true
+	record.inspectionChecksum = record.Checksum
 	return record, nil
 }
 
@@ -1312,13 +1329,17 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 	if err != nil {
 		return CapabilityRecord{Reason: CapabilityReasonMalformed, MediaType: declaredType}
 	}
+	if declaredType == "video/quicktime" &&
+		(metadata.Kind != KindVideo || metadata.Container != "quicktime") {
+		return CapabilityRecord{Reason: CapabilityReasonMalformed, MediaType: declaredType}
+	}
 	record := CapabilityRecord{MediaFamily: string(metadata.Kind), MediaType: metadata.MediaType,
 		Format: string(metadata.Format), Measurements: CapabilityMeasurements{
 			Pixels: metadata.Pixels(), Frames: int64(metadata.FrameCount), DurationMS: metadata.DurationMS,
 		}}
 	if metadata.Kind == KindVideo {
 		info, ok := mp4Metadata(data)
-		if !ok {
+		if !ok || !info.sampleAuthority {
 			return CapabilityRecord{Reason: CapabilityReasonMalformed, MediaType: declaredType}
 		}
 		record.Measurements.Frames = info.frameCount
@@ -1489,6 +1510,163 @@ func inspectWAV(data []byte, policy InspectionPolicy) CapabilityRecord {
 	}
 	record.Eligible, record.Reason = true, CapabilityReasonEligible
 	return record
+}
+
+type mp3FrameHeader struct {
+	version         byte
+	sampleRate      uint64
+	samples, length uint64
+}
+
+func inspectMP3(data []byte, policy InspectionPolicy) CapabilityRecord {
+	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/mpeg", Format: "mp3"}
+	if policy.MaxDurationMS <= 0 {
+		record.Reason = CapabilityReasonMalformed
+		return record
+	}
+	audioStart, audioEnd, ok := mp3AudioBounds(data)
+	if !ok {
+		record.Reason = CapabilityReasonMalformed
+		return record
+	}
+	var reference mp3FrameHeader
+	var seenFrame bool
+	var totalSamples uint64
+	for offset := audioStart; offset < audioEnd; {
+		frame, ok := parseMP3FrameHeader(data[offset:audioEnd])
+		if !ok || seenFrame && (frame.version != reference.version || frame.sampleRate != reference.sampleRate) {
+			record.Reason = CapabilityReasonMalformed
+			return record
+		}
+		if !seenFrame {
+			reference = frame
+			seenFrame = true
+		}
+		remaining := uint64(audioEnd - offset) //nolint:gosec // offset is below audioEnd by the loop condition
+		if frame.length > remaining || math.MaxUint64-totalSamples < frame.samples {
+			record.Reason = CapabilityReasonMalformed
+			return record
+		}
+		totalSamples += frame.samples
+		offset += int(frame.length) // #nosec G115 -- bounded by the remaining input bytes above.
+	}
+	if totalSamples == 0 {
+		record.Reason = CapabilityReasonMalformed
+		return record
+	}
+	durationMS, ok := mp3DurationMilliseconds(totalSamples, reference.sampleRate)
+	if !ok {
+		record.Reason = CapabilityReasonMalformed
+		return record
+	}
+	record.Measurements.DurationMS = durationMS
+	if durationMS > policy.MaxDurationMS {
+		record.Reason = CapabilityReasonVisualBounds
+		return record
+	}
+	record.Eligible, record.Reason = true, CapabilityReasonEligible
+	return record
+}
+
+func mp3AudioBounds(data []byte) (int, int, bool) {
+	start, end := 0, len(data)
+	if bytes.HasPrefix(data, []byte("ID3")) {
+		if len(data) < 10 {
+			return 0, 0, false
+		}
+		version, revision, flags := data[3], data[4], data[5]
+		var allowedFlags byte
+		switch version {
+		case 2:
+			allowedFlags = 0xc0
+		case 3:
+			allowedFlags = 0xe0
+		case 4:
+			allowedFlags = 0xf0
+		default:
+			return 0, 0, false
+		}
+		if revision == 0xff || flags & ^allowedFlags != 0 {
+			return 0, 0, false
+		}
+		tagSize := 0
+		for _, value := range data[6:10] {
+			if value&0x80 != 0 {
+				return 0, 0, false
+			}
+			tagSize = tagSize<<7 | int(value)
+		}
+		if tagSize > maxID3v2TagBytes {
+			return 0, 0, false
+		}
+		footerBytes := 0
+		if version == 4 && flags&0x10 != 0 {
+			footerBytes = 10
+		}
+		start = 10 + tagSize + footerBytes
+		if start > end {
+			return 0, 0, false
+		}
+		if footerBytes != 0 {
+			footer := data[start-footerBytes : start]
+			if !bytes.Equal(footer[:3], []byte("3DI")) || footer[3] != version || footer[4] != revision ||
+				footer[5] != flags || !bytes.Equal(footer[6:10], data[6:10]) {
+				return 0, 0, false
+			}
+		}
+	}
+	if end-start >= 128 && bytes.Equal(data[end-128:end-125], []byte("TAG")) {
+		end -= 128
+	}
+	return start, end, start < end
+}
+
+func parseMP3FrameHeader(data []byte) (mp3FrameHeader, bool) {
+	if len(data) < 4 || data[0] != 0xff || data[1]&0xe0 != 0xe0 {
+		return mp3FrameHeader{}, false
+	}
+	versionID := (data[1] >> 3) & 0x03
+	if versionID == 1 || (data[1]>>1)&0x03 != 1 {
+		return mp3FrameHeader{}, false
+	}
+	if data[3]&0x03 == 2 { // emphasis=2 is reserved by MPEG audio.
+		return mp3FrameHeader{}, false
+	}
+	bitrateIndex := (data[2] >> 4) & 0x0f
+	sampleRateIndex := (data[2] >> 2) & 0x03
+	if bitrateIndex == 0 || bitrateIndex == 15 || sampleRateIndex == 3 {
+		return mp3FrameHeader{}, false
+	}
+	var sampleRate, bitrate, samples, coefficient uint64
+	switch versionID {
+	case 3: // MPEG-1 Layer III.
+		sampleRate = []uint64{44_100, 48_000, 32_000}[sampleRateIndex]
+		bitrate = []uint64{32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}[bitrateIndex-1]
+		samples, coefficient = 1_152, 144_000
+	case 2: // MPEG-2 Layer III.
+		sampleRate = []uint64{22_050, 24_000, 16_000}[sampleRateIndex]
+		bitrate = []uint64{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}[bitrateIndex-1]
+		samples, coefficient = 576, 72_000
+	case 0: // MPEG-2.5 Layer III.
+		sampleRate = []uint64{11_025, 12_000, 8_000}[sampleRateIndex]
+		bitrate = []uint64{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}[bitrateIndex-1]
+		samples, coefficient = 576, 72_000
+	default:
+		return mp3FrameHeader{}, false
+	}
+	length := coefficient*bitrate/sampleRate + uint64((data[2]>>1)&1)
+	return mp3FrameHeader{version: versionID, sampleRate: sampleRate, samples: samples, length: length}, length >= 4
+}
+
+func mp3DurationMilliseconds(samples, sampleRate uint64) (int64, bool) {
+	if samples == 0 || sampleRate == 0 || samples > math.MaxUint64/1_000 {
+		return 0, false
+	}
+	milliseconds := (samples*1_000 + sampleRate - 1) / sampleRate
+	if milliseconds > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(milliseconds), true
 }
 
 func inspectEPUBCSS(data []byte, stylesheet string, archiveNames map[string]bool) (bool, error) {

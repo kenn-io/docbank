@@ -54,6 +54,32 @@ func TestAuthorizeReturnsOnlyValidatedUnlinkedExactBytes(t *testing.T) {
 	assert.Empty(t, spoolEntries(t, directory), "the named spool must be gone before handoff")
 }
 
+// TestAuthorizeCarriesExactLocalCapabilityValue catches an authorized upload
+// that drops the locally inspected capability authority or exposes mutable
+// shared state to a provider adapter.
+func TestAuthorizeCarriesExactLocalCapabilityValue(t *testing.T) {
+	data := []byte("alpha\nbeta\n")
+	record := inspectCapability(t, data)
+	upload, err := Authorize(t.Context(), Source{
+		Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir(),
+	}, record, UploadMetadata{Filename: "notes.txt"})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, upload.Close()) })
+
+	carrier, ok := upload.(interface {
+		CapabilityProof() document.UploadCapability
+	})
+	require.True(t, ok)
+	carried := carrier.CapabilityProof()
+	facts, local := carried.Facts()
+	require.True(t, local)
+	assert.Equal(t, record.Checksum, facts.Checksum)
+	assert.Equal(t, record.SourceSHA256, facts.SourceSHA256)
+	facts.Checksum = "changed"
+	unchanged, _ := carrier.CapabilityProof().Facts()
+	assert.Equal(t, record.Checksum, unchanged.Checksum)
+}
+
 func TestAuthorizeRejectsPathReplacementSymlinkAndWriterMutation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows reparse-point cases run in the platform suite")

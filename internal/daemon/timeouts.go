@@ -1,6 +1,6 @@
-// Package daemonlife defines lifecycle budgets shared by the daemon and the
+// Package daemon defines lifecycle budgets shared by the daemon and the
 // clients that wait for it to stop.
-package daemonlife
+package daemon
 
 import "time"
 

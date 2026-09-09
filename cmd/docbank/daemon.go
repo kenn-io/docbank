@@ -27,7 +27,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonlife"
+	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/extract"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
@@ -200,7 +200,7 @@ func runServe(ctx context.Context) (retErr error) {
 	jobSupervisor := jobs.New(sigCtx, logger)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(
-			context.Background(), daemonlife.JobDrainTimeout)
+			context.Background(), daemon.JobDrainTimeout)
 		defer cancel()
 		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
 			retErr = errors.Join(retErr, err)
@@ -408,7 +408,7 @@ func runServe(ctx context.Context) (retErr error) {
 	logger.Info("docbank daemon shutting down")
 	jobSupervisor.Stop()
 	shutdownCtx, cancel := context.WithTimeout(
-		context.Background(), daemonlife.HTTPDrainTimeout)
+		context.Background(), daemon.HTTPDrainTimeout)
 	defer cancel()
 	shutdownErr := srv.Shutdown(shutdownCtx)
 	for _, running := range servers {

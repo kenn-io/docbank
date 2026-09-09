@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
-	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -240,7 +240,7 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 	require.NoError(t, stopRecord(t.Context(), rec))
 	elapsed := time.Since(started)
 	if runtime.GOOS == "windows" {
-		assert.GreaterOrEqual(t, elapsed, daemonlife.GracefulExitTimeout-time.Second,
+		assert.GreaterOrEqual(t, elapsed, daemon.GracefulExitTimeout-time.Second,
 			"Windows must preserve graceful draining before native termination")
 	} else {
 		assert.Less(t, elapsed, 5*time.Second,

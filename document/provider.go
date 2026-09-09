@@ -875,6 +875,7 @@ type sealedAuthorizedUpload struct {
 	hasher         hash.Hash
 	expectedSHA256 string
 	providerClosed bool
+	capability     UploadCapability
 }
 
 func newSealedAuthorizedUpload(
@@ -883,10 +884,12 @@ func newSealedAuthorizedUpload(
 	hasher := sha256.New()
 	limited := &io.LimitedReader{R: source, N: metadata.ByteLength}
 	return &sealedAuthorizedUpload{
-		ctx: ctx, source: source, metadata: metadata, limited: limited,
+		ctx: ctx, source: source, metadata: metadata, limited: limited, capability: source.CapabilityProof(),
 		reader: io.TeeReader(limited, hasher), hasher: hasher, expectedSHA256: metadata.SHA256,
 	}
 }
+
+func (upload *sealedAuthorizedUpload) CapabilityProof() UploadCapability { return upload.capability }
 
 func (upload *sealedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {
 	return upload.metadata
@@ -983,6 +986,10 @@ type ownedAuthorizedUpload struct {
 
 func (upload *ownedAuthorizedUpload) Read(buffer []byte) (int, error) {
 	return upload.upload.Read(buffer)
+}
+
+func (upload *ownedAuthorizedUpload) CapabilityProof() UploadCapability {
+	return uploadCapability(upload.upload)
 }
 
 func (upload *ownedAuthorizedUpload) Metadata() AuthorizedUploadMetadata {

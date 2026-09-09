@@ -1,6 +1,6 @@
-// Package openaiembed implements one bounded OpenAI-compatible text embedding
+// Package openaicompat implements one bounded OpenAI-compatible text embedding
 // endpoint for operator-controlled local deployments.
-package openaiembed
+package openaicompat
 
 import (
 	"bytes"
@@ -85,11 +85,11 @@ type Profile struct {
 }
 
 var (
-	ErrMalformedResponse = errors.New("openaiembed: malformed provider response")
-	ErrUnauthorized      = errors.New("openaiembed: credential is unavailable or unauthorized")
-	ErrTransientResponse = errors.New("openaiembed: transient provider response")
-	ErrCapacityResponse  = errors.New("openaiembed: provider capacity exceeded")
-	ErrPermanentResponse = errors.New("openaiembed: permanent provider response")
+	ErrMalformedResponse = errors.New("openaicompat: malformed provider response")
+	ErrUnauthorized      = errors.New("openaicompat: credential is unavailable or unauthorized")
+	ErrTransientResponse = errors.New("openaicompat: transient provider response")
+	ErrCapacityResponse  = errors.New("openaicompat: provider capacity exceeded")
+	ErrPermanentResponse = errors.New("openaicompat: permanent provider response")
 )
 
 type ProviderError struct {
@@ -100,7 +100,7 @@ type ProviderError struct {
 }
 
 func (err *ProviderError) Error() string {
-	return fmt.Sprintf("openaiembed: HTTP %d: %v", err.StatusCode, err.Kind)
+	return fmt.Sprintf("openaicompat: HTTP %d: %v", err.StatusCode, err.Kind)
 }
 func (err *ProviderError) Unwrap() error { return err.Kind }
 func RetryAfter(err error) (time.Duration, bool) {
@@ -191,7 +191,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 	}
 	encoded, err := json.Marshal(identity, json.Deterministic(true))
 	if err != nil {
-		return "", fmt.Errorf("openaiembed: encode policy identity: %w", err)
+		return "", fmt.Errorf("openaicompat: encode policy identity: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
@@ -210,24 +210,24 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		if err == nil {
 			err = errors.New("descriptor is not canonical")
 		}
-		return nil, fmt.Errorf("openaiembed: invalid descriptor: %w", err)
+		return nil, fmt.Errorf("openaicompat: invalid descriptor: %w", err)
 	}
 	fingerprint, err := PolicyFingerprint(profile)
 	if err != nil {
 		return nil, err
 	}
 	if descriptor.PolicyFingerprint != fingerprint {
-		return nil, errors.New("openaiembed: descriptor policy fingerprint does not match profile")
+		return nil, errors.New("openaicompat: descriptor policy fingerprint does not match profile")
 	}
 	if normalized.SecretBinding == "" {
 		if !nilValue(secrets) {
-			return nil, errors.New("openaiembed: secret resolver requires a named binding")
+			return nil, errors.New("openaicompat: secret resolver requires a named binding")
 		}
 	} else if nilValue(secrets) {
-		return nil, errors.New("openaiembed: named secret binding requires a resolver")
+		return nil, errors.New("openaicompat: named secret binding requires a resolver")
 	}
 	if httpClient == nil {
-		return nil, errors.New("openaiembed: HTTP client is required")
+		return nil, errors.New("openaicompat: HTTP client is required")
 	}
 	isolate := *httpClient
 	if normalized.EgressPolicy.Scheme != "" {
@@ -256,10 +256,10 @@ func (client *Client) Descriptor() document.EmbeddingDescriptor {
 // and restores caller ordering from the response indices.
 func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
 	if client == nil {
-		return document.EmbeddingResult{}, errors.New("openaiembed: client is required")
+		return document.EmbeddingResult{}, errors.New("openaicompat: client is required")
 	}
 	if ctx == nil {
-		return document.EmbeddingResult{}, errors.New("openaiembed: context is required")
+		return document.EmbeddingResult{}, errors.New("openaicompat: context is required")
 	}
 	if err := document.ValidateEmbeddingProviderRequest(client, inputs, authorization); err != nil {
 		return document.EmbeddingResult{}, err
@@ -267,10 +267,10 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	if authorization.MaxBatchItems > client.profile.MaxBatchItems ||
 		authorization.MaxInputBytes > client.profile.MaxInputBytes ||
 		authorization.MaxResponseBytes > client.profile.MaxResponseBytes {
-		return document.EmbeddingResult{}, errors.New("openaiembed: embedding authorization exceeds profile capacity")
+		return document.EmbeddingResult{}, errors.New("openaicompat: embedding authorization exceeds profile capacity")
 	}
 	if err := ctx.Err(); err != nil {
-		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: embedding canceled: %w", err)
+		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding canceled: %w", err)
 	}
 
 	rendered := make([]string, len(inputs))
@@ -282,16 +282,16 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		case input.Role == document.EmbeddingRoleQuery && input.Kind == document.EmbeddingInputQueryText:
 			rendered[index] = client.profile.ModelInput.EncodeQuery(input.Text)
 		default:
-			return document.EmbeddingResult{}, errors.New("openaiembed: unsupported non-text embedding input or role")
+			return document.EmbeddingResult{}, errors.New("openaicompat: unsupported non-text embedding input or role")
 		}
 		if int64(len(rendered[index])) > client.profile.MaxInputBytes-renderedBytes {
-			return document.EmbeddingResult{}, errors.New("openaiembed: embedding input exceeds profile byte capacity")
+			return document.EmbeddingResult{}, errors.New("openaicompat: embedding input exceeds profile byte capacity")
 		}
 		renderedBytes += int64(len(rendered[index]))
 	}
 	payload, err := json.Marshal(wireRequest{Input: rendered, Model: client.descriptor.Model, EncodingFormat: "float"})
 	if err != nil {
-		return document.EmbeddingResult{}, errors.New("openaiembed: could not encode embedding request")
+		return document.EmbeddingResult{}, errors.New("openaicompat: could not encode embedding request")
 	}
 	if int64(len(payload)) > client.profile.MaxRequestBytes {
 		return document.EmbeddingResult{}, fmt.Errorf("%w: embedding request byte limit exceeded", ErrCapacityResponse)
@@ -301,7 +301,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.profile.Origin+embeddingsPath, bytes.NewReader(payload))
 	if err != nil {
-		return document.EmbeddingResult{}, errors.New("openaiembed: could not construct embedding request")
+		return document.EmbeddingResult{}, errors.New("openaicompat: could not construct embedding request")
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
@@ -309,7 +309,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		secret, resolveErr := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
 		if resolveErr != nil {
 			if contextErr := requestCtx.Err(); contextErr != nil {
-				return document.EmbeddingResult{}, fmt.Errorf("openaiembed: credential resolution canceled: %w", contextErr)
+				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: credential resolution canceled: %w", contextErr)
 			}
 			return document.EmbeddingResult{}, ErrUnauthorized
 		}
@@ -322,13 +322,13 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	response, err := client.http.Do(request)
 	if err != nil {
 		if contextErr := requestCtx.Err(); contextErr != nil {
-			return document.EmbeddingResult{}, fmt.Errorf("openaiembed: embedding request canceled: %w", contextErr)
+			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding request canceled: %w", contextErr)
 		}
 		return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse}
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: provider redirect refused: %w",
+		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: provider redirect refused: %w",
 			&ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode})
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
@@ -357,7 +357,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	var decoded wireResponse
 	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
-		return document.EmbeddingResult{}, fmt.Errorf("openaiembed: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
+		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
 	}
 	result, err := client.validateAndOrder(decoded, inputs)
 	if err != nil {
@@ -375,33 +375,33 @@ func (client *Client) validateRevisionEcho(header http.Header) error {
 	}
 	values := header.Values(client.profile.ProviderRevisionHeader)
 	if len(values) != 1 || strings.TrimSpace(values[0]) != client.descriptor.ModelRevision {
-		return errors.New("openaiembed: provider revision echo does not match profile")
+		return errors.New("openaicompat: provider revision echo does not match profile")
 	}
 	return nil
 }
 
 func (client *Client) validateAndOrder(response wireResponse, inputs []document.EmbeddingInput) (document.EmbeddingResult, error) {
 	if response.Object != "list" || response.Model != client.descriptor.Model {
-		return document.EmbeddingResult{}, errors.New("openaiembed: provider model or response contract drifted")
+		return document.EmbeddingResult{}, errors.New("openaicompat: provider model or response contract drifted")
 	}
 	if response.Usage != nil && (response.Usage.PromptTokens < 0 || response.Usage.TotalTokens < response.Usage.PromptTokens) {
-		return document.EmbeddingResult{}, errors.New("openaiembed: provider usage is invalid")
+		return document.EmbeddingResult{}, errors.New("openaicompat: provider usage is invalid")
 	}
 	if len(response.Data) != len(inputs) {
-		return document.EmbeddingResult{}, errors.New("openaiembed: provider response has a missing vector")
+		return document.EmbeddingResult{}, errors.New("openaicompat: provider response has a missing vector")
 	}
 	vectors := make([]document.EmbeddingVector, len(inputs))
 	seen := make([]bool, len(inputs))
 	for _, item := range response.Data {
 		if item.Object != "embedding" || item.Index == nil {
-			return document.EmbeddingResult{}, errors.New("openaiembed: provider response item contract drifted")
+			return document.EmbeddingResult{}, errors.New("openaicompat: provider response item contract drifted")
 		}
 		index := *item.Index
 		if index < 0 || index >= len(inputs) {
-			return document.EmbeddingResult{}, errors.New("openaiembed: provider response index is outside request bounds")
+			return document.EmbeddingResult{}, errors.New("openaicompat: provider response index is outside request bounds")
 		}
 		if seen[index] {
-			return document.EmbeddingResult{}, errors.New("openaiembed: provider response has a duplicate vector index")
+			return document.EmbeddingResult{}, errors.New("openaicompat: provider response has a duplicate vector index")
 		}
 		seen[index] = true
 		if err := client.validateVector(item.Embedding); err != nil {
@@ -410,27 +410,27 @@ func (client *Client) validateAndOrder(response wireResponse, inputs []document.
 		vectors[index] = document.EmbeddingVector{Key: inputs[index].Key, Values: slices.Clone(item.Embedding)}
 	}
 	if slices.Contains(seen, false) {
-		return document.EmbeddingResult{}, errors.New("openaiembed: provider response has a missing vector index")
+		return document.EmbeddingResult{}, errors.New("openaicompat: provider response has a missing vector index")
 	}
 	return document.EmbeddingResult{Vectors: vectors}, nil
 }
 
 func (client *Client) validateVector(vector []float32) error {
 	if len(vector) != client.descriptor.Dimension {
-		return errors.New("openaiembed: provider vector dimension does not match profile")
+		return errors.New("openaicompat: provider vector dimension does not match profile")
 	}
 	var squaredNorm float64
 	for _, value := range vector {
 		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-			return errors.New("openaiembed: provider vector contains a non-finite value")
+			return errors.New("openaicompat: provider vector contains a non-finite value")
 		}
 		squaredNorm += float64(value) * float64(value)
 	}
 	if squaredNorm == 0 {
-		return errors.New("openaiembed: provider returned a zero vector")
+		return errors.New("openaicompat: provider returned a zero vector")
 	}
 	if client.descriptor.Normalization == document.VectorNormalizationUnitLength && math.Abs(squaredNorm-1) > unitLengthTolerance {
-		return errors.New("openaiembed: provider vector normalization does not match profile")
+		return errors.New("openaicompat: provider vector normalization does not match profile")
 	}
 	return nil
 }
@@ -467,10 +467,10 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 		profile.MaxInputBytes < 1 || profile.MaxInputBytes > maxInputBytes ||
 		profile.MaxRequestBytes < 1 || profile.MaxRequestBytes > maxRequestBytes ||
 		profile.MaxResponseBytes < 1 || profile.MaxResponseBytes > maxResponseBytes {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: execution bounds are invalid")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: execution bounds are invalid")
 	}
 	if profile.SecretBinding != "" && !validIdentityToken(profile.SecretBinding) {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: secret binding is invalid")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: secret binding is invalid")
 	}
 	if profile.EgressPolicy.Scheme != "" {
 		if profile.EgressPolicy.ConnectTimeout == 0 {
@@ -486,7 +486,7 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 			profile.EgressPolicy.ProxyMode = providerhttp.ProxyDisabled
 		}
 		if _, err := providerhttp.NewTransport(profile.EgressPolicy, nil); err != nil {
-			return Profile{}, document.EmbeddingDescriptor{}, fmt.Errorf("openaiembed: invalid sealed egress policy: %w", err)
+			return Profile{}, document.EmbeddingDescriptor{}, fmt.Errorf("openaicompat: invalid sealed egress policy: %w", err)
 		}
 		parsed, _ := url.Parse(profile.Origin)
 		port := parsed.Port()
@@ -499,7 +499,7 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 		}
 		if profile.EgressPolicy.Scheme != parsed.Scheme || !strings.EqualFold(profile.EgressPolicy.Host, parsed.Hostname()) ||
 			strconv.Itoa(int(profile.EgressPolicy.Port)) != port || profile.EgressPolicy.ProxyMode != providerhttp.ProxyDisabled {
-			return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: origin and sealed egress authority differ")
+			return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: origin and sealed egress authority differ")
 		}
 		slices.SortFunc(profile.EgressPolicy.AllowedCIDRs, func(a, b netip.Prefix) int { return strings.Compare(a.Masked().String(), b.Masked().String()) })
 		slices.Sort(profile.EgressPolicy.TLS.SPKISHA256)
@@ -510,7 +510,7 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 	descriptorIdentity.Fingerprint = ""
 	descriptorIdentity, err = document.NewEmbeddingDescriptor(descriptorIdentity)
 	if err != nil {
-		return Profile{}, document.EmbeddingDescriptor{}, fmt.Errorf("openaiembed: invalid descriptor identity: %w", err)
+		return Profile{}, document.EmbeddingDescriptor{}, fmt.Errorf("openaicompat: invalid descriptor identity: %w", err)
 	}
 	descriptorIdentity.PolicyFingerprint = ""
 	descriptorIdentity.Fingerprint = ""
@@ -518,14 +518,14 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 		return Profile{}, document.EmbeddingDescriptor{}, err
 	}
 	if (profile.DeploymentEpoch == "") == (profile.ProviderRevisionHeader == "") {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: exactly one deployment epoch or provider revision header is required")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: exactly one deployment epoch or provider revision header is required")
 	}
 	if profile.DeploymentEpoch != "" {
 		if !validIdentityToken(profile.DeploymentEpoch) || profile.DeploymentEpoch != descriptorIdentity.ModelRevision {
-			return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: deployment epoch must exactly match descriptor model revision")
+			return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: deployment epoch must exactly match descriptor model revision")
 		}
 	} else if !validRevisionHeader(profile.ProviderRevisionHeader) {
-		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaiembed: provider revision header is not a canonical safe response header")
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: provider revision header is not a canonical safe response header")
 	}
 	return profile, descriptorIdentity, nil
 }
@@ -562,10 +562,10 @@ func validateDescriptorContract(descriptor document.EmbeddingDescriptor, modelIn
 		descriptor.QueryFormatter != QueryFormatterV1 || !descriptor.SupportsTextQuery ||
 		!slices.Equal(descriptor.InputKinds, []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}) ||
 		!slices.Equal(descriptor.SupportedRequestModes, []document.ModelInputMode{document.ModelInputModeText}) {
-		return errors.New("openaiembed: descriptor does not match the text-only adapter contract")
+		return errors.New("openaicompat: descriptor does not match the text-only adapter contract")
 	}
 	if descriptor.ModelInput != modelInput || descriptor.CompatibilityID != modelInput.CompatibilityID {
-		return errors.New("openaiembed: descriptor and explicit model-input contract differ")
+		return errors.New("openaicompat: descriptor and explicit model-input contract differ")
 	}
 	switch modelInput.Profile {
 	case document.ModelInputProfileNomic, document.ModelInputProfileE5,
@@ -573,7 +573,7 @@ func validateDescriptorContract(descriptor document.EmbeddingDescriptor, modelIn
 		document.ModelInputProfileQwen3, document.ModelInputProfileQueryInstruction,
 		document.ModelInputProfileCustom:
 	default:
-		return errors.New("openaiembed: model-input contract must use a reviewed embedding family or complete custom profile")
+		return errors.New("openaicompat: model-input contract must use a reviewed embedding family or complete custom profile")
 	}
 	return nil
 }
@@ -582,17 +582,17 @@ func validateOrigin(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Opaque != "" || parsed.ForceQuery || parsed.Fragment != "" ||
 		(parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", errors.New("openaiembed: origin must be one HTTP(S) origin without credentials, non-root path, query, or fragment")
+		return "", errors.New("openaicompat: origin must be one HTTP(S) origin without credentials, non-root path, query, or fragment")
 	}
 	hostname := parsed.Hostname()
 	if hostname == "" || !asciiHost(hostname) || strings.ToLower(hostname) != hostname {
-		return "", errors.New("openaiembed: origin host is not canonical ASCII")
+		return "", errors.New("openaicompat: origin host is not canonical ASCII")
 	}
 	port := parsed.Port()
 	if port != "" {
 		value, parseErr := strconv.ParseUint(port, 10, 16)
 		if parseErr != nil || value == 0 {
-			return "", errors.New("openaiembed: origin port is invalid")
+			return "", errors.New("openaicompat: origin port is invalid")
 		}
 	}
 	authority := hostname
@@ -676,14 +676,14 @@ func validBearerCharacter(character byte) bool {
 func validateResponseContentType(value string) error {
 	mediaType, parameters, err := mime.ParseMediaType(value)
 	if err != nil || mediaType != "application/json" {
-		return errors.New("openaiembed: provider response content type is not application/json")
+		return errors.New("openaicompat: provider response content type is not application/json")
 	}
 	if len(parameters) == 0 {
 		return nil
 	}
 	charset, ok := parameters["charset"]
 	if len(parameters) != 1 || !ok || !strings.EqualFold(charset, "utf-8") {
-		return errors.New("openaiembed: provider response content type has unsupported parameters")
+		return errors.New("openaicompat: provider response content type has unsupported parameters")
 	}
 	return nil
 }
@@ -692,12 +692,12 @@ func readBounded(ctx context.Context, reader io.Reader, maximum int64) ([]byte, 
 	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, fmt.Errorf("openaiembed: response read canceled: %w", contextErr)
+			return nil, fmt.Errorf("openaicompat: response read canceled: %w", contextErr)
 		}
-		return nil, fmt.Errorf("openaiembed: could not read provider response: %w", ErrTransientResponse)
+		return nil, fmt.Errorf("openaicompat: could not read provider response: %w", ErrTransientResponse)
 	}
 	if int64(len(body)) > maximum {
-		return nil, fmt.Errorf("openaiembed: provider response byte limit exceeded: %w", ErrMalformedResponse)
+		return nil, fmt.Errorf("openaicompat: provider response byte limit exceeded: %w", ErrMalformedResponse)
 	}
 	return body, nil
 }

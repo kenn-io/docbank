@@ -50,13 +50,14 @@ type UploadMetadata struct {
 }
 
 type authorizedUpload struct {
-	mu       sync.Mutex
-	reader   *os.File
-	metadata document.AuthorizedUploadMetadata
-	cleanup  func() error
-	stop     func() bool
-	closed   bool
-	cause    error
+	mu         sync.Mutex
+	reader     *os.File
+	metadata   document.AuthorizedUploadMetadata
+	cleanup    func() error
+	stop       func() bool
+	closed     bool
+	cause      error
+	capability media.CapabilityRecord
 }
 
 func (upload *authorizedUpload) Read(buffer []byte) (int, error) {
@@ -115,6 +116,13 @@ func (upload *authorizedUpload) Metadata() document.AuthorizedUploadMetadata {
 		return document.AuthorizedUploadMetadata{}
 	}
 	return upload.metadata
+}
+
+func (upload *authorizedUpload) CapabilityProof() document.UploadCapability {
+	if upload == nil {
+		return document.UploadCapability{}
+	}
+	return upload.capability.UploadCapability()
 }
 
 var _ document.AuthorizedUpload = (*authorizedUpload)(nil)
@@ -268,7 +276,7 @@ func Authorize(
 		return nil, err
 	}
 	providerDigest := sha256.Sum256(metadata.ProviderMetadata)
-	result := &authorizedUpload{reader: reader, metadata: document.AuthorizedUploadMetadata{
+	result := &authorizedUpload{reader: reader, capability: capability, metadata: document.AuthorizedUploadMetadata{
 		Filename: metadata.Filename, MediaFamily: capability.MediaFamily,
 		MediaType: capability.MediaType, ByteLength: capability.SourceBytes,
 		SHA256: capability.SourceSHA256, CapabilityRecordChecksum: capability.Checksum,

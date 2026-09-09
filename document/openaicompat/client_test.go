@@ -1,4 +1,4 @@
-package openaiembed
+package openaicompat
 
 import (
 	"context"

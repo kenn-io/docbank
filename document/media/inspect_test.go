@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"image/color"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1771,14 +1773,14 @@ func TestInspectRejectsExcessivelyDeepPDFPageTree(t *testing.T) {
 
 func TestInspectBoundsVideoFramesFromValidatedSampleTables(t *testing.T) {
 	t.Parallel()
-	video := mediatest.MP4(64, 48, 1_000)
+	video := mediatest.H265MP4()
 	decoy := make([]byte, 20)
 	binary.BigEndian.PutUint32(decoy[:4], 20)
 	copy(decoy[4:8], "stsz")
 	binary.BigEndian.PutUint32(decoy[16:20], 100)
 	video = append(video, mediatest.Box("free", decoy)...)
 	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
-	policy.MaxPixels = 64 * 48
+	policy.MaxPixels = 16 * 16
 	policy.MaxFrames = 1
 	policy.MaxDurationMS = 1_000
 	record, err := media.InspectCapability(bytes.NewReader(video), policy)
@@ -1793,6 +1795,475 @@ func TestInspectBoundsVideoFramesFromValidatedSampleTables(t *testing.T) {
 	assert.Equal(t, media.CapabilityReasonVisualBounds, record.Reason)
 }
 
+// TestInspectCapabilityRejectsVideoWithoutSampleToChunkAuthority catches a
+// capability gate that accepts codec headers and sample sizes without proving
+// how those samples are assigned to media chunks.
+func TestInspectCapabilityRejectsVideoWithoutSampleToChunkAuthority(t *testing.T) {
+	t.Parallel()
+	video := decodableAVCMP4(t)
+	stsc := bytes.Index(video, []byte("stsc"))
+	require.NotEqual(t, -1, stsc)
+	copy(video[stsc:stsc+4], "free")
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsVideoWithoutChunkOffsets catches a capability
+// gate that cannot establish where declared chunks reside in the source.
+func TestInspectCapabilityRejectsVideoWithoutChunkOffsets(t *testing.T) {
+	t.Parallel()
+	video := decodableAVCMP4(t)
+	stco := bytes.Index(video, []byte("stco"))
+	require.NotEqual(t, -1, stco)
+	copy(video[stco:stco+4], "free")
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsVideoWithoutMediaData catches a capability gate
+// that accepts chunk offsets without proving they point into an mdat payload.
+func TestInspectCapabilityRejectsVideoWithoutMediaData(t *testing.T) {
+	t.Parallel()
+	video := decodableAVCMP4(t)
+	mdat := bytes.Index(video, []byte("mdat"))
+	require.NotEqual(t, -1, mdat)
+	copy(video[mdat:mdat+4], "free")
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsVideoChunkOutsideMediaData catches a capability
+// gate that parses an offset table but never resolves its absolute positions.
+func TestInspectCapabilityRejectsVideoChunkOutsideMediaData(t *testing.T) {
+	t.Parallel()
+	video := decodableAVCMP4(t)
+	stco := bytes.Index(video, []byte("stco"))
+	require.NotEqual(t, -1, stco)
+	binary.BigEndian.PutUint32(video[stco+12:stco+16], uint32(len(video)+1))
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsVideoSampleOutsideMediaData catches a capability
+// gate that checks only each chunk's starting offset, not the declared sample
+// sizes assigned to that chunk.
+func TestInspectCapabilityRejectsVideoSampleOutsideMediaData(t *testing.T) {
+	t.Parallel()
+	video := decodableAVCMP4(t)
+	stsz := bytes.Index(video, []byte("stsz"))
+	require.NotEqual(t, -1, stsz)
+	binary.BigEndian.PutUint32(video[stsz+16:stsz+20], uint32(len(video)))
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsOverlappingVideoSamples catches a capability
+// gate that independently bounds samples but permits two chunk authorities to
+// claim the same media bytes.
+func TestInspectCapabilityRejectsOverlappingVideoSamples(t *testing.T) {
+	t.Parallel()
+	video := mp4WithOverlappingVideoChunks(t)
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsSampleToChunkRunWithoutChunk catches a mapper
+// that ignores a well-formed stsc run whose first chunk is absent from the
+// authoritative offset table.
+func TestInspectCapabilityRejectsSampleToChunkRunWithoutChunk(t *testing.T) {
+	t.Parallel()
+	video := mp4WithUnusedSampleToChunkRun(t)
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+func mp4WithUnusedSampleToChunkRun(t *testing.T) []byte {
+	t.Helper()
+	video := decodableAVCMP4(t)
+	stsc := bytes.Index(video, []byte("stsc"))
+	require.NotEqual(t, -1, stsc)
+	boxStart := stsc - 4
+	oldSize := int(binary.BigEndian.Uint32(video[boxStart:stsc]))
+	require.Equal(t, 28, oldSize)
+	replacement := make([]byte, 40)
+	binary.BigEndian.PutUint32(replacement[:4], uint32(len(replacement)))
+	copy(replacement[4:8], "stsc")
+	binary.BigEndian.PutUint32(replacement[12:16], 2)
+	copy(replacement[16:28], video[stsc+12:stsc+24])
+	binary.BigEndian.PutUint32(replacement[28:32], 2)
+	binary.BigEndian.PutUint32(replacement[32:36], 1)
+	binary.BigEndian.PutUint32(replacement[36:40], 1)
+	video = append(append(append([]byte(nil), video[:boxStart]...), replacement...), video[boxStart+oldSize:]...)
+	for _, kind := range []string{"stbl", "minf", "mdia", "trak", "moov"} {
+		index := bytes.Index(video, []byte(kind))
+		require.GreaterOrEqual(t, index, 4)
+		size := binary.BigEndian.Uint32(video[index-4 : index])
+		binary.BigEndian.PutUint32(video[index-4:index], size+12)
+	}
+	stco := bytes.Index(video, []byte("stco"))
+	require.NotEqual(t, -1, stco)
+	offset := binary.BigEndian.Uint32(video[stco+12 : stco+16])
+	binary.BigEndian.PutUint32(video[stco+12:stco+16], offset+12)
+	return video
+}
+
+func mp4WithOverlappingVideoChunks(t *testing.T) []byte {
+	t.Helper()
+	video := decodableAVCMP4(t)
+	stsc := bytes.Index(video, []byte("stsc"))
+	stco := bytes.Index(video, []byte("stco"))
+	require.NotEqual(t, -1, stsc)
+	require.NotEqual(t, -1, stco)
+	binary.BigEndian.PutUint32(video[stsc+16:stsc+20], 1)
+	oldOffset := binary.BigEndian.Uint32(video[stco+12 : stco+16])
+	replacement := make([]byte, 24)
+	binary.BigEndian.PutUint32(replacement[:4], uint32(len(replacement)))
+	copy(replacement[4:8], "stco")
+	binary.BigEndian.PutUint32(replacement[12:16], 2)
+	binary.BigEndian.PutUint32(replacement[16:20], oldOffset+4)
+	binary.BigEndian.PutUint32(replacement[20:24], oldOffset+4)
+	boxStart := stco - 4
+	video = append(append(append([]byte(nil), video[:boxStart]...), replacement...), video[boxStart+20:]...)
+	for _, kind := range []string{"stbl", "minf", "mdia", "trak", "moov"} {
+		index := bytes.Index(video, []byte(kind))
+		require.GreaterOrEqual(t, index, 4)
+		size := binary.BigEndian.Uint32(video[index-4 : index])
+		binary.BigEndian.PutUint32(video[index-4:index], size+4)
+	}
+	return video
+}
+
+// TestInspectCapabilityAcceptsVideoWith64BitChunkOffsets catches a sample
+// authority implementation that narrows valid ISO BMFF layouts to stco even
+// when an equivalent bounded co64 table is present.
+func TestInspectCapabilityAcceptsVideoWith64BitChunkOffsets(t *testing.T) {
+	t.Parallel()
+	video := mp4With64BitChunkOffsets(t)
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 2
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	assert.Equal(t, int64(2), record.Measurements.Frames)
+}
+
+// TestInspectCapabilityRejectsSamplesThatDoNotMatchVideoCodec catches a
+// capability gate that proves container tables and codec configuration but
+// never verifies that the mapped mdat sample is media for that codec.
+func TestInspectCapabilityRejectsSamplesThatDoNotMatchVideoCodec(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name, filename, mediaType string
+		data                      []byte
+		corrupt                   func([]byte, int)
+	}{
+		{
+			name: "H264", filename: "clip.mov", mediaType: "video/quicktime", data: mediatest.H264MOV(),
+			corrupt: func(data []byte, sample int) { clear(data[sample : sample+4]) },
+		},
+		{
+			name: "H265", filename: "clip.mp4", mediaType: "video/mp4", data: mediatest.H265MP4(),
+			corrupt: func(data []byte, sample int) { clear(data[sample : sample+4]) },
+		},
+		{
+			name: "VP9", filename: "clip.mp4", mediaType: "video/mp4", data: mediatest.VP9MP4(),
+			corrupt: func(data []byte, sample int) { data[sample] &= 0x3f },
+		},
+		{
+			name: "AV1", filename: "clip.mp4", mediaType: "video/mp4", data: mediatest.AV1MP4(),
+			corrupt: func(data []byte, sample int) { data[sample] |= 0x80 },
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			sampleOffset := firstMP4SampleOffset(t, testCase.data)
+			testCase.corrupt(testCase.data, sampleOffset)
+			policy := inspectionPolicy(testCase.data, testCase.filename, testCase.mediaType)
+			policy.MaxPixels = 64 * 64
+			policy.MaxFrames = 1
+			policy.MaxDurationMS = 1_000
+
+			record, err := media.InspectCapability(bytes.NewReader(testCase.data), policy)
+			require.NoError(t, err)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+		})
+	}
+}
+
+func TestInspectCapabilityAcceptsMappedDecodableSupportedVideoCodecs(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name, filename, mediaType string
+		data                      []byte
+		pixels                    int64
+	}{
+		{name: "H264 MOV", filename: "clip.mov", mediaType: "video/quicktime", data: mediatest.H264MOV(), pixels: 16 * 16},
+		{name: "H265 MP4", filename: "clip.mp4", mediaType: "video/mp4", data: mediatest.H265MP4(), pixels: 16 * 16},
+		{name: "VP9 MP4", filename: "clip.mp4", mediaType: "video/mp4", data: mediatest.VP9MP4(), pixels: 16 * 16},
+		{name: "AV1 MP4", filename: "clip.mp4", mediaType: "video/mp4", data: mediatest.AV1MP4(), pixels: 64 * 64},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			policy := inspectionPolicy(testCase.data, testCase.filename, testCase.mediaType)
+			policy.MaxPixels = testCase.pixels
+			policy.MaxFrames = 1
+			policy.MaxDurationMS = 1_000
+
+			record, err := media.InspectCapability(bytes.NewReader(testCase.data), policy)
+			require.NoError(t, err)
+			require.True(t, record.Eligible, record.Reason)
+			assert.Equal(t, "video", record.MediaFamily)
+			assert.Equal(t, int64(1), record.Measurements.Frames)
+			assert.Equal(t, int64(1_000), record.Measurements.DurationMS)
+		})
+	}
+}
+
+func TestInspectCapabilityRejectsHeaderOnlyVideoDeclaration(t *testing.T) {
+	t.Parallel()
+	video := mediatest.MP4(16, 16, 1_000)
+	policy := inspectionPolicy(video, "clip.mp4", "video/mp4")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 1
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(video), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+func firstMP4SampleOffset(t *testing.T, data []byte) int {
+	t.Helper()
+	stco := bytes.Index(data, []byte("stco"))
+	require.NotEqual(t, -1, stco)
+	offset := uint64(binary.BigEndian.Uint32(data[stco+12 : stco+16]))
+	require.Less(t, offset, uint64(len(data)))
+	return int(offset)
+}
+
+func mp4With64BitChunkOffsets(t *testing.T) []byte {
+	t.Helper()
+	video := decodableAVCMP4(t)
+	stco := bytes.Index(video, []byte("stco"))
+	require.NotEqual(t, -1, stco)
+	oldOffset := binary.BigEndian.Uint32(video[stco+12 : stco+16])
+	replacement := make([]byte, 24)
+	binary.BigEndian.PutUint32(replacement[:4], uint32(len(replacement)))
+	copy(replacement[4:8], "co64")
+	binary.BigEndian.PutUint32(replacement[12:16], 1)
+	binary.BigEndian.PutUint64(replacement[16:24], uint64(oldOffset)+4)
+	boxStart := stco - 4
+	video = append(append(append([]byte(nil), video[:boxStart]...), replacement...), video[boxStart+20:]...)
+	for _, kind := range []string{"stbl", "minf", "mdia", "trak", "moov"} {
+		index := bytes.Index(video, []byte(kind))
+		require.GreaterOrEqual(t, index, 4)
+		size := binary.BigEndian.Uint32(video[index-4 : index])
+		binary.BigEndian.PutUint32(video[index-4:index], size+4)
+	}
+	return video
+}
+
+// TestInspectCapabilityProvesGeminiMP3Duration catches a regression where
+// valid MPEG Layer III frames are left in the unbounded audio family instead
+// of contributing their literal, finite duration to capability proof.
+func TestInspectCapabilityProvesGeminiMP3Duration(t *testing.T) {
+	t.Parallel()
+	data := syntheticMP3Frames(10)
+	policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
+	policy.MaxDurationMS = 262
+
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	assert.Equal(t, "audio", record.MediaFamily)
+	assert.Equal(t, "audio/mpeg", record.MediaType)
+	assert.Equal(t, "mp3", record.Format)
+	assert.Equal(t, int64(262), record.Measurements.DurationMS)
+}
+
+func TestInspectCapabilityProvesRealMP3WithBoundedID3Tags(t *testing.T) {
+	t.Parallel()
+	audio := mediatest.MP3()
+	id3v2 := append([]byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 4}, []byte("TEST")...)
+	id3v1 := make([]byte, 128)
+	copy(id3v1, "TAG")
+	tagged := slices.Concat(id3v2, audio, id3v1)
+
+	barePolicy := inspectionPolicy(audio, "sample.mp3", "audio/mpeg")
+	barePolicy.MaxDurationMS = 1_000
+	bare, err := media.InspectCapability(bytes.NewReader(audio), barePolicy)
+	require.NoError(t, err)
+	require.True(t, bare.Eligible, bare.Reason)
+
+	taggedPolicy := inspectionPolicy(tagged, "sample.mp3", "audio/mpeg")
+	taggedPolicy.MaxDurationMS = 1_000
+	withTags, err := media.InspectCapability(bytes.NewReader(tagged), taggedPolicy)
+	require.NoError(t, err)
+	require.True(t, withTags.Eligible, withTags.Reason)
+	assert.Equal(t, bare.Measurements.DurationMS, withTags.Measurements.DurationMS)
+
+	for _, testCase := range []struct {
+		name string
+		tag  []byte
+	}{
+		{name: "truncated header", tag: []byte("ID3\x04\x00")},
+		{name: "unknown version", tag: []byte{'I', 'D', '3', 5, 0, 0, 0, 0, 0, 0}},
+		{name: "unknown flags", tag: []byte{'I', 'D', '3', 4, 0, 1, 0, 0, 0, 0}},
+		{name: "non synchsafe size", tag: []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0x80, 0}},
+		{name: "declared body exceeds input", tag: []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 4, 0}},
+		{name: "declared body exceeds tag bound", tag: []byte{'I', 'D', '3', 4, 0, 0, 0, 0x40, 0, 1}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := append(append([]byte(nil), testCase.tag...), audio...)
+			policy := inspectionPolicy(candidate, "sample.mp3", "audio/mpeg")
+			policy.MaxDurationMS = 1_000
+			record, inspectErr := media.InspectCapability(bytes.NewReader(candidate), policy)
+			require.NoError(t, inspectErr)
+			assert.False(t, record.Eligible)
+			assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+		})
+	}
+}
+
+// TestInspectCapabilityProvesGeminiQuickTimeVideo catches an identity check
+// that rejects a locally verified MOV merely because detection normalizes it
+// to the shared video/mp4 media type and mp4 format.
+func TestInspectCapabilityProvesGeminiQuickTimeVideo(t *testing.T) {
+	t.Parallel()
+	data := quickTimeH264MP4()
+	policy := inspectionPolicy(data, "clip.mov", "video/quicktime")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 1
+	policy.MaxDurationMS = 1_000
+
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	assert.Equal(t, "video", record.MediaFamily)
+	assert.Equal(t, "video/quicktime", record.MediaType)
+	assert.Equal(t, "mp4", record.Format)
+}
+
+func TestInspectCapabilityRejectsMP4ClaimingQuickTimeIdentity(t *testing.T) {
+	t.Parallel()
+	data := mediatest.MP4(16, 16, 500)
+	policy := inspectionPolicy(data, "clip.mov", "video/quicktime")
+	policy.MaxPixels = 16 * 16
+	policy.MaxFrames = 1
+	policy.MaxDurationMS = 500
+
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	assert.False(t, record.Eligible)
+	assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+// TestInspectCapabilityRejectsUnboundedOrOverlongGeminiMP3 catches a parser
+// that accepts mixed frame streams or fails to enforce their derived duration.
+func TestInspectCapabilityRejectsUnboundedOrOverlongGeminiMP3(t *testing.T) {
+	t.Parallel()
+	t.Run("mixed MPEG versions are malformed", func(t *testing.T) {
+		data := syntheticMP3Frames(2)
+		data[417+1] = 0xf3 // MPEG-2 Layer III, unlike the preceding MPEG-1 frame.
+		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
+		policy.MaxDurationMS = 1_000
+
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+	})
+
+	t.Run("MPEG-2.5 cannot reset the stream identity", func(t *testing.T) {
+		data := append(syntheticMPEG25Frame(), syntheticMP3Frames(1)...)
+		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
+		policy.MaxDurationMS = 1_000
+
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+	})
+
+	t.Run("reserved emphasis is malformed", func(t *testing.T) {
+		data := syntheticMP3Frames(1)
+		data[3] = 0x02
+		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
+		policy.MaxDurationMS = 1_000
+
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+	})
+
+	t.Run("duration above the policy is rejected", func(t *testing.T) {
+		data := syntheticMP3Frames(4)
+		policy := inspectionPolicy(data, "sample.mp3", "audio/mpeg")
+		policy.MaxDurationMS = 100
+
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
+		require.NoError(t, err)
+		assert.False(t, record.Eligible)
+		assert.Equal(t, media.CapabilityReasonVisualBounds, record.Reason)
+		assert.Equal(t, int64(105), record.Measurements.DurationMS)
+	})
+}
+
 func inspectionPolicy(data []byte, filename, mediaType string) media.InspectionPolicy {
 	return media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType,
@@ -1803,6 +2274,22 @@ func inspectionPolicy(data []byte, filename, mediaType string) media.InspectionP
 		MaxEntries: 100, MaxNestingDepth: 1, MaxTextLines: 1_000, MaxCharacters: 1 << 20,
 		MaxPages: 100, MaxSlides: 100, MaxSheets: 100, MaxCells: 10_000, MaxSpineItems: 1_000, MaxResources: 10_000,
 	}
+}
+
+func syntheticMP3Frames(count int) []byte {
+	const frameBytes = 417 // MPEG-1 Layer III, 128 kbps, 44.1 kHz, no padding.
+	frames := make([]byte, count*frameBytes)
+	for offset := 0; offset < len(frames); offset += frameBytes {
+		frames[offset], frames[offset+1], frames[offset+2], frames[offset+3] = 0xff, 0xfb, 0x90, 0
+	}
+	return frames
+}
+
+func syntheticMPEG25Frame() []byte {
+	const frameBytes = 522 // MPEG-2.5 Layer III, 80 kbps, 11.025 kHz, no padding.
+	frame := make([]byte, frameBytes)
+	frame[0], frame[1], frame[2], frame[3] = 0xff, 0xe3, 0x90, 0
+	return frame
 }
 
 type zipEntry struct{ name, body string }
@@ -1924,4 +2411,167 @@ func syntheticPDFObjects(label string, objects []string, extraDefinitions ...str
 	_, _ = fmt.Fprintf(&output,
 		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
 	return output.Bytes()
+}
+
+// Public integrity checksums do not grant permission to alter an inspected
+// decision's measured bounds or downstream authority.
+func TestUploadCapabilityRejectsRechecksummedInspectionChanges(t *testing.T) {
+	data := mediatest.PNG(1, 1, color.Black)
+	policy := inspectionPolicy(data, "synthetic.png", "image/png")
+	policy.MaxPixels, policy.MaxFrames = 100, 10
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible)
+	_, local := record.UploadCapability().Facts()
+	require.True(t, local, "unchanged inspection authorizes its exact source")
+	for _, tc := range []struct {
+		name   string
+		change func(*media.CapabilityRecord)
+	}{
+		{"measurements", func(record *media.CapabilityRecord) { record.Measurements.Pixels++ }},
+		{"policy limits", func(record *media.CapabilityRecord) { record.Policy.MaxPixels++ }},
+		{"descriptor binding", func(record *media.CapabilityRecord) {
+			record.DescriptorFingerprint = strings.Repeat("f", 64)
+			record.Policy.DescriptorFingerprint = record.DescriptorFingerprint
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := record
+			tc.change(&changed)
+			encoded, err := json.Marshal(changed.Policy, json.Deterministic(true))
+			require.NoError(t, err)
+			changed.PolicyFingerprint = sha256Hex(encoded)
+			changed.Checksum = ""
+			encoded, err = json.Marshal(changed, json.Deterministic(true))
+			require.NoError(t, err)
+			changed.Checksum = sha256Hex(encoded)
+			require.NoError(t, media.ValidateCapabilityRecord(changed), "portable integrity remains valid")
+			_, local := changed.InspectionPolicy()
+			assert.False(t, local, "changed record cannot authorize reinspection")
+			_, local = changed.UploadCapability().Facts()
+			assert.False(t, local, "changed facts cannot authorize a provider upload")
+		})
+	}
+}
+
+// Marker bits precede the profile and frame flags. Vary the lower bits to
+// check marker validation, without asserting complete codec decodability.
+func TestInspectCapabilityChecksVP9HighFrameMarkerBits(t *testing.T) {
+	for _, tc := range []struct {
+		header   byte
+		eligible bool
+	}{
+		{0x80, true}, {0x81, true}, {0x82, true}, {0x83, true},
+		{0x02, false}, {0x42, false}, {0xc2, false},
+	} {
+		t.Run(fmt.Sprintf("header_%02x", tc.header), func(t *testing.T) {
+			data := mediatest.VP9MP4()
+			data[firstMP4SampleOffset(t, data)] = tc.header
+			policy := inspectionPolicy(data, "synthetic.mp4", "video/mp4")
+			policy.MaxPixels = 16 * 16
+			policy.MaxFrames = 1
+			policy.MaxDurationMS = 1_000
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			assert.Equal(t, tc.eligible, record.Eligible, record.Reason)
+		})
+	}
+}
+
+// Local decoy samples cannot authorize a video whose sample descriptions refer
+// to another data source. Metadata remains available without upload authority.
+func TestInspectCapabilityRequiresLocalMP4DataReferences(t *testing.T) {
+	for _, scenario := range []string{"local", "external URL", "local URL with location", "unsupported reference", "missing table", "duplicate table", "wrong count", "zero index", "out of range index", "local nonvisual first", "external nonvisual first"} {
+		t.Run(scenario, func(t *testing.T) {
+			data := mediatest.H265MP4()
+			if strings.HasSuffix(scenario, "nonvisual first") {
+				// This track exercises common sample-reference handling, not audio decoding.
+				trackIndex := bytes.Index(data, []byte("trak"))
+				size := int(binary.BigEndian.Uint32(data[trackIndex-4 : trackIndex]))
+				nonvisual := append([]byte(nil), data[trackIndex-4:trackIndex-4+size]...)
+				tkhd := mp4TestBoxPayload(t, nonvisual, "tkhd")
+				clear(tkhd[len(tkhd)-8:])
+				binary.BigEndian.PutUint32(tkhd[12:16], 2)
+				copy(mp4TestBoxPayload(t, nonvisual, "hdlr")[8:12], "soun")
+				entry := bytes.Index(nonvisual, []byte("hvc1"))
+				copy(nonvisual[entry:entry+4], "mp4a")
+				data = slices.Concat(data[:trackIndex-4], nonvisual, data[trackIndex-4:])
+				moov := bytes.Index(data, []byte("moov"))
+				binary.BigEndian.PutUint32(data[moov-4:moov], binary.BigEndian.Uint32(data[moov-4:moov])+uint32(len(nonvisual)))
+				for offset := 0; ; {
+					index := bytes.Index(data[offset:], []byte("stco"))
+					if index < 0 {
+						break
+					}
+					index += offset
+					binary.BigEndian.PutUint32(data[index+12:index+16], binary.BigEndian.Uint32(data[index+12:index+16])+uint32(len(nonvisual)))
+					offset = index + 4
+				}
+			}
+			original := append([]byte(nil), data[firstMP4SampleOffset(t, data):]...)
+			urlIndex := bytes.Index(data, []byte("url "))
+			drefIndex := bytes.Index(data, []byte("dref"))
+			entryIndex := bytes.Index(data, []byte("hvc1"))
+			require.Positive(t, urlIndex)
+			require.Positive(t, drefIndex)
+			require.Positive(t, entryIndex)
+			var insertion []byte
+			var position int
+			var ancestors []string
+			switch scenario {
+			case "external URL", "local URL with location", "external nonvisual first":
+				insertion = []byte("https://example.invalid/synthetic-video.mp4\x00")
+				position = urlIndex + 8
+				ancestors = []string{"url ", "dref", "dinf", "minf", "mdia", "trak", "moov"}
+				if scenario == "external URL" || scenario == "external nonvisual first" {
+					clear(data[urlIndex+4 : urlIndex+8])
+				}
+			case "unsupported reference":
+				copy(data[urlIndex:urlIndex+4], "alis")
+			case "missing table":
+				index := bytes.Index(data, []byte("dinf"))
+				require.Positive(t, index)
+				copy(data[index:index+4], "free")
+			case "duplicate table":
+				size := int(binary.BigEndian.Uint32(data[drefIndex-4 : drefIndex]))
+				insertion = append([]byte(nil), data[drefIndex-4:drefIndex-4+size]...)
+				position = drefIndex - 4 + size
+				ancestors = []string{"dinf", "minf", "mdia", "trak", "moov"}
+			case "wrong count":
+				binary.BigEndian.PutUint32(data[drefIndex+8:drefIndex+12], 2)
+			case "zero index":
+				binary.BigEndian.PutUint16(data[entryIndex+10:entryIndex+12], 0)
+			case "out of range index":
+				binary.BigEndian.PutUint16(data[entryIndex+10:entryIndex+12], 2)
+			}
+			if len(insertion) > 0 {
+				data = append(append(append([]byte(nil), data[:position]...), insertion...), data[position:]...)
+				for _, kind := range ancestors {
+					index := bytes.Index(data, []byte(kind))
+					size := binary.BigEndian.Uint32(data[index-4 : index])
+					binary.BigEndian.PutUint32(data[index-4:index], size+uint32(len(insertion)))
+				}
+				for offset := 0; ; {
+					index := bytes.Index(data[offset:], []byte("stco"))
+					if index < 0 {
+						break
+					}
+					index += offset
+					binary.BigEndian.PutUint32(data[index+12:index+16], binary.BigEndian.Uint32(data[index+12:index+16])+uint32(len(insertion)))
+					offset = index + 4
+				}
+			}
+			require.Equal(t, original, data[firstMP4SampleOffset(t, data):], "local samples are unchanged")
+			metadata, err := media.DetectBytes(data, "video/mp4")
+			require.NoError(t, err)
+			assert.Equal(t, int64(16), metadata.Width)
+			policy := inspectionPolicy(data, "synthetic.mp4", "video/mp4")
+			policy.MaxPixels, policy.MaxFrames, policy.MaxDurationMS = 16*16, 1, 1_000
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			assert.Equal(t, scenario == "local" || scenario == "local nonvisual first", record.Eligible)
+			_, authority := record.UploadCapability().Facts()
+			assert.Equal(t, scenario == "local" || scenario == "local nonvisual first", authority)
+		})
+	}
 }
