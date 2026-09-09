@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -249,4 +250,71 @@ func TestEmbedClassifiesTransportFailures(t *testing.T) {
 			require.ErrorIs(t, err, test.want)
 		})
 	}
+}
+
+func TestEmbedDistinguishesAdapterTimeoutFromCallerCancellation(t *testing.T) {
+	for _, phase := range []string{"credential", "request", "response"} {
+		for _, cause := range []string{"adapter timeout", "caller deadline", "caller cancellation"} {
+			t.Run(phase+"/"+cause, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					if cause == "caller deadline" {
+						var cancelDeadline context.CancelFunc
+						ctx, cancelDeadline = context.WithTimeout(ctx, time.Millisecond)
+						defer cancelDeadline()
+					}
+					waitForContext := func(requestCtx context.Context) error {
+						if cause == "caller cancellation" {
+							cancel()
+						}
+						<-requestCtx.Done()
+						return requestCtx.Err()
+					}
+					secrets := secretResolverFunc(func(requestCtx context.Context, _ string) (string, error) {
+						if phase == "credential" {
+							return "", waitForContext(requestCtx)
+						}
+						return "synthetic-key", nil
+					})
+					var bodyDone chan struct{}
+					client := testClient(t, testProfile(t, 40, EncodingFloat, LatencyAuto), secrets, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+						if phase == "request" {
+							return nil, waitForContext(request.Context())
+						}
+						reader, writer := io.Pipe()
+						bodyDone = make(chan struct{})
+						go func() {
+							defer close(bodyDone)
+							_ = writer.CloseWithError(waitForContext(request.Context()))
+						}()
+						return &http.Response{StatusCode: http.StatusOK,
+							Header: http.Header{"Content-Type": []string{"application/json"}}, Body: reader, Request: request}, nil
+					}))
+					_, err := client.Embed(ctx, oneInput(), authorization(client.descriptor, 1))
+					if bodyDone != nil {
+						<-bodyDone
+					}
+					switch cause {
+					case "adapter timeout":
+						require.ErrorIs(t, err, ErrTransientResponse)
+						require.NotErrorIs(t, err, context.DeadlineExceeded)
+						require.NoError(t, ctx.Err())
+					case "caller deadline":
+						require.ErrorIs(t, err, context.DeadlineExceeded)
+						require.NotErrorIs(t, err, ErrTransientResponse)
+					case "caller cancellation":
+						require.ErrorIs(t, err, context.Canceled)
+						require.NotErrorIs(t, err, ErrTransientResponse)
+					}
+				})
+			})
+		}
+	}
+}
+
+type secretResolverFunc func(context.Context, string) (string, error)
+
+func (resolve secretResolverFunc) ResolveSecret(ctx context.Context, binding string) (string, error) {
+	return resolve(ctx, binding)
 }

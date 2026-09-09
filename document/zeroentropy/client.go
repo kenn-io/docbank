@@ -107,8 +107,11 @@ func (client *Client) embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}()
 	secret, err := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
 	if err != nil || !validSecret(secret) {
-		if contextErr := requestCtx.Err(); contextErr != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
 			return Execution{}, fmt.Errorf("zeroentropy embed: credential resolution canceled: %w", contextErr)
+		}
+		if requestCtx.Err() != nil {
+			return Execution{}, &ProviderError{Kind: ErrTransientResponse}
 		}
 		return Execution{}, errors.New("zeroentropy embed: API-key resolution failed")
 	}
@@ -117,7 +120,7 @@ func (client *Client) embed(ctx context.Context, inputs []document.EmbeddingInpu
 		PolicyFingerprint: client.descriptor.PolicyFingerprint, Model: Model, ModelRevision: client.descriptor.ModelRevision,
 		EncodingFormat: client.profile.EncodingFormat, RequestedLatency: client.profile.Latency}
 	for _, request := range prepared {
-		vectors, usage, executeErr := client.execute(requestCtx, request.payload, len(request.positions), secret)
+		vectors, usage, executeErr := client.execute(ctx, requestCtx, request.payload, len(request.positions), secret)
 		if executeErr != nil {
 			return Execution{}, executeErr
 		}
@@ -196,8 +199,8 @@ func (client *Client) prepareRequests(inputs []document.EmbeddingInput) ([]prepa
 	return requests, nil
 }
 
-func (client *Client) execute(ctx context.Context, payload []byte, expected int, secret string) ([][]float32, wireUsage, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+embedPath, bytes.NewReader(payload))
+func (client *Client) execute(ctx, requestCtx context.Context, payload []byte, expected int, secret string) ([][]float32, wireUsage, error) {
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, origin+embedPath, bytes.NewReader(payload))
 	if err != nil {
 		return nil, wireUsage{}, errors.New("zeroentropy embed: request construction failed")
 	}

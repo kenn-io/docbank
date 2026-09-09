@@ -105,8 +105,11 @@ func (client *Client) rerank(ctx context.Context, request retrieval.RerankingReq
 	defer cancel()
 	secret, err := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
 	if err != nil || !validSecret(secret) {
-		if contextErr := requestCtx.Err(); contextErr != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
 			return Execution{}, fmt.Errorf("zeroentropy rerank: credential resolution canceled: %w", contextErr)
+		}
+		if requestCtx.Err() != nil {
+			return Execution{}, &ProviderError{Kind: ErrTransientResponse}
 		}
 		return Execution{}, errors.New("zeroentropy rerank: API-key resolution failed")
 	}
@@ -119,7 +122,7 @@ func (client *Client) rerank(ctx context.Context, request retrieval.RerankingReq
 	httpRequest.Header.Set("Authorization", "Bearer "+secret)
 	response, err := client.http.Do(httpRequest)
 	if err != nil {
-		if contextErr := requestCtx.Err(); contextErr != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
 			return Execution{}, fmt.Errorf("zeroentropy rerank: request canceled: %w", contextErr)
 		}
 		if errors.Is(err, providerhttp.ErrAddressDenied) || errors.Is(err, providerhttp.ErrDestinationDenied) ||
@@ -137,7 +140,7 @@ func (client *Client) rerank(ctx context.Context, request retrieval.RerankingReq
 	}
 	body, readErr := readBounded(response.Body, client.profile.MaxResponseBytes)
 	defer clear(body)
-	if contextErr := requestCtx.Err(); contextErr != nil {
+	if contextErr := ctx.Err(); contextErr != nil {
 		return Execution{}, fmt.Errorf("zeroentropy rerank: response read canceled: %w", contextErr)
 	}
 	if readErr != nil {
