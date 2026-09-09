@@ -73,6 +73,7 @@ type Profile struct {
 	Origin                 string
 	Descriptor             document.EmbeddingDescriptor
 	ModelInput             document.ModelInputContract
+	DeploymentContract     *DeploymentContract
 	SecretBinding          string
 	DeploymentEpoch        string
 	ProviderRevisionHeader string
@@ -117,6 +118,7 @@ type policyIdentity struct {
 	Route                  string                       `json:"route"`
 	Descriptor             document.EmbeddingDescriptor `json:"descriptor"`
 	ModelInput             document.ModelInputContract  `json:"model_input"`
+	DeploymentContract     *DeploymentContract          `json:"deployment_contract,omitempty"`
 	CredentialBinding      string                       `json:"credential_binding"`
 	DeploymentEpoch        string                       `json:"deployment_epoch,omitempty"`
 	ProviderRevisionHeader string                       `json:"provider_revision_header,omitempty"`
@@ -182,7 +184,8 @@ func PolicyFingerprint(profile Profile) (string, error) {
 	identity := policyIdentity{
 		AdapterContract: adapterContract, Origin: normalized.Origin, Route: embeddingsPath,
 		Descriptor: descriptorIdentity, ModelInput: normalized.ModelInput,
-		CredentialBinding: normalized.SecretBinding, DeploymentEpoch: normalized.DeploymentEpoch,
+		DeploymentContract: normalized.DeploymentContract,
+		CredentialBinding:  normalized.SecretBinding, DeploymentEpoch: normalized.DeploymentEpoch,
 		ProviderRevisionHeader: normalized.ProviderRevisionHeader,
 		RequestTimeoutNanos:    int64(normalized.RequestTimeout), MaxBatchItems: normalized.MaxBatchItems,
 		MaxInputBytes: normalized.MaxInputBytes, MaxRequestBytes: normalized.MaxRequestBytes,
@@ -436,6 +439,11 @@ func (client *Client) validateVector(vector []float32) error {
 }
 
 func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, error) {
+	if profile.DeploymentContract != nil {
+		contract := *profile.DeploymentContract
+		profile.DeploymentContract = &contract
+	}
+	profile.EgressPolicy = cloneEgressPolicy(profile.EgressPolicy)
 	// CertPool does not expose certificate contents for a canonical identity.
 	// A subject-only hash would conflate distinct trust roots.
 	if profile.EgressPolicy.TLS.RootCAs != nil {
@@ -517,6 +525,9 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 	if err := validateDescriptorContract(descriptorIdentity, profile.ModelInput); err != nil {
 		return Profile{}, document.EmbeddingDescriptor{}, err
 	}
+	if err := validateDeploymentContract(profile.DeploymentContract, descriptorIdentity, profile.ModelInput); err != nil {
+		return Profile{}, document.EmbeddingDescriptor{}, err
+	}
 	if (profile.DeploymentEpoch == "") == (profile.ProviderRevisionHeader == "") {
 		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: exactly one deployment epoch or provider revision header is required")
 	}
@@ -542,6 +553,12 @@ func openAIEgressPolicyIdentity(policy providerhttp.EgressPolicy) *openAIEgressI
 		AllowedCIDRs: cidrs, ProxyMode: string(policy.ProxyMode), ConnectTimeout: int64(policy.ConnectTimeout),
 		KeepAlive: int64(policy.KeepAlive), TLSHandshakeTimeout: int64(policy.TLSHandshakeTimeout),
 		SPKISHA256: slices.Clone(policy.TLS.SPKISHA256)}
+}
+
+func cloneEgressPolicy(policy providerhttp.EgressPolicy) providerhttp.EgressPolicy {
+	policy.AllowedCIDRs = slices.Clone(policy.AllowedCIDRs)
+	policy.TLS.SPKISHA256 = slices.Clone(policy.TLS.SPKISHA256)
+	return policy
 }
 
 func openAIRetryAfter(value string, now time.Time) (time.Duration, bool) {
