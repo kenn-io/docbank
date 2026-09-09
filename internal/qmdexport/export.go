@@ -24,7 +24,9 @@ import (
 	"golang.org/x/text/transform"
 
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/kit/safefileio"
 )
 
 const (
@@ -150,6 +152,9 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 	if ctx == nil || reader == nil {
 		return Receipt{}, errors.New("qmd export requires context and blob reader")
 	}
+	if err := ctx.Err(); err != nil {
+		return Receipt{}, err
+	}
 	if !validCollection(collection) {
 		return Receipt{}, errors.New("qmd export collection name is invalid")
 	}
@@ -180,11 +185,17 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 	if err != nil {
 		return Receipt{}, fmt.Errorf("resolve qmd export root: %w", err)
 	}
-	if root == string(filepath.Separator) {
+	if filepath.Dir(root) == root {
 		return Receipt{}, errors.New("qmd export root is invalid")
 	}
 	generations := filepath.Join(root, "generations")
-	if err := os.MkdirAll(generations, 0o700); err != nil {
+	if err := ctx.Err(); err != nil {
+		return Receipt{}, err
+	}
+	if err := preparePrivateDir(root); err != nil {
+		return Receipt{}, fmt.Errorf("prepare qmd export root: %w", err)
+	}
+	if err := preparePrivateDir(generations); err != nil {
 		return Receipt{}, fmt.Errorf("create qmd export root: %w", err)
 	}
 	release, err := acquirePublishLock(ctx, root, hooks.waitingOnLock)
@@ -192,6 +203,9 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 		return Receipt{}, err
 	}
 	defer func() { retErr = errors.Join(retErr, release()) }()
+	if err := validateExistingPrivateFile(filepath.Join(root, "CURRENT")); err != nil {
+		return Receipt{}, fmt.Errorf("inspect qmd export current pointer: %w", err)
+	}
 	if err := removeAbandonedStages(generations); err != nil {
 		return Receipt{}, err
 	}
@@ -204,7 +218,13 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 			retErr = errors.Join(retErr, os.RemoveAll(stage))
 		}
 	}()
-	if err := os.MkdirAll(filepath.Join(stage, "collection"), 0o700); err != nil {
+	if err := safefileio.EnsurePrivateDir(stage); err != nil {
+		return Receipt{}, fmt.Errorf("secure qmd export stage: %w", err)
+	}
+	if err := preparePrivateDir(filepath.Join(stage, "collection")); err != nil {
+		return Receipt{}, fmt.Errorf("stage qmd export collection: %w", err)
+	}
+	if err := preparePrivateDir(filepath.Join(stage, "collection", "documents")); err != nil {
 		return Receipt{}, fmt.Errorf("stage qmd export collection: %w", err)
 	}
 	manifest, err := build(ctx, stage, collection, canonical, reader)
@@ -222,9 +242,15 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 	if err := verifyGeneration(stage, manifest, manifestBytes); err != nil {
 		return Receipt{}, err
 	}
+	if err := syncGeneration(stage); err != nil {
+		return Receipt{}, err
+	}
 	final := filepath.Join(generations, manifest.Checksum)
 	if _, statErr := os.Stat(final); errors.Is(statErr, os.ErrNotExist) {
-		if err := os.Rename(stage, final); err != nil {
+		if err := ctx.Err(); err != nil {
+			return Receipt{}, err
+		}
+		if err := renamePublished(stage, final); err != nil {
 			return Receipt{}, fmt.Errorf("publish qmd export generation: %w", err)
 		}
 	} else if statErr != nil {
@@ -233,12 +259,18 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 		if err := verifyGeneration(final, manifest, manifestBytes); err != nil {
 			return Receipt{}, err
 		}
+		if err := syncGeneration(final); err != nil {
+			return Receipt{}, err
+		}
 		if err := os.RemoveAll(stage); err != nil {
 			return Receipt{}, fmt.Errorf("remove duplicate qmd export stage: %w", err)
 		}
 	}
 	stage = ""
-	if err := publishCurrent(root, manifest.Checksum); err != nil {
+	if err := pack.SyncDir(generations); err != nil {
+		return Receipt{}, fmt.Errorf("sync qmd export generations: %w", err)
+	}
+	if err := publishCurrent(ctx, root, manifest.Checksum); err != nil {
 		return Receipt{}, err
 	}
 	if hooks.afterCurrent != nil {
@@ -364,10 +396,10 @@ func compareSource(a, b Source) int {
 }
 
 func writePrivateFile(path string, content io.Reader) (int64, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := preparePrivateDir(filepath.Dir(path)); err != nil {
 		return 0, fmt.Errorf("create qmd export directory: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateFile(path)
 	if err != nil {
 		return 0, fmt.Errorf("create qmd export file: %w", err)
 	}
@@ -381,8 +413,22 @@ func writePrivateFile(path string, content io.Reader) (int64, error) {
 }
 
 func acquirePublishLock(ctx context.Context, root string, waiting func()) (func() error, error) {
-	lock := flock.New(filepath.Join(root, ".publish.lock"), flock.SetPermissions(0o600))
+	path := filepath.Join(root, ".publish.lock")
+	file, err := createPrivateFile(path)
+	if errors.Is(err, os.ErrExist) {
+		file, err = openPrivateFile(path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("prepare qmd export publication lock: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	lock := flock.New(path, flock.SetPermissions(0o600))
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		locked, err := lock.TryLock()
 		if err != nil {
 			return nil, fmt.Errorf("acquire qmd export publication lock: %w", err)
@@ -429,7 +475,7 @@ func verifyGeneration(root string, manifest Manifest, manifestBytes []byte) erro
 			return errors.New("collection contains a symbolic link")
 		}
 		if entry.IsDir() {
-			return nil
+			return verifyDirectory(path)
 		}
 		relative, err := filepath.Rel(collection, path)
 		if err != nil {
@@ -455,12 +501,8 @@ func verifyGeneration(root string, manifest Manifest, manifestBytes []byte) erro
 }
 
 func verifyDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("expected a real directory")
+	if err := safefileio.ValidatePrivateDir(path); err != nil {
+		return fmt.Errorf("validate private qmd export directory: %w", err)
 	}
 	return nil
 }
@@ -473,7 +515,7 @@ func verifyFile(path string, size int64, checksum string) (retErr error) {
 	if !info.Mode().IsRegular() || info.Size() != size {
 		return errors.New("expected a regular file with exact size")
 	}
-	file, err := os.Open(path)
+	file, err := openPrivateFile(path)
 	if err != nil {
 		return err
 	}
@@ -489,25 +531,38 @@ func verifyFile(path string, size int64, checksum string) (retErr error) {
 	return nil
 }
 
-func publishCurrent(root, generationID string) (retErr error) {
+func publishCurrent(ctx context.Context, root, generationID string) (retErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	temporary, err := os.CreateTemp(root, ".current-")
 	if err != nil {
 		return fmt.Errorf("stage qmd export current pointer: %w", err)
 	}
 	path := temporary.Name()
 	defer func() {
-		if retErr != nil {
+		if path != "" {
 			retErr = errors.Join(retErr, os.Remove(path))
 		}
 	}()
+	if err := restrictNewFile(path); err != nil {
+		return errors.Join(err, temporary.Close())
+	}
 	_, writeErr := io.WriteString(temporary, generationID+"\n")
 	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
 		return fmt.Errorf("write qmd export current pointer: %w", err)
 	}
-	if err := os.Rename(path, filepath.Join(root, "CURRENT")); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := renamePublished(path, filepath.Join(root, "CURRENT")); err != nil {
 		return fmt.Errorf("publish qmd export current pointer: %w", err)
+	}
+	path = ""
+	if err := pack.SyncDir(root); err != nil {
+		return fmt.Errorf("sync qmd export current pointer directory: %w", err)
 	}
 	return nil
 }
@@ -523,6 +578,66 @@ func removeAbandonedStages(root string) error {
 		}
 		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
 			return fmt.Errorf("remove abandoned qmd export stage: %w", err)
+		}
+	}
+	return nil
+}
+
+// Existing paths must already be private; only newly created directories are secured.
+func preparePrivateDir(path string) error {
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		return verifyDirectory(path)
+	}
+	if err := pack.MkdirAllSynced(path); err != nil {
+		return fmt.Errorf("create private qmd export directory: %w", err)
+	}
+	if err := safefileio.EnsurePrivateDir(path); err != nil {
+		return fmt.Errorf("secure qmd export directory: %w", err)
+	}
+	return nil
+}
+
+func createPrivateFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := restrictNewFile(path); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
+func validateExistingPrivateFile(path string) error {
+	file, err := openPrivateFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+func syncGeneration(root string) error {
+	var directories []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			directories = append(directories, path)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("list qmd export directories: %w", err)
+	}
+	for _, path := range slices.Backward(directories) {
+		if err := pack.SyncDir(path); err != nil {
+			return fmt.Errorf("sync qmd export directory: %w", err)
 		}
 	}
 	return nil
