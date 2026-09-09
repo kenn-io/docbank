@@ -34,6 +34,12 @@ const tagCatalogScreenshotPath = path.join(
   "screenshots",
   "web-tag-catalog.png",
 );
+const tagFilterScreenshotPath = path.join(
+  repositoryRoot,
+  ".superpowers",
+  "screenshots",
+  "web-tag-filter.png",
+);
 const auditEvidenceScreenshotPath = path.join(
   repositoryRoot,
   ".superpowers",
@@ -147,6 +153,7 @@ test.describe("Docbank web screenshots", () => {
     await rm(restoreScreenshotPath, { force: true });
     await rm(tagAssignmentScreenshotPath, { force: true });
     await rm(tagCatalogScreenshotPath, { force: true });
+    await rm(tagFilterScreenshotPath, { force: true });
     await rm(auditEvidenceScreenshotPath, { force: true });
     await rm(storageScreenshotPath, { force: true });
     await rm(tuiStorageScreenshotPath, { force: true });
@@ -200,7 +207,9 @@ test.describe("Docbank web screenshots", () => {
       "plain",
     ]);
     await runDocbank(["tag", "create", "tax"]);
-    await runDocbank(["tag", "create", "reviewed"]);
+    await runDocbank(["tag", "create", "matter/acme/reviewed"]);
+    await runDocbank(["tag", "create", "matter/acme/privileged"]);
+    await runDocbank(["tag", "create", "matter/zephyr/hold"]);
     await runDocbank([
       "tag",
       "assign",
@@ -351,7 +360,7 @@ test.describe("Docbank web screenshots", () => {
     });
     await expect(report).toBeVisible();
     await report.click();
-    await expect(page.getByText("tax", { exact: true })).toBeVisible();
+    await expect(page.getByTitle(/^tax · /)).toBeVisible();
     await expect(page.getByText("Protected", { exact: true })).toBeVisible();
     await page.screenshot({
       path: vaultBrowserScreenshotPath,
@@ -454,6 +463,11 @@ test.describe("Docbank web screenshots", () => {
     });
     await expect(catalog).toContainText("tax");
     await expect(catalog).toContainText("reviewed");
+    await expect(catalog).toContainText("matter/acme");
+    await expect(catalog).toContainText("matter/zephyr");
+    await expect(
+      catalog.getByTitle("matter/acme/reviewed", { exact: true }),
+    ).toMatchAriaSnapshot(`- text: matter/acme/reviewed`);
     await catalog.getByRole("textbox", { name: "New tag name" }).fill("archived");
     await catalog.getByRole("button", { name: "Create" }).click();
     await expect(catalog).toContainText("Created archived.");
@@ -463,6 +477,20 @@ test.describe("Docbank web screenshots", () => {
       animations: "disabled",
     });
     await catalog.getByRole("button", { name: "Done" }).click();
+
+    const tagFilter = page.getByRole("combobox", {
+      name: "Browse or filter by tag: All tags",
+    });
+    await tagFilter.click();
+    await expect(
+      page.getByRole("option", { name: "matter/acme/reviewed (0)" }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: tagFilterScreenshotPath,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.getByRole("option", { name: "All tags" }).click();
 
     await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
     const selectedReport = page.getByRole("cell", {
@@ -478,9 +506,13 @@ test.describe("Docbank web screenshots", () => {
     });
     await expect(tags).toContainText("tax");
     await tags.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }).click();
-    await tags.getByRole("option", { name: "reviewed (0)" }).click();
+    await tags
+      .getByRole("option", { name: "matter/acme/reviewed (0)" })
+      .click();
     await tags.getByRole("button", { name: "Add tag" }).click();
-    await expect(tags).toContainText("Added reviewed.");
+    await expect(tags).toContainText("Added matter/acme/reviewed.");
+    await expect(tags.getByRole("status", { name: "Loading" })).toHaveCount(0);
+    await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0);
     await page.screenshot({
       path: tagAssignmentScreenshotPath,
       fullPage: true,

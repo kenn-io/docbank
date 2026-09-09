@@ -177,3 +177,58 @@ it("keeps a stale rename visible without losing the inspected definition", async
     expect(screen.getByRole("textbox", { name: "Rename tax" })).toBeTruthy(),
   );
 });
+
+it("keeps an identity color while a rename moves the tag between groups", async () => {
+  const groupedTax = { ...tax, name: "matter/acme/tax" };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ...groupedTax,
+        name: "archive/complete",
+        revision: 3,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+
+  render(TagCatalogModal, {
+    session: "short-lived",
+    catalog: [groupedTax],
+    catalogTotal: 1,
+    disabled: false,
+    onclose: vi.fn(),
+    onchanged: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+
+  expect(screen.getByText("matter/acme")).toBeTruthy();
+  const beforeName = screen.getByText("matter/acme/tax");
+  const before = beforeName.parentElement as HTMLElement;
+  const beforeVisual = before.querySelector<HTMLElement>("[aria-hidden='true']");
+  expect(beforeVisual?.textContent).toBe("tax");
+  expect((beforeVisual?.firstElementChild as HTMLElement).style.backgroundColor).toBe(
+    "rgb(188, 76, 0)",
+  );
+
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Rename tag matter/acme/tax" }),
+  );
+  await fireEvent.input(
+    screen.getByRole("textbox", { name: "Rename matter/acme/tax" }),
+    { target: { value: "archive/complete" } },
+  );
+  await fireEvent.click(
+    screen.getByRole("button", {
+      name: "Save renamed tag matter/acme/tax",
+    }),
+  );
+
+  expect(await screen.findByText("archive")).toBeTruthy();
+  const afterName = screen.getByText("archive/complete");
+  const after = afterName.parentElement as HTMLElement;
+  const afterVisual = after.querySelector<HTMLElement>("[aria-hidden='true']");
+  expect(afterVisual?.textContent).toBe("complete");
+  expect((afterVisual?.firstElementChild as HTMLElement).style.backgroundColor).toBe(
+    "rgb(188, 76, 0)",
+  );
+});
