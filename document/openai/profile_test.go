@@ -1,4 +1,4 @@
-package openaihosted
+package openai
 
 import (
 	"bytes"

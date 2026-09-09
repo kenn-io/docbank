@@ -1,4 +1,4 @@
-package daemonlife
+package daemon
 
 import "testing"
 

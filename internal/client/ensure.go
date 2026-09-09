@@ -19,8 +19,8 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
-	"go.kenn.io/docbank/internal/daemonlife"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -553,7 +553,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		if _, rejected := responseStatus(shutdownErr); rejected {
 			return signalStopRecord(ctx, rec)
 		}
-		dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
+		dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)
 		if err != nil {
 			return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
 		}
@@ -576,7 +576,7 @@ func signalStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := requestProcessStop(rec.PID); err != nil {
 		return fmt.Errorf("requesting daemon pid %d stop: %w", rec.PID, err)
 	}
-	dead, err := waitDead(ctx, rec, daemonlife.GracefulExitTimeout)
+	dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for signaled daemon shutdown: %w", err)
 	}
@@ -593,7 +593,7 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := forceTerminateProcess(rec.PID); err != nil {
 		return fmt.Errorf("forcibly terminating daemon pid %d: %w", rec.PID, err)
 	}
-	dead, err := waitDead(ctx, rec, daemonlife.ForcedExitTimeout)
+	dead, err := waitDead(ctx, rec, daemon.ForcedExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for daemon after forced termination: %w", err)
 	}

@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
+	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
@@ -203,6 +204,56 @@ func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) 
 		}
 	}
 	assert.Equal(t, "Current event", title)
+}
+
+func TestVaultSourceMetadataBackfillRefreshesV15MOVGeneration(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	content := mediatest.H264MOV()
+	receipt, err := vault.Create(t.Context(), "/synthetic.mov", bytes.NewReader(content), CreateOptions{
+		MediaType: "video/quicktime", Expected: contentIdentity(content),
+	})
+	require.NoError(t, err)
+	// The v15 detector rejected QuickTime's separate minf data handler.
+	staleCanonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Warnings: []document.SourceMetadataWarningV1{{
+			Code: "unparseable_metadata", Namespace: "media.container", SourceField: "header",
+			Detail: "visual container metadata is malformed or unsupported",
+		}},
+	})
+	require.NoError(t, err)
+	const v15Fingerprint = "3c9192f3c2a9959e25a3cde14be3ef6ab80907e9e1f3d168b2df717355a2c290"
+	_, err = vault.metadata.PublishSourceMetadata(t.Context(), receipt.Version.BlobHash, v15Fingerprint, staleCanonical)
+	require.NoError(t, err)
+
+	targets, err := vault.metadata.MissingSourceMetadataTargetsAfter(
+		t.Context(), internalprocessing.SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1, "the current extractor must revisit the stored v15 warning")
+	completed, err := internalprocessing.BackfillSourceMetadataTargets(t.Context(), vault.metadata, vault.blobs, targets)
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+
+	metadata, err := vault.SourceMetadata(t.Context(), receipt.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, internalprocessing.SourceMetadataExtractorFingerprint, metadata.ExtractorFingerprint)
+	assert.Empty(t, metadata.Warnings)
+	measurements := make(map[string]int64)
+	for _, field := range metadata.Fields {
+		if field.Value.Kind == document.SourceMetadataInteger {
+			measurements[field.Key] = *field.Value.Integer
+		}
+	}
+	assert.Equal(t, int64(16), measurements["media.container.width_px"])
+	assert.Equal(t, int64(16), measurements["media.container.height_px"])
+	assert.Equal(t, int64(1000), measurements["media.container.duration_ms"])
+	targets, err = vault.metadata.MissingSourceMetadataTargetsAfter(
+		t.Context(), internalprocessing.SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, targets)
 }
 
 func TestVaultEnsureSourceMetadataRestoresPreviouslyRecordedExtractorGeneration(t *testing.T) {

@@ -13,6 +13,6 @@ import (
 // while the evidence goes stale, so reviewers of parser changes must expect
 // this file to change too, and an accidental bump turns this test red.
 func TestSourceMetadataExtractorFingerprintIsPinned(t *testing.T) {
-	assert.Equal(t, "3c9192f3c2a9959e25a3cde14be3ef6ab80907e9e1f3d168b2df717355a2c290",
+	assert.Equal(t, "67186a2bd450858b65360cf78fff8a103ef808954fe155a40f81a7b5e7286c0a",
 		SourceMetadataExtractorFingerprint)
 }

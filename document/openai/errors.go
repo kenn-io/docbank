@@ -1,4 +1,4 @@
-package openaihosted
+package openai
 
 import (
 	"errors"
@@ -11,13 +11,13 @@ import (
 
 var (
 	// ErrUnauthorized identifies an unavailable or rejected API key.
-	ErrUnauthorized = errors.New("openaihosted: credential is unavailable or unauthorized")
+	ErrUnauthorized = errors.New("openai: credential is unavailable or unauthorized")
 	// ErrTransientResponse identifies retryable transport, 408, 429, and 5xx failures.
-	ErrTransientResponse = errors.New("openaihosted: transient provider response")
+	ErrTransientResponse = errors.New("openai: transient provider response")
 	// ErrCapacityResponse identifies request or response capacity failures.
-	ErrCapacityResponse = errors.New("openaihosted: provider capacity exceeded")
+	ErrCapacityResponse = errors.New("openai: provider capacity exceeded")
 	// ErrPermanentResponse identifies non-retryable provider or schema failures.
-	ErrPermanentResponse = errors.New("openaihosted: permanent provider response")
+	ErrPermanentResponse = errors.New("openai: permanent provider response")
 )
 
 // ProviderError contains only stable classification and bounded retry metadata.
@@ -30,7 +30,7 @@ type ProviderError struct {
 
 func (err *ProviderError) Error() string {
 	if err.StatusCode != 0 {
-		return fmt.Sprintf("openaihosted: HTTP %d: %v", err.StatusCode, err.Kind)
+		return fmt.Sprintf("openai: HTTP %d: %v", err.StatusCode, err.Kind)
 	}
 	return err.Kind.Error()
 }

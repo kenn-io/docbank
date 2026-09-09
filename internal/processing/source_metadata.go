@@ -54,7 +54,7 @@ const (
 // pins the resulting fingerprint so the bump cannot be forgotten or made by
 // accident.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v15"
+	"ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v16"
 
 var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local

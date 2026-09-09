@@ -1,4 +1,4 @@
-package openaihosted
+package openai
 
 import (
 	"bytes"
@@ -56,14 +56,14 @@ type wireUsage struct {
 // Embed sends one bounded text-only request to the fixed hosted endpoint.
 func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
 	if client == nil || ctx == nil {
-		return document.EmbeddingResult{}, errors.New("openaihosted: client and context are required")
+		return document.EmbeddingResult{}, errors.New("openai: client and context are required")
 	}
 	if err := document.ValidateEmbeddingProviderRequest(client, inputs, authorization); err != nil {
 		return document.EmbeddingResult{}, err
 	}
 	if authorization.MaxBatchItems > client.profile.MaxBatchItems || authorization.MaxInputBytes > client.profile.MaxInputBytes ||
 		authorization.MaxResponseBytes > client.profile.MaxResponseBytes {
-		return document.EmbeddingResult{}, errors.New("openaihosted: embedding authorization exceeds profile capacity")
+		return document.EmbeddingResult{}, errors.New("openai: embedding authorization exceeds profile capacity")
 	}
 	rendered := make([]string, len(inputs))
 	var total int64
@@ -84,7 +84,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	payload, err := json.Marshal(wireRequest{Input: rendered, Model: Model, Dimensions: client.descriptor.Dimension, EncodingFormat: "float"})
 	if err != nil {
-		return document.EmbeddingResult{}, errors.New("openaihosted: request encoding failed")
+		return document.EmbeddingResult{}, errors.New("openai: request encoding failed")
 	}
 	if int64(len(payload)) > client.profile.MaxRequestBytes {
 		return document.EmbeddingResult{}, &ProviderError{Kind: ErrCapacityResponse}
@@ -95,7 +95,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	secret, err := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
 	if err != nil || !validSecret(secret) {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return document.EmbeddingResult{}, fmt.Errorf("openaihosted: credential resolution canceled: %w", contextErr)
+			return document.EmbeddingResult{}, fmt.Errorf("openai: credential resolution canceled: %w", contextErr)
 		}
 		if requestCtx.Err() != nil {
 			return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse}
@@ -104,7 +104,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, origin+embeddingsPath, bytes.NewReader(payload))
 	if err != nil {
-		return document.EmbeddingResult{}, errors.New("openaihosted: request construction failed")
+		return document.EmbeddingResult{}, errors.New("openai: request construction failed")
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
@@ -112,7 +112,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	response, err := client.http.Do(request)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return document.EmbeddingResult{}, fmt.Errorf("openaihosted: request canceled: %w", contextErr)
+			return document.EmbeddingResult{}, fmt.Errorf("openai: request canceled: %w", contextErr)
 		}
 		if errors.Is(err, providerhttp.ErrCertificatePin) || errors.Is(err, providerhttp.ErrDestinationDenied) ||
 			errors.Is(err, providerhttp.ErrAddressDenied) {
@@ -212,7 +212,7 @@ func readBounded(ctx context.Context, reader io.Reader, maximum int64) ([]byte, 
 	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, fmt.Errorf("openaihosted: response read canceled: %w", contextErr)
+			return nil, fmt.Errorf("openai: response read canceled: %w", contextErr)
 		}
 		return nil, &ProviderError{Kind: ErrTransientResponse}
 	}

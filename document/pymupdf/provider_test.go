@@ -56,7 +56,8 @@ func TestProviderRendersExactPDFPagesThroughFixedProtocol(t *testing.T) {
 		Executable: executable, ExecutableSHA256: executableSHA256(t, executable),
 		RuntimeIdentity:  testRuntimeIdentity,
 		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20,
-		MaxPages: 10, Timeout: time.Second,
+		// This checks the protocol, not helper startup latency on a busy runner.
+		MaxPages: 10, Timeout: 30 * time.Second,
 	})
 	require.NoError(t, err)
 	source := testPDF(2)
