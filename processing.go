@@ -37,9 +37,7 @@ func (v *Vault) StartProcessing(ctx context.Context, request StartProcessingRequ
 	if err != nil {
 		return ProcessingJob{}, err
 	}
-	return ProcessingJob{ID: job.ID, RenditionJobID: job.RenditionJobID, AttachmentID: job.AttachmentID,
-		EmbeddingJobIDs: job.EmbeddingJobIDs, ProfileFingerprint: job.ProfileFingerprint,
-		ContentVersionID: job.ContentVersionID}, nil
+	return fromProcessingJob(job), nil
 }
 
 func (v *Vault) ProcessingStatus(ctx context.Context, request ProcessingStatusRequest) (ProcessingStatus, error) {

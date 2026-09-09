@@ -13,6 +13,40 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func TestNewEvidencePolicyForProcessingProfileUsesDeclaredLimits(t *testing.T) {
+	policy, err := document.NewEvidencePolicyForProcessingProfile(document.ProcessingProfileV1{
+		EvidenceLexical: document.EvidenceLexicalPolicyV1{MaxUnitRunes: 7},
+		Rendition:       &document.RenditionBindingV1{MaxUnits: 3},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 21, policy.Identity().MaxDocumentChars)
+}
+
+func TestNewEvidencePolicyForProcessingProfileRejectsMissingRendition(t *testing.T) {
+	_, err := document.NewEvidencePolicyForProcessingProfile(document.ProcessingProfileV1{})
+	require.EqualError(t, err, "processing profile has no rendition policy")
+}
+
+func TestNewEvidencePolicyForProcessingProfileClampsInvalidProduct(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		maxUnitRunes int
+		maxUnits     int
+	}{
+		{name: "zero product", maxUnitRunes: 0, maxUnits: 1},
+		{name: "product above bound", maxUnitRunes: 256 << 20, maxUnits: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy, err := document.NewEvidencePolicyForProcessingProfile(document.ProcessingProfileV1{
+				EvidenceLexical: document.EvidenceLexicalPolicyV1{MaxUnitRunes: test.maxUnitRunes},
+				Rendition:       &document.RenditionBindingV1{MaxUnits: test.maxUnits},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, 256<<20, policy.Identity().MaxDocumentChars)
+		})
+	}
+}
+
 func TestCanonicalProfileMatchesGoldenAndCanonicalizesInput(t *testing.T) {
 	profile := syntheticProcessingProfileV1()
 	profile.Rendition.Descriptor.ID = "mistral-Cafe\u0301\r\nruntime"

@@ -159,6 +159,19 @@ type ProcessingProfileV1 struct {
 	Retrieval           RetrievalPolicyV1           `json:"retrieval"`
 }
 
+// NewEvidencePolicyForProcessingProfile derives the evidence limit used by
+// processing from the declared lexical unit and rendition unit limits.
+func NewEvidencePolicyForProcessingProfile(profile ProcessingProfileV1) (EvidencePolicy, error) {
+	if profile.Rendition == nil {
+		return EvidencePolicy{}, errors.New("processing profile has no rendition policy")
+	}
+	maxChars := profile.EvidenceLexical.MaxUnitRunes * max(1, profile.Rendition.MaxUnits)
+	if maxChars <= 0 || maxChars > 256<<20 {
+		maxChars = 256 << 20
+	}
+	return NewEvidencePolicy(maxChars)
+}
+
 // FingerprintSet contains the assembled identity and independent derivative
 // layer identities. Maps are keyed by embedding binding name.
 type FingerprintSet struct {

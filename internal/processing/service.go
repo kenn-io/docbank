@@ -319,6 +319,17 @@ func NewService(config ServiceConfig) (*Service, error) {
 				descriptor.Fingerprint != profile.Rendition.Descriptor.Fingerprint {
 				return nil, fmt.Errorf("processing profile %q rendition provider differs from its descriptor", name)
 			}
+			if bound, ok := supplied.RenditionProvider.(interface {
+				EvidencePolicy() document.EvidencePolicy
+			}); ok {
+				evidencePolicy, err := document.NewEvidencePolicyForProcessingProfile(profile)
+				if err != nil {
+					return nil, fmt.Errorf("processing profile %q evidence policy: %w", name, err)
+				}
+				if bound.EvidencePolicy().Identity() != evidencePolicy.Identity() {
+					return nil, fmt.Errorf("processing profile %q rendition provider evidence policy differs from profile", name)
+				}
+			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
 			if _, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
@@ -1521,15 +1532,11 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		MaxArtifacts:        max(1, len(profile.portable.Rendition.RequestedArtifacts)),
 		MaxTotalResultBytes: maximum, AuthorizedAt: authorizedAt.Format(timestampForm),
 		ExpiresAt: authorizedAt.Add(10 * time.Minute).Format(timestampForm)}
-	maxChars := profile.portable.EvidenceLexical.MaxUnitRunes * max(1, profile.portable.Rendition.MaxUnits)
-	if maxChars <= 0 || maxChars > 256<<20 {
-		maxChars = 256 << 20
-	}
-	evidence, err := document.NewEvidencePolicy(maxChars)
+	evidence, err := document.NewEvidencePolicyForProcessingProfile(profile.portable)
 	if err != nil {
 		return providerExecution{}, err
 	}
-	normalization, err := document.NewNormalizePolicy(maxChars)
+	normalization, err := document.NewNormalizePolicy(evidence.Identity().MaxDocumentChars)
 	if err != nil {
 		return providerExecution{}, err
 	}

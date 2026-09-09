@@ -54,6 +54,28 @@ shorter document therefore cannot share an identity with a longer document
 whose retained evidence or remaining units were truncated by a normalization
 bound.
 
+## Build evidence from a supplied transcript
+
+Applications that already have transcript text can pass it through the same evidence and rendition contracts as other document families:
+
+```go
+evidencePolicy, err := document.NewEvidencePolicy(100_000)
+if err != nil {
+	return err
+}
+evidence, artifact, err := document.BuildTranscriptEvidenceV1(
+	document.SuppliedTranscript{Provider: "beeper", Text: transcript}, evidencePolicy,
+)
+if err != nil {
+	return err
+}
+_ = artifact // retain the provider transcript with the source record
+```
+
+The provider value must be a lowercase identifier. Docbank keeps the exact provider and transcript text in the `supplied-transcript/v1` JSON artifact, while normalized evidence and the rendition apply their existing Unicode, Markdown, and character limits. The evidence uses the `audio` family with a generic unit and `degraded_provenance` completeness because supplied text has no timing or speaker data. The caller still associates the transcript with the audio source and its source version. This operation does not inspect audio, run speech recognition, verify provider identity, or create ingestion and search records.
+
+The embedded `document/suppliedtranscript` provider connects an authorized WAV or MP3 upload to a caller-owned transcript source. Construct it with the same `ProcessingProfileV1` that you register for the rendition provider. The provider derives its evidence policy from that profile, and the processing service applies the same profile limits when it normalizes the result. The source receives the sealed audio SHA-256 and returns the supplied transcript. A missing transcript means a zero `SuppliedTranscript` and a nil error. A nonzero provider with empty text is malformed. Existing upload inspection and rendering validation enforce the audio bounds, exact bytes, authorization, and output limits. A missing transcript returns the existing terminal unsupported-input error. The provider keeps no URL and performs no speech recognition. Use `Vault.SubmitProcessing` to receive the durable processing job before rendition work finishes. The caller must keep the transcript result stable for the source version and profile while accepted work runs. Cancelling the submission context after acknowledgement does not cancel the job. `Vault.Close` cancels accepted processing and waits for its lifecycle lease to release.
+
 ## Run Mistral OCR safely
 
 Mistral uploads fail closed until an operator has produced and supplied a
@@ -288,6 +310,10 @@ application storage and workers
 
 application storage and workers
   -> document/embedding (provider-neutral text planning and retrieval contracts)
+  -> document (provider-neutral normalization)
+
+application storage and workers
+  -> document/suppliedtranscript (caller-owned transcript source)
   -> document (provider-neutral normalization)
 ```
 

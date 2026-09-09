@@ -112,6 +112,7 @@ type Vault struct {
 	metadata   *store.Store
 	blobs      *blob.Store
 	processing *internalprocessing.Service
+	cancel     context.CancelFunc
 
 	lifecycle sync.RWMutex
 	mutation  sync.Mutex
@@ -261,7 +262,8 @@ func openVaultWithRootOpener(
 	if err := blobs.CleanTmp(); err != nil {
 		return nil, err
 	}
-	vault := &Vault{root: root, lock: lock, metadata: metadata, blobs: blobs}
+	lifecycle, cancel := context.WithCancel(context.Background())
+	vault := &Vault{root: root, lock: lock, metadata: metadata, blobs: blobs, cancel: cancel}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
 		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),
@@ -287,7 +289,7 @@ func openVaultWithRootOpener(
 	}
 	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
 		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
-		Profiles: profiles, SpoolDirectory: spoolDirectory,
+		Profiles: profiles, SpoolDirectory: spoolDirectory, Lifecycle: lifecycle,
 	})
 	if err != nil {
 		return nil, err
@@ -323,6 +325,9 @@ func (gate embeddedMutationGate) MaintainContext(ctx context.Context, fn func() 
 func (v *Vault) Close() error {
 	if v == nil {
 		return nil
+	}
+	if v.cancel != nil {
+		v.cancel()
 	}
 	v.lifecycle.Lock()
 	defer v.lifecycle.Unlock()

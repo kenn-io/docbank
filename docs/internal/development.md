@@ -16,7 +16,9 @@ developers update the right layer and preserve cross-layer contracts.
 | `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
-| `pkg` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
+| `pkg` | lifecycle and bounded public operations for one exclusively owned embedded vault, including durable processing acknowledgement | standalone CLI paths or a second storage implementation |
+
+`pkg` methods that submit accepted background work must hold the vault read lease until the processing service returns. The submission method transfers the lease to the goroutine that calls `StartWithProgress`, and that goroutine releases it after the service finishes. The embedded service uses a vault-owned lifecycle context after enqueue. `Close` cancels that context before waiting for the accepted work and then releases vault resources. A caller context controls admission through acknowledgement; cancelling it after acknowledgement does not cancel the accepted job.
 
 ## Common change paths
 
