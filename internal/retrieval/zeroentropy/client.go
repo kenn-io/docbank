@@ -196,6 +196,8 @@ func (client *Client) validateRequest(request retrieval.RerankingRequest) error 
 			return &ProviderError{Kind: ErrCapacityResponse}
 		}
 		excerptBytes += int64(len(candidate.Excerpt))
+		// Provider input accounting counts the query and 150 bytes per document;
+		// MaxRequestBytes separately bounds JSON. See https://docs.zeroentropy.dev/api-reference/models/rerank.
 		increment := int64(150 + len(request.Query) + len(candidate.Excerpt))
 		if increment > providerPayloadMax-providerBytes {
 			return &ProviderError{Kind: ErrCapacityResponse}

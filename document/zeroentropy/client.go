@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/providerhttp"
 )
 
@@ -174,6 +175,8 @@ func (client *Client) prepareRequests(inputs []document.EmbeddingInput) ([]prepa
 		if len(group.positions) == 0 {
 			continue
 		}
+		// Provider input accounting adds 150 bytes per item; MaxRequestBytes
+		// separately bounds serialized JSON. See https://docs.zeroentropy.dev/api-reference/models/embed.
 		var providerBytes int64
 		for _, value := range group.values {
 			if int64(len(value))+150 > providerPayloadMax-providerBytes {
@@ -255,7 +258,8 @@ func (client *Client) execute(ctx, requestCtx context.Context, payload []byte, e
 func (client *Client) decodeVector(raw jsonv1.RawMessage) ([]float32, error) {
 	var values []float32
 	if client.profile.EncodingFormat == EncodingFloat {
-		if err := json.Unmarshal(raw, &values, json.RejectUnknownMembers(true)); err != nil {
+		if err := json.Unmarshal(raw, &values, json.RejectUnknownMembers(true),
+			json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 			return nil, err
 		}
 	} else {

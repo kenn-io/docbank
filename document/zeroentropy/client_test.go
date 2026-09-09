@@ -105,6 +105,7 @@ func TestEmbedRejectsResponseDriftAndInvalidVectors(t *testing.T) {
 	tests := map[string]string{
 		"missing result":  `{"results":[],"usage":{"total_bytes":155,"total_tokens":2}}`,
 		"wrong dimension": strings.Replace(valid, validVector, "0,0", 1),
+		"null coordinate": strings.Replace(valid, "0,", "null,", 1),
 		"non finite":      strings.Replace(valid, "0,", "1e1000,", 1),
 		"missing usage":   strings.Replace(valid, `,"usage":{"total_bytes":155,"total_tokens":2}`, "", 1),
 		"negative usage":  strings.Replace(valid, `"total_tokens":2`, `"total_tokens":-1`, 1),
