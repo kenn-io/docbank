@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 func TestEmbedSeparatesInputTypesAndPreservesInputOrder(t *testing.T) {
@@ -216,3 +218,35 @@ func (body *contextBody) Read([]byte) (int, error) {
 }
 
 func (*contextBody) Close() error { return nil }
+
+func TestEmbedClassifiesDeniedDNSAsPermanent(t *testing.T) {
+	client, err := New(testProfile(t, 40, EncodingFloat, LatencyAuto), testSecrets{"secret:zeroentropy": "synthetic-key"},
+		testResolver{netip.MustParseAddr("198.51.100.10")}, &http.Client{})
+	require.NoError(t, err)
+
+	_, err = client.Embed(context.Background(), oneInput(), authorization(client.descriptor, 1))
+	require.ErrorIs(t, err, ErrPermanentResponse)
+}
+
+func TestEmbedClassifiesTransportFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure error
+		want    error
+	}{
+		{"address denied", providerhttp.ErrAddressDenied, ErrPermanentResponse},
+		{"destination denied", providerhttp.ErrDestinationDenied, ErrPermanentResponse},
+		{"certificate pin", providerhttp.ErrCertificatePin, ErrPermanentResponse},
+		{"connection failure", assert.AnError, ErrTransientResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := testClient(t, testProfile(t, 40, EncodingFloat, LatencyAuto), testSecrets{"secret:zeroentropy": "synthetic-key"},
+				roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return nil, fmt.Errorf("provider transport: %w", test.failure)
+				}))
+
+			_, err := client.Embed(context.Background(), oneInput(), authorization(client.descriptor, 1))
+			require.ErrorIs(t, err, test.want)
+		})
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 const (
@@ -207,6 +208,10 @@ func (client *Client) execute(ctx context.Context, payload []byte, expected int,
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, wireUsage{}, fmt.Errorf("zeroentropy embed: request canceled: %w", contextErr)
+		}
+		if errors.Is(err, providerhttp.ErrAddressDenied) || errors.Is(err, providerhttp.ErrDestinationDenied) ||
+			errors.Is(err, providerhttp.ErrCertificatePin) {
+			return nil, wireUsage{}, &ProviderError{Kind: ErrPermanentResponse}
 		}
 		return nil, wireUsage{}, &ProviderError{Kind: ErrTransientResponse}
 	}

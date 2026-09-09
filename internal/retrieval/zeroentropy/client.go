@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/retrieval"
 )
 
@@ -120,6 +121,10 @@ func (client *Client) rerank(ctx context.Context, request retrieval.RerankingReq
 	if err != nil {
 		if contextErr := requestCtx.Err(); contextErr != nil {
 			return Execution{}, fmt.Errorf("zeroentropy rerank: request canceled: %w", contextErr)
+		}
+		if errors.Is(err, providerhttp.ErrAddressDenied) || errors.Is(err, providerhttp.ErrDestinationDenied) ||
+			errors.Is(err, providerhttp.ErrCertificatePin) {
+			return Execution{}, &ProviderError{Kind: ErrPermanentResponse}
 		}
 		return Execution{}, &ProviderError{Kind: ErrTransientResponse}
 	}

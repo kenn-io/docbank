@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/retrieval"
 )
 
@@ -214,3 +216,35 @@ func (body *contextBody) Read([]byte) (int, error) {
 }
 
 func (*contextBody) Close() error { return nil }
+
+func TestRerankClassifiesDeniedDNSAsPermanent(t *testing.T) {
+	client, err := New(testProfile(LatencyAuto), testSecrets{"secret:zeroentropy-rerank": "synthetic-key"},
+		testResolver{netip.MustParseAddr("198.51.100.10")}, &http.Client{})
+	require.NoError(t, err)
+
+	_, err = client.Rerank(context.Background(), rerankingRequest())
+	require.ErrorIs(t, err, ErrPermanentResponse)
+}
+
+func TestRerankClassifiesTransportFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure error
+		want    error
+	}{
+		{"address denied", providerhttp.ErrAddressDenied, ErrPermanentResponse},
+		{"destination denied", providerhttp.ErrDestinationDenied, ErrPermanentResponse},
+		{"certificate pin", providerhttp.ErrCertificatePin, ErrPermanentResponse},
+		{"connection failure", assert.AnError, ErrTransientResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := testClient(t, testProfile(LatencyAuto), testSecrets{"secret:zeroentropy-rerank": "synthetic-key"},
+				roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return nil, fmt.Errorf("provider transport: %w", test.failure)
+				}))
+
+			_, err := client.Rerank(context.Background(), rerankingRequest())
+			require.ErrorIs(t, err, test.want)
+		})
+	}
+}
