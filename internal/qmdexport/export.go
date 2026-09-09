@@ -20,6 +20,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/transform"
 
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
@@ -52,7 +54,6 @@ type Entry struct {
 	ArtifactChecksum             string `json:"artifact_checksum"`
 	MarkdownChecksum             string `json:"markdown_checksum"`
 	ExportedMarkdownSHA256       string `json:"exported_markdown_sha256"`
-	Frontmatter                  string `json:"frontmatter,omitempty"`
 }
 
 // Manifest is the deterministic identity map for one complete collection.
@@ -73,13 +74,6 @@ type Options struct {
 type publishHooks struct {
 	afterCurrent  func()
 	waitingOnLock func()
-}
-
-// Generation is a complete validated in-memory export ready for publication.
-type Generation struct {
-	ID        string
-	Manifest  Manifest
-	documents map[string][]byte
 }
 
 // Receipt identifies the immutable generation selected by CURRENT.
@@ -115,55 +109,18 @@ func PublishActive(ctx context.Context, root, collection string, catalog SourceC
 	return Publish(ctx, root, collection, sources, reader, bounds)
 }
 
-// Build reads and verifies every exact source before returning a generation.
-func Build(ctx context.Context, collection string, sources []Source, reader BlobReader, options Options) (Generation, error) {
-	if ctx == nil || reader == nil {
-		return Generation{}, errors.New("qmd export requires context and blob reader")
-	}
-	if !validCollection(collection) {
-		return Generation{}, errors.New("qmd export collection name is invalid")
-	}
-	bounds, err := normalizeOptions(options)
-	if err != nil {
-		return Generation{}, err
-	}
-	if len(sources) > bounds.MaxDocuments {
-		return Generation{}, errors.New("qmd export document membership exceeds bound")
-	}
-	canonical := slices.Clone(sources)
-	slices.SortFunc(canonical, compareSource)
-	var total int64
-	for index, source := range canonical {
-		if err := validateSource(source); err != nil {
-			return Generation{}, fmt.Errorf("qmd export source %d: %w", index, err)
-		}
-		if source.BlobSize > bounds.MaxDocumentBytes || source.BlobSize > bounds.MaxTotalBytes-total {
-			return Generation{}, errors.New("qmd export source bytes exceed bound")
-		}
-		total += source.BlobSize
-		if index > 0 && compareSource(canonical[index-1], source) == 0 {
-			return Generation{}, errors.New("qmd export contains duplicate source authority")
-		}
-	}
-
+// build stages verified source streams and returns their complete manifest.
+func build(ctx context.Context, stage, collection string, sources []Source, reader BlobReader) (Manifest, error) {
 	manifest := Manifest{Format: ManifestFormatV1, Collection: collection}
-	documents := make(map[string][]byte, len(canonical))
-	for index, source := range canonical {
+	for index, source := range sources {
 		if err := ctx.Err(); err != nil {
-			return Generation{}, err
+			return Manifest{}, err
 		}
-		markdown, err := readSource(ctx, reader, source)
-		if err != nil {
-			return Generation{}, fmt.Errorf("qmd export source %d: %w", index, err)
-		}
-		frontmatter, body := splitFrontmatter(markdown)
 		identity := sourcePathIdentity(source)
 		relative := "documents/" + identity[:2] + "/" + identity + ".md"
-		if _, exists := documents[relative]; exists {
-			return Generation{}, errors.New("qmd export synthetic path collision")
+		if err := writeSource(ctx, filepath.Join(stage, "collection", filepath.FromSlash(relative)), reader, source); err != nil {
+			return Manifest{}, fmt.Errorf("qmd export source %d: %w", index, err)
 		}
-		documents[relative] = body
-		exportedDigest := sha256.Sum256(body)
 		manifest.Entries = append(manifest.Entries, Entry{
 			URI: "qmd://" + collection + "/" + relative, RelativePath: relative,
 			VaultUID: source.VaultUID, NodeID: source.NodeID,
@@ -171,31 +128,59 @@ func Build(ctx context.Context, collection string, sources []Source, reader Blob
 			AttachmentID: source.AttachmentID, BuildID: source.BuildID, ArtifactID: source.ArtifactID,
 			BlobSHA256: source.BlobSHA256, BlobSize: source.BlobSize,
 			ArtifactChecksum: source.ArtifactChecksum, MarkdownChecksum: source.MarkdownChecksum,
-			ExportedMarkdownSHA256: hex.EncodeToString(exportedDigest[:]), Frontmatter: frontmatter,
+			ExportedMarkdownSHA256: source.BlobSHA256,
 		})
 	}
-	slices.SortFunc(manifest.Entries, func(a, b Entry) int { return strings.Compare(a.URI, b.URI) })
 	checksum, err := manifestChecksum(manifest)
 	if err != nil {
-		return Generation{}, err
+		return Manifest{}, err
 	}
 	manifest.Checksum = checksum
-	return Generation{ID: checksum, Manifest: manifest, documents: documents}, nil
+	return manifest, nil
 }
 
-// Publish builds, stages, and selects one complete immutable generation, then
-// removes older disposable generations after CURRENT points at the new one.
+// Publish stages verified streams and selects one complete immutable generation.
+// Retired generations remain readable. The caller may remove them only when no
+// consumer uses them; publication cleans up abandoned staging directories only.
 func Publish(ctx context.Context, root, collection string, sources []Source, reader BlobReader, options Options) (Receipt, error) {
 	return publish(ctx, root, collection, sources, reader, options, publishHooks{})
 }
 
 func publish(ctx context.Context, root, collection string, sources []Source, reader BlobReader, options Options, hooks publishHooks) (_ Receipt, retErr error) {
-	generation, err := Build(ctx, collection, sources, reader, options)
+	if ctx == nil || reader == nil {
+		return Receipt{}, errors.New("qmd export requires context and blob reader")
+	}
+	if !validCollection(collection) {
+		return Receipt{}, errors.New("qmd export collection name is invalid")
+	}
+	bounds, err := normalizeOptions(options)
 	if err != nil {
 		return Receipt{}, err
 	}
+	if len(sources) > bounds.MaxDocuments {
+		return Receipt{}, errors.New("qmd export document membership exceeds bound")
+	}
+	canonical := slices.Clone(sources)
+	slices.SortFunc(canonical, compareSource)
+	var total int64
+	for index, source := range canonical {
+		if err := validateSource(source); err != nil {
+			return Receipt{}, fmt.Errorf("qmd export source %d: %w", index, err)
+		}
+		if source.BlobSize > bounds.MaxDocumentBytes || source.BlobSize > bounds.MaxTotalBytes-total {
+			return Receipt{}, errors.New("qmd export source bytes exceed bound")
+		}
+		total += source.BlobSize
+		if index > 0 && compareSource(canonical[index-1], source) == 0 {
+			return Receipt{}, errors.New("qmd export contains duplicate source authority")
+		}
+	}
+
 	root, err = filepath.Abs(root)
-	if err != nil || root == string(filepath.Separator) {
+	if err != nil {
+		return Receipt{}, fmt.Errorf("resolve qmd export root: %w", err)
+	}
+	if root == string(filepath.Separator) {
 		return Receipt{}, errors.New("qmd export root is invalid")
 	}
 	generations := filepath.Join(root, "generations")
@@ -207,107 +192,87 @@ func publish(ctx context.Context, root, collection string, sources []Source, rea
 		return Receipt{}, err
 	}
 	defer func() { retErr = errors.Join(retErr, release()) }()
-	final := filepath.Join(generations, generation.ID)
-	manifestBytes, err := json.Marshal(generation.Manifest, json.Deterministic(true))
+	if err := removeAbandonedStages(generations); err != nil {
+		return Receipt{}, err
+	}
+	stage, err := os.MkdirTemp(generations, ".stage-")
+	if err != nil {
+		return Receipt{}, fmt.Errorf("stage qmd export generation: %w", err)
+	}
+	defer func() {
+		if stage != "" {
+			retErr = errors.Join(retErr, os.RemoveAll(stage))
+		}
+	}()
+	if err := os.MkdirAll(filepath.Join(stage, "collection"), 0o700); err != nil {
+		return Receipt{}, fmt.Errorf("stage qmd export collection: %w", err)
+	}
+	manifest, err := build(ctx, stage, collection, canonical, reader)
+	if err != nil {
+		return Receipt{}, err
+	}
+	manifestBytes, err := json.Marshal(manifest, json.Deterministic(true))
 	if err != nil {
 		return Receipt{}, fmt.Errorf("encode qmd export manifest: %w", err)
 	}
 	manifestBytes = append(manifestBytes, '\n')
+	if _, err := writePrivateFile(filepath.Join(stage, "manifest.json"), bytes.NewReader(manifestBytes)); err != nil {
+		return Receipt{}, err
+	}
+	if err := verifyGeneration(stage, manifest, manifestBytes); err != nil {
+		return Receipt{}, err
+	}
+	final := filepath.Join(generations, manifest.Checksum)
 	if _, statErr := os.Stat(final); errors.Is(statErr, os.ErrNotExist) {
-		stage, err := os.MkdirTemp(generations, ".stage-")
-		if err != nil {
-			return Receipt{}, fmt.Errorf("stage qmd export generation: %w", err)
-		}
-		published := false
-		defer func() {
-			if !published {
-				_ = os.RemoveAll(stage)
-			}
-		}()
-		if err := os.MkdirAll(filepath.Join(stage, "collection"), 0o700); err != nil {
-			return Receipt{}, fmt.Errorf("stage qmd export collection: %w", err)
-		}
-		for relative, content := range generation.documents {
-			path := filepath.Join(stage, "collection", filepath.FromSlash(relative))
-			if err := writePrivateFile(path, content); err != nil {
-				return Receipt{}, err
-			}
-		}
-		if err := writePrivateFile(filepath.Join(stage, "manifest.json"), manifestBytes); err != nil {
-			return Receipt{}, err
-		}
 		if err := os.Rename(stage, final); err != nil {
 			return Receipt{}, fmt.Errorf("publish qmd export generation: %w", err)
 		}
-		published = true
 	} else if statErr != nil {
 		return Receipt{}, fmt.Errorf("inspect qmd export generation: %w", statErr)
+	} else {
+		if err := verifyGeneration(final, manifest, manifestBytes); err != nil {
+			return Receipt{}, err
+		}
+		if err := os.RemoveAll(stage); err != nil {
+			return Receipt{}, fmt.Errorf("remove duplicate qmd export stage: %w", err)
+		}
 	}
-	if err := verifyGeneration(final, generation, manifestBytes); err != nil {
-		return Receipt{}, err
-	}
-	if err := publishCurrent(root, generation.ID); err != nil {
+	stage = ""
+	if err := publishCurrent(root, manifest.Checksum); err != nil {
 		return Receipt{}, err
 	}
 	if hooks.afterCurrent != nil {
 		hooks.afterCurrent()
 	}
-	if err := removeStaleGenerations(generations, generation.ID); err != nil {
-		return Receipt{}, err
-	}
-	return Receipt{GenerationID: generation.ID, CollectionPath: filepath.Join(final, "collection"), Manifest: generation.Manifest}, nil
+	// ponytail: retired generations accumulate; add pruning with consumer ownership.
+	return Receipt{GenerationID: manifest.Checksum, CollectionPath: filepath.Join(final, "collection"), Manifest: manifest}, nil
 }
 
-func readSource(ctx context.Context, reader BlobReader, source Source) (ret []byte, retErr error) {
+func writeSource(ctx context.Context, path string, reader BlobReader, source Source) (retErr error) {
 	stream, size, err := reader.OpenStreamContext(ctx, source.BlobSHA256)
 	if err != nil {
-		return nil, fmt.Errorf("open retained Markdown: %w", err)
+		return fmt.Errorf("open retained Markdown: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
 	if size != source.BlobSize {
-		return nil, errors.New("retained Markdown size does not match catalog")
+		return errors.New("retained Markdown size does not match catalog")
 	}
-	content, err := io.ReadAll(io.LimitReader(stream, source.BlobSize+1))
+	digest := sha256.New()
+	validated := transform.NewReader(io.LimitReader(stream, source.BlobSize+1), encoding.UTF8Validator)
+	written, err := writePrivateFile(path, io.TeeReader(validated, digest))
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, errors.New("read retained Markdown")
+		return fmt.Errorf("copy retained Markdown: %w", errors.Join(err, ctx.Err()))
 	}
-	if int64(len(content)) != source.BlobSize {
-		return nil, errors.New("retained Markdown read size does not match catalog")
+	if written != source.BlobSize {
+		return errors.New("retained Markdown read size does not match catalog")
 	}
 	if err := stream.Verify(); err != nil {
-		return nil, fmt.Errorf("verify retained Markdown: %w", err)
+		return fmt.Errorf("verify retained Markdown: %w", err)
 	}
-	digest := sha256.Sum256(content)
-	actual := hex.EncodeToString(digest[:])
-	if actual != source.BlobSHA256 || actual != source.MarkdownChecksum {
-		return nil, errors.New("retained Markdown checksum does not match catalog")
+	if hex.EncodeToString(digest.Sum(nil)) != source.BlobSHA256 {
+		return errors.New("retained Markdown checksum does not match catalog")
 	}
-	if !utf8.Valid(content) {
-		return nil, errors.New("retained Markdown is not valid UTF-8")
-	}
-	return content, nil
-}
-
-func splitFrontmatter(markdown []byte) (string, []byte) {
-	if !bytes.HasPrefix(markdown, []byte("---\n")) {
-		return "", slices.Clone(markdown)
-	}
-	rest := markdown[4:]
-	end := -1
-	delimiterSize := 0
-	for _, delimiter := range [][]byte{[]byte("\n---\n"), []byte("\n...\n")} {
-		if index := bytes.Index(rest, delimiter); index >= 0 && (end < 0 || index < end) {
-			end = index
-			delimiterSize = len(delimiter)
-		}
-	}
-	if end >= 0 {
-		return string(rest[:end]), slices.Clone(rest[end+delimiterSize:])
-	}
-	return "", slices.Clone(markdown)
+	return nil
 }
 
 func sourcePathIdentity(source Source) string {
@@ -398,21 +363,21 @@ func compareSource(a, b Source) int {
 	return strings.Compare(left, right)
 }
 
-func writePrivateFile(path string, content []byte) error {
+func writePrivateFile(path string, content io.Reader) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create qmd export directory: %w", err)
+		return 0, fmt.Errorf("create qmd export directory: %w", err)
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("create qmd export file: %w", err)
+		return 0, fmt.Errorf("create qmd export file: %w", err)
 	}
-	_, writeErr := file.Write(content)
+	written, writeErr := io.Copy(file, content)
 	syncErr := file.Sync()
 	closeErr := file.Close()
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		return fmt.Errorf("write qmd export file: %w", err)
+		return 0, fmt.Errorf("write qmd export file: %w", err)
 	}
-	return nil
+	return written, nil
 }
 
 func acquirePublishLock(ctx context.Context, root string, waiting func()) (func() error, error) {
@@ -437,7 +402,7 @@ func acquirePublishLock(ctx context.Context, root string, waiting func()) (func(
 	}
 }
 
-func verifyGeneration(root string, generation Generation, manifestBytes []byte) error {
+func verifyGeneration(root string, manifest Manifest, manifestBytes []byte) error {
 	if err := verifyDirectory(root); err != nil {
 		return fmt.Errorf("verify qmd export generation: %w", err)
 	}
@@ -445,12 +410,13 @@ func verifyGeneration(root string, generation Generation, manifestBytes []byte) 
 	if err := verifyDirectory(collection); err != nil {
 		return fmt.Errorf("verify qmd export generation: %w", err)
 	}
-	if err := verifyFile(filepath.Join(root, "manifest.json"), manifestBytes); err != nil {
+	manifestDigest := sha256.Sum256(manifestBytes)
+	if err := verifyFile(filepath.Join(root, "manifest.json"), int64(len(manifestBytes)), hex.EncodeToString(manifestDigest[:])); err != nil {
 		return fmt.Errorf("verify qmd export generation: %w", err)
 	}
-	expected := make(map[string][]byte, len(generation.documents))
-	for relative, content := range generation.documents {
-		expected[filepath.Clean(filepath.FromSlash(relative))] = content
+	expected := make(map[string]Entry, len(manifest.Entries))
+	for _, entry := range manifest.Entries {
+		expected[filepath.Clean(filepath.FromSlash(entry.RelativePath))] = entry
 	}
 	err := filepath.WalkDir(collection, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -473,7 +439,7 @@ func verifyGeneration(root string, generation Generation, manifestBytes []byte) 
 		if !exists {
 			return errors.New("collection contains an unexpected file")
 		}
-		if err := verifyFile(path, content); err != nil {
+		if err := verifyFile(path, content.BlobSize, content.ExportedMarkdownSHA256); err != nil {
 			return err
 		}
 		delete(expected, relative)
@@ -499,19 +465,25 @@ func verifyDirectory(path string) error {
 	return nil
 }
 
-func verifyFile(path string, expected []byte) error {
+func verifyFile(path string, size int64, checksum string) (retErr error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Size() != int64(len(expected)) {
+	if !info.Mode().IsRegular() || info.Size() != size {
 		return errors.New("expected a regular file with exact size")
 	}
-	content, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(content, expected) {
+	defer func() { retErr = errors.Join(retErr, file.Close()) }()
+	digest := sha256.New()
+	written, err := io.Copy(digest, io.LimitReader(file, size+1))
+	if err != nil {
+		return err
+	}
+	if written != size || hex.EncodeToString(digest.Sum(nil)) != checksum {
 		return errors.New("file bytes do not match generation identity")
 	}
 	return nil
@@ -528,33 +500,29 @@ func publishCurrent(root, generationID string) (retErr error) {
 			retErr = errors.Join(retErr, os.Remove(path))
 		}
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
 	_, writeErr := io.WriteString(temporary, generationID+"\n")
 	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
 		return fmt.Errorf("write qmd export current pointer: %w", err)
 	}
-	if err := atomicReplace(path, filepath.Join(root, "CURRENT")); err != nil {
+	if err := os.Rename(path, filepath.Join(root, "CURRENT")); err != nil {
 		return fmt.Errorf("publish qmd export current pointer: %w", err)
 	}
 	return nil
 }
 
-func removeStaleGenerations(root, current string) error {
+func removeAbandonedStages(root string) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return fmt.Errorf("list qmd export generations: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == current {
+		if !strings.HasPrefix(entry.Name(), ".stage-") {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
-			return fmt.Errorf("remove stale qmd export generation: %w", err)
+			return fmt.Errorf("remove abandoned qmd export stage: %w", err)
 		}
 	}
 	return nil

@@ -22,7 +22,7 @@ import (
 
 func TestPublishBuildsDeterministicOpaqueQMDGeneration(t *testing.T) {
 	first, firstMarkdown := source(9, "00000000-0000-4000-8000-000000000009", "# Alpha\nsearchable alpha\n")
-	second, secondMarkdown := source(2, "00000000-0000-4000-8000-000000000002", "---\nprivate_tag: hidden-taxonomy\n---\n# Beta\nsearchable beta\n")
+	second, secondMarkdown := source(2, "00000000-0000-4000-8000-000000000002", "# Beta\nsearchable beta\n")
 	reader := fakeReader{first.BlobSHA256: firstMarkdown, second.BlobSHA256: secondMarkdown}
 	root := t.TempDir()
 
@@ -55,16 +55,14 @@ func TestPublishBuildsDeterministicOpaqueQMDGeneration(t *testing.T) {
 	}
 	exported := readFile(t, filepath.Join(receipt.CollectionPath, filepath.FromSlash(strings.TrimPrefix(beta.URI, "qmd://docbank/"))))
 	assert.Equal(t, "# Beta\nsearchable beta\n", exported)
-	assert.NotContains(t, exported, "hidden-taxonomy")
-	assert.Contains(t, beta.Frontmatter, "private_tag: hidden-taxonomy")
 
-	reversed, err := Build(t.Context(), "docbank", []Source{second, first}, reader, Options{})
+	reversed, err := Publish(t.Context(), root, "docbank", []Source{second, first}, reader, Options{})
 	require.NoError(t, err)
-	assert.Equal(t, receipt.GenerationID, reversed.ID)
+	assert.Equal(t, receipt.GenerationID, reversed.GenerationID)
 	assert.Equal(t, receipt.Manifest, reversed.Manifest)
 }
 
-func TestPublishReplacesCurrentAndRemovesStaleGeneration(t *testing.T) {
+func TestPublishReplacesCurrentAndRetainsPriorGeneration(t *testing.T) {
 	root := t.TempDir()
 	first, firstMarkdown := source(1, "00000000-0000-4000-8000-000000000001", "# One\n")
 	firstReceipt, err := Publish(t.Context(), root, "docbank", []Source{first}, fakeReader{first.BlobSHA256: firstMarkdown}, Options{})
@@ -73,8 +71,7 @@ func TestPublishReplacesCurrentAndRemovesStaleGeneration(t *testing.T) {
 	secondReceipt, err := Publish(t.Context(), root, "docbank", []Source{second}, fakeReader{second.BlobSHA256: secondMarkdown}, Options{})
 	require.NoError(t, err)
 	assert.NotEqual(t, firstReceipt.GenerationID, secondReceipt.GenerationID)
-	_, err = os.Stat(filepath.Join(root, "generations", firstReceipt.GenerationID))
-	require.ErrorIs(t, err, os.ErrNotExist)
+	assert.Equal(t, string(firstMarkdown), readFile(t, filepath.Join(firstReceipt.CollectionPath, firstReceipt.Manifest.Entries[0].RelativePath)))
 	assert.Equal(t, secondReceipt.GenerationID, strings.TrimSpace(readFile(t, filepath.Join(root, "CURRENT"))))
 }
 
@@ -88,6 +85,9 @@ func TestPublishFailureKeepsPriorGenerationCurrent(t *testing.T) {
 	_, err = Publish(t.Context(), root, "docbank", []Source{invalid}, reader, Options{})
 	require.ErrorContains(t, err, "checksum")
 	assert.Equal(t, receipt.GenerationID, strings.TrimSpace(readFile(t, filepath.Join(root, "CURRENT"))))
+	stages, err := filepath.Glob(filepath.Join(root, "generations", ".stage-*"))
+	require.NoError(t, err)
+	assert.Empty(t, stages)
 }
 
 func TestPublishRejectsCorruptedExistingGeneration(t *testing.T) {
@@ -117,7 +117,7 @@ func TestPublishRejectsSymlinkedExistingCollection(t *testing.T) {
 	require.ErrorContains(t, err, "generation")
 }
 
-func TestPublishSerializesCurrentSelectionAndStaleCleanup(t *testing.T) {
+func TestPublishSerializesCurrentSelection(t *testing.T) {
 	root := t.TempDir()
 	first, firstMarkdown := source(1, "00000000-0000-4000-8000-000000000001", "# One\n")
 	second, secondMarkdown := source(2, "00000000-0000-4000-8000-000000000002", "# Two\n")
@@ -159,7 +159,7 @@ type publishResult struct {
 	err     error
 }
 
-func TestPublishEmptyActiveSetRemovesLastStaleGeneration(t *testing.T) {
+func TestPublishEmptyActiveSetRetainsPriorGeneration(t *testing.T) {
 	root := t.TempDir()
 	item, markdown := source(1, "00000000-0000-4000-8000-000000000001", "# One\n")
 	prior, err := Publish(t.Context(), root, "docbank", []Source{item}, fakeReader{item.BlobSHA256: markdown}, Options{})
@@ -170,27 +170,26 @@ func TestPublishEmptyActiveSetRemovesLastStaleGeneration(t *testing.T) {
 	assert.Empty(t, empty.Manifest.Entries)
 	assert.DirExists(t, empty.CollectionPath)
 	assert.Equal(t, empty.GenerationID, strings.TrimSpace(readFile(t, filepath.Join(root, "CURRENT"))))
-	_, err = os.Stat(filepath.Join(root, "generations", prior.GenerationID))
-	require.ErrorIs(t, err, os.ErrNotExist)
+	assert.Equal(t, string(markdown), readFile(t, filepath.Join(prior.CollectionPath, prior.Manifest.Entries[0].RelativePath)))
 }
 
-func TestBuildRejectsUnsafeCollectionAndBoundsBeforeReading(t *testing.T) {
+func TestPublishRejectsUnsafeCollectionAndBoundsBeforeReading(t *testing.T) {
 	item, markdown := source(1, "00000000-0000-4000-8000-000000000001", "# One\n")
 	reader := &countingReader{fakeReader: fakeReader{item.BlobSHA256: markdown}}
-	_, err := Build(t.Context(), "../private", []Source{item}, reader, Options{})
+	_, err := Publish(t.Context(), t.TempDir(), "../private", []Source{item}, reader, Options{})
 	require.Error(t, err)
 	assert.Zero(t, reader.opens)
-	_, err = Build(t.Context(), "docbank", []Source{item}, reader, Options{MaxDocuments: 1, MaxDocumentBytes: 2, MaxTotalBytes: 2})
+	_, err = Publish(t.Context(), t.TempDir(), "docbank", []Source{item}, reader, Options{MaxDocuments: 1, MaxDocumentBytes: 2, MaxTotalBytes: 2})
 	require.ErrorContains(t, err, "bound")
 	assert.Zero(t, reader.opens)
 
 	item.ArtifactChecksum = strings.Repeat("f", 64)
-	_, err = Build(t.Context(), "docbank", []Source{item}, reader, Options{})
+	_, err = Publish(t.Context(), t.TempDir(), "docbank", []Source{item}, reader, Options{})
 	require.ErrorContains(t, err, "authority")
 	assert.Zero(t, reader.opens)
 }
 
-func TestBuildRejectsNonUTF8Markdown(t *testing.T) {
+func TestPublishRejectsNonUTF8Markdown(t *testing.T) {
 	item, _ := source(1, "00000000-0000-4000-8000-000000000001", "placeholder")
 	content := []byte{0xff, 0xfe}
 	digest := sha256.Sum256(content)
@@ -199,37 +198,8 @@ func TestBuildRejectsNonUTF8Markdown(t *testing.T) {
 	item.MarkdownChecksum = checksum
 	item.ArtifactChecksum = checksum
 	item.BlobSize = int64(len(content))
-	_, err := Build(t.Context(), "docbank", []Source{item}, fakeReader{checksum: content}, Options{})
+	_, err := Publish(t.Context(), t.TempDir(), "docbank", []Source{item}, fakeReader{checksum: content}, Options{})
 	require.ErrorContains(t, err, "UTF-8")
-}
-
-func TestSplitFrontmatterUsesEarliestValidTerminator(t *testing.T) {
-	tests := []struct {
-		name        string
-		markdown    string
-		frontmatter string
-		body        string
-	}{
-		{
-			name:        "YAML document end precedes later fence",
-			markdown:    "---\ntitle: One\n...\nsearchable\n---\ntail\n",
-			frontmatter: "title: One",
-			body:        "searchable\n---\ntail\n",
-		},
-		{
-			name:        "closing fence precedes later YAML document end",
-			markdown:    "---\ntitle: Two\n---\nsearchable\n...\ntail\n",
-			frontmatter: "title: Two",
-			body:        "searchable\n...\ntail\n",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			frontmatter, body := splitFrontmatter([]byte(test.markdown))
-			assert.Equal(t, test.frontmatter, frontmatter)
-			assert.Equal(t, test.body, string(body))
-		})
-	}
 }
 
 type fakeReader map[string][]byte
@@ -263,7 +233,7 @@ func (reader *countingReader) OpenStreamContext(ctx context.Context, hash string
 }
 
 type verifiedReader struct {
-	*bytes.Reader
+	io.Reader
 
 	verified bool
 }
@@ -292,3 +262,72 @@ func readFile(t *testing.T, path string) string {
 }
 
 var _ io.ReadCloser = (*verifiedReader)(nil)
+
+func TestPublishStreamsIntoStageBeforeSourceEOF(t *testing.T) {
+	root := t.TempDir()
+	item, markdown := source(1, "version-1", strings.Repeat("€", 64<<10))
+	var input io.Reader = bytes.NewReader(markdown)
+	readBytes := 0
+	reader := blobReaderFunc(func(context.Context, string) (packstore.VerifiedReadCloser, int64, error) {
+		return &verifiedReader{Reader: readerFunc(func(p []byte) (int, error) {
+			if readBytes >= 32<<10 {
+				paths, err := filepath.Glob(filepath.Join(root, "generations", ".stage-*", "collection", "documents", "*", "*.md"))
+				if err != nil || len(paths) != 1 {
+					return 0, errors.New("document has not been staged while reading")
+				}
+				info, err := os.Stat(paths[0])
+				if err != nil || info.Size() == 0 {
+					return 0, errors.New("document bytes have not been staged while reading")
+				}
+			}
+			n, err := input.Read(p)
+			readBytes += n
+			return n, err
+		})}, int64(len(markdown)), nil
+	})
+	receipt, err := Publish(t.Context(), root, "docbank", []Source{item}, reader, Options{})
+	require.NoError(t, err)
+	assert.Equal(t, string(markdown), readFile(t, filepath.Join(receipt.CollectionPath, receipt.Manifest.Entries[0].RelativePath)))
+}
+
+func TestPublishPreservesReadError(t *testing.T) {
+	item, _ := source(1, "version-1", "# One\n")
+	reader := blobReaderFunc(func(context.Context, string) (packstore.VerifiedReadCloser, int64, error) {
+		return &verifiedReader{Reader: readerFunc(func([]byte) (int, error) {
+			return 0, io.ErrUnexpectedEOF
+		})}, item.BlobSize, nil
+	})
+	_, err := Publish(t.Context(), t.TempDir(), "docbank", []Source{item}, reader, Options{})
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+func TestPublishRejectsAggregateBytesBeforeReading(t *testing.T) {
+	first, markdown := source(1, "version-1", "# One\n")
+	second, _ := source(2, "version-2", string(markdown))
+	reader := &countingReader{fakeReader: fakeReader{first.BlobSHA256: markdown}}
+	_, err := Publish(t.Context(), t.TempDir(), "docbank", []Source{first, second}, reader, Options{MaxTotalBytes: first.BlobSize})
+	require.ErrorContains(t, err, "bound")
+	assert.Zero(t, reader.opens)
+}
+
+func TestPublishCleansAbandonedStage(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "generations", ".stage-abandoned")
+	require.NoError(t, os.MkdirAll(stage, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(stage, "partial.md"), []byte("partial"), 0o600))
+	item, markdown := source(1, "version-1", "# One\n")
+	_, err := Publish(t.Context(), root, "docbank", []Source{item}, fakeReader{item.BlobSHA256: markdown}, Options{})
+	require.NoError(t, err)
+	_, err = os.Stat(stage)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (read readerFunc) Read(p []byte) (int, error) { return read(p) }
+
+type blobReaderFunc func(context.Context, string) (packstore.VerifiedReadCloser, int64, error)
+
+func (read blobReaderFunc) OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error) {
+	return read(ctx, hash)
+}
