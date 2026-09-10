@@ -39,10 +39,12 @@ const (
 )
 
 var (
-	ErrForeignVault         = errors.New("processing source fence belongs to another vault")
-	ErrProfileNotConfigured = errors.New("processing profile is not configured")
-	ErrPlanChanged          = errors.New("processing plan changed after preview")
-	ErrConsentRequired      = errors.New("processing consent is required")
+	ErrForeignVault              = errors.New("processing source fence belongs to another vault")
+	ErrProfileNotConfigured      = errors.New("processing profile is not configured")
+	ErrPlanChanged               = errors.New("processing plan changed after preview")
+	ErrConsentRequired           = errors.New("processing consent is required")
+	ErrRenditionFailed           = store.ErrRenditionJobTerminal
+	ErrRenditionOperatorRequired = store.ErrRenditionJobOperatorRequired
 )
 
 type ProfileConfig struct {
@@ -491,22 +493,24 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		return renditionRun{}, err
 	}
 	for {
-		processed, err := worker.RunJob(ctx, job.ID)
+		_, err := worker.RunJob(ctx, job.ID)
+		current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID)
+		if statusErr != nil {
+			return renditionRun{}, errors.Join(err, statusErr)
+		}
+		switch current.State {
+		case store.RenditionJobQueued, store.RenditionJobRunning, store.RenditionJobRetryWait:
+		case store.RenditionJobCompleted:
+			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
+		case store.RenditionJobFailed:
+			return renditionRun{}, fmt.Errorf("%w: %s", ErrRenditionFailed, current.FailureCode)
+		case store.RenditionJobOperatorRequired:
+			return renditionRun{}, ErrRenditionOperatorRequired
+		}
 		if err != nil {
-			if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
-				current.State == store.RenditionJobCompleted {
-				return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
-			}
 			return renditionRun{}, err
 		}
-		if processed {
-			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
-		}
-		if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
-			current.State == store.RenditionJobCompleted {
-			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
-		}
-		// Shared work must finish before this caller can build its embeddings.
+		// Shared work and provider retries must finish before building embeddings.
 		if err := waitRenditionWorker(ctx, 100*time.Millisecond); err != nil {
 			return renditionRun{}, err
 		}

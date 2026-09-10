@@ -12,6 +12,8 @@ var (
 	ErrProcessingProfileUnavailable = internalprocessing.ErrProfileNotConfigured
 	ErrProcessingPlanChanged        = internalprocessing.ErrPlanChanged
 	ErrProcessingConsentRequired    = internalprocessing.ErrConsentRequired
+	ErrRenditionFailed              = internalprocessing.ErrRenditionFailed
+	ErrRenditionOperatorRequired    = internalprocessing.ErrRenditionOperatorRequired
 )
 
 func (v *Vault) PlanProcessing(ctx context.Context, request ProcessingPlanRequest) (ProcessingPlan, error) {
@@ -26,6 +28,10 @@ func (v *Vault) PlanProcessing(ctx context.Context, request ProcessingPlanReques
 	return fromProcessingPlan(plan), nil
 }
 
+// StartProcessing drives rendition work, including provider retry delays, before
+// running embeddings. Callers can bound the wait with a context deadline.
+// Terminal rendition failures match ErrRenditionFailed; ambiguous outcomes match
+// ErrRenditionOperatorRequired.
 func (v *Vault) StartProcessing(ctx context.Context, request StartProcessingRequest) (ProcessingJob, error) {
 	if err := v.begin(); err != nil {
 		return ProcessingJob{}, err

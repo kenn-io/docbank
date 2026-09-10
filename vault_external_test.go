@@ -23,6 +23,8 @@ import (
 	docbank "go.kenn.io/docbank"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func TestRootPackageConstructor(t *testing.T) {
@@ -271,6 +273,129 @@ type waitingRenditionProvider struct {
 	started, release chan struct{}
 	calls            atomic.Int32
 	filenames        []string
+}
+
+func TestEmbeddedProcessingWaitsForRenditionOutcome(t *testing.T) {
+	for _, chunks := range []bool{false, true} {
+		for _, test := range []struct {
+			name string
+			code document.RenditionErrorCode
+			want error
+		}{
+			{"retry", document.RenditionErrorRateLimited, nil},
+			{"failed", document.RenditionErrorUnsupportedInput, docbank.ErrRenditionFailed},
+			{"operator required", document.RenditionErrorAmbiguousSubmission, docbank.ErrRenditionOperatorRequired},
+		} {
+			t.Run(fmt.Sprintf("%s/chunks=%t", test.name, chunks), func(t *testing.T) {
+				plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+				require.NoError(t, err)
+				delay := time.Duration(0)
+				if test.want == nil {
+					delay = 20 * time.Millisecond
+				}
+				failure, err := document.NewRenditionProviderError(test.code, delay, nil)
+				require.NoError(t, err)
+				provider := &outcomeRenditionProvider{RenditionProvider: plain, failure: failure}
+				embedding := newSyntheticEmbeddingProvider(t)
+				config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}
+				if chunks {
+					config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"chunks": embedding}
+					config.Tokenizers = map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}
+				}
+				vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+					Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
+				require.NoError(t, err)
+				request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+				plan, err := vault.PlanProcessing(t.Context(), request)
+				require.NoError(t, err)
+				start := docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
+				job, err := vault.StartProcessing(t.Context(), start)
+				if test.want != nil {
+					require.ErrorIs(t, err, test.want)
+					require.Zero(t, embedding.calls.Load())
+					_, err = vault.StartProcessing(t.Context(), start)
+					require.ErrorIs(t, err, test.want)
+					require.Equal(t, int32(1), provider.calls.Load(), "terminal work must not be retried")
+					return
+				}
+				require.NoError(t, err)
+				status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+				require.NoError(t, err)
+				require.Equal(t, "completed", status.State)
+				require.Equal(t, int32(2), provider.calls.Load())
+				if chunks {
+					require.Len(t, job.EmbeddingJobIDs, 1)
+					require.Equal(t, 1, status.CompletedBindings)
+					require.Equal(t, int32(1), embedding.calls.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestEmbeddedProcessingCancelsRenditionBackoff(t *testing.T) {
+	plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	failure, err := document.NewRenditionProviderError(document.RenditionErrorRateLimited, 10*time.Minute, nil)
+	require.NoError(t, err)
+	provider := &outcomeRenditionProvider{RenditionProvider: plain, failure: failure}
+	embedding := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, provider.Descriptor())
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+	root := t.TempDir()
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{"test": {Profile: profile, RenditionProvider: provider,
+			EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedding},
+			Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}}}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+	plan, err := vault.PlanProcessing(t.Context(), request)
+	require.NoError(t, err)
+	// Observe the committed retry state before canceling, without timing the provider.
+	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		defer close(done)
+		_, runErr = vault.StartProcessing(ctx, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	require.Eventually(t, func() bool {
+		var state string
+		return db.QueryRowContext(t.Context(), "SELECT state FROM rendition_jobs").Scan(&state) == nil && state == "retry_wait"
+	}, 10*time.Second, 10*time.Millisecond)
+	cancel()
+	<-done
+	require.ErrorIs(t, runErr, context.Canceled)
+	require.Equal(t, int32(1), provider.calls.Load(), "cancellation must not bypass the retry delay")
+	require.Zero(t, embedding.calls.Load())
+}
+
+type outcomeRenditionProvider struct {
+	document.RenditionProvider
+
+	failure error
+	calls   atomic.Int32
+}
+
+func (provider *outcomeRenditionProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
+	authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	if provider.calls.Add(1) == 1 {
+		return document.RenditionResult{}, provider.failure
+	}
+	return provider.RenditionProvider.Render(ctx, upload, authorization)
 }
 
 func (provider *waitingRenditionProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
