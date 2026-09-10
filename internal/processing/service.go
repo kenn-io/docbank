@@ -440,6 +440,22 @@ func (service *Service) profileByFingerprint(fingerprint string) (configuredProf
 	return configuredProfile{}, false
 }
 
+func (service *Service) EmbeddingVectorSpaces() map[string]store.EmbeddingVectorSpaceRecord {
+	spaces := make(map[string]store.EmbeddingVectorSpaceRecord)
+	for _, profile := range service.profiles {
+		_, fingerprints, err := document.CanonicalProfile(profile.portable)
+		if err != nil {
+			continue
+		}
+		for _, binding := range profile.portable.Embeddings {
+			descriptor := profile.embedders[binding.Name].Descriptor()
+			spaces[fingerprints.VectorSpace[binding.Name]] = embeddingVectorSpaceRecord(descriptor,
+				fingerprints.VectorSpace[binding.Name])
+		}
+	}
+	return spaces
+}
+
 func (service *Service) RenditionChunkGenerationHook() func(context.Context,
 	store.RenditionChunkGenerationRequest,
 ) (store.EmbeddingInputGenerationRecord, error) {
@@ -1311,6 +1327,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
 		MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
 		DescriptorFingerprints: service.embeddings.Fingerprints(),
+		VectorSpaces:           service.EmbeddingVectorSpaces(),
 		GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
 	})
 	if err != nil {
@@ -1399,27 +1416,48 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		profiles = []configuredProfile{profile}
 	}
 
-	embeddingWorker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
-		Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
-		GenerationBlobs: service.blobs, Runtime: service.embeddings, Gate: service.gate,
-		Owner: "embedded-embedding-resume", LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond,
-		RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
-		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
-		MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
-		DescriptorFingerprints: service.embeddings.Fingerprints(),
-		GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
-	})
-	if err != nil {
-		return ResumeReport{}, err
+	profileFingerprint := ""
+	if profileName != "" {
+		profileFingerprint = profiles[0].record.Fingerprint
+	}
+	descriptorFingerprints := make([]string, 0)
+	for _, profile := range profiles {
+		for _, binding := range profile.portable.Embeddings {
+			descriptorFingerprints = append(descriptorFingerprints,
+				profile.embedders[binding.Name].Descriptor().Fingerprint)
+		}
+	}
+	slices.Sort(descriptorFingerprints)
+	descriptorFingerprints = slices.Compact(descriptorFingerprints)
+	var embeddingWorker *EmbeddingWorker
+	if len(descriptorFingerprints) != 0 {
+		var err error
+		embeddingWorker, err = NewEmbeddingWorker(EmbeddingWorkerConfig{
+			Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
+			GenerationBlobs: service.blobs, Runtime: service.embeddings, Gate: service.gate,
+			Owner: "embedded-embedding-resume", LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond,
+			RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
+			AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
+			MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
+			DescriptorFingerprints: descriptorFingerprints, ProfileFingerprint: profileFingerprint,
+			VectorSpaces: service.EmbeddingVectorSpaces(),
+			MaxJobs:      maxJobs, GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
+		})
+		if err != nil {
+			return ResumeReport{}, err
+		}
 	}
 	renditionWorker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: service.catalog, Blobs: service.blobs, Runtime: service.renditions,
 		Gate: service.gate, Owner: "embedded-rendition-resume", LeaseDuration: 5 * time.Minute,
 		IdleDelay: time.Millisecond, Clock: service.clock,
-		Continuation: embeddingWorker.ContinueRenditionTargets,
+		ProfileFingerprint: profileFingerprint,
 	})
 	if err != nil {
 		return ResumeReport{}, err
+	}
+	if embeddingWorker != nil {
+		renditionWorker.continuation = embeddingWorker.ContinueRenditionTargets
 	}
 	result := ResumeReport{}
 	for result.RenditionsProcessed < maxJobs {
@@ -1432,28 +1470,50 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		}
 		result.RenditionsProcessed++
 	}
-	result.EmbeddingsAdmitted += embeddingWorker.lastReconcile.Enqueued
-	processed, err := embeddingWorker.ScanOnce(ctx)
+	if embeddingWorker != nil {
+		budget := maxJobs - result.RenditionsProcessed
+		if budget > 0 {
+			embeddingWorker.maxJobs = budget
+			for {
+				before, beforeRendition, _ := embeddingWorker.reconcileProgress()
+				processed, scanErr := embeddingWorker.ScanOnce(ctx)
+				if scanErr != nil {
+					return result, scanErr
+				}
+				result.EmbeddingsProcessed += processed
+				if result.EmbeddingsProcessed >= budget {
+					break
+				}
+				after, afterRendition, _ := embeddingWorker.reconcileProgress()
+				if processed == 0 && before == after && beforeRendition == afterRendition {
+					break
+				}
+			}
+		}
+		_, _, result.EmbeddingsAdmitted = embeddingWorker.reconcileProgress()
+	}
+	var spaces []string
+	if profileFingerprint == "" {
+		spaces, err = service.catalog.ListVectorIndexSpaces(ctx)
+	} else {
+		spaces, err = service.catalog.ListVectorIndexSpacesForProfile(ctx, profileFingerprint)
+	}
 	if err != nil {
 		return result, err
 	}
-	result.EmbeddingsAdmitted += embeddingWorker.lastReconcile.Enqueued
-	result.EmbeddingsProcessed = processed
-	spaces := make([]string, 0, len(embeddingWorker.completedVectorSpaces))
-	for space := range embeddingWorker.completedVectorSpaces {
-		spaces = append(spaces, space)
-	}
-	indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
-		Gate: service.gate, Owner: "embedded-index-resume", BuildLease: 5 * time.Minute,
-		ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
-	if err != nil {
-		return result, err
-	}
-	for _, space := range sortedUnique(spaces) {
-		if _, err := indexer.Rebuild(ctx, space); err != nil {
+	if len(spaces) != 0 {
+		indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
+			Gate: service.gate, Owner: "embedded-index-resume", BuildLease: 5 * time.Minute,
+			ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
+		if err != nil {
 			return result, err
 		}
-		result.IndexesRebuilt++
+		for _, space := range sortedUnique(spaces) {
+			if _, err := indexer.Rebuild(ctx, space); err != nil {
+				return result, err
+			}
+			result.IndexesRebuilt++
+		}
 	}
 	for _, profile := range profiles {
 		pending, err := service.catalog.PendingRenditionJobs(ctx, profile.record.Fingerprint)

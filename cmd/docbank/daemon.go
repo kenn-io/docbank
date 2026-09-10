@@ -226,6 +226,7 @@ func runServe(ctx context.Context) (retErr error) {
 				AttemptLifetime: 30 * time.Minute, MaxRows: 100_000,
 				MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
 				DescriptorFingerprints: embeddingRuntimeRegistry.Fingerprints(),
+				VectorSpaces:           processingService.EmbeddingVectorSpaces(),
 				GenerateRenditionChunk: processingService.RenditionChunkGenerationHook(),
 			})
 			if workerErr != nil {

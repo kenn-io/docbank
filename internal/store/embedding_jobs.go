@@ -265,6 +265,21 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 }
 
 func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
+	return s.claimNextEmbeddingWork(ctx, owner, "", at, lease)
+}
+
+func (s *Store) ClaimNextEmbeddingWorkForProfile(ctx context.Context, owner, profileFingerprint string,
+	at time.Time, lease time.Duration,
+) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
+	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
+		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, err
+	}
+	return s.claimNextEmbeddingWork(ctx, owner, profileFingerprint, at, lease)
+}
+
+func (s *Store) claimNextEmbeddingWork(ctx context.Context, owner, profileFingerprint string,
+	at time.Time, lease time.Duration,
+) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
 	if !validRenditionWorkerOwner(owner) || at.IsZero() || lease <= 0 {
 		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, errors.New("embedding claim is invalid")
 	}
@@ -273,7 +288,7 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
 	found := false
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var jobID string
-		err := tx.QueryRowContext(ctx, `SELECT j.job_id FROM embedding_jobs j
+		query := `SELECT j.job_id FROM embedding_jobs j
 			WHERE j.state IN ('queued','retry_wait','running') AND j.available_at<=?
 			  AND NOT EXISTS(SELECT 1 FROM embedding_heads h
 			    JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
@@ -281,8 +296,14 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
 			      AND h.input_kind=j.input_kind AND s.profile_fingerprint=j.profile_fingerprint
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
-			    AND r.active=1 AND r.expires_at>?)
-			ORDER BY j.available_at,j.job_id LIMIT 1`, at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout)).Scan(&jobID)
+			    AND r.active=1 AND r.expires_at>? )`
+		args := []any{at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout)}
+		if profileFingerprint != "" {
+			query += ` AND j.profile_fingerprint=?`
+			args = append(args, profileFingerprint)
+		}
+		query += ` ORDER BY j.available_at,j.job_id LIMIT 1`
+		err := tx.QueryRowContext(ctx, query, args...).Scan(&jobID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}

@@ -49,6 +49,11 @@ type embeddingWorkerCatalog interface {
 	FailEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, code store.EmbeddingFailureCode, receipt EmbeddingAttemptReceipt, at time.Time) error
 }
 
+type profileEmbeddingWorkerCatalog interface {
+	ClaimNextEmbeddingWorkForProfile(ctx context.Context, owner, profileFingerprint string,
+		at time.Time, lease time.Duration) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
+}
+
 type targetedEmbeddingWorkerCatalog interface {
 	ClaimEmbeddingWork(ctx context.Context, jobID, owner string, at time.Time,
 		lease time.Duration) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
@@ -198,6 +203,9 @@ type EmbeddingWorkerConfig struct {
 	Clock                  func() time.Time
 	Wait                   func(context.Context, time.Duration) error
 	DescriptorFingerprints []string
+	ProfileFingerprint     string
+	MaxJobs                int
+	VectorSpaces           map[string]store.EmbeddingVectorSpaceRecord
 	GenerateRenditionChunk func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 }
 
@@ -218,11 +226,16 @@ type EmbeddingWorker struct {
 	clock                                          func() time.Time
 	wait                                           func(context.Context, time.Duration) error
 	descriptorFingerprints                         []string
+	profileFingerprint                             string
+	maxJobs                                        int
+	vectorSpaces                                   map[string]store.EmbeddingVectorSpaceRecord
 	reconcileAfter                                 string
 	reconcileRenditionAfter                        string
 	generateRenditionChunk                         func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 	lastReconcile                                  store.EmbeddingReconcileResult
 	completedVectorSpaces                          map[string]struct{}
+	stateMu                                        sync.Mutex
+	reconcileEnqueued                              int
 }
 
 func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) {
@@ -251,6 +264,14 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 	if len(config.DescriptorFingerprints) == 0 {
 		return nil, errors.New("embedding worker requires executable descriptor fingerprints")
 	}
+	if config.ProfileFingerprint != "" {
+		if err := validateWorkerFingerprint(config.ProfileFingerprint); err != nil {
+			return nil, err
+		}
+	}
+	if config.MaxJobs < 0 {
+		return nil, errors.New("embedding worker job limit must not be negative")
+	}
 	if config.Clock == nil {
 		config.Clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -266,6 +287,8 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		maxRows: config.MaxRows, maxDimensions: config.MaxDimensions,
 		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait,
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
+		profileFingerprint:     config.ProfileFingerprint, maxJobs: config.MaxJobs,
+		vectorSpaces:           cloneVectorSpaces(config.VectorSpaces),
 		generateRenditionChunk: config.GenerateRenditionChunk,
 		completedVectorSpaces:  make(map[string]struct{}),
 	}, nil
@@ -304,10 +327,13 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		found := false
 		if err := worker.gate.MutateContext(ctx, func() error {
 			if !reconciled {
+				after, afterRendition := worker.reconciliationCursors()
 				result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-					After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
+					After: after, Limit: 100, At: worker.clock().UTC(),
+					ProfileFingerprint:       worker.profileFingerprint,
 					DescriptorFingerprints:   worker.descriptorFingerprints,
-					AfterRenditionAttachment: worker.reconcileRenditionAfter,
+					VectorSpaces:             worker.vectorSpaces,
+					AfterRenditionAttachment: afterRendition,
 					GenerateRenditionChunk:   worker.generateRenditionChunk,
 					HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 						return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
@@ -316,13 +342,13 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				if err != nil {
 					return ErrEmbeddingPersistence
 				}
-				worker.lastReconcile = result
-				worker.reconcileAfter = result.Next
-				worker.reconcileRenditionAfter = result.NextRenditionAttachment
+				worker.recordReconcile(result, true)
 				reconciled = true
 			}
-			claim, work, claimed, err := worker.catalog.ClaimNextEmbeddingWork(
-				ctx, worker.owner, worker.clock().UTC(), worker.leaseDuration)
+			if worker.maxJobs > 0 && processed >= worker.maxJobs {
+				return nil
+			}
+			claim, work, claimed, err := worker.claimNextEmbeddingWork(ctx)
 			if err != nil {
 				return ErrEmbeddingPersistence
 			}
@@ -331,10 +357,15 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				return nil
 			}
 			processed++
-			if err := worker.processClaim(ctx, claim, work); err != nil {
+			completed, err := worker.processClaim(ctx, claim, work)
+			if err != nil {
 				return err
 			}
-			worker.completedVectorSpaces[work.VectorSpaceID] = struct{}{}
+			if completed {
+				worker.stateMu.Lock()
+				worker.completedVectorSpaces[work.VectorSpaceID] = struct{}{}
+				worker.stateMu.Unlock()
+			}
 			return nil
 		}); err != nil {
 			if ctx.Err() != nil {
@@ -349,6 +380,73 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			return processed, nil
 		}
 	}
+}
+
+func (worker *EmbeddingWorker) claimNextEmbeddingWork(ctx context.Context) (EmbeddingWorkClaim, EmbeddingWork, bool, error) {
+	at := worker.clock().UTC()
+	if worker.profileFingerprint != "" {
+		catalog, ok := worker.catalog.(profileEmbeddingWorkerCatalog)
+		if !ok {
+			return EmbeddingWorkClaim{}, EmbeddingWork{}, false, errors.New("embedding catalog does not support profile claims")
+		}
+		return catalog.ClaimNextEmbeddingWorkForProfile(ctx, worker.owner, worker.profileFingerprint,
+			at, worker.leaseDuration)
+	}
+	return worker.catalog.ClaimNextEmbeddingWork(ctx, worker.owner, at, worker.leaseDuration)
+}
+
+func cloneVectorSpaces(spaces map[string]store.EmbeddingVectorSpaceRecord) map[string]store.EmbeddingVectorSpaceRecord {
+	if len(spaces) == 0 {
+		return nil
+	}
+	clone := make(map[string]store.EmbeddingVectorSpaceRecord, len(spaces))
+	for id, space := range spaces {
+		clone[id] = space
+	}
+	return clone
+}
+
+func (worker *EmbeddingWorker) reconciliationCursors() (string, string) {
+	worker.stateMu.Lock()
+	defer worker.stateMu.Unlock()
+	return worker.reconcileAfter, worker.reconcileRenditionAfter
+}
+
+func (worker *EmbeddingWorker) recordReconcile(result store.EmbeddingReconcileResult, advance bool) {
+	worker.stateMu.Lock()
+	defer worker.stateMu.Unlock()
+	worker.lastReconcile = result
+	worker.reconcileEnqueued += result.Enqueued
+	if advance {
+		worker.reconcileAfter = result.Next
+		worker.reconcileRenditionAfter = result.NextRenditionAttachment
+	}
+}
+
+func (worker *EmbeddingWorker) reconcileProgress() (string, string, int) {
+	worker.stateMu.Lock()
+	defer worker.stateMu.Unlock()
+	return worker.reconcileAfter, worker.reconcileRenditionAfter, worker.reconcileEnqueued
+}
+
+func (worker *EmbeddingWorker) completedSpaces() []string {
+	worker.stateMu.Lock()
+	defer worker.stateMu.Unlock()
+	spaces := make([]string, 0, len(worker.completedVectorSpaces))
+	for space := range worker.completedVectorSpaces {
+		spaces = append(spaces, space)
+	}
+	return spaces
+}
+
+func validateWorkerFingerprint(value string) error {
+	if len(value) != sha256.Size*2 {
+		return errors.New("embedding worker profile fingerprint is invalid")
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return errors.New("embedding worker profile fingerprint is invalid")
+	}
+	return nil
 }
 
 func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
@@ -366,8 +464,10 @@ func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
 	}
 	return worker.gate.MutateContext(ctx, func() error {
 		result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-			After: worker.reconcileAfter, Limit: 1000, At: worker.clock().UTC(),
+			After: "", Limit: 1000, At: worker.clock().UTC(),
+			ProfileFingerprint:     worker.profileFingerprint,
 			DescriptorFingerprints: worker.descriptorFingerprints,
+			VectorSpaces:           worker.vectorSpaces,
 			RenditionAttachments:   attachments,
 			GenerateRenditionChunk: worker.generateRenditionChunk,
 			HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
@@ -380,7 +480,7 @@ func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
 			}
 			return ErrEmbeddingPersistence
 		}
-		worker.lastReconcile = result
+		worker.recordReconcile(result, false)
 		return nil
 	})
 }
@@ -403,7 +503,8 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 			return claimErr
 		}
 		processed = true
-		return worker.processClaim(ctx, claim, work)
+		_, processErr := worker.processClaim(ctx, claim, work)
+		return processErr
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -416,7 +517,7 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 	return processed, err
 }
 
-func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (retErr error) {
+func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (completed bool, retErr error) {
 	started := worker.clock().UTC()
 	attemptCtx, cancelAttempt := context.WithTimeout(ctx, worker.attemptLifetime)
 	defer cancelAttempt()
@@ -426,40 +527,40 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	leaseCtx, stopLease := worker.keepEmbeddingLease(attemptCtx, claim)
 	defer func() { retErr = errors.Join(retErr, stopLease()) }()
 	if err := validateEmbeddingWork(work, worker.maxRows, worker.maxDimensions); err != nil {
-		return worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
+		return false, worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
 	}
 
 	materializedGeneration := work.InputGeneration
 	result, authorization, code, err := worker.executeBatches(leaseCtx, claim, work, &materializedGeneration, &receipt, started)
 	if err != nil {
 		if leaseCtx.Err() != nil {
-			return fmt.Errorf("embedding provider work canceled: %w", context.Cause(leaseCtx))
+			return false, fmt.Errorf("embedding provider work canceled: %w", context.Cause(leaseCtx))
 		}
-		return worker.failClaim(leaseCtx, claim, work, code, &receipt, started)
+		return false, worker.failClaim(leaseCtx, claim, work, code, &receipt, started)
 	}
 	if err := worker.catalog.ValidateEmbeddingWork(leaseCtx, claim, work, worker.clock().UTC()); err != nil {
 		if isEmbeddingWorkFence(err) {
-			return ErrEmbeddingWorkFenced
+			return false, ErrEmbeddingWorkFenced
 		}
-		return worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
+		return false, worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
 	}
 	work.InputGeneration = materializedGeneration
 	record, payload, err := buildEmbeddingSet(work, result, worker.clock().UTC())
 	if err != nil || int64(len(payload)) > worker.maxVectorBlobBytes {
-		return worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureInvalidResponse, &receipt, started)
+		return false, worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureInvalidResponse, &receipt, started)
 	}
 	err = worker.persistEmbeddingSet(leaseCtx, claim, record, payload)
 	if err != nil {
 		if isEmbeddingWorkFence(err) {
-			return ErrEmbeddingWorkFenced
+			return false, ErrEmbeddingWorkFenced
 		}
 		if leaseCtx.Err() != nil {
-			return fmt.Errorf("embedding persistence canceled: %w", context.Cause(leaseCtx))
+			return false, fmt.Errorf("embedding persistence canceled: %w", context.Cause(leaseCtx))
 		}
 		if errors.Is(err, errEmbeddingReceiptMismatch) {
-			return worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureInvalidResponse, &receipt, started)
+			return false, worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureInvalidResponse, &receipt, started)
 		}
-		return ErrEmbeddingPersistence
+		return false, ErrEmbeddingPersistence
 	}
 	head := store.EmbeddingHeadRecord{Key: store.EmbeddingHeadKey{ContentVersionID: work.ContentVersionID,
 		BindingID: work.Binding.Name, InputKind: work.Binding.InputKind}, SetID: record.ID,
@@ -468,18 +569,18 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	if _, err := worker.authority.PublishEmbeddingHeadWithLease(leaseCtx, head, work.Consent,
 		authorization, claim.AttemptID, claim.Epoch, worker.clock().UTC()); err != nil {
 		if isEmbeddingWorkFence(err) {
-			return ErrEmbeddingWorkFenced
+			return false, ErrEmbeddingWorkFenced
 		}
-		return worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
+		return false, worker.failClaim(leaseCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
 	}
 	receipt.Elapsed = worker.clock().UTC().Sub(started)
 	if err := worker.catalog.FinishEmbeddingWork(leaseCtx, claim, receipt, worker.clock().UTC()); err != nil {
 		if isEmbeddingWorkFence(err) {
-			return ErrEmbeddingWorkFenced
+			return false, ErrEmbeddingWorkFenced
 		}
-		return ErrEmbeddingPersistence
+		return false, ErrEmbeddingPersistence
 	}
-	return nil
+	return true, nil
 }
 
 func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork,

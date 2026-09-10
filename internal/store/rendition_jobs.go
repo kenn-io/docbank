@@ -567,12 +567,39 @@ func (s *Store) ClaimRenditionJob(
 func (s *Store) ClaimNextRenditionJob(
 	ctx context.Context, owner string, at time.Time, lease time.Duration,
 ) (RenditionJobClaim, bool, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return s.claimNextRenditionJob(ctx, owner, "", at, lease)
+}
+
+func (s *Store) ClaimNextRenditionJobForProfile(ctx context.Context, owner, profileFingerprint string,
+	at time.Time, lease time.Duration,
+) (RenditionJobClaim, bool, error) {
+	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
+		return RenditionJobClaim{}, false, err
+	}
+	return s.claimNextRenditionJob(ctx, owner, profileFingerprint, at, lease)
+}
+
+func (s *Store) claimNextRenditionJob(ctx context.Context, owner, profileFingerprint string,
+	at time.Time, lease time.Duration,
+) (RenditionJobClaim, bool, error) {
+	query := `
 		SELECT job_id FROM rendition_jobs
 		WHERE (state IN ('queued','retry_wait') AND available_at<=?)
 		   OR (state='running' AND lease_expires_at<=?)
-		ORDER BY available_at,job_id LIMIT 64`,
-		at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout))
+		`
+	args := []any{at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout)}
+	if profileFingerprint != "" {
+		query = `
+		SELECT job_id FROM rendition_jobs
+		WHERE ((state IN ('queued','retry_wait') AND available_at<=?)
+		   OR (state='running' AND lease_expires_at<=?))
+		  AND EXISTS(SELECT 1 FROM rendition_job_waiters w
+		    WHERE w.job_id=rendition_jobs.job_id AND w.profile_fingerprint=?)
+		`
+		args = append(args, profileFingerprint)
+	}
+	query += ` ORDER BY available_at,job_id LIMIT 64`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return RenditionJobClaim{}, false, fmt.Errorf("listing claimable rendition jobs: %w", err)
 	}

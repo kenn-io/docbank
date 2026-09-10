@@ -15,10 +15,13 @@ import (
 // EmbeddingReconcileRequest bounds one durable discovery page. Descriptor
 // fingerprints are process-local executable authority, never catalog intent.
 type EmbeddingReconcileRequest struct {
-	After                    string
-	Limit                    int
-	At                       time.Time
-	DescriptorFingerprints   []string
+	After                  string
+	Limit                  int
+	At                     time.Time
+	ProfileFingerprint     string
+	DescriptorFingerprints []string
+	// VectorSpaces carries exact runtime descriptor authority for a missing E1 record.
+	VectorSpaces             map[string]EmbeddingVectorSpaceRecord
 	HydrateGeneration        func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
 	AfterRenditionAttachment string
 	RenditionAttachments     []string
@@ -77,6 +80,11 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if request.Limit < 1 || request.Limit > 1000 || request.At.IsZero() || len(request.DescriptorFingerprints) == 0 {
 		return EmbeddingReconcileResult{}, errors.New("embedding reconciliation request is invalid")
 	}
+	if request.ProfileFingerprint != "" {
+		if err := validateCatalogSHA256(request.ProfileFingerprint, "processing profile fingerprint"); err != nil {
+			return EmbeddingReconcileResult{}, err
+		}
+	}
 	executable := make(map[string]struct{}, len(request.DescriptorFingerprints))
 	for _, fingerprint := range request.DescriptorFingerprints {
 		if err := validateCatalogSHA256(fingerprint, "embedding runtime descriptor fingerprint"); err != nil {
@@ -87,11 +95,19 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	var generationIDs []string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		generationIDs, err = stringColumnTx(ctx, tx, "embedding reconciliation generations", `
+		query := `
 			SELECT g.generation_id FROM embedding_input_generations g
 			JOIN content_versions v ON v.version_id=g.source_version_id
 			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-			WHERE g.generation_id>? ORDER BY g.generation_id LIMIT ?`, request.After, request.Limit+1)
+			WHERE g.generation_id>?`
+		args := []any{request.After}
+		if request.ProfileFingerprint != "" {
+			query += ` AND g.profile_fingerprint=?`
+			args = append(args, request.ProfileFingerprint)
+		}
+		query += ` ORDER BY g.generation_id LIMIT ?`
+		args = append(args, request.Limit+1)
+		generationIDs, err = stringColumnTx(ctx, tx, "embedding reconciliation generations", query, args...)
 		return err
 	})
 	if err != nil {
@@ -127,7 +143,18 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				}
 				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
 				if errors.Is(err, ErrNotFound) {
-					continue
+					var found bool
+					space, found = request.VectorSpaces[fingerprints.VectorSpace[binding.Name]]
+					if !found {
+						return errors.New("embedding reconciliation requires the exact vector-space authority")
+					}
+					if err := validateEmbeddingVectorSpace(space); err != nil {
+						return err
+					}
+					if err := insertVectorSpaceTx(ctx, tx, space); err != nil {
+						return err
+					}
+					err = nil
 				}
 				if err != nil {
 					return err
@@ -253,8 +280,16 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				AND n.kind='file' AND n.trashed_at IS NULL`
 		args := make([]any, 0, len(request.RenditionAttachments)+2)
 		paged := len(request.RenditionAttachments) == 0
+		where := " WHERE "
+		if request.ProfileFingerprint != "" {
+			where += "rh.profile_fingerprint=?"
+			args = append(args, request.ProfileFingerprint)
+		}
 		if paged {
-			query += ` WHERE rh.attachment_id>? ORDER BY rh.attachment_id LIMIT ?`
+			if request.ProfileFingerprint != "" {
+				where += " AND "
+			}
+			where += "rh.attachment_id>?"
 			args = append(args, request.AfterRenditionAttachment, request.Limit+1)
 		} else {
 			placeholders := make([]string, len(request.RenditionAttachments))
@@ -262,7 +297,14 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				placeholders[index] = "?"
 				args = append(args, attachmentID)
 			}
-			query += ` WHERE rh.attachment_id IN (` + strings.Join(placeholders, ",") + `) ORDER BY rh.attachment_id`
+			if request.ProfileFingerprint != "" {
+				where += " AND "
+			}
+			where += `rh.attachment_id IN (` + strings.Join(placeholders, ",") + `)`
+		}
+		query += where + ` ORDER BY rh.attachment_id`
+		if paged {
+			query += ` LIMIT ?`
 		}
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -304,7 +346,18 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				}
 				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
 				if errors.Is(err, ErrNotFound) {
-					continue
+					var found bool
+					space, found = request.VectorSpaces[fingerprints.VectorSpace[binding.Name]]
+					if !found {
+						return errors.New("embedding reconciliation requires the exact vector-space authority")
+					}
+					if err := validateEmbeddingVectorSpace(space); err != nil {
+						return err
+					}
+					if err := insertVectorSpaceTx(ctx, tx, space); err != nil {
+						return err
+					}
+					err = nil
 				}
 				if err != nil {
 					return err
@@ -314,10 +367,13 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 					continue
 				}
 				var jobExists bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs
-					WHERE vault_uid=? AND content_version_id=? AND profile_fingerprint=?
-					AND binding_id=? AND input_kind=?)`, s.vaultID, versionID, profileFingerprint,
-					binding.Name, binding.InputKind).Scan(&jobExists); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs j
+					JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+					WHERE j.vault_uid=? AND j.content_version_id=? AND j.profile_fingerprint=?
+					AND j.binding_id=? AND j.input_kind=? AND j.vector_space_id=?
+					AND g.source_version_id=? AND g.profile_fingerprint=? AND g.attachment_id=?)`,
+					s.vaultID, versionID, profileFingerprint, binding.Name, binding.InputKind,
+					space.ID, versionID, profileFingerprint, attachmentID).Scan(&jobExists); err != nil {
 					return err
 				}
 				if jobExists {

@@ -220,6 +220,27 @@ func (s *Store) ListVectorIndexSpaces(ctx context.Context) (_ []string, retErr e
 	return spaces, rows.Err()
 }
 
+func (s *Store) ListVectorIndexSpacesForProfile(ctx context.Context, profileFingerprint string) (_ []string, retErr error) {
+	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT vector_space_id FROM embedding_heads
+		WHERE profile_fingerprint=? ORDER BY vector_space_id`, profileFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	var spaces []string
+	for rows.Next() {
+		var space string
+		if err := rows.Scan(&space); err != nil {
+			return nil, err
+		}
+		spaces = append(spaces, space)
+	}
+	return spaces, rows.Err()
+}
+
 func (s *Store) ClaimVectorIndexBuild(ctx context.Context, vectorSpaceID, sourceChecksum,
 	owner string, at time.Time, lease time.Duration,
 ) (VectorIndexBuildClaim, bool, error) {
