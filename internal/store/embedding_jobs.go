@@ -225,6 +225,7 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 	return status, nil
 }
 
+// EmbeddingJobsForVersionProfile excludes chunk jobs for superseded renditions.
 func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	profileFingerprint string,
 ) ([]EmbeddingJobStatus, error) {
@@ -238,8 +239,13 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code
-		FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? ORDER BY binding_id,job_id`,
+	rows, err := s.db.QueryContext(ctx, `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code
+		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+		WHERE j.content_version_id=? AND j.profile_fingerprint=?
+		AND (j.input_kind='original_file' OR EXISTS (
+			SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
+			AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id
+		)) ORDER BY j.binding_id,j.job_id`,
 		versionID, profileFingerprint)
 	if err != nil {
 		return nil, err

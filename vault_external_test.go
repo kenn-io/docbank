@@ -1319,3 +1319,59 @@ func TestEmbeddedProcessingRejectsMismatchedProviderBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddedProcessingStatusExcludesHistoricalChunkJobs(t *testing.T) {
+	for _, initialFailure := range []bool{false, true} {
+		t.Run(strconv.FormatBool(initialFailure), func(t *testing.T) {
+			rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+			require.NoError(t, err)
+			embedding := newSyntheticEmbeddingProvider(t)
+			if initialFailure {
+				embedding.failure = errors.New("synthetic permanent provider failure")
+			}
+			profile := embeddedProcessingProfile(t, rendition.Descriptor())
+			profile.Rendition.DiscloseFilename = true
+			profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+				"test": {Profile: profile, RenditionProvider: rendition, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedding}, Tokenizers: map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}, EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{"chunks": func(error) (docbank.EmbeddingFailureClass, time.Duration) {
+					return docbank.EmbeddingFailurePermanent, 0
+				}}},
+			}}})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			receipt, err := vault.Put(t.Context(), "/before.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+			plan, err := vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			first, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NoError(t, err)
+			before, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: first.ID})
+			require.NoError(t, err)
+			if initialFailure {
+				require.Equal(t, "failed", before.State)
+			} else {
+				require.Equal(t, "completed", before.State)
+			}
+			renamed, err := vault.MovePath(t.Context(), "/before.txt", "/after.txt", docbank.RevisionOptions{})
+			require.NoError(t, err)
+			require.Equal(t, receipt.Version.ID, renamed.Node.CurrentVersionID)
+			embedding.failure = nil
+			plan, err = vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			second, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NoError(t, err)
+			after, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: second.ID})
+			require.NoError(t, err)
+			require.NotEqual(t, first.RenditionJobID, second.RenditionJobID)
+			require.NotEqual(t, first.EmbeddingJobIDs, second.EmbeddingJobIDs)
+			report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "test", BindingID: "chunks", Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}})
+			require.NoError(t, err)
+			require.Len(t, report.Results, 1, "the current embedding is published and searchable")
+			require.Equal(t, second.EmbeddingJobIDs, after.EmbeddingJobIDs)
+			require.Equal(t, "completed", after.State)
+			require.Equal(t, 1, after.CompletedBindings)
+			require.Empty(t, after.FailureCode)
+		})
+	}
+}
