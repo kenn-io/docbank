@@ -1035,6 +1035,13 @@ func loadProcessingProfile(ctx context.Context, tx metadataQuerier, fingerprint 
 	return record, nil
 }
 
+func (s *Store) ProcessingProfileByFingerprint(ctx context.Context, fingerprint string) (ProcessingProfileRecord, error) {
+	if err := validateCatalogSHA256(fingerprint, "processing profile fingerprint"); err != nil {
+		return ProcessingProfileRecord{}, ErrNotFound
+	}
+	return loadProcessingProfile(ctx, s.db, fingerprint)
+}
+
 func loadRenditionAttachment(ctx context.Context, tx metadataQuerier, attachmentID string) (RenditionAttachmentRecord, error) {
 	record := RenditionAttachmentRecord{ID: attachmentID}
 	var profileFingerprint string

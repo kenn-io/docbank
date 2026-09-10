@@ -986,7 +986,13 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		profile, _ := service.profileByFingerprint(waiter.ProfileFingerprint)
+		profile, ok := service.profileByFingerprint(waiter.ProfileFingerprint)
+		if !ok {
+			profile, err = service.persistedProfile(ctx, waiter.ProfileFingerprint)
+			if err != nil {
+				return Status{}, err
+			}
+		}
 		pendingBindings := service.pendingChunkBindings(profile, embeddings)
 		return aggregateStatus(jobID, &rendition, embeddings, pendingBindings), nil
 	}
@@ -1067,6 +1073,18 @@ func (service *Service) pendingChunkBindings(profile configuredProfile,
 		}
 	}
 	return pending
+}
+
+func (service *Service) persistedProfile(ctx context.Context, fingerprint string) (configuredProfile, error) {
+	record, err := service.catalog.ProcessingProfileByFingerprint(ctx, fingerprint)
+	if err != nil {
+		return configuredProfile{}, err
+	}
+	var portable document.ProcessingProfileV1
+	if err := json.Unmarshal(record.CanonicalProfile, &portable, json.RejectUnknownMembers(true)); err != nil {
+		return configuredProfile{}, fmt.Errorf("decoding persisted processing profile: %w", err)
+	}
+	return configuredProfile{portable: portable, record: record}, nil
 }
 
 func (service *Service) Rendition(ctx context.Context, selector Selector, limit int64) (Rendition, error) {
@@ -1491,6 +1509,10 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 			}
 		}
 		_, _, result.EmbeddingsAdmitted = embeddingWorker.reconcileProgress()
+		generationsDone, renditionHeadsDone := embeddingWorker.reconciliationDone()
+		if !generationsDone || !renditionHeadsDone {
+			result.Pending = true
+		}
 	}
 	var spaces []string
 	if profileFingerprint == "" {
@@ -1528,7 +1550,7 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		if err != nil {
 			return result, err
 		}
-		if pending || result.EmbeddingsAdmitted > result.EmbeddingsProcessed {
+		if pending {
 			result.Pending = true
 			break
 		}
