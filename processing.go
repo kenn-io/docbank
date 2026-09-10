@@ -51,7 +51,24 @@ func (v *Vault) ProcessingStatus(ctx context.Context, request ProcessingStatusRe
 	}
 	return ProcessingStatus{JobID: status.JobID, State: status.State, Phase: status.Phase,
 		FailureCode: status.FailureCode, EmbeddingJobIDs: status.EmbeddingJobIDs,
-		CompletedBindings: status.CompletedBindings}, nil
+		CompletedBindings: status.CompletedBindings, PendingBindings: status.PendingBindings}, nil
+}
+
+func (v *Vault) ResumeProcessing(ctx context.Context, request ResumeProcessingRequest) (ProcessingResumeReport, error) {
+	if err := v.begin(); err != nil {
+		return ProcessingResumeReport{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if request.MaxJobs == 0 {
+		request.MaxJobs = 16
+	}
+	report, err := v.processing.Resume(ctx, request.Profile, request.MaxJobs)
+	if err != nil {
+		return ProcessingResumeReport{}, err
+	}
+	return ProcessingResumeReport{RenditionsProcessed: report.RenditionsProcessed,
+		EmbeddingsAdmitted: report.EmbeddingsAdmitted, EmbeddingsProcessed: report.EmbeddingsProcessed,
+		IndexesRebuilt: report.IndexesRebuilt, Pending: report.Pending}, nil
 }
 
 func (v *Vault) Rendition(ctx context.Context, request RenditionRequest) (*RenditionContent, error) {

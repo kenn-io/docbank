@@ -61,7 +61,7 @@ func TestCanonicalProfileMatchesGoldenAndCanonicalizesInput(t *testing.T) {
 	assert.Equal(t, want, encoded)
 	assert.Equal(t, original, profile, "canonicalization must not mutate caller-owned policy")
 	assert.Equal(t, "38a06e593e2fe3588e88f76e842e3138184237c5a3d8052872fe865d117f0e1f", fingerprints.Profile)
-	assert.Equal(t, "9d0a202be29b43e16684f74b540a41778443fe2f4757d4b1815d85994f5b2522", fingerprints.RenditionRequest)
+	assert.Equal(t, "075e9485d47257849d6909cd76695c97931b3e3cd624b225b6764aef3cf0279f", fingerprints.RenditionRequest)
 	assert.Equal(t, "f5405d835d1bb377cade66ca6e18b488972fadc862bfd96faf746cd374184819", fingerprints.EvidenceLexical)
 	assert.Equal(t, map[string]string{
 		"direct":   "6d0ee0f814c74992f6bcedfcab8b52f07c0024077526919ff5c2c336d9f353b2",
@@ -119,7 +119,7 @@ func TestCanonicalProfileFingerprintsTrackExactLayerFields(t *testing.T) {
 	}{
 		{"rendition adapter contract", func(p *document.ProcessingProfileV1) { p.Rendition.AdapterContract = "adapter/v2" }, layers("profile", "rendition")},
 		{"rendition authorization", func(p *document.ProcessingProfileV1) { p.Rendition.AuthorizationFingerprint = fingerprint("c") }, layers("profile")},
-		{"rendition credential reference", func(p *document.ProcessingProfileV1) { p.Rendition.CredentialBinding = "credential:ocr-secondary" }, layers("profile")},
+		{"rendition credential reference", func(p *document.ProcessingProfileV1) { p.Rendition.CredentialBinding = "credential:ocr-secondary" }, layers("profile", "rendition")},
 		{"rendition deployment", func(p *document.ProcessingProfileV1) { p.Rendition.DeploymentFingerprint = fingerprint("c") }, layers("profile", "rendition", "retention")},
 		{"rendition descriptor id", func(p *document.ProcessingProfileV1) { p.Rendition.Descriptor.ID = "mistral-ocr-v2" }, layers("profile", "rendition", "retention")},
 		{"rendition descriptor fingerprint", func(p *document.ProcessingProfileV1) { p.Rendition.Descriptor.Fingerprint = fingerprint("c") }, layers("profile", "rendition", "retention")},
@@ -132,7 +132,7 @@ func TestCanonicalProfileFingerprintsTrackExactLayerFields(t *testing.T) {
 		{"requested artifact roles", func(p *document.ProcessingProfileV1) {
 			p.Rendition.RequestedArtifacts = append(p.Rendition.RequestedArtifacts, document.EvidenceArtifactImage)
 		}, layers("profile", "rendition")},
-		{"rendition trust boundary", func(p *document.ProcessingProfileV1) { p.Rendition.TrustBoundary = "processor-secondary" }, layers("profile", "retention")},
+		{"rendition trust boundary", func(p *document.ProcessingProfileV1) { p.Rendition.TrustBoundary = "processor-secondary" }, layers("profile", "rendition", "retention")},
 		{"rendition upload options", func(p *document.ProcessingProfileV1) { p.Rendition.UploadOptionsFingerprint = fingerprint("c") }, layers("profile", "rendition")},
 		{"normalizer", func(p *document.ProcessingProfileV1) { p.EvidenceLexical.NormalizerFingerprint = fingerprint("c") }, layers("profile", "evidence", "input:semantic")},
 		{"sanitizer", func(p *document.ProcessingProfileV1) { p.EvidenceLexical.SanitizerFingerprint = fingerprint("c") }, layers("profile", "evidence", "input:semantic")},

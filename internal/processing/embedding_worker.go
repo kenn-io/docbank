@@ -198,6 +198,7 @@ type EmbeddingWorkerConfig struct {
 	Clock                  func() time.Time
 	Wait                   func(context.Context, time.Duration) error
 	DescriptorFingerprints []string
+	GenerateRenditionChunk func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 }
 
 // EmbeddingWorker publishes each binding head independently.
@@ -218,6 +219,10 @@ type EmbeddingWorker struct {
 	wait                                           func(context.Context, time.Duration) error
 	descriptorFingerprints                         []string
 	reconcileAfter                                 string
+	reconcileRenditionAfter                        string
+	generateRenditionChunk                         func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
+	lastReconcile                                  store.EmbeddingReconcileResult
+	completedVectorSpaces                          map[string]struct{}
 }
 
 func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) {
@@ -261,6 +266,8 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		maxRows: config.MaxRows, maxDimensions: config.MaxDimensions,
 		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait,
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
+		generateRenditionChunk: config.GenerateRenditionChunk,
+		completedVectorSpaces:  make(map[string]struct{}),
 	}, nil
 }
 
@@ -299,7 +306,9 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			if !reconciled {
 				result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 					After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
-					DescriptorFingerprints: worker.descriptorFingerprints,
+					DescriptorFingerprints:   worker.descriptorFingerprints,
+					AfterRenditionAttachment: worker.reconcileRenditionAfter,
+					GenerateRenditionChunk:   worker.generateRenditionChunk,
 					HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 						return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
 					},
@@ -307,7 +316,9 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				if err != nil {
 					return ErrEmbeddingPersistence
 				}
+				worker.lastReconcile = result
 				worker.reconcileAfter = result.Next
+				worker.reconcileRenditionAfter = result.NextRenditionAttachment
 				reconciled = true
 			}
 			claim, work, claimed, err := worker.catalog.ClaimNextEmbeddingWork(
@@ -320,7 +331,11 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				return nil
 			}
 			processed++
-			return worker.processClaim(ctx, claim, work)
+			if err := worker.processClaim(ctx, claim, work); err != nil {
+				return err
+			}
+			worker.completedVectorSpaces[work.VectorSpaceID] = struct{}{}
+			return nil
 		}); err != nil {
 			if ctx.Err() != nil {
 				return processed, ctx.Err()
@@ -334,6 +349,40 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			return processed, nil
 		}
 	}
+}
+
+func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
+	targets []store.RenditionPublicationTarget,
+) error {
+	if worker == nil {
+		return errors.New("embedding worker is nil")
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	attachments := make([]string, 0, len(targets))
+	for _, target := range targets {
+		attachments = append(attachments, target.AttachmentID)
+	}
+	return worker.gate.MutateContext(ctx, func() error {
+		result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
+			After: worker.reconcileAfter, Limit: 1000, At: worker.clock().UTC(),
+			DescriptorFingerprints: worker.descriptorFingerprints,
+			RenditionAttachments:   attachments,
+			GenerateRenditionChunk: worker.generateRenditionChunk,
+			HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
+				return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
+			},
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return ErrEmbeddingPersistence
+		}
+		worker.lastReconcile = result
+		return nil
+	})
 }
 
 // RunJob processes one exact ready embedding job without consuming unrelated

@@ -13,6 +13,7 @@ import (
 	"math"
 	"mime"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -22,7 +23,6 @@ import (
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/document/suppliedtranscript"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/maintenance"
@@ -213,6 +213,7 @@ type Status struct {
 	FailureCode       string
 	EmbeddingJobIDs   []string
 	CompletedBindings int
+	PendingBindings   int
 }
 
 type Rendition struct {
@@ -318,40 +319,20 @@ func NewService(config ServiceConfig) (*Service, error) {
 				TrustBoundary:                  profile.RetentionDisclosure.TrustBoundary}}
 		if profile.Rendition != nil {
 			configured.record.RenditionDisclosureFingerprint = profile.Rendition.DisclosureFingerprint
-			if renditionInterfaceNil(supplied.RenditionProvider) {
-				return nil, fmt.Errorf("processing profile %q requires a rendition provider", name)
-			}
-			descriptor := supplied.RenditionProvider.Descriptor()
-			if descriptor.ID != profile.Rendition.Descriptor.ID ||
-				descriptor.Fingerprint != profile.Rendition.Descriptor.Fingerprint {
-				return nil, fmt.Errorf("processing profile %q rendition provider differs from its descriptor", name)
-			}
-			if bound, ok := supplied.RenditionProvider.(interface {
-				EvidencePolicy() document.EvidencePolicy
-			}); ok {
-				evidencePolicy, err := document.NewEvidencePolicyForProcessingProfile(profile)
-				if err != nil {
-					return nil, fmt.Errorf("processing profile %q evidence policy: %w", name, err)
-				}
-				if bound.EvidencePolicy().Identity() != evidencePolicy.Identity() {
-					return nil, fmt.Errorf("processing profile %q rendition provider evidence policy differs from profile", name)
-				}
-			}
-			if suppliedProvider, ok := supplied.RenditionProvider.(*suppliedtranscript.Provider); ok &&
-				suppliedProvider.DeploymentFingerprint() != profile.Rendition.DeploymentFingerprint {
-				return nil, fmt.Errorf("processing profile %q supplied transcript deployment differs from its binding", name)
+			if err := validateRenditionProviderBinding(supplied.RenditionProvider, profile); err != nil {
+				return nil, fmt.Errorf("processing profile %q: %w", name, err)
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
-			if existing, exists := registeredRenditions[descriptor.Fingerprint]; exists {
-				if err := equivalentRenditionProviderRegistration(existing, supplied.RenditionProvider); err != nil {
+			if existing, exists := registeredRenditions[fingerprints.RenditionRequest]; exists {
+				if err := sameRenditionProviderInstance(existing, supplied.RenditionProvider); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
 				}
 			} else {
-				if err := service.renditions.Register(descriptor.Fingerprint, runtime); err != nil {
+				if err := service.renditions.Register(fingerprints.RenditionRequest, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
 				}
-				registeredRenditions[descriptor.Fingerprint] = supplied.RenditionProvider
+				registeredRenditions[fingerprints.RenditionRequest] = supplied.RenditionProvider
 			}
 		}
 		for _, binding := range profile.Embeddings {
@@ -396,16 +377,43 @@ func NewService(config ServiceConfig) (*Service, error) {
 	return service, nil
 }
 
-func equivalentRenditionProviderRegistration(existing, incoming document.RenditionProvider) error {
-	existingSupplied, existingIsSupplied := existing.(*suppliedtranscript.Provider)
-	incomingSupplied, incomingIsSupplied := incoming.(*suppliedtranscript.Provider)
-	if !existingIsSupplied && !incomingIsSupplied {
+func validateRenditionProviderBinding(provider document.RenditionProvider,
+	portable document.ProcessingProfileV1,
+) error {
+	if portable.Rendition == nil {
+		return errors.New("processing profile has no rendition binding")
+	}
+	if renditionInterfaceNil(provider) {
+		return errors.New("rendition provider is unavailable")
+	}
+	descriptor := provider.Descriptor()
+	if descriptor.ID != portable.Rendition.Descriptor.ID ||
+		descriptor.Fingerprint != portable.Rendition.Descriptor.Fingerprint {
+		return errors.New("rendition provider differs from its descriptor")
+	}
+	if bound, ok := provider.(interface {
+		EvidencePolicy() document.EvidencePolicy
+	}); ok {
+		evidencePolicy, err := document.NewEvidencePolicyForProcessingProfile(portable)
+		if err != nil {
+			return fmt.Errorf("rendition provider evidence policy: %w", err)
+		}
+		if bound.EvidencePolicy().Identity() != evidencePolicy.Identity() {
+			return errors.New("rendition provider evidence policy differs from profile")
+		}
+	}
+	if bound, ok := provider.(interface{ DeploymentFingerprint() string }); ok &&
+		bound.DeploymentFingerprint() != portable.Rendition.DeploymentFingerprint {
+		return errors.New("rendition provider deployment differs from its binding")
+	}
+	return nil
+}
+
+func sameRenditionProviderInstance(existing, incoming document.RenditionProvider) error {
+	if reflect.TypeOf(existing) == reflect.TypeOf(incoming) && reflect.TypeOf(existing).Comparable() && existing == incoming {
 		return nil
 	}
-	if existingIsSupplied && incomingIsSupplied && existingSupplied == incomingSupplied {
-		return nil
-	}
-	return errors.New("supplied transcript providers with an equal descriptor must reuse the same provider instance")
+	return errors.New("rendition providers sharing one deployment binding must reuse the same provider instance")
 }
 
 func (service *Service) Profiles() []ProfileSummary {
@@ -421,6 +429,42 @@ func (service *Service) Profiles() []ProfileSummary {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
+}
+
+func (service *Service) profileByFingerprint(fingerprint string) (configuredProfile, bool) {
+	for _, profile := range service.profiles {
+		if profile.record.Fingerprint == fingerprint {
+			return profile, true
+		}
+	}
+	return configuredProfile{}, false
+}
+
+func (service *Service) RenditionChunkGenerationHook() func(context.Context,
+	store.RenditionChunkGenerationRequest,
+) (store.EmbeddingInputGenerationRecord, error) {
+	return func(ctx context.Context, request store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error) {
+		profile, ok := service.profileByFingerprint(request.ProfileFingerprint)
+		if !ok {
+			return store.EmbeddingInputGenerationRecord{}, store.ErrNotFound
+		}
+		binding, err := selectEmbeddingBinding(profile.portable, request.BindingID)
+		if err != nil || binding.InputKind != document.EmbeddingInputRenditionChunk {
+			return store.EmbeddingInputGenerationRecord{}, store.ErrNotFound
+		}
+		version, err := service.catalog.ContentVersionByID(ctx, request.ContentVersionID)
+		if err != nil {
+			return store.EmbeddingInputGenerationRecord{}, err
+		}
+		view, err := service.catalog.ActiveRendition(ctx, version.ID, profile.record.Fingerprint)
+		if err != nil || view.Attachment.ID != request.AttachmentID {
+			if err != nil {
+				return store.EmbeddingInputGenerationRecord{}, err
+			}
+			return store.EmbeddingInputGenerationRecord{}, store.ErrNotFound
+		}
+		return service.renditionChunkGeneration(ctx, version, profile, binding, view, false)
+	}
 }
 
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
@@ -926,7 +970,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, &rendition, embeddings), nil
+		profile, _ := service.profileByFingerprint(waiter.ProfileFingerprint)
+		pendingBindings := service.pendingChunkBindings(profile, embeddings)
+		return aggregateStatus(jobID, &rendition, embeddings, pendingBindings), nil
 	}
 	if !errors.Is(waiterErr, store.ErrNotFound) {
 		return Status{}, waiterErr
@@ -938,7 +984,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, nil, embeddings), nil
+		return aggregateStatus(jobID, nil, embeddings, 0), nil
 	}
 	if !errors.Is(embeddingErr, store.ErrNotFound) {
 		return Status{}, embeddingErr
@@ -949,14 +995,14 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 	if err != nil {
 		return Status{}, err
 	}
-	return aggregateStatus(jobID, &rendition, nil), nil
+	return aggregateStatus(jobID, &rendition, nil, 0), nil
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,
-	embeddings []store.EmbeddingJobStatus,
+	embeddings []store.EmbeddingJobStatus, pendingBindings int,
 ) Status {
 	status := Status{JobID: jobID, State: "completed", Phase: "embedding",
-		EmbeddingJobIDs: make([]string, len(embeddings))}
+		EmbeddingJobIDs: make([]string, len(embeddings)), PendingBindings: pendingBindings}
 	if rendition != nil {
 		status.State, status.Phase, status.FailureCode = string(rendition.State),
 			string(rendition.Phase), string(rendition.FailureCode)
@@ -979,10 +1025,32 @@ func aggregateStatus(jobID string, rendition *store.RenditionJob,
 			}
 		}
 	}
+	if pendingBindings > 0 {
+		status.State, status.Phase, status.FailureCode = "queued", "embedding", ""
+		return status
+	}
 	if len(embeddings) != 0 {
 		status.State, status.Phase, status.FailureCode = "completed", "embedding", ""
 	}
 	return status
+}
+
+func (service *Service) pendingChunkBindings(profile configuredProfile,
+	embeddings []store.EmbeddingJobStatus,
+) int {
+	present := make(map[string]struct{}, len(embeddings))
+	for _, embedding := range embeddings {
+		present[embedding.BindingID] = struct{}{}
+	}
+	pending := 0
+	for _, binding := range profile.portable.Embeddings {
+		if binding.InputKind == document.EmbeddingInputRenditionChunk {
+			if _, ok := present[binding.Name]; !ok {
+				pending++
+			}
+		}
+	}
+	return pending
 }
 
 func (service *Service) Rendition(ctx context.Context, selector Selector, limit int64) (Rendition, error) {
@@ -1184,6 +1252,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	}
 	requests := make([]store.EmbeddingJobRequest, 0, len(profile.portable.Embeddings))
 	vectorSpaceByJob := make(map[string]string, len(profile.portable.Embeddings))
+	requestVectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	for _, binding := range profile.portable.Embeddings {
 		var generation store.EmbeddingInputGenerationRecord
@@ -1194,6 +1263,14 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		case document.EmbeddingInputRenditionChunk:
 			generation, err = service.chunkEmbeddingGeneration(ctx, version, profile, binding)
 			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					if err := service.catalog.EnsureEmbeddingVectorSpace(ctx,
+						embeddingVectorSpaceRecord(profile.embedders[binding.Name].Descriptor(),
+							fingerprints.VectorSpace[binding.Name])); err != nil {
+						return nil, err
+					}
+					continue
+				}
 				return nil, err
 			}
 		default:
@@ -1207,13 +1284,17 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
 			Authorization: authorization,
 		})
+		requestVectorSpaces = append(requestVectorSpaces, fingerprints.VectorSpace[binding.Name])
+	}
+	if len(requests) == 0 {
+		return []string{}, nil
 	}
 	jobIDs, err := service.catalog.EnqueueEmbeddingJobs(ctx, requests)
 	if err != nil {
 		return nil, err
 	}
 	for index, jobID := range jobIDs {
-		vectorSpaceByJob[jobID] = fingerprints.VectorSpace[profile.portable.Embeddings[index].Name]
+		vectorSpaceByJob[jobID] = requestVectorSpaces[index]
 	}
 	if onEnqueued != nil {
 		onEnqueued(slices.Clone(jobIDs))
@@ -1230,6 +1311,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
 		MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
 		DescriptorFingerprints: service.embeddings.Fingerprints(),
+		GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
 	})
 	if err != nil {
 		return jobIDs, err
@@ -1288,6 +1370,104 @@ func (service *Service) waitEmbeddingSettled(ctx context.Context, jobID string) 
 	}
 }
 
+type ResumeReport struct {
+	RenditionsProcessed int
+	EmbeddingsAdmitted  int
+	EmbeddingsProcessed int
+	IndexesRebuilt      int
+	Pending             bool
+}
+
+func (service *Service) Resume(ctx context.Context, profileName string, maxJobs int) (ResumeReport, error) {
+	if maxJobs == 0 {
+		maxJobs = 16
+	}
+	if maxJobs < 1 {
+		return ResumeReport{}, errors.New("processing resume job limit must be positive")
+	}
+	var profiles []configuredProfile
+	if profileName == "" {
+		profiles = make([]configuredProfile, 0, len(service.profiles))
+		for _, profile := range service.profiles {
+			profiles = append(profiles, profile)
+		}
+	} else {
+		profile, ok := service.profiles[profileName]
+		if !ok {
+			return ResumeReport{}, ErrProfileNotConfigured
+		}
+		profiles = []configuredProfile{profile}
+	}
+
+	embeddingWorker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
+		Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
+		GenerationBlobs: service.blobs, Runtime: service.embeddings, Gate: service.gate,
+		Owner: "embedded-embedding-resume", LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond,
+		RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
+		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
+		MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
+		DescriptorFingerprints: service.embeddings.Fingerprints(),
+		GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
+	})
+	if err != nil {
+		return ResumeReport{}, err
+	}
+	renditionWorker, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: service.catalog, Blobs: service.blobs, Runtime: service.renditions,
+		Gate: service.gate, Owner: "embedded-rendition-resume", LeaseDuration: 5 * time.Minute,
+		IdleDelay: time.Millisecond, Clock: service.clock,
+		Continuation: embeddingWorker.ContinueRenditionTargets,
+	})
+	if err != nil {
+		return ResumeReport{}, err
+	}
+	result := ResumeReport{}
+	for result.RenditionsProcessed < maxJobs {
+		processed, runErr := renditionWorker.RunOne(ctx)
+		if runErr != nil {
+			return result, runErr
+		}
+		if !processed {
+			break
+		}
+		result.RenditionsProcessed++
+	}
+	result.EmbeddingsAdmitted += embeddingWorker.lastReconcile.Enqueued
+	processed, err := embeddingWorker.ScanOnce(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.EmbeddingsAdmitted += embeddingWorker.lastReconcile.Enqueued
+	result.EmbeddingsProcessed = processed
+	spaces := make([]string, 0, len(embeddingWorker.completedVectorSpaces))
+	for space := range embeddingWorker.completedVectorSpaces {
+		spaces = append(spaces, space)
+	}
+	indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
+		Gate: service.gate, Owner: "embedded-index-resume", BuildLease: 5 * time.Minute,
+		ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
+	if err != nil {
+		return result, err
+	}
+	for _, space := range sortedUnique(spaces) {
+		if _, err := indexer.Rebuild(ctx, space); err != nil {
+			return result, err
+		}
+		result.IndexesRebuilt++
+	}
+	for _, profile := range profiles {
+		pending, err := service.catalog.PendingRenditionJobs(ctx, profile.record.Fingerprint)
+		if err != nil {
+			return result, err
+		}
+		if pending {
+			result.Pending = true
+			break
+		}
+	}
+	return result, nil
+}
+
 func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version store.ContentVersion,
 	profile configuredProfile, binding document.EmbeddingBindingV1,
 ) (store.EmbeddingInputGenerationRecord, error) {
@@ -1295,6 +1475,12 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
+	return service.renditionChunkGeneration(ctx, version, profile, binding, view, true)
+}
+
+func (service *Service) renditionChunkGeneration(ctx context.Context, version store.ContentVersion,
+	profile configuredProfile, binding document.EmbeddingBindingV1, view store.RenditionView, underGate bool,
+) (store.EmbeddingInputGenerationRecord, error) {
 	var artifact store.RenditionArtifactRecord
 	for _, candidate := range view.Build.Artifacts {
 		if candidate.Role == "normalized_evidence" {
@@ -1346,7 +1532,7 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
 	var receipt blob.WriteReceipt
-	err = service.gate.MutateContext(ctx, func() error {
+	writeBlob := func() error {
 		return service.blobs.WithMutation(ctx, func() error {
 			var writeErr error
 			receipt, writeErr = service.blobs.WriteDetailedContext(ctx, bytes.NewReader(encoded))
@@ -1362,7 +1548,12 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 				PackEligible: receipt.PackEligible, Created: receipt.Created,
 			})
 		})
-	})
+	}
+	if underGate {
+		err = service.gate.MutateContext(ctx, writeBlob)
+	} else {
+		err = writeBlob()
+	}
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
@@ -1397,6 +1588,16 @@ func directEmbeddingGeneration(version store.ContentVersion, profileFingerprint,
 		GenerationChecksum:           version.BlobHash,
 		Inputs:                       []store.EmbeddingInputReference{{ID: version.ID, RenderedChecksum: version.BlobHash}},
 		CreatedAt:                    version.RecordedAt}
+}
+
+func embeddingVectorSpaceRecord(descriptor document.EmbeddingDescriptor, id string) store.EmbeddingVectorSpaceRecord {
+	return store.EmbeddingVectorSpaceRecord{ID: id,
+		ContractVersion: store.EmbeddingVectorSpaceContractV1, Descriptor: descriptor,
+		ProviderDescriptor: descriptor.ID, ProviderRevision: descriptor.ModelRevision,
+		DescriptorFingerprint: descriptor.Fingerprint, CompatibilityID: descriptor.CompatibilityID,
+		Dimensions: descriptor.Dimension, Metric: descriptor.Metric, Normalization: descriptor.Normalization,
+		ScalarEncoding: descriptor.ScalarEncoding, DocumentFormatter: descriptor.DocumentFormatter,
+		QueryFormatter: descriptor.QueryFormatter, ModelInputFingerprint: descriptor.ModelInput.Fingerprint}
 }
 
 func stableHash(values ...string) string {
@@ -1503,6 +1704,9 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 	if err := json.Unmarshal(work.Profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)); err != nil {
 		return RenditionExecution{}, err
 	}
+	if err := validateRenditionProviderBinding(runtime.provider, portable); err != nil {
+		return RenditionExecution{}, err
+	}
 	version := runtimeVersion(work)
 	node := store.Node{ID: version.NodeID, Name: work.ExecutionIdentity.Upload.Filename,
 		CurrentVersionID: version.ID, BlobHash: version.BlobHash, Size: version.Size, MimeType: version.MimeType}
@@ -1517,9 +1721,17 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 		RenditionPolicy: prepared.RenditionPolicy}, nil
 }
 
-func (runtime *providerRenditionRuntime) ResumeProvider(_ context.Context, _ store.RenditionJobWork,
-	_ document.RenditionExecutionSnapshotV1,
+func (runtime *providerRenditionRuntime) ResumeProvider(_ context.Context, work store.RenditionJobWork,
+	snapshot document.RenditionExecutionSnapshotV1,
 ) (document.RenditionProvider, error) {
+	var portable document.ProcessingProfileV1
+	if err := json.Unmarshal(work.Profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)); err != nil {
+		return nil, ErrRenditionRuntimeUnavailable
+	}
+	if err := validateRenditionProviderBinding(runtime.provider, portable); err != nil ||
+		snapshot.Identity.Authorization.RenditionRequestFingerprint != work.Profile.RenditionRequestFingerprint {
+		return nil, ErrRenditionRuntimeUnavailable
+	}
 	if _, ok := runtime.provider.(document.ResumableRenditionProvider); !ok {
 		return nil, ErrRenditionRuntimeUnavailable
 	}

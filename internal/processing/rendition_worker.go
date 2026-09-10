@@ -40,11 +40,11 @@ type RenditionResumeRuntime interface {
 }
 
 // ErrRenditionRuntimeUnavailable means no process-local adapter is registered
-// for the immutable descriptor. It is safe to retry because Prepare performs
+// for the immutable egress binding. It is safe to retry because Prepare performs
 // no provider egress.
 var ErrRenditionRuntimeUnavailable = errors.New("rendition runtime is unavailable")
 
-// RenditionRuntimeRegistry resolves immutable descriptor fingerprints without
+// RenditionRuntimeRegistry resolves immutable rendition egress bindings without
 // adding provider enumerations or provider-specific state to SQLite.
 type RenditionRuntimeRegistry struct {
 	mu       sync.RWMutex
@@ -67,25 +67,42 @@ func (registry *RenditionRuntimeRegistry) Ready() bool {
 	return len(registry.runtimes) != 0
 }
 
-// Register binds one descriptor fingerprint once for this daemon lifecycle.
+// Register binds one immutable rendition egress binding once for this daemon lifecycle.
 func (registry *RenditionRuntimeRegistry) Register(
-	descriptorFingerprint string, runtime RenditionRuntime,
+	bindingFingerprint string, runtime RenditionRuntime,
 ) error {
-	if registry == nil || len(descriptorFingerprint) != sha256.Size*2 ||
+	if registry == nil || len(bindingFingerprint) != sha256.Size*2 ||
 		renditionInterfaceNil(runtime) {
 		return errors.New("rendition runtime registration is invalid")
 	}
-	if _, err := hex.DecodeString(descriptorFingerprint); err != nil ||
-		descriptorFingerprint != string(bytes.ToLower([]byte(descriptorFingerprint))) {
-		return errors.New("rendition runtime descriptor fingerprint is invalid")
+	if _, err := hex.DecodeString(bindingFingerprint); err != nil ||
+		bindingFingerprint != string(bytes.ToLower([]byte(bindingFingerprint))) {
+		return errors.New("rendition runtime binding fingerprint is invalid")
 	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
-	if _, exists := registry.runtimes[descriptorFingerprint]; exists {
-		return errors.New("rendition runtime descriptor is already registered")
+	if _, exists := registry.runtimes[bindingFingerprint]; exists {
+		return errors.New("rendition runtime binding is already registered")
 	}
-	registry.runtimes[descriptorFingerprint] = runtime
+	registry.runtimes[bindingFingerprint] = runtime
 	return nil
+}
+
+func renditionRuntimeKey(work store.RenditionJobWork) (document.ProcessingProfileV1, string, error) {
+	var profile document.ProcessingProfileV1
+	if err := json.Unmarshal(work.Profile.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil ||
+		profile.Rendition == nil {
+		return document.ProcessingProfileV1{}, "", errors.New("rendition runtime profile is invalid")
+	}
+	fingerprint := work.Profile.RenditionRequestFingerprint
+	if len(fingerprint) != sha256.Size*2 {
+		return document.ProcessingProfileV1{}, "", errors.New("rendition runtime binding fingerprint is invalid")
+	}
+	if _, err := hex.DecodeString(fingerprint); err != nil ||
+		fingerprint != string(bytes.ToLower([]byte(fingerprint))) {
+		return document.ProcessingProfileV1{}, "", errors.New("rendition runtime binding fingerprint is invalid")
+	}
+	return profile, fingerprint, nil
 }
 
 // Prepare dispatches to the exact registered descriptor runtime.
@@ -95,14 +112,12 @@ func (registry *RenditionRuntimeRegistry) Prepare(
 	if registry == nil {
 		return RenditionExecution{}, ErrRenditionRuntimeUnavailable
 	}
-	var profile document.ProcessingProfileV1
-	if err := json.Unmarshal(
-		work.Profile.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil ||
-		profile.Rendition == nil {
-		return RenditionExecution{}, errors.New("rendition runtime profile is invalid")
+	_, key, err := renditionRuntimeKey(work)
+	if err != nil {
+		return RenditionExecution{}, err
 	}
 	registry.mu.RLock()
-	runtime := registry.runtimes[profile.Rendition.Descriptor.Fingerprint]
+	runtime := registry.runtimes[key]
 	registry.mu.RUnlock()
 	if runtime == nil {
 		return RenditionExecution{}, ErrRenditionRuntimeUnavailable
@@ -118,9 +133,16 @@ func (registry *RenditionRuntimeRegistry) ResumeProvider(
 	if registry == nil {
 		return nil, ErrRenditionRuntimeUnavailable
 	}
+	profile, key, err := renditionRuntimeKey(work)
+	if err != nil || snapshot.Identity.Authorization.DescriptorFingerprint != profile.Rendition.Descriptor.Fingerprint {
+		return nil, ErrRenditionRuntimeUnavailable
+	}
 	registry.mu.RLock()
-	runtime := registry.runtimes[snapshot.Identity.Authorization.DescriptorFingerprint]
+	runtime := registry.runtimes[key]
 	registry.mu.RUnlock()
+	if runtime == nil {
+		return nil, ErrRenditionRuntimeUnavailable
+	}
 	resumable, ok := runtime.(RenditionResumeRuntime)
 	if !ok || renditionInterfaceNil(resumable) {
 		return nil, ErrRenditionRuntimeUnavailable
@@ -186,6 +208,7 @@ type RenditionWorkerConfig struct {
 	Blobs         renditionBlobWriter
 	Runtime       RenditionRuntime
 	Gate          RenditionMutationGate
+	Continuation  func(context.Context, []store.RenditionPublicationTarget) error
 	Owner         string
 	LeaseDuration time.Duration
 	IdleDelay     time.Duration
@@ -195,14 +218,17 @@ type RenditionWorkerConfig struct {
 // RenditionWorker claims, resumes, validates, stages, and publishes shared
 // rendition builds without exposing provider data through status or logs.
 type RenditionWorker struct {
-	catalog       renditionWorkerCatalog
-	blobs         renditionBlobWriter
-	runtime       RenditionRuntime
-	gate          RenditionMutationGate
-	owner         string
-	leaseDuration time.Duration
-	idleDelay     time.Duration
-	clock         func() time.Time
+	catalog             renditionWorkerCatalog
+	blobs               renditionBlobWriter
+	runtime             RenditionRuntime
+	gate                RenditionMutationGate
+	continuation        func(context.Context, []store.RenditionPublicationTarget) error
+	continuationMu      sync.Mutex
+	continuationTargets []store.RenditionPublicationTarget
+	owner               string
+	leaseDuration       time.Duration
+	idleDelay           time.Duration
+	clock               func() time.Time
 }
 
 type renditionWorkerFatalError struct{ cause error }
@@ -255,7 +281,7 @@ func NewRenditionWorker(config RenditionWorkerConfig) (*RenditionWorker, error) 
 	}
 	return &RenditionWorker{
 		catalog: config.Catalog, blobs: config.Blobs, runtime: config.Runtime,
-		gate:  config.Gate,
+		gate: config.Gate, continuation: config.Continuation,
 		owner: config.Owner, leaseDuration: config.LeaseDuration,
 		idleDelay: config.IdleDelay, clock: config.Clock,
 	}, nil
@@ -312,6 +338,11 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
 		err = renditionWorkerFatal(err)
 	}
+	if err == nil {
+		if continuationErr := worker.runContinuation(ctx); continuationErr != nil {
+			err = continuationErr
+		}
+	}
 	return processed, err
 }
 
@@ -341,7 +372,32 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
 		err = renditionWorkerFatal(err)
 	}
+	if err == nil {
+		if continuationErr := worker.runContinuation(ctx); continuationErr != nil {
+			err = continuationErr
+		}
+	}
 	return processed, err
+}
+
+func (worker *RenditionWorker) recordContinuationTargets(targets []store.RenditionPublicationTarget) {
+	worker.continuationMu.Lock()
+	defer worker.continuationMu.Unlock()
+	worker.continuationTargets = append(worker.continuationTargets, targets...)
+}
+
+func (worker *RenditionWorker) runContinuation(ctx context.Context) error {
+	worker.continuationMu.Lock()
+	targets := slices.Clone(worker.continuationTargets)
+	worker.continuationTargets = nil
+	worker.continuationMu.Unlock()
+	if worker.continuation == nil || len(targets) == 0 {
+		return nil
+	}
+	if err := worker.continuation(ctx, targets); err != nil {
+		return &renditionWorkerRetryableError{cause: err}
+	}
+	return nil
 }
 
 // runOneUnderGate keeps the operation order gate -> blob coordinator ->
@@ -674,11 +730,19 @@ func (worker *RenditionWorker) stageGenerationAndPublish(
 	}); err != nil {
 		return err
 	}
+	var publication store.RenditionJobPublication
 	err := worker.retryCatalog(ctx, func() error {
-		_, publishErr := worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
+		var publishErr error
+		publication, publishErr = worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
 		return publishErr
 	})
-	return worker.classifyPublicationError(ctx, claim, err)
+	if err := worker.classifyPublicationError(ctx, claim, err); err != nil {
+		return err
+	}
+	if len(publication.PublishedTargets) != 0 {
+		worker.recordContinuationTargets(publication.PublishedTargets)
+	}
+	return nil
 }
 
 func (worker *RenditionWorker) classifyProviderError(

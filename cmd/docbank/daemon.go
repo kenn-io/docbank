@@ -215,22 +215,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
-	// Provider adapters register before this admission point. Until the daemon
-	// has one, leave restored jobs untouched instead of repeatedly claiming and
-	// delaying work that this process cannot execute.
-	if runtimeRegistry.Ready() {
-		renditionWorker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: s, Blobs: blobs, Runtime: runtimeRegistry, Gate: operationGate,
-			Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
-			IdleDelay: time.Second,
-		})
-		if workerErr != nil {
-			return fmt.Errorf("configuring rendition worker: %w", workerErr)
-		}
-		if err := jobSupervisor.Start("process:renditions", renditionWorker.Run); err != nil {
-			return fmt.Errorf("starting rendition worker: %w", err)
-		}
-	}
+	var embeddingWorker *processing.EmbeddingWorker
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
 			worker, workerErr := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
@@ -241,13 +226,36 @@ func runServe(ctx context.Context) (retErr error) {
 				AttemptLifetime: 30 * time.Minute, MaxRows: 100_000,
 				MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
 				DescriptorFingerprints: embeddingRuntimeRegistry.Fingerprints(),
+				GenerateRenditionChunk: processingService.RenditionChunkGenerationHook(),
 			})
 			if workerErr != nil {
 				return nil, fmt.Errorf("configuring embedding worker: %w", workerErr)
 			}
+			embeddingWorker = worker
 			return worker, nil
 		}); err != nil {
 		return err
+	}
+	// Provider adapters register before this admission point. Until the daemon
+	// has one, leave restored jobs untouched instead of repeatedly claiming and
+	// delaying work that this process cannot execute.
+	if runtimeRegistry.Ready() {
+		var continuation func(context.Context, []store.RenditionPublicationTarget) error
+		if embeddingWorker != nil {
+			continuation = embeddingWorker.ContinueRenditionTargets
+		}
+		renditionWorker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+			Catalog: s, Blobs: blobs, Runtime: runtimeRegistry, Gate: operationGate,
+			Continuation: continuation,
+			Owner:        "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
+			IdleDelay: time.Second,
+		})
+		if workerErr != nil {
+			return fmt.Errorf("configuring rendition worker: %w", workerErr)
+		}
+		if err := jobSupervisor.Start("process:renditions", renditionWorker.Run); err != nil {
+			return fmt.Errorf("starting rendition worker: %w", err)
+		}
 	}
 	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
 		worker, workerErr := processing.NewIndexWorker(processing.IndexWorkerConfig{

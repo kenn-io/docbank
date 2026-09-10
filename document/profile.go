@@ -191,6 +191,7 @@ type fingerprintEnvelope[T any] struct {
 
 type renditionRequestIdentity struct {
 	AdapterContract          string                 `json:"adapter_contract"`
+	CredentialBinding        string                 `json:"credential_binding"`
 	DeploymentFingerprint    string                 `json:"deployment_fingerprint"`
 	Descriptor               ProviderDescriptorV1   `json:"descriptor"`
 	DiscloseFilename         bool                   `json:"disclose_filename"`
@@ -199,6 +200,7 @@ type renditionRequestIdentity struct {
 	MaxResponseBytes         int64                  `json:"max_response_bytes"`
 	MaxUnits                 int                    `json:"max_units"`
 	RequestedArtifacts       []EvidenceArtifactRole `json:"requested_artifacts"`
+	TrustBoundary            string                 `json:"trust_boundary"`
 	UploadOptionsFingerprint string                 `json:"upload_options_fingerprint"`
 }
 
@@ -262,11 +264,13 @@ func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, erro
 	if canonical.Rendition != nil {
 		renditionIdentity = &renditionRequestIdentity{
 			AdapterContract:       canonical.Rendition.AdapterContract,
+			CredentialBinding:     canonical.Rendition.CredentialBinding,
 			DeploymentFingerprint: canonical.Rendition.DeploymentFingerprint, Descriptor: canonical.Rendition.Descriptor,
 			DiscloseFilename: canonical.Rendition.DiscloseFilename, DisclosureFingerprint: canonical.Rendition.DisclosureFingerprint,
 			MaxDocumentBytes: canonical.Rendition.MaxDocumentBytes,
 			MaxResponseBytes: canonical.Rendition.MaxResponseBytes, MaxUnits: canonical.Rendition.MaxUnits,
-			RequestedArtifacts: canonical.Rendition.RequestedArtifacts, UploadOptionsFingerprint: canonical.Rendition.UploadOptionsFingerprint,
+			RequestedArtifacts: canonical.Rendition.RequestedArtifacts, TrustBoundary: canonical.Rendition.TrustBoundary,
+			UploadOptionsFingerprint: canonical.Rendition.UploadOptionsFingerprint,
 		}
 	}
 	result.RenditionRequest, err = componentFingerprint("rendition_request", renditionIdentity)

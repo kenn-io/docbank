@@ -118,6 +118,20 @@ type ProcessingStatus struct {
 	FailureCode       string   `json:"failure_code,omitzero"`
 	EmbeddingJobIDs   []string `json:"embedding_job_ids"`
 	CompletedBindings int      `json:"completed_bindings"`
+	PendingBindings   int      `json:"pending_bindings"`
+}
+
+type ResumeProcessingRequest struct {
+	Profile string
+	MaxJobs int
+}
+
+type ProcessingResumeReport struct {
+	RenditionsProcessed int
+	EmbeddingsAdmitted  int
+	EmbeddingsProcessed int
+	IndexesRebuilt      int
+	Pending             bool
 }
 
 type RenditionRequest struct {

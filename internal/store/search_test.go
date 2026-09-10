@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,6 +16,50 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
+
+func TestResolveSemanticCandidatesRejectsForeignProfileInSharedVectorSpace(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	var foreignPortable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &foreignPortable))
+	foreignPortable.Rendition.DeploymentFingerprint = strings.Repeat("b", 64)
+	foreignCanonical, foreignFingerprints, err := document.CanonicalProfile(foreignPortable)
+	require.NoError(t, err)
+	foreignProfile := profile
+	foreignProfile.Fingerprint = foreignFingerprints.Profile
+	foreignProfile.CanonicalProfile = jsontext.Value(foreignCanonical)
+	foreignProfile.RenditionRequestFingerprint = foreignFingerprints.RenditionRequest
+	foreignProfile.EvidenceLexicalFingerprint = foreignFingerprints.EvidenceLexical
+	foreignProfile.RetentionDisclosureFingerprint = foreignFingerprints.RetentionDisclosure
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, foreignProfile)
+	}))
+	foreignNode, err := s.CreateFile(t.Context(), s.RootID(), "foreign.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+
+	requested := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	foreign := embeddingSetFixture(s, foreignNode.CurrentVersionID, foreignProfile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	require.Equal(t, requested.VectorSpace.ID, foreign.VectorSpace.ID)
+	for _, record := range []EmbeddingSetRecord{requested, foreign} {
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+			Key: EmbeddingHeadKey{ContentVersionID: record.ContentVersionID,
+				BindingID: record.BindingID, InputKind: record.InputKind}, SetID: record.ID,
+			VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: record.ProcessingProfileFingerprint,
+			PublishedAt: embeddingCatalogTime,
+		}))
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), requested.VectorSpace.ID)
+	require.NoError(t, err)
+	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, requested.BindingID,
+		requested.InputKind, requested.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{SetID: foreign.VectorSet.ID, InputKey: foreignNode.CurrentVersionID,
+			InputChecksum: foreign.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		10, SearchOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, resolution.Candidates)
+}
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)

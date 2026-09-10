@@ -421,6 +421,19 @@ func (s *Store) RenditionJobByID(ctx context.Context, id string) (RenditionJob, 
 	return job, nil
 }
 
+func (s *Store) PendingRenditionJobs(ctx context.Context, profileFingerprint string) (bool, error) {
+	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
+		return false, ErrNotFound
+	}
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM rendition_jobs j
+		JOIN rendition_job_waiters w ON w.job_id=j.job_id
+		WHERE w.profile_fingerprint=? AND j.state IN ('queued','running','retry_wait'))`,
+		profileFingerprint).Scan(&pending)
+	return pending, err
+}
+
 func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (RenditionJobWaiter, error) {
 	if err := validateCatalogSHA256(id, "rendition waiter ID"); err != nil {
 		return RenditionJobWaiter{}, fmt.Errorf("rendition waiter: %w", ErrNotFound)
@@ -947,12 +960,21 @@ func (s *Store) finishRenditionJobClaim(
 	})
 }
 
+// RenditionPublicationTarget names one authorized version/profile attachment
+// that this publication made current.
+type RenditionPublicationTarget struct {
+	ContentVersionID   string
+	ProfileFingerprint string
+	AttachmentID       string
+}
+
 // RenditionJobPublication contains aggregate activation evidence only.
 type RenditionJobPublication struct {
 	JobID                string
 	LexicalGenerationID  string
 	PublishedWaiterCount int
 	RejectedWaiterCount  int
+	PublishedTargets     []RenditionPublicationTarget
 }
 
 // StageRenditionJobBuild atomically stages the immutable build, installs its
@@ -1150,6 +1172,7 @@ func (s *Store) PublishRenditionJob(
 		}
 		pairs := make([]renditionPublicationPair, 0, len(authorized))
 		publishedAt := at.UTC().Format(timestampLayout)
+		publishedTargets := make([]RenditionPublicationTarget, 0, len(authorized))
 		for _, authority := range authorized {
 			attachedAt := publishedAt
 			err := tx.QueryRowContext(ctx, `SELECT attached_at FROM rendition_attachments
@@ -1179,6 +1202,11 @@ func (s *Store) PublishRenditionJob(
 				publishedAt, authority.waiter.ID); err != nil {
 				return fmt.Errorf("publishing rendition waiter: %w", err)
 			}
+			publishedTargets = append(publishedTargets, RenditionPublicationTarget{
+				ContentVersionID:   authority.waiter.ContentVersionID,
+				ProfileFingerprint: authority.waiter.ProfileFingerprint,
+				AttachmentID:       authority.waiter.AttachmentID,
+			})
 		}
 		for _, waiter := range rejected {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
@@ -1202,6 +1230,7 @@ func (s *Store) PublishRenditionJob(
 		publication.LexicalGenerationID = generationID
 		publication.PublishedWaiterCount = len(authorized)
 		publication.RejectedWaiterCount = len(rejected)
+		publication.PublishedTargets = publishedTargets
 		return nil
 	})
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -14,19 +15,33 @@ import (
 // EmbeddingReconcileRequest bounds one durable discovery page. Descriptor
 // fingerprints are process-local executable authority, never catalog intent.
 type EmbeddingReconcileRequest struct {
-	After                  string
-	Limit                  int
-	At                     time.Time
-	DescriptorFingerprints []string
-	HydrateGeneration      func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
+	After                    string
+	Limit                    int
+	At                       time.Time
+	DescriptorFingerprints   []string
+	HydrateGeneration        func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
+	AfterRenditionAttachment string
+	RenditionAttachments     []string
+	GenerateRenditionChunk   func(context.Context, RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error)
 }
 
 // EmbeddingReconcileResult reports work materialized from existing portable
 // authority. Next is empty when the scan reached the end.
 type EmbeddingReconcileResult struct {
-	Next     string
-	Examined int
-	Enqueued int
+	Next                    string
+	Examined                int
+	Enqueued                int
+	NextRenditionAttachment string
+	Generated               int
+}
+
+// RenditionChunkGenerationRequest names the exact published attachment whose
+// E2 generation the caller must materialize. It carries no bytes and no policy.
+type RenditionChunkGenerationRequest struct {
+	ContentVersionID   string
+	ProfileFingerprint string
+	BindingID          string
+	AttachmentID       string
 }
 
 type embeddingReconcileCandidate struct {
@@ -34,6 +49,25 @@ type embeddingReconcileCandidate struct {
 	binding      document.EmbeddingBindingV1
 	fingerprints document.FingerprintSet
 	space        EmbeddingVectorSpaceRecord
+}
+
+type renditionChunkCandidate struct {
+	request      EmbeddingJobRequest
+	binding      document.EmbeddingBindingV1
+	fingerprints document.FingerprintSet
+	space        EmbeddingVectorSpaceRecord
+	attachmentID string
+}
+
+// EnsureEmbeddingVectorSpace records the immutable descriptor needed before a
+// deferred rendition chunk can be reconciled.
+func (s *Store) EnsureEmbeddingVectorSpace(ctx context.Context, record EmbeddingVectorSpaceRecord) error {
+	if err := validateEmbeddingVectorSpace(record); err != nil {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return insertVectorSpaceTx(ctx, tx, record)
+	})
 }
 
 // ReconcileEmbeddingJobs discovers only already-materialized E1/E2 or direct
@@ -163,7 +197,169 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if more && len(generationIDs) != 0 {
 		result.Next = generationIDs[len(generationIDs)-1]
 	}
+	if request.GenerateRenditionChunk != nil {
+		candidates, next, err := s.renditionChunkCandidates(ctx, request, executable)
+		if err != nil {
+			return EmbeddingReconcileResult{}, err
+		}
+		for _, candidate := range candidates {
+			generated, err := request.GenerateRenditionChunk(ctx, RenditionChunkGenerationRequest{
+				ContentVersionID:   candidate.request.ContentVersionID,
+				ProfileFingerprint: candidate.request.Profile.Fingerprint,
+				BindingID:          candidate.binding.Name, AttachmentID: candidate.attachmentID,
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return EmbeddingReconcileResult{}, ctx.Err()
+				}
+				continue
+			}
+			result.Generated++
+			candidate.request.InputGeneration = generated
+			record := EmbeddingSetRecord{BindingID: candidate.binding.Name, InputKind: candidate.binding.InputKind,
+				ProcessingProfileFingerprint: candidate.request.Profile.Fingerprint,
+				EmbeddingInputFingerprint:    candidate.fingerprints.EmbeddingInput[candidate.binding.Name],
+				VectorSpace:                  candidate.space, InputGeneration: generated}
+			if err := validateEmbeddingBindingAuthority(record, candidate.binding, candidate.fingerprints); err != nil {
+				continue
+			}
+			exists, err := s.renditionEmbeddingHeadExists(ctx, candidate, generated.ID)
+			if err != nil {
+				return EmbeddingReconcileResult{}, err
+			}
+			if exists {
+				continue
+			}
+			if _, err := s.EnqueueEmbeddingJob(ctx, candidate.request); err != nil {
+				return EmbeddingReconcileResult{}, fmt.Errorf("reconciling rendition embedding job: %w", err)
+			}
+			result.Enqueued++
+		}
+		result.NextRenditionAttachment = next
+	}
 	return result, nil
+}
+
+func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingReconcileRequest,
+	executable map[string]struct{},
+) ([]renditionChunkCandidate, string, error) {
+	var candidates []renditionChunkCandidate
+	var next string
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		query := `SELECT rh.content_version_id,rh.profile_fingerprint,rh.attachment_id
+			FROM rendition_heads rh
+			JOIN content_versions v ON v.version_id=rh.content_version_id
+			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
+				AND n.kind='file' AND n.trashed_at IS NULL`
+		args := make([]any, 0, len(request.RenditionAttachments)+2)
+		paged := len(request.RenditionAttachments) == 0
+		if paged {
+			query += ` WHERE rh.attachment_id>? ORDER BY rh.attachment_id LIMIT ?`
+			args = append(args, request.AfterRenditionAttachment, request.Limit+1)
+		} else {
+			placeholders := make([]string, len(request.RenditionAttachments))
+			for index, attachmentID := range request.RenditionAttachments {
+				placeholders[index] = "?"
+				args = append(args, attachmentID)
+			}
+			query += ` WHERE rh.attachment_id IN (` + strings.Join(placeholders, ",") + `) ORDER BY rh.attachment_id`
+		}
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		rowCount := 0
+		lastPageAttachment := ""
+		for rows.Next() {
+			var versionID, profileFingerprint, attachmentID string
+			if err := rows.Scan(&versionID, &profileFingerprint, &attachmentID); err != nil {
+				return err
+			}
+			rowCount++
+			if paged && rowCount > request.Limit {
+				continue
+			}
+			if paged {
+				lastPageAttachment = attachmentID
+			}
+			profile, err := loadProcessingProfile(ctx, tx, profileFingerprint)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			var portable document.ProcessingProfileV1
+			if err := json.Unmarshal(profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)); err != nil {
+				continue
+			}
+			_, fingerprints, err := document.CanonicalProfile(portable)
+			if err != nil {
+				continue
+			}
+			for _, binding := range portable.Embeddings {
+				if binding.InputKind != document.EmbeddingInputRenditionChunk {
+					continue
+				}
+				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if _, ok := executable[space.Descriptor.Fingerprint]; !ok ||
+					space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
+					continue
+				}
+				var jobExists bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs
+					WHERE vault_uid=? AND content_version_id=? AND profile_fingerprint=?
+					AND binding_id=? AND input_kind=?)`, s.vaultID, versionID, profileFingerprint,
+					binding.Name, binding.InputKind).Scan(&jobExists); err != nil {
+					return err
+				}
+				if jobExists {
+					continue
+				}
+				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID,
+					profileFingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At.UTC())
+				if err != nil {
+					return err
+				}
+				if !found {
+					continue
+				}
+				candidates = append(candidates, renditionChunkCandidate{
+					request: EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile,
+						BindingID: binding.Name, Descriptor: space.Descriptor, Authorization: consent},
+					binding: binding, fingerprints: fingerprints, space: space, attachmentID: attachmentID,
+				})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if paged && rowCount > request.Limit {
+			next = lastPageAttachment
+		}
+		return nil
+	})
+	return candidates, next, err
+}
+
+func (s *Store) renditionEmbeddingHeadExists(ctx context.Context, candidate renditionChunkCandidate,
+	generationID string,
+) (bool, error) {
+	var exists bool
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		exists, err = exactEmbeddingHeadExistsTx(ctx, tx, candidate.request.ContentVersionID,
+			candidate.request.Profile.Fingerprint, candidate.binding, generationID, candidate.space.ID)
+		return err
+	})
+	return exists, err
 }
 
 func embeddingGenerationCurrentTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord, profile string) (bool, error) {

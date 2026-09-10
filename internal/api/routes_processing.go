@@ -123,13 +123,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 					return
 				}
 			}
-			status, statusErr := d.Processing.Status(hctx.Context(), first.ID)
-			if statusErr != nil {
-				status = processing.Status{JobID: first.ID, State: "failed", Phase: "processing",
-					FailureCode: "processing_failed", EmbeddingJobIDs: []string{}}
-			} else if result.err != nil && status.State != "failed" && status.State != "operator_required" {
-				status.State, status.FailureCode = "failed", "processing_failed"
+			status := processing.Status{JobID: first.ID}
+			loadedStatus, statusErr := d.Processing.Status(hctx.Context(), first.ID)
+			if statusErr == nil {
+				status = loadedStatus
 			}
+			status = processingStreamStatus(status, statusErr, result.err)
 			wireStatus := fromProcessingStatus(status)
 			stream.send(ProcessingJobEvent{Sequence: 2, Type: "status", Status: &wireStatus, Terminal: true})
 		}}, nil
@@ -340,6 +339,17 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	})
 }
 
+func processingStreamStatus(status processing.Status, statusErr, startErr error) processing.Status {
+	if statusErr != nil {
+		return processing.Status{JobID: status.JobID, State: "failed", Phase: "processing",
+			FailureCode: "processing_failed", EmbeddingJobIDs: []string{}}
+	}
+	if startErr != nil && status.State == "completed" {
+		status.State, status.FailureCode = "failed", "processing_failed"
+	}
+	return status
+}
+
 func processingUnavailable() error {
 	return NewError(http.StatusServiceUnavailable, "processing_unavailable", "document processing is not configured")
 }
@@ -444,7 +454,7 @@ func fromProcessingCoverage(report processing.Coverage) CoverageReport {
 func fromProcessingStatus(status processing.Status) ProcessingStatus {
 	return ProcessingStatus{JobID: status.JobID, State: status.State, Phase: status.Phase,
 		FailureCode: status.FailureCode, EmbeddingJobIDs: status.EmbeddingJobIDs,
-		CompletedBindings: status.CompletedBindings}
+		CompletedBindings: status.CompletedBindings, PendingBindings: status.PendingBindings}
 }
 
 func fromProcessingJob(job processing.Job) ProcessingJob {

@@ -161,6 +161,7 @@ type ProcessingStatus struct {
 	FailureCode       string   `json:"failure_code,omitzero"`
 	EmbeddingJobIDs   []string `json:"embedding_job_ids"`
 	CompletedBindings int      `json:"completed_bindings" minimum:"0"`
+	PendingBindings   int      `json:"pending_bindings" minimum:"0"`
 }
 
 // RenditionSelectorRequest reads the active rendition for one exact source

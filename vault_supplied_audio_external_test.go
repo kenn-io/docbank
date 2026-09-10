@@ -183,6 +183,67 @@ func TestEmbeddedSuppliedAudioRejectsMismatchedEvidencePolicy(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestEmbeddedSuppliedAudioRetryWaitContinuesChunkEmbeddingsAfterResume(t *testing.T) {
+	var calls int
+	provider := newTestSuppliedAudioProvider(t, func(string) (document.SuppliedTranscript, error) {
+		calls++
+		if calls == 1 {
+			providerErr, err := document.NewRenditionProviderError(document.RenditionErrorTransient,
+				"", 0, errors.New("temporary"))
+			if err != nil {
+				return document.SuppliedTranscript{}, err
+			}
+			return document.SuppliedTranscript{}, providerErr
+		}
+		return document.SuppliedTranscript{Provider: "beeper", Text: "retryable chunk needle"}, nil
+	})
+	embeddingProvider := newSyntheticEmbeddingProvider(t)
+	profile := suppliedAudioProfileForProvider(t, provider)
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{"audio": {
+			Profile: profile, RenditionProvider: provider,
+			EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider},
+			Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}},
+		}},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/voice.wav", bytes.NewReader(mediatest.WAV()), docbank.PutOptions{MediaType: "audio/wav"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "audio"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	status := waitForProcessingStatus(t, vault, job.ID, "retry_wait")
+	assert.Equal(t, 1, status.PendingBindings)
+	assert.Empty(t, job.EmbeddingJobIDs)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, err := vault.ResumeProcessing(t.Context(), docbank.ResumeProcessingRequest{Profile: "audio", MaxJobs: 16})
+		require.NoError(t, err)
+		status, err = vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+		require.NoError(t, err)
+		if status.State == "completed" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Equal(t, "completed", status.State)
+	require.NotEmpty(t, status.EmbeddingJobIDs)
+
+	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
+	search, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "audio", BindingID: "chunks", Fence: fence,
+	})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+}
+
 func TestEmbeddedSuppliedAudioRejectsAmbiguousProviderRegistrationInEitherOrder(t *testing.T) {
 	provider := newTestSuppliedAudioProvider(t, func(string) (document.SuppliedTranscript, error) {
 		return document.SuppliedTranscript{Provider: "beeper", Text: "transcript"}, nil
@@ -328,7 +389,7 @@ func TestEmbeddedSuppliedAudioRejectsDeploymentBindingMismatch(t *testing.T) {
 			"audio": {Profile: profile, RenditionProvider: provider},
 		},
 	}})
-	require.ErrorContains(t, err, "supplied transcript deployment differs from its binding")
+	require.ErrorContains(t, err, "rendition provider deployment differs from its binding")
 }
 
 func TestEmbeddedSuppliedAudioCancellationAfterRenditionAcknowledgementKeepsLaterEmbeddings(t *testing.T) {
