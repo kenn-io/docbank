@@ -436,6 +436,46 @@ func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *te
 	})
 	require.NoError(t, err)
 	assert.Zero(t, result.Enqueued)
+	assert.True(t, result.Incomplete, "revoked consent keeps reconciliation pending")
+}
+
+func TestEmbeddingJobReconciliationRecoversMissingDirectBinding(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "direct-recovery")
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
+	_, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	spaces := make(map[string]EmbeddingVectorSpaceRecord, len(portable.Embeddings))
+	for _, binding := range portable.Embeddings {
+		spaces[fingerprints.VectorSpace[binding.Name]] = EmbeddingVectorSpaceRecord{
+			ID: fingerprints.VectorSpace[binding.Name], ContractVersion: EmbeddingVectorSpaceContractV1,
+			Descriptor: request.Descriptor, ProviderDescriptor: request.Descriptor.ID,
+			ProviderRevision: request.Descriptor.ModelRevision, DescriptorFingerprint: request.Descriptor.Fingerprint,
+			CompatibilityID: request.Descriptor.CompatibilityID, Dimensions: request.Descriptor.Dimension,
+			Metric: request.Descriptor.Metric, Normalization: request.Descriptor.Normalization,
+			ScalarEncoding: request.Descriptor.ScalarEncoding, DocumentFormatter: request.Descriptor.DocumentFormatter,
+			QueryFormatter: request.Descriptor.QueryFormatter, ModelInputFingerprint: request.Descriptor.ModelInput.Fingerprint,
+		}
+	}
+	var recovered []string
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint},
+		VectorSpaces: spaces,
+		GenerateOriginalFile: func(_ context.Context, generation OriginalFileGenerationRequest) (EmbeddingInputGenerationRecord, error) {
+			recovered = append(recovered, generation.BindingID)
+			assert.Equal(t, versionID, generation.ContentVersionID)
+			assert.Equal(t, profile.Fingerprint, generation.ProfileFingerprint)
+			return request.InputGeneration, nil
+		},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"optional", "required"}, recovered)
+	assert.Equal(t, 2, result.Enqueued)
+	assert.False(t, result.Incomplete)
+	var jobs int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs`).Scan(&jobs))
+	assert.Equal(t, 2, jobs)
 }
 
 func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T) {

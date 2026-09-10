@@ -24,11 +24,20 @@ type EmbeddingReconcileRequest struct {
 	// VectorSpaces carries exact runtime descriptor authority for a missing E1 record.
 	VectorSpaces             map[string]EmbeddingVectorSpaceRecord
 	HydrateGeneration        func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
+	GenerateOriginalFile     func(context.Context, OriginalFileGenerationRequest) (EmbeddingInputGenerationRecord, error)
 	AfterRenditionAttachment string
 	RenditionAttachments     []string
 	SkipGenerations          bool
 	SkipRenditionHeads       bool
 	GenerateRenditionChunk   func(context.Context, RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error)
+}
+
+// OriginalFileGenerationRequest names the exact source version and profile
+// binding whose direct-file input authority the processing service may rebuild.
+type OriginalFileGenerationRequest struct {
+	ContentVersionID   string
+	ProfileFingerprint string
+	BindingID          string
 }
 
 // EmbeddingReconcileResult reports work materialized from existing portable
@@ -77,9 +86,9 @@ func (s *Store) EnsureEmbeddingVectorSpace(ctx context.Context, record Embedding
 	})
 }
 
-// ReconcileEmbeddingJobs discovers only already-materialized E1/E2 or direct
-// generations for current versions. It never creates input authority, grants
-// consent, or contacts a provider.
+// ReconcileEmbeddingJobs discovers materialized generations for current
+// versions and asks the processing service to rebuild missing input authority
+// from a current rendition head. It never grants consent or contacts a provider.
 func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest) (EmbeddingReconcileResult, error) {
 	if request.Limit < 1 || request.Limit > 1000 || request.At.IsZero() || len(request.DescriptorFingerprints) == 0 {
 		return EmbeddingReconcileResult{}, errors.New("embedding reconciliation request is invalid")
@@ -206,6 +215,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					return err
 				}
 				if !found {
+					result.Incomplete = true
 					continue
 				}
 				candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
@@ -249,17 +259,33 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if more && len(generationIDs) != 0 {
 		result.Next = generationIDs[len(generationIDs)-1]
 	}
-	if request.GenerateRenditionChunk != nil && !request.SkipRenditionHeads {
-		candidates, next, err := s.renditionChunkCandidates(ctx, request, executable)
+	if (request.GenerateRenditionChunk != nil || request.GenerateOriginalFile != nil) && !request.SkipRenditionHeads {
+		candidates, next, incomplete, err := s.renditionEmbeddingCandidates(ctx, request, executable)
 		if err != nil {
 			return EmbeddingReconcileResult{}, err
 		}
+		result.Incomplete = result.Incomplete || incomplete
 		for _, candidate := range candidates {
-			generated, err := request.GenerateRenditionChunk(ctx, RenditionChunkGenerationRequest{
-				ContentVersionID:   candidate.request.ContentVersionID,
-				ProfileFingerprint: candidate.request.Profile.Fingerprint,
-				BindingID:          candidate.binding.Name, AttachmentID: candidate.attachmentID,
-			})
+			var generated EmbeddingInputGenerationRecord
+			if candidate.binding.InputKind == document.EmbeddingInputRenditionChunk {
+				if request.GenerateRenditionChunk == nil {
+					return EmbeddingReconcileResult{}, errors.New("embedding reconciliation requires rendition chunk generation authority")
+				}
+				generated, err = request.GenerateRenditionChunk(ctx, RenditionChunkGenerationRequest{
+					ContentVersionID:   candidate.request.ContentVersionID,
+					ProfileFingerprint: candidate.request.Profile.Fingerprint,
+					BindingID:          candidate.binding.Name, AttachmentID: candidate.attachmentID,
+				})
+			} else {
+				if request.GenerateOriginalFile == nil {
+					return EmbeddingReconcileResult{}, errors.New("embedding reconciliation requires direct-file generation authority")
+				}
+				generated, err = request.GenerateOriginalFile(ctx, OriginalFileGenerationRequest{
+					ContentVersionID:   candidate.request.ContentVersionID,
+					ProfileFingerprint: candidate.request.Profile.Fingerprint,
+					BindingID:          candidate.binding.Name,
+				})
+			}
 			if err != nil {
 				if ctx.Err() != nil {
 					return EmbeddingReconcileResult{}, ctx.Err()
@@ -272,19 +298,23 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					FailureCode:                  EmbeddingFailureProviderUnavailable,
 					FailedAt:                     request.At.UTC().Format(timestampLayout),
 				}); failureErr != nil {
-					return EmbeddingReconcileResult{}, fmt.Errorf("recording rendition chunk recovery failure: %w", failureErr)
+					return EmbeddingReconcileResult{}, fmt.Errorf("recording embedding recovery failure: %w", failureErr)
 				}
 				result.Incomplete = true
 				continue
 			}
-			result.Generated++
+			if candidate.binding.InputKind == document.EmbeddingInputRenditionChunk {
+				result.Generated++
+			}
 			candidate.request.InputGeneration = generated
 			record := EmbeddingSetRecord{BindingID: candidate.binding.Name, InputKind: candidate.binding.InputKind,
 				ProcessingProfileFingerprint: candidate.request.Profile.Fingerprint,
 				EmbeddingInputFingerprint:    candidate.fingerprints.EmbeddingInput[candidate.binding.Name],
 				VectorSpace:                  candidate.space, InputGeneration: generated}
-			if err := validateEmbeddingBindingAuthority(record, candidate.binding, candidate.fingerprints); err != nil {
-				continue
+			if candidate.binding.InputKind == document.EmbeddingInputRenditionChunk {
+				if err := validateEmbeddingBindingAuthority(record, candidate.binding, candidate.fingerprints); err != nil {
+					continue
+				}
 			}
 			exists, err := s.renditionEmbeddingHeadExists(ctx, candidate, generated.ID)
 			if err != nil {
@@ -306,11 +336,12 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	return result, nil
 }
 
-func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingReconcileRequest,
+func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request EmbeddingReconcileRequest,
 	executable map[string]struct{},
-) ([]renditionChunkCandidate, string, error) {
+) ([]renditionChunkCandidate, string, bool, error) {
 	var candidates []renditionChunkCandidate
 	var next string
+	incomplete := false
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		query := `SELECT rh.content_version_id,rh.profile_fingerprint,rh.attachment_id
 			FROM rendition_heads rh
@@ -386,7 +417,11 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				continue
 			}
 			for _, binding := range portable.Embeddings {
-				if binding.InputKind != document.EmbeddingInputRenditionChunk {
+				if binding.InputKind == document.EmbeddingInputRenditionChunk && request.GenerateRenditionChunk == nil {
+					continue
+				}
+				if binding.InputKind != document.EmbeddingInputRenditionChunk &&
+					(binding.InputKind != document.EmbeddingInputOriginalFile || request.GenerateOriginalFile == nil) {
 					continue
 				}
 				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
@@ -414,13 +449,26 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 					continue
 				}
 				var jobExists bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs j
-					JOIN embedding_input_generations g ON g.generation_id=j.generation_id
-					WHERE j.vault_uid=? AND j.content_version_id=? AND j.profile_fingerprint=?
-					AND j.binding_id=? AND j.input_kind=? AND j.vector_space_id=?
-					AND g.source_version_id=? AND g.profile_fingerprint=? AND g.attachment_id=?)`,
-					s.vaultID, versionID, profileFingerprint, binding.Name, binding.InputKind,
-					space.ID, versionID, profileFingerprint, attachmentID).Scan(&jobExists); err != nil {
+				var query string
+				var args []any
+				if binding.InputKind == document.EmbeddingInputRenditionChunk {
+					query = `SELECT EXISTS(SELECT 1 FROM embedding_jobs j
+						JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+						WHERE j.vault_uid=? AND j.content_version_id=? AND j.profile_fingerprint=?
+						AND j.binding_id=? AND j.input_kind=? AND j.vector_space_id=?
+						AND g.source_version_id=? AND g.profile_fingerprint=? AND g.attachment_id=?)`
+					args = append(args, versionID, profileFingerprint, attachmentID)
+				} else {
+					query = `SELECT EXISTS(SELECT 1 FROM embedding_jobs j
+						WHERE j.vault_uid=? AND j.content_version_id=? AND j.profile_fingerprint=?
+						AND j.binding_id=? AND j.input_kind=? AND j.vector_space_id=?)
+						OR EXISTS(SELECT 1 FROM embedding_heads h
+						JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
+						WHERE h.content_version_id=? AND h.binding_id=? AND h.input_kind=?
+						AND s.profile_fingerprint=? AND s.vector_space_id=?)`
+					args = append(args, versionID, binding.Name, binding.InputKind, profileFingerprint, space.ID)
+				}
+				if err := tx.QueryRowContext(ctx, query, args...).Scan(&jobExists); err != nil {
 					return err
 				}
 				if jobExists {
@@ -432,6 +480,7 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 					return err
 				}
 				if !found {
+					incomplete = true
 					continue
 				}
 				candidates = append(candidates, renditionChunkCandidate{
@@ -449,7 +498,7 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 		}
 		return nil
 	})
-	return candidates, next, err
+	return candidates, next, incomplete, err
 }
 
 func (s *Store) renditionEmbeddingHeadExists(ctx context.Context, candidate renditionChunkCandidate,

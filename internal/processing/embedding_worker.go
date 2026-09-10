@@ -214,6 +214,7 @@ type EmbeddingWorkerConfig struct {
 	MaxJobs                int
 	VectorSpaces           map[string]store.EmbeddingVectorSpaceRecord
 	BoundedReconciliation  bool
+	GenerateOriginalFile   func(context.Context, store.OriginalFileGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 	GenerateRenditionChunk func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 }
 
@@ -244,6 +245,7 @@ type EmbeddingWorker struct {
 	reconcileRenditionHeadsDone                    bool
 	reconcileIncomplete                            bool
 	boundedReconciliation                          bool
+	generateOriginalFile                           func(context.Context, store.OriginalFileGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 	generateRenditionChunk                         func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 	lastReconcile                                  store.EmbeddingReconcileResult
 	completedVectorSpaces                          map[string]struct{}
@@ -307,6 +309,7 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		profileFingerprints:    slices.Clone(config.ProfileFingerprints),
 		vectorSpaces:           cloneVectorSpaces(config.VectorSpaces),
 		boundedReconciliation:  config.BoundedReconciliation,
+		generateOriginalFile:   config.GenerateOriginalFile,
 		generateRenditionChunk: config.GenerateRenditionChunk,
 		completedVectorSpaces:  make(map[string]struct{}),
 	}, nil
@@ -355,6 +358,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 					AfterRenditionAttachment: afterRendition,
 					SkipGenerations:          worker.boundedReconciliation && generationsDone,
 					SkipRenditionHeads:       worker.boundedReconciliation && renditionHeadsDone,
+					GenerateOriginalFile:     worker.generateOriginalFile,
 					GenerateRenditionChunk:   worker.generateRenditionChunk,
 					HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 						return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
@@ -505,6 +509,7 @@ func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
 			DescriptorFingerprints: worker.descriptorFingerprints,
 			VectorSpaces:           worker.vectorSpaces,
 			RenditionAttachments:   attachments,
+			GenerateOriginalFile:   worker.generateOriginalFile,
 			GenerateRenditionChunk: worker.generateRenditionChunk,
 			HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 				return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)

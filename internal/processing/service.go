@@ -493,6 +493,33 @@ func (service *Service) RenditionChunkGenerationHook() func(context.Context,
 	}
 }
 
+// DirectFileGenerationHook rebuilds a direct-file generation from the exact
+// configured profile and persisted source version.
+func (service *Service) DirectFileGenerationHook() func(context.Context,
+	store.OriginalFileGenerationRequest,
+) (store.EmbeddingInputGenerationRecord, error) {
+	return func(ctx context.Context, request store.OriginalFileGenerationRequest) (store.EmbeddingInputGenerationRecord, error) {
+		profile, ok := service.profileByFingerprint(request.ProfileFingerprint)
+		if !ok {
+			return store.EmbeddingInputGenerationRecord{}, store.ErrNotFound
+		}
+		binding, err := selectEmbeddingBinding(profile.portable, request.BindingID)
+		if err != nil || binding.InputKind != document.EmbeddingInputOriginalFile {
+			return store.EmbeddingInputGenerationRecord{}, store.ErrNotFound
+		}
+		version, err := service.catalog.ContentVersionByID(ctx, request.ContentVersionID)
+		if err != nil {
+			return store.EmbeddingInputGenerationRecord{}, err
+		}
+		_, fingerprints, err := document.CanonicalProfile(profile.portable)
+		if err != nil {
+			return store.EmbeddingInputGenerationRecord{}, err
+		}
+		return directEmbeddingGeneration(version, profile.record.Fingerprint,
+			fingerprints.EmbeddingInput[binding.Name], binding), nil
+	}
+}
+
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
 	node, version, profile, err := service.resolve(ctx, selector)
 	if err != nil {
@@ -1003,7 +1030,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 				return Status{}, err
 			}
 		}
-		pendingBindings := service.pendingChunkBindings(profile, embeddings)
+		pendingBindings := service.pendingEmbeddingBindings(profile, embeddings)
 		return aggregateStatus(jobID, &rendition, embeddings, pendingBindings), nil
 	}
 	if !errors.Is(waiterErr, store.ErrNotFound) {
@@ -1067,7 +1094,7 @@ func aggregateStatus(jobID string, rendition *store.RenditionJob,
 	return status
 }
 
-func (service *Service) pendingChunkBindings(profile configuredProfile,
+func (service *Service) pendingEmbeddingBindings(profile configuredProfile,
 	embeddings []store.EmbeddingJobStatus,
 ) int {
 	present := make(map[string]struct{}, len(embeddings))
@@ -1076,10 +1103,8 @@ func (service *Service) pendingChunkBindings(profile configuredProfile,
 	}
 	pending := 0
 	for _, binding := range profile.portable.Embeddings {
-		if binding.InputKind == document.EmbeddingInputRenditionChunk {
-			if _, ok := present[binding.Name]; !ok {
-				pending++
-			}
+		if _, ok := present[binding.Name]; !ok {
+			pending++
 		}
 	}
 	return pending
@@ -1299,26 +1324,66 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	requestVectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	for _, binding := range profile.portable.Embeddings {
-		var generation store.EmbeddingInputGenerationRecord
-		switch binding.InputKind {
-		case document.EmbeddingInputOriginalFile:
-			generation = directEmbeddingGeneration(version, profile.record.Fingerprint,
-				fingerprints.EmbeddingInput[binding.Name], binding)
-		case document.EmbeddingInputRenditionChunk:
-			generation, err = service.chunkEmbeddingGeneration(ctx, version, profile, binding)
-			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					if err := service.catalog.EnsureEmbeddingVectorSpace(ctx,
-						embeddingVectorSpaceRecord(profile.embedders[binding.Name].Descriptor(),
-							fingerprints.VectorSpace[binding.Name])); err != nil {
-						return nil, err
-					}
-					continue
-				}
-				return nil, err
-			}
-		default:
+		if binding.InputKind != document.EmbeddingInputOriginalFile &&
+			binding.InputKind != document.EmbeddingInputRenditionChunk {
 			return nil, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
+		}
+	}
+	enqueue := func() ([]string, error) {
+		if len(requests) == 0 {
+			return nil, nil
+		}
+		jobIDs, enqueueErr := service.catalog.EnqueueEmbeddingJobs(ctx, requests)
+		if enqueueErr != nil {
+			return nil, enqueueErr
+		}
+		for index, jobID := range jobIDs {
+			vectorSpaceByJob[jobID] = requestVectorSpaces[index]
+		}
+		if onEnqueued != nil {
+			onEnqueued(slices.Clone(jobIDs))
+		}
+		requests = requests[:0]
+		requestVectorSpaces = requestVectorSpaces[:0]
+		return jobIDs, nil
+	}
+	jobIDs := make([]string, 0, len(profile.portable.Embeddings))
+	for _, binding := range profile.portable.Embeddings {
+		if binding.InputKind != document.EmbeddingInputOriginalFile {
+			continue
+		}
+		generation := directEmbeddingGeneration(version, profile.record.Fingerprint,
+			fingerprints.EmbeddingInput[binding.Name], binding)
+		authorization := store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
+			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+		requests = append(requests, store.EmbeddingJobRequest{
+			ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
+			Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
+			Authorization: authorization,
+		})
+		requestVectorSpaces = append(requestVectorSpaces, fingerprints.VectorSpace[binding.Name])
+	}
+	directJobIDs, err := enqueue()
+	if err != nil {
+		return nil, err
+	}
+	jobIDs = append(jobIDs, directJobIDs...)
+	for _, binding := range profile.portable.Embeddings {
+		if binding.InputKind != document.EmbeddingInputRenditionChunk {
+			continue
+		}
+		generation, generationErr := service.chunkEmbeddingGeneration(ctx, version, profile, binding)
+		if generationErr != nil {
+			if errors.Is(generationErr, store.ErrNotFound) {
+				if ensureErr := service.catalog.EnsureEmbeddingVectorSpace(ctx,
+					embeddingVectorSpaceRecord(profile.embedders[binding.Name].Descriptor(),
+						fingerprints.VectorSpace[binding.Name])); ensureErr != nil {
+					return jobIDs, ensureErr
+				}
+				continue
+			}
+			return jobIDs, generationErr
 		}
 		authorization := store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
@@ -1330,18 +1395,13 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		})
 		requestVectorSpaces = append(requestVectorSpaces, fingerprints.VectorSpace[binding.Name])
 	}
-	if len(requests) == 0 {
-		return []string{}, nil
-	}
-	jobIDs, err := service.catalog.EnqueueEmbeddingJobs(ctx, requests)
+	chunkJobIDs, err := enqueue()
 	if err != nil {
-		return nil, err
+		return jobIDs, err
 	}
-	for index, jobID := range jobIDs {
-		vectorSpaceByJob[jobID] = requestVectorSpaces[index]
-	}
-	if onEnqueued != nil {
-		onEnqueued(slices.Clone(jobIDs))
+	jobIDs = append(jobIDs, chunkJobIDs...)
+	if len(jobIDs) == 0 {
+		return []string{}, nil
 	}
 	executionCtx := ctx
 	if onEnqueued != nil {
@@ -1356,6 +1416,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
 		DescriptorFingerprints: service.embeddings.Fingerprints(),
 		VectorSpaces:           service.EmbeddingVectorSpaces(),
+		GenerateOriginalFile:   service.DirectFileGenerationHook(),
 		GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
 	})
 	if err != nil {
@@ -1483,6 +1544,7 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 			ProfileFingerprints: profileFingerprints,
 			VectorSpaces:        service.EmbeddingVectorSpaces(),
 			MaxJobs:             maxJobs, BoundedReconciliation: true,
+			GenerateOriginalFile:   service.DirectFileGenerationHook(),
 			GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
 		})
 		if err != nil {
@@ -1539,12 +1601,26 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 	}
 	var spaces []string
 	if profileFingerprint == "" {
-		spaces, err = service.catalog.ListVectorIndexSpaces(ctx)
+		for _, fingerprint := range profileFingerprints {
+			var profileSpaces []string
+			profileSpaces, err = service.catalog.ListVectorIndexSpacesForProfile(ctx, fingerprint)
+			if err != nil {
+				return result, err
+			}
+			spaces = append(spaces, profileSpaces...)
+		}
 	} else {
 		spaces, err = service.catalog.ListVectorIndexSpacesForProfile(ctx, profileFingerprint)
 	}
 	if err != nil {
 		return result, err
+	}
+	spaces = sortedUnique(spaces)
+	remaining := maxJobs - result.RenditionsProcessed - result.EmbeddingsProcessed
+	remaining = max(remaining, 0)
+	if len(spaces) > remaining {
+		result.Pending = true
+		spaces = spaces[:remaining]
 	}
 	if len(spaces) != 0 {
 		indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
@@ -1553,7 +1629,7 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		if err != nil {
 			return result, err
 		}
-		for _, space := range sortedUnique(spaces) {
+		for _, space := range spaces {
 			if _, err := indexer.Rebuild(ctx, space); err != nil {
 				return result, err
 			}
