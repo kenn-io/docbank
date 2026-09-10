@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-09
+last_edited: 2026-09-10
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -103,62 +103,87 @@ restore.
 
 ## Save complete query intent over HTTP
 
-The saved-query API keeps a named QueryV1 definition without running it. The
-payload carries the full expression and structured filters, so Boolean syntax
-is not flattened into the current `docbank search` flags. There is no saved
-query CLI or web management screen yet.
+Save a named search definition when several clients need to reuse it. The
+HTTP API stores the definition with the vault's metadata. It does not run the
+search. Saved definitions survive backup and restore.
 
-This example creates a synthetic definition, reads its ETag, and updates it
-under that revision. It expects `DOCBANK_URL`, `DOCBANK_API_KEY`, and `jq`:
+A query payload uses `QueryV1`: a JSON object with version `v: 1`, search text,
+filters, and optional syntax, mode, and sort choices. A saved mode such as
+`hybrid` describes intent; it does not enable that mode in `docbank search`.
+See the [payload reference](../architecture/http-api.md#saved-query-and-highlight-definitions)
+for accepted fields and limits.
+
+The examples below use `DOCBANK_URL` and `DOCBANK_API_KEY` from the
+[agent connection setup](../agents/integration.md#give-an-independent-client-a-stable-endpoint).
+Create a query with a unique name:
 
 ```bash
-created=$(mktemp)
-headers=$(mktemp)
-
-curl --fail-with-body --silent --show-error \
-  -D "$headers" -o "$created" \
+curl --fail-with-body --silent --show-error -i \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Synthetic review search",
-    "description": "Complete saved intent",
-    "kind": "query",
-    "payload": {
-      "v": 1,
-      "text": "status:open AND (owner:me OR owner:team)",
-      "syntax": "advanced",
-      "mode": "hybrid",
-      "filters": {"paths": ["/records"], "extensions": ["md", "txt"]},
-      "sort": {"field": "modified_at", "direction": "desc"}
-    }
-  }' \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"Quarterly reports","kind":"query","payload":{"v":1,"text":"quarterly report","filters":{"paths":["/reports"]}}}' \
   "$DOCBANK_URL/api/v1/saved-queries"
-
-saved_id=$(jq -r .id "$created")
-etag=$(awk 'tolower($1) == "etag:" {sub("\\r$", "", $2); print $2}' "$headers")
-
-curl --fail-with-body --silent --show-error \
-  -H "X-Api-Key: $DOCBANK_API_KEY" \
-  "$DOCBANK_URL/api/v1/saved-queries/$saved_id" | jq .
-
-curl --fail-with-body --silent --show-error \
-  -H "X-Api-Key: $DOCBANK_API_KEY" \
-  -H "Content-Type: application/json" \
-  -H "If-Match: $etag" \
-  -X PATCH \
-  -d '{"description":"Reviewed synthetic definition"}' \
-  "$DOCBANK_URL/api/v1/saved-queries/$saved_id" | jq .
-
-rm "$created" "$headers"
 ```
 
-The response payload is canonical structured JSON and includes its SHA-256
-fingerprint, revision, and UTC timestamps. Use `GET
-/api/v1/saved-queries?kind=query&limit=100&offset=0` to list definitions.
-Create, update, and delete return `409 audit_mutation_unsupported` after audit
-authority has been enabled; listing and reading still work. Saving either a
-query or a literal highlight set does not execute a search or inspect document
-content through these endpoints.
+Keep the returned `id` and `ETag`. The ETag is a quoted revision number, such
+as `"1"`. Use the ID to read the definition:
+
+```bash
+curl --fail-with-body -i \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/saved-queries/<saved-query-id>"
+```
+
+To edit it, send the ETag from your last read as `If-Match`. Replace the
+example ID and revision with those returned by your daemon:
+
+```bash
+curl --fail-with-body -X PATCH \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "1"' \
+  -H 'Content-Type: application/json' \
+  --data '{"description":"Reports for quarterly review"}' \
+  "$DOCBANK_URL/api/v1/saved-queries/<saved-query-id>"
+```
+
+Only `name`, `description`, and `payload` can change. A supplied `payload`
+replaces the complete payload. A stale revision returns `412 stale_revision`;
+read again and reconsider the edit. To delete a definition, send `DELETE` to
+the same URL with its current `If-Match`.
+
+List definitions with `GET /api/v1/saved-queries?kind=query&limit=100&offset=0`.
+The response includes `items`, `total`, `limit`, and `offset`. Omit `kind` to
+list both kinds of definition. Each definition has a SHA-256 fingerprint of
+its normalized payload, a revision, and UTC timestamps.
+
+### How do I save a highlight set?
+
+A highlight set is an ordered list of literal text and colors. Save one through
+the same endpoint with `kind: "highlight_set"`:
+
+```bash
+curl --fail-with-body -i \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"Review terms","kind":"highlight_set","payload":{"v":1,"terms":[{"text":"invoice","color":"#ffff00"},{"text":"due date","color":"#aaffaa"}]}}' \
+  "$DOCBANK_URL/api/v1/saved-queries"
+```
+
+Use 1–64 unique terms, each 1–256 Unicode characters long. Colors must use
+lowercase `#rrggbb`. Terms are literal text, not regular expressions. Order is
+preserved. Read, edit, and delete the set by its returned ID, using the same
+revision rules as a query.
+
+### What are the saved-definition limits?
+
+The CLI, web application, and TUI have no saved-definition management screen
+or command. The HTTP endpoints do not execute saved queries, render
+highlights, or return result counts.
+
+Once permanent audit history is enabled anywhere in the vault, create, update,
+and delete return `409 audit_mutation_unsupported`. Listing and reading still
+work. See [Permanent audited history](audited-history.md) before enabling it
+in a vault that needs editable saved definitions.
 
 ## Text extraction
 
@@ -178,9 +203,16 @@ extraction failure. `docbank jobs` shows whether that worker is running.
 
 ## Which text is not searched?
 
-Docbank does not extract PDF text layers, office-document text, or text from
-images through optical character recognition (OCR). You can still find these
-files by name and read their stored bytes.
+The daemon does not automatically extract PDF text layers, office-document
+text, or text from images through optical character recognition (OCR). You
+can still find these files by name and read their stored bytes. The
+[document processing libraries](../document-understanding.md) provide additional
+processing options for applications; adding a file does not start them.
+
+The CLI, HTTP search endpoint, web application, and TUI use lexical search:
+matching words in names and indexed text. They do not expose semantic search
+by meaning, hybrid search that combines both methods, query expansion, or
+reranking. Saving those choices in QueryV1 does not run them.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the

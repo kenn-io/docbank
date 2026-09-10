@@ -82,6 +82,13 @@ Tags organize documents independently of their current paths. Each tag has a
 stable UUID; its name can change without breaking assignments or agent-held
 references.
 
+In the web application, slash-separated names form display groups. For
+example, `matter/acme/reviewed` appears as `reviewed` under `matter/acme`.
+The full name is still one tag; assigning it does not assign a parent tag.
+Use the full name or UUID in CLI commands. Colors come from stable tag IDs,
+so renaming a tag keeps its color. You do not need to configure groups or
+colors. See [web tag controls](web.md#manage-tag-definitions).
+
 ![The Docbank web application managing a synthetic vault's stable tag catalog.](https://docbank.ai/assets/generated/web-tag-catalog.png)
 
 ```bash

@@ -117,6 +117,11 @@ has no continuation cursor; narrow a truncated query as described in
 
 ## Current limits
 
+The search box accepts text only. Use `docbank search` or HTTP for tag,
+media-type, directory, and modification-time filters. Saved query and
+highlight definitions are managed through the
+[HTTP API](searching.md#save-complete-query-intent-over-http).
+
 Other mutations, permanent deletion, permanent-audit enrollment, independent
 verification, backup creation/verification/restore, and storage maintenance
 remain outside this interface. Use their ordinary CLI commands or authenticated

@@ -131,14 +131,15 @@ never modified or deleted.
 - With `--replace`, a live directory fails the file. A destination created
   after the initial read also fails with an exact-name conflict; Docbank does
   not add a suffix. Without `--replace`, ordinary suffixing still applies.
-- Re-running an import converges: a file whose content already exists
-  under any candidate name in the destination is skipped, so an
-  interrupted bulk import can simply be re-run. See
+- Without `--replace`, a rerun skips content that already exists under a
+  candidate name in the destination. An interrupted bulk import can be
+  rerun. See
   [Importing Documents](usage/importing.md).
 
 ### Preview an import
 
-Run `--preflight` before a large import. The report counts files, directories,
+Run `--preflight` before a large import. It cannot be combined with `--replace`.
+The report counts files, directories,
 and logical bytes. It separates pack-eligible files, larger loose-only files,
 files above the ingest limit, exclusions, non-regular entries, and filesystem
 errors. It also summarizes the largest extension groups.
@@ -728,8 +729,11 @@ an explicit `truncated` boolean. A filtered report also echoes the stable
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
-after a terminally verified read. PDF, Office, and OCR extraction are
-unsupported. See [Searching](usage/searching.md).
+after a complete verified read. It does not automatically run PDF, Office,
+or OCR extraction. Search uses words in names and indexed text; it has no
+semantic or hybrid mode. Saved queries and highlight sets use a separate
+[HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no
+CLI management command. See [Searching](usage/searching.md).
 
 ## docbank tui
 

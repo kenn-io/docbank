@@ -200,8 +200,12 @@ ranking and appear before content-only matches.
 Content search covers current versions of verified UTF-8 plain text, Markdown,
 JSON, and JSONL documents up to 16 MiB. Extraction runs in the background.
 After a write, inspect `docbank jobs` or retry briefly before treating a
-missing content match as permanent. Vault text search does not extract PDF,
-Office, image, or OCR text.
+missing content match as permanent. The daemon does not automatically run
+PDF, Office, image, or OCR extraction. See [Searching](../usage/searching.md)
+for the processing boundary and exact media types.
+
+`GET /api/v1/search` uses lexical matching: words in names and indexed text.
+It does not accept a saved QueryV1 payload or expose semantic or hybrid search.
 
 Use these filters to narrow the same ranking:
 
@@ -257,6 +261,20 @@ curl --fail-with-body --get \
   --data 'limit=100' \
   "$DOCBANK_URL/api/v1/search"
 ```
+
+### Share saved queries and highlight sets
+
+Store reusable definitions through `/api/v1/saved-queries`. Use the
+[create, read, and edit examples](../usage/searching.md#save-complete-query-intent-over-http)
+and the [payload reference](../architecture/http-api.md#saved-query-and-highlight-definitions).
+Keep each definition's stable `id` and current `ETag`. Send that ETag as
+`If-Match` when editing or deleting; on `412 stale_revision`, read again and
+reconsider the change.
+
+These endpoints store definitions only. They do not execute queries, apply
+highlights, or count matching documents. A payload with `mode: "hybrid"` does
+not enable hybrid execution. Permanent audit history makes saved definitions
+read-only: writes return `409 audit_mutation_unsupported`.
 
 ### Download and verify content
 

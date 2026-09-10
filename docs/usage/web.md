@@ -71,7 +71,9 @@ more than six.
 3. Select an existing tag and choose **Add tag**, or remove an assigned tag.
 
 The dialog lists assigned tags separately from available tags. It loads the
-first 1,000 definitions in name order.
+first 1,000 definitions in name order, then displays related names in groups.
+The picker uses the same color for a tag wherever it appears. Use the arrow
+keys to navigate its options, Enter to select, and Escape to close it.
 
 Every change is bound to the stable node ID and revision shown in the dialog.
 After success, the browser updates the node revision and the tag's vault-wide
@@ -94,6 +96,12 @@ its assignments, but never deletes a document or its stored content. Reusing
 the same name later creates a different stable identity. After a rename or
 deletion, the browser reloads the active folder, search, or tag view so node
 revisions and assignment counts remain authoritative.
+
+Tags use a color derived from their stable ID. A rename keeps that color.
+Slash-separated names create display groups automatically: `matter/acme/reviewed`
+appears as `reviewed` under `matter/acme`. The full name remains available in
+the tooltip and to assistive technology. Groups do not create parent tags or
+change assignment rules.
 
 The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
@@ -415,7 +423,7 @@ The launch page carries the scoped session and its random upload-proof secret
 in a URL fragment. Browsers do not include fragments in the initial HTTP
 request; the application removes them from the address bar and holds them only
 in page memory. Ordinary requests send `X-Docbank-Web-Session`. The daemon
-accepts that credential only for the routes used by this interface:
+accepts that credential for the following operations:
 
 | Permission | Limit |
 |------------|-------|
@@ -429,6 +437,11 @@ accepts that credential only for the routes used by this interface:
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
+| Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
+
+The API permits saved-definition management with a browser session, but the
+current application has no controls for it. See
+[Saved queries and highlight sets](searching.md#save-complete-query-intent-over-http).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
 session. The browser must prove it holds the upload secret before sending any
