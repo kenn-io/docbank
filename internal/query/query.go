@@ -72,7 +72,7 @@ type Filters struct {
 	ModifiedAfter        string   `json:"modified_after,omitzero"`
 	ModifiedBefore       string   `json:"modified_before,omitzero"`
 	SizeMin              int64    `json:"size_min,omitzero"`
-	SizeMax              int64    `json:"size_max,omitzero"`
+	SizeMax              *int64   `json:"size_max,omitzero"`
 	TextCoverage         []string `json:"text_coverage,omitempty"`
 	HasDuplicates        bool     `json:"has_duplicates,omitzero"`
 	CollapseDuplicates   bool     `json:"collapse_duplicates,omitzero"`
@@ -235,7 +235,7 @@ func (input filtersInput) value() Filters {
 		value.SizeMin = *input.SizeMin
 	}
 	if input.SizeMax != nil {
-		value.SizeMax = *input.SizeMax
+		value.SizeMax = input.SizeMax
 	}
 	if input.TextCoverage != nil {
 		value.TextCoverage = *input.TextCoverage
@@ -322,10 +322,11 @@ func normalizeFilters(value Filters) (Filters, error) {
 			return Filters{}, errors.New("modified_after must precede modified_before")
 		}
 	}
-	if value.SizeMin < 0 || value.SizeMin > maxSafeInteger || value.SizeMax < 0 || value.SizeMax > maxSafeInteger {
+	if value.SizeMin < 0 || value.SizeMin > maxSafeInteger ||
+		(value.SizeMax != nil && (*value.SizeMax < 0 || *value.SizeMax > maxSafeInteger)) {
 		return Filters{}, errors.New("query size bounds must be safe nonnegative integers")
 	}
-	if value.SizeMin != 0 && value.SizeMax != 0 && value.SizeMin > value.SizeMax {
+	if value.SizeMax != nil && value.SizeMin > *value.SizeMax {
 		return Filters{}, errors.New("size_min exceeds size_max")
 	}
 	return value, nil

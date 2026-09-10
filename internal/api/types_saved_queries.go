@@ -16,8 +16,8 @@ import (
 const maxSavedQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // SavedQueryPayload carries one complete query or literal highlight set as
-// structured JSON. Its raw representation reaches the strict canonical codec
-// unchanged, including duplicate member names and numeric lexemes.
+// structured JSON. Numeric lexemes reach the strict canonical codec unchanged;
+// the HTTP decoder rejects duplicate member names before invoking the codec.
 type SavedQueryPayload jsonv1.RawMessage
 
 func (p SavedQueryPayload) MarshalJSON() ([]byte, error) {
@@ -121,7 +121,7 @@ type SavedQueryCreateRequest struct {
 // SavedQueryPatch replaces only the supplied mutable fields. Kind and all
 // identity, revision, fingerprint, and timestamp fields are server-owned.
 type SavedQueryPatch struct {
-	Name        *string            `json:"name,omitempty"`
-	Description *string            `json:"description,omitempty"`
-	Payload     *SavedQueryPayload `json:"payload,omitempty"`
+	Name        *string            `json:"name,omitzero"`
+	Description *string            `json:"description,omitzero"`
+	Payload     *SavedQueryPayload `json:"payload,omitzero"`
 }

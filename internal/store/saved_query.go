@@ -56,6 +56,7 @@ func (s *Store) CreateSavedQuery(
 	if err != nil {
 		return SavedQuery{}, err
 	}
+	description = strings.ReplaceAll(description, "\r\n", "\n")
 	if err := validateSavedQueryDescription(description); err != nil {
 		return SavedQuery{}, err
 	}
@@ -169,9 +170,11 @@ func (s *Store) UpdateSavedQuery(
 		normalizedName = &name
 	}
 	if patch.Description != nil {
-		if err := validateSavedQueryDescription(*patch.Description); err != nil {
+		description := strings.ReplaceAll(*patch.Description, "\r\n", "\n")
+		if err := validateSavedQueryDescription(description); err != nil {
 			return SavedQuery{}, err
 		}
+		patch.Description = &description
 	}
 
 	var updated SavedQuery

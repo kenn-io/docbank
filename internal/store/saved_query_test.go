@@ -99,6 +99,27 @@ func TestSavedQueryLifecycleCanonicalizesAndFencesRevisions(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestSavedQueryNormalizesDescriptionLineEndings(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateSavedQuery(t.Context(), "Multiline", "First\r\nSecond",
+		SavedQueryKindQuery, []byte(`{}`))
+	require.NoError(t, err)
+	assert.Equal(t, "First\nSecond", created.Description)
+
+	unchanged, err := s.UpdateSavedQuery(t.Context(), created.ID, created.Revision,
+		SavedQueryPatch{Description: new("First\r\nSecond")})
+	require.NoError(t, err)
+	assert.Equal(t, created, unchanged)
+
+	updated, err := s.UpdateSavedQuery(t.Context(), created.ID, created.Revision,
+		SavedQueryPatch{Description: new("Third\r\nFourth")})
+	require.NoError(t, err)
+	assert.Equal(t, "Third\nFourth", updated.Description)
+	stored, err := s.SavedQueryByID(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, stored)
+}
+
 func TestSavedQueriesAreBoundedFilteredAndNameSorted(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

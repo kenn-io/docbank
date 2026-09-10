@@ -1080,6 +1080,37 @@ func TestSavedQueryClientRoundTrip(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestSavedQueryClientPreservesEmptyPatchValues(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		patch           api.SavedQueryPatch
+		wantDescription string
+		wantText        string
+	}{
+		{name: "clear description", patch: api.SavedQueryPatch{Description: new("")}, wantText: "invoice"},
+		{name: "reset payload", patch: api.SavedQueryPatch{Payload: new(api.SavedQueryPayload(`{}`))}, wantDescription: "Original"},
+		{name: "clear with rename", patch: api.SavedQueryPatch{
+			Name: new("Renamed"), Description: new(""), Payload: new(api.SavedQueryPayload(`{}`)),
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := newClient(t, serverKey)
+			created, err := c.CreateSavedQuery(t.Context(), api.SavedQueryCreateRequest{
+				Name: "Saved search", Description: "Original", Kind: "query",
+				Payload: api.SavedQueryPayload(`{"text":"invoice"}`),
+			})
+			require.NoError(t, err)
+			updated, err := c.UpdateSavedQuery(t.Context(), created.ID, created.Revision, test.patch)
+			require.NoError(t, err)
+			assert.Equal(t, test.wantDescription, updated.Description)
+			assert.Equal(t, test.wantText, savedQueryPayloadText(t, updated.Payload))
+			fetched, err := c.SavedQuery(t.Context(), created.ID)
+			require.NoError(t, err)
+			assert.Equal(t, updated, fetched)
+		})
+	}
+}
+
 func savedQueryPayloadText(t *testing.T, payload []byte) string {
 	t.Helper()
 	var query struct {

@@ -86,6 +86,11 @@ adds a stable UUID, canonical payload fingerprint, revision, timestamps, and a
 quoted numeric `ETag`. Payloads remain JSON objects on the wire; they are not
 base64 strings.
 
+Names are unique across both kinds. Descriptions normalize Windows CRLF line
+endings to LF on create and update. An omitted or `null` size bound is unset;
+`size_max: 0` preserves an empty-file bound, while `size_min: 0` is equivalent
+to no lower bound. A minimum greater than the maximum is rejected.
+
 `GET /saved-queries` returns a consistent name-then-ID-sorted page with
 `items`, `total`, `limit`, and `offset`. The default limit is 100, the maximum
 is 1,000, and an optional `kind` selects one definition type. The stable-ID

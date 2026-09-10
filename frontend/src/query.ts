@@ -111,7 +111,7 @@ export function canonicalQuery(value: Query): string {
   if (normalized.filters.modified_before) filters.modified_before = normalized.filters.modified_before;
   if (normalized.filters.no_tags) filters.no_tags = true;
   if (normalized.filters.paths?.length) filters.paths = normalized.filters.paths;
-  if (normalized.filters.size_max) filters.size_max = normalized.filters.size_max;
+  if (normalized.filters.size_max !== undefined) filters.size_max = normalized.filters.size_max;
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
   if (normalized.filters.tag_ids?.length) filters.tag_ids = normalized.filters.tag_ids;
   if (normalized.filters.text_coverage?.length) filters.text_coverage = normalized.filters.text_coverage;
@@ -215,7 +215,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     extensions: normalizeSet(value.extensions, 32, (item) => extensionPattern.test(item), "extensions"),
     modified_after: normalizeTimestamp(value.modified_after, "modified_after"),
     modified_before: normalizeTimestamp(value.modified_before, "modified_before"),
-    size_min: normalizeSize(value.size_min, "size_min"),
+    size_min: normalizeSize(value.size_min, "size_min") || undefined,
     size_max: normalizeSize(value.size_max, "size_max"),
     text_coverage: normalizeSet(value.text_coverage, 6, (item) => (textCoverageValues as readonly string[]).includes(item), "text_coverage") as TextCoverage[] | undefined,
     has_duplicates: Boolean(value.has_duplicates) || undefined,
@@ -226,7 +226,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
       timestampComparable(result.modified_after) >= timestampComparable(result.modified_before)) {
     throw new Error("modified_after must precede modified_before");
   }
-  if (result.size_min && result.size_max && result.size_min > result.size_max) throw new Error("size_min exceeds size_max");
+  if (result.size_max !== undefined && (result.size_min ?? 0) > result.size_max) throw new Error("size_min exceeds size_max");
   return result;
 }
 
@@ -294,7 +294,7 @@ function validMIMEToken(value: string, allowWildcard: boolean): boolean {
 }
 
 function normalizeSize(value: number | undefined, field: string): number | undefined {
-  if (value === undefined || value === 0) return undefined;
+  if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || value < 0 || value > maxSafeInteger) throw new Error(`${field} is not a safe nonnegative integer`);
   return value;
 }

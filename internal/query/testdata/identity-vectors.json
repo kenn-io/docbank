@@ -2,6 +2,18 @@
   "format": "docbank-query-identity-v1",
   "queries": [
     {
+      "name": "query_zero_size_max",
+      "input_json": "{\"filters\":{\"size_max\":0}}",
+      "canonical_utf8": "{\"filters\":{\"size_max\":0},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:b203dd89dec8cc2a6ef7c80cfc310b218da696be69553a9aa03adae4cd5661c3"
+    },
+    {
+      "name": "query_zero_size_range",
+      "input_json": "{\"filters\":{\"size_min\":0,\"size_max\":0}}",
+      "canonical_utf8": "{\"filters\":{\"size_max\":0},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:b203dd89dec8cc2a6ef7c80cfc310b218da696be69553a9aa03adae4cd5661c3"
+    },
+    {
       "name": "query_defaults",
       "input_json": "{}",
       "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
@@ -59,6 +71,7 @@
     }
   ],
   "invalid_queries": [
+    {"name": "positive_minimum_with_zero_maximum", "json_text": "{\"filters\":{\"size_min\":5,\"size_max\":0}}"},
     {"name": "duplicate_object_keys", "json_text": "{\"v\":1,\"v\":1}"},
     {"name": "nested_duplicate_keys", "json_text": "{\"filters\":{\"extensions\":[\"txt\"],\"extensions\":[\"pdf\"]}}"},
     {"name": "unsafe_integer", "json_text": "{\"filters\":{\"size_max\":9007199254740992}}"},
