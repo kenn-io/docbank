@@ -1041,6 +1041,149 @@ func TestContentReplacementRoundTrip(t *testing.T) {
 	assert.Equal(t, 2, versions.Total)
 }
 
+func TestSavedQueryClientRoundTrip(t *testing.T) {
+	c, _ := newClient(t, serverKey)
+	created, err := c.CreateSavedQuery(t.Context(), api.SavedQueryCreateRequest{
+		Name: "Client search", Description: "Synthetic client fixture", Kind: "query",
+		Payload: api.SavedQueryPayload(`{"text":"status:open AND owner:team","syntax":"advanced"}`),
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, created.Revision)
+	assert.Equal(t, "status:open AND owner:team", savedQueryPayloadText(t, created.Payload))
+
+	page, err := c.SavedQueries(t.Context(), "query", 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, created, page.Items[0])
+
+	fetched, err := c.SavedQuery(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created, fetched)
+
+	description := "Updated through client"
+	payload := api.SavedQueryPayload(`{"text":"tag:urgent OR tag:review","syntax":"advanced"}`)
+	updated, err := c.UpdateSavedQuery(t.Context(), created.ID, created.Revision,
+		api.SavedQueryPatch{Description: &description, Payload: &payload})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, updated.Revision)
+	assert.Equal(t, description, updated.Description)
+	assert.Equal(t, "tag:urgent OR tag:review", savedQueryPayloadText(t, updated.Payload))
+
+	_, err = c.UpdateSavedQuery(t.Context(), created.ID, created.Revision,
+		api.SavedQueryPatch{Name: new("stale")})
+	require.ErrorIs(t, err, store.ErrStaleRevision)
+	deleted, err := c.DeleteSavedQuery(t.Context(), created.ID, updated.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, updated, deleted)
+	_, err = c.SavedQuery(t.Context(), created.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func savedQueryPayloadText(t *testing.T, payload []byte) string {
+	t.Helper()
+	var query struct {
+		Text string `json:"text"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &query))
+	return query.Text
+}
+
+func savedQueryClientFixture() api.SavedQuery {
+	return api.SavedQuery{
+		ID: "11111111-1111-4111-8111-111111111111", Name: "Synthetic response",
+		Kind: "query",
+		Payload: api.SavedQueryPayload(
+			`{"filters":{},"mode":"lexical","sort":{"direction":"asc","field":"name"},"syntax":"simple","text":"","v":1}`,
+		),
+		Fingerprint: "sha256:5e60ffa8c5c733830f8dddba716f9bfce8a17121b5f8eb4de97cf23cf2fbe460",
+		Revision:    1, CreatedAt: "2026-09-09T20:00:00Z", UpdatedAt: "2026-09-09T20:00:00Z",
+	}
+}
+
+func TestSavedQueryClientRequiresExactETagForEveryItemResponse(t *testing.T) {
+	for _, responseETag := range []struct {
+		name  string
+		value string
+	}{
+		{"missing", ""},
+		{"wrong revision", `"2"`},
+	} {
+		for _, operation := range []struct {
+			name string
+			call func(*client.Client) error
+		}{
+			{"create", func(c *client.Client) error {
+				_, err := c.CreateSavedQuery(t.Context(), api.SavedQueryCreateRequest{
+					Name: "Synthetic response", Kind: "query", Payload: api.SavedQueryPayload(`{}`),
+				})
+				return err
+			}},
+			{"get", func(c *client.Client) error {
+				_, err := c.SavedQuery(t.Context(), savedQueryClientFixture().ID)
+				return err
+			}},
+			{"update", func(c *client.Client) error {
+				_, err := c.UpdateSavedQuery(t.Context(), savedQueryClientFixture().ID, 1,
+					api.SavedQueryPatch{Name: new("Synthetic response")})
+				return err
+			}},
+			{"delete", func(c *client.Client) error {
+				_, err := c.DeleteSavedQuery(t.Context(), savedQueryClientFixture().ID, 1)
+				return err
+			}},
+		} {
+			t.Run(responseETag.name+" "+operation.name, func(t *testing.T) {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if responseETag.value != "" {
+						w.Header().Set("ETag", responseETag.value)
+					}
+					_ = json.MarshalWrite(w, savedQueryClientFixture())
+				}))
+				t.Cleanup(ts.Close)
+				err := operation.call(client.New(ts.URL, serverKey))
+				require.ErrorContains(t, err, "ETag")
+			})
+		}
+	}
+}
+
+func TestSavedQueryClientValidatesOffsetAwarePageCardinality(t *testing.T) {
+	first := savedQueryClientFixture()
+	second := first
+	second.ID = "22222222-2222-4222-8222-222222222222"
+	second.Name = "Synthetic response 2"
+
+	for _, test := range []struct {
+		name    string
+		page    api.SavedQueryPage
+		wantErr bool
+	}{
+		{"short page", api.SavedQueryPage{Items: []api.SavedQuery{first}, Total: 3, Limit: 2, Offset: 0}, true},
+		{"empty page before total", api.SavedQueryPage{Items: []api.SavedQuery{}, Total: 1, Limit: 1, Offset: 0}, true},
+		{"nonempty page beyond total", api.SavedQueryPage{Items: []api.SavedQuery{first}, Total: 1, Limit: 1, Offset: 100}, true},
+		{"complete page", api.SavedQueryPage{Items: []api.SavedQuery{first, second}, Total: 3, Limit: 2, Offset: 0}, false},
+		{"empty page beyond total", api.SavedQueryPage{Items: []api.SavedQuery{}, Total: 1, Limit: 1, Offset: 100}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.MarshalWrite(w, test.page)
+			}))
+			t.Cleanup(ts.Close)
+			_, err := client.New(ts.URL, serverKey).SavedQueries(
+				t.Context(), "", test.page.Limit, test.page.Offset,
+			)
+			if test.wantErr {
+				require.ErrorContains(t, err, "inconsistent bounds")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestProvenanceAppendRoundTrip(t *testing.T) {
 	c, s := newClient(t, serverKey)
 	content := []byte("provenance client")

@@ -407,6 +407,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportTags(ctx, tx, write); err != nil {
 		return err
 	}
+	if layout.schemaVersion >= 7 {
+		if err := exportSavedQueries(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
 	}
@@ -957,6 +962,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		SELECT
 		  (SELECT COUNT(*) FROM nodes),
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
+		    + (SELECT COUNT(*) FROM saved_queries)
 		    + (SELECT COUNT(*) FROM blob_checksums)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
@@ -1284,6 +1290,12 @@ func (s *Store) importMetadataRecord(
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO tags(id,name,revision) VALUES(?,?,?)`, v.ID, v.Name, v.Revision)
 		return err
+	case metadataSavedQueryType:
+		var v metadataSavedQuery
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importSavedQueryMetadata(ctx, tx, v)
 	case "node_tag":
 		var v metadataNodeTag
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1360,6 +1372,7 @@ const (
 	metadataProvenanceType                = "provenance"
 	metadataWatchSourceType               = "watch_source"
 	metadataTagRecordType                 = "tag"
+	metadataSavedQueryType                = "saved_query"
 	metadataAuditAuthorityType            = "audit_authority"
 	metadataAuditScopeType                = "audit_scope"
 	metadataAuditMembershipType           = "audit_membership"
@@ -1386,6 +1399,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
+	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", "revision", metadataCreatedAtField, "updated_at"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
 	"extracted_text":                       {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 	metadataAuditAuthorityType:             {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},

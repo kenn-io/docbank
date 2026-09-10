@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-09
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -79,6 +80,65 @@ id:198     content  /taxes/2026/car-insurance-notes.md
 
 For scripts, `--json` returns `hits`, `limit`, and `truncated` without table
 formatting. `hits` is always an array, including when nothing matches.
+
+## Save complete query intent over HTTP
+
+The saved-query API keeps a named QueryV1 definition without running it. The
+payload carries the full expression and structured filters, so Boolean syntax
+is not flattened into the current `docbank search` flags. There is no saved
+query CLI or web management screen yet.
+
+This example creates a synthetic definition, reads its ETag, and updates it
+under that revision. It expects `DOCBANK_URL`, `DOCBANK_API_KEY`, and `jq`:
+
+```bash
+created=$(mktemp)
+headers=$(mktemp)
+
+curl --fail-with-body --silent --show-error \
+  -D "$headers" -o "$created" \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Synthetic review search",
+    "description": "Complete saved intent",
+    "kind": "query",
+    "payload": {
+      "v": 1,
+      "text": "status:open AND (owner:me OR owner:team)",
+      "syntax": "advanced",
+      "mode": "hybrid",
+      "filters": {"paths": ["/records"], "extensions": ["md", "txt"]},
+      "sort": {"field": "modified_at", "direction": "desc"}
+    }
+  }' \
+  "$DOCBANK_URL/api/v1/saved-queries"
+
+saved_id=$(jq -r .id "$created")
+etag=$(awk 'tolower($1) == "etag:" {sub("\\r$", "", $2); print $2}' "$headers")
+
+curl --fail-with-body --silent --show-error \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  "$DOCBANK_URL/api/v1/saved-queries/$saved_id" | jq .
+
+curl --fail-with-body --silent --show-error \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "If-Match: $etag" \
+  -X PATCH \
+  -d '{"description":"Reviewed synthetic definition"}' \
+  "$DOCBANK_URL/api/v1/saved-queries/$saved_id" | jq .
+
+rm "$created" "$headers"
+```
+
+The response payload is canonical structured JSON and includes its SHA-256
+fingerprint, revision, and UTC timestamps. Use `GET
+/api/v1/saved-queries?kind=query&limit=100&offset=0` to list definitions.
+Create, update, and delete return `409 audit_mutation_unsupported` after audit
+authority has been enabled; listing and reading still work. Saving either a
+query or a literal highlight set does not execute a search or inspect document
+content through these endpoints.
 
 ## Text extraction
 

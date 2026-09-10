@@ -1177,6 +1177,20 @@ CREATE TABLE IF NOT EXISTS node_tags (
 
 CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
+-- Saved definitions are mutable intent, fenced by revision. Their canonical
+-- payload and fingerprint are validated in Go before they enter authority.
+CREATE TABLE IF NOT EXISTS saved_queries (
+    id          TEXT PRIMARY KEY NOT NULL,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    payload     BLOB NOT NULL,
+    fingerprint TEXT NOT NULL,
+    revision    INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 -- Canonical full-audit records are immutable content-addressed authority. The
 -- digest is over Docbank's typed canonical audit encoding, never the JSON
 -- spelling retained here for deterministic metadata-v1 transport.

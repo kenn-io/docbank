@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-09
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -39,6 +40,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
+| `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
 | `POST /audit/preview` · `POST /audit/enable` · `GET /audit/status` | review permanent first-scope retention, enable the exact reviewed plan, and inspect authority or membership | Implemented |
 | `GET /audit/history?path=&node_id=&limit=&cursor=` | read one audited node's canonical newest-first event timeline with a stable continuation cursor | Implemented |
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
@@ -75,6 +77,41 @@ remains in force, without a cursor. If `truncated` is true, the page is
 incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
 
+### Saved query and highlight definitions
+
+`POST /saved-queries` stores a name, optional description, immutable `kind`,
+and one complete structured `payload`. `kind` is either `query` for QueryV1 or
+`highlight_set` for an ordered set of literal text/color pairs. The response
+adds a stable UUID, canonical payload fingerprint, revision, timestamps, and a
+quoted numeric `ETag`. Payloads remain JSON objects on the wire; they are not
+base64 strings.
+
+`GET /saved-queries` returns a consistent name-then-ID-sorted page with
+`items`, `total`, `limit`, and `offset`. The default limit is 100, the maximum
+is 1,000, and an optional `kind` selects one definition type. The stable-ID
+route returns one definition and its current ETag. `PATCH` accepts only
+`name`, `description`, and `payload`; omitted fields stay unchanged, `null` and
+an empty patch are rejected, and `kind` cannot change. Update and delete both
+require `If-Match`. A canonical no-op keeps its revision and timestamp.
+
+These endpoints store intent. They do not execute a query, translate QueryV1
+into the current `/search` query string, read document content, render
+highlights, or return result counts. Query text is preserved exactly, including
+quotes, parentheses, and Boolean operators, for an executor that understands
+the saved format.
+
+Once audit authority is enabled for a vault, saved-definition reads remain
+available but create, update, and delete return `409
+audit_mutation_unsupported`. The audited history format does not yet record
+this mutation class, so the server leaves every saved row and revision intact.
+
+Saved definitions are included in current backups. Restoring an older supported
+backup upgrades it into the current schema with no saved definitions when none
+were present. A backup containing saved-definition authority must be restored
+with the release that wrote it or a newer release; downgrade readability is not
+promised, and an older reader rejects the unknown authority instead of silently
+dropping it.
+
 Root-level, outside `/api/v1` and auth-exempt: `GET /health`, `GET
 /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/` plus `/assets/` (the static web application, when `[web] enabled`). A hidden `POST
@@ -86,8 +123,8 @@ independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime, while
 `DELETE /api/daemon/web-session` revokes the calling browser session. Those
 tokens authenticate only the explicit routes used by the built-in document,
-tag-definition/assignment, recoverable-trash, storage, job, configured-backup, and
-verified-download workflows; they are intentionally not another general API
+tag-definition/assignment, saved-definition, recoverable-trash, storage, job,
+configured-backup, and verified-download workflows; they are intentionally not another general API
 credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
@@ -229,6 +266,7 @@ and maintenance are explicit exceptions:
 | `POST /nodes/{id}/restore` | required — target node's revision |
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required — tag definition/assignment-set revision |
+| `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required — saved-definition revision |
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
@@ -622,6 +660,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, is already superseded, or is an operational ingest fact |
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
+| `invalid_saved_query` | 422 | saved name, description, kind, payload, or patch violates the saved-definition contract |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
