@@ -302,8 +302,15 @@ func (s *Store) PendingEmbeddingJobs(ctx context.Context, profileFingerprint str
 	}
 	var pending bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM embedding_jobs
-		WHERE profile_fingerprint=? AND state IN ('queued','running','retry_wait'))`,
+		SELECT 1 FROM embedding_jobs j
+		JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+		LEFT JOIN rendition_heads rh ON rh.content_version_id=j.content_version_id
+			AND rh.profile_fingerprint=j.profile_fingerprint
+		WHERE j.profile_fingerprint=? AND j.state IN ('queued','running','retry_wait')
+			AND ((j.input_kind='original_file' AND g.source_version_id=j.content_version_id
+				AND g.profile_fingerprint=j.profile_fingerprint AND g.attachment_id IS NULL)
+			OR (j.input_kind='rendition_chunk' AND g.source_version_id=j.content_version_id
+				AND g.profile_fingerprint=j.profile_fingerprint AND g.attachment_id=rh.attachment_id)))`,
 		profileFingerprint).Scan(&pending)
 	return pending, err
 }

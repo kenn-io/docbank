@@ -1630,7 +1630,10 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 			return result, err
 		}
 		for _, space := range spaces {
-			if _, err := indexer.Rebuild(ctx, space); err != nil {
+			if _, err := indexer.Rebuild(ctx, space); errors.Is(err, store.ErrNotFound) {
+				result.Pending = true
+				continue
+			} else if err != nil {
 				return result, err
 			}
 			result.IndexesRebuilt++

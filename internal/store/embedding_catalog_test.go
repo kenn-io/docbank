@@ -518,6 +518,9 @@ func TestEmbeddingJobsForVersionProfileExcludesStaleRenditionGeneration(t *testi
 	jobs, err := s.EmbeddingJobsForVersionProfile(t.Context(), versionID, profile.Fingerprint)
 	require.NoError(t, err)
 	assert.Empty(t, jobs, "the old rendition generation must not satisfy the current binding")
+	pending, err := s.PendingEmbeddingJobs(t.Context(), profile.Fingerprint)
+	require.NoError(t, err)
+	assert.False(t, pending, "the old rendition generation must not keep the profile pending")
 }
 
 func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T) {
