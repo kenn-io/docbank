@@ -207,6 +207,7 @@ type EmbeddingWorkerConfig struct {
 	ProfileFingerprint     string
 	MaxJobs                int
 	VectorSpaces           map[string]store.EmbeddingVectorSpaceRecord
+	BoundedReconciliation  bool
 	GenerateRenditionChunk func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 }
 
@@ -232,6 +233,9 @@ type EmbeddingWorker struct {
 	vectorSpaces                                   map[string]store.EmbeddingVectorSpaceRecord
 	reconcileAfter                                 string
 	reconcileRenditionAfter                        string
+	reconcileGenerationsDone                       bool
+	reconcileRenditionHeadsDone                    bool
+	boundedReconciliation                          bool
 	generateRenditionChunk                         func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 	lastReconcile                                  store.EmbeddingReconcileResult
 	completedVectorSpaces                          map[string]struct{}
@@ -290,6 +294,7 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
 		profileFingerprint:     config.ProfileFingerprint, maxJobs: config.MaxJobs,
 		vectorSpaces:           cloneVectorSpaces(config.VectorSpaces),
+		boundedReconciliation:  config.BoundedReconciliation,
 		generateRenditionChunk: config.GenerateRenditionChunk,
 		completedVectorSpaces:  make(map[string]struct{}),
 	}, nil
@@ -328,13 +333,15 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		found := false
 		if err := worker.gate.MutateContext(ctx, func() error {
 			if !reconciled {
-				after, afterRendition := worker.reconciliationCursors()
+				after, afterRendition, generationsDone, renditionHeadsDone := worker.reconciliationScanState()
 				result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 					After: after, Limit: 100, At: worker.clock().UTC(),
 					ProfileFingerprint:       worker.profileFingerprint,
 					DescriptorFingerprints:   worker.descriptorFingerprints,
 					VectorSpaces:             worker.vectorSpaces,
 					AfterRenditionAttachment: afterRendition,
+					SkipGenerations:          worker.boundedReconciliation && generationsDone,
+					SkipRenditionHeads:       worker.boundedReconciliation && renditionHeadsDone,
 					GenerateRenditionChunk:   worker.generateRenditionChunk,
 					HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
 						return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
@@ -405,10 +412,11 @@ func cloneVectorSpaces(spaces map[string]store.EmbeddingVectorSpaceRecord) map[s
 	return clone
 }
 
-func (worker *EmbeddingWorker) reconciliationCursors() (string, string) {
+func (worker *EmbeddingWorker) reconciliationScanState() (string, string, bool, bool) {
 	worker.stateMu.Lock()
 	defer worker.stateMu.Unlock()
-	return worker.reconcileAfter, worker.reconcileRenditionAfter
+	return worker.reconcileAfter, worker.reconcileRenditionAfter,
+		worker.reconcileGenerationsDone, worker.reconcileRenditionHeadsDone
 }
 
 func (worker *EmbeddingWorker) recordReconcile(result store.EmbeddingReconcileResult, advance bool) {
@@ -419,7 +427,17 @@ func (worker *EmbeddingWorker) recordReconcile(result store.EmbeddingReconcileRe
 	if advance {
 		worker.reconcileAfter = result.Next
 		worker.reconcileRenditionAfter = result.NextRenditionAttachment
+		if worker.boundedReconciliation {
+			worker.reconcileGenerationsDone = result.Next == ""
+			worker.reconcileRenditionHeadsDone = result.NextRenditionAttachment == ""
+		}
 	}
+}
+
+func (worker *EmbeddingWorker) reconciliationDone() (bool, bool) {
+	worker.stateMu.Lock()
+	defer worker.stateMu.Unlock()
+	return worker.reconcileGenerationsDone, worker.reconcileRenditionHeadsDone
 }
 
 func (worker *EmbeddingWorker) reconcileProgress() (string, string, int) {

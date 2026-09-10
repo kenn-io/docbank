@@ -25,6 +25,8 @@ type EmbeddingReconcileRequest struct {
 	HydrateGeneration        func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
 	AfterRenditionAttachment string
 	RenditionAttachments     []string
+	SkipGenerations          bool
+	SkipRenditionHeads       bool
 	GenerateRenditionChunk   func(context.Context, RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error)
 }
 
@@ -93,23 +95,26 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 		executable[fingerprint] = struct{}{}
 	}
 	var generationIDs []string
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		query := `
+	var err error
+	if !request.SkipGenerations {
+		err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			var err error
+			query := `
 			SELECT g.generation_id FROM embedding_input_generations g
 			JOIN content_versions v ON v.version_id=g.source_version_id
 			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
 			WHERE g.generation_id>?`
-		args := []any{request.After}
-		if request.ProfileFingerprint != "" {
-			query += ` AND g.profile_fingerprint=?`
-			args = append(args, request.ProfileFingerprint)
-		}
-		query += ` ORDER BY g.generation_id LIMIT ?`
-		args = append(args, request.Limit+1)
-		generationIDs, err = stringColumnTx(ctx, tx, "embedding reconciliation generations", query, args...)
-		return err
-	})
+			args := []any{request.After}
+			if request.ProfileFingerprint != "" {
+				query += ` AND g.profile_fingerprint=?`
+				args = append(args, request.ProfileFingerprint)
+			}
+			query += ` ORDER BY g.generation_id LIMIT ?`
+			args = append(args, request.Limit+1)
+			generationIDs, err = stringColumnTx(ctx, tx, "embedding reconciliation generations", query, args...)
+			return err
+		})
+	}
 	if err != nil {
 		return EmbeddingReconcileResult{}, err
 	}
@@ -141,6 +146,9 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
 					continue
 				}
+				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
+					continue
+				}
 				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
 				if errors.Is(err, ErrNotFound) {
 					var found bool
@@ -159,8 +167,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if err != nil {
 					return err
 				}
-				if _, ok := executable[space.Descriptor.Fingerprint]; !ok ||
-					space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
+				if space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
 				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
@@ -224,7 +231,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if more && len(generationIDs) != 0 {
 		result.Next = generationIDs[len(generationIDs)-1]
 	}
-	if request.GenerateRenditionChunk != nil {
+	if request.GenerateRenditionChunk != nil && !request.SkipRenditionHeads {
 		candidates, next, err := s.renditionChunkCandidates(ctx, request, executable)
 		if err != nil {
 			return EmbeddingReconcileResult{}, err
@@ -344,6 +351,9 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				if binding.InputKind != document.EmbeddingInputRenditionChunk {
 					continue
 				}
+				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
+					continue
+				}
 				space, err := loadVectorSpaceTx(ctx, tx, fingerprints.VectorSpace[binding.Name])
 				if errors.Is(err, ErrNotFound) {
 					var found bool
@@ -362,8 +372,7 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				if err != nil {
 					return err
 				}
-				if _, ok := executable[space.Descriptor.Fingerprint]; !ok ||
-					space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
+				if space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
 				var jobExists bool

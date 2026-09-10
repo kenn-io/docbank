@@ -1441,7 +1441,8 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 			MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
 			DescriptorFingerprints: descriptorFingerprints, ProfileFingerprint: profileFingerprint,
 			VectorSpaces: service.EmbeddingVectorSpaces(),
-			MaxJobs:      maxJobs, GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
+			MaxJobs:      maxJobs, BoundedReconciliation: true,
+			GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
 		})
 		if err != nil {
 			return ResumeReport{}, err
@@ -1473,9 +1474,8 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 	if embeddingWorker != nil {
 		budget := maxJobs - result.RenditionsProcessed
 		if budget > 0 {
-			embeddingWorker.maxJobs = budget
 			for {
-				before, beforeRendition, _ := embeddingWorker.reconcileProgress()
+				embeddingWorker.maxJobs = budget - result.EmbeddingsProcessed
 				processed, scanErr := embeddingWorker.ScanOnce(ctx)
 				if scanErr != nil {
 					return result, scanErr
@@ -1484,8 +1484,8 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 				if result.EmbeddingsProcessed >= budget {
 					break
 				}
-				after, afterRendition, _ := embeddingWorker.reconcileProgress()
-				if processed == 0 && before == after && beforeRendition == afterRendition {
+				generationsDone, renditionHeadsDone := embeddingWorker.reconciliationDone()
+				if processed == 0 && generationsDone && renditionHeadsDone {
 					break
 				}
 			}
@@ -1521,6 +1521,14 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 			return result, err
 		}
 		if pending {
+			result.Pending = true
+			break
+		}
+		pending, err = service.catalog.PendingEmbeddingJobs(ctx, profile.record.Fingerprint)
+		if err != nil {
+			return result, err
+		}
+		if pending || result.EmbeddingsAdmitted > result.EmbeddingsProcessed {
 			result.Pending = true
 			break
 		}

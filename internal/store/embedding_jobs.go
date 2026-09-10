@@ -264,6 +264,18 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	return result, rows.Err()
 }
 
+func (s *Store) PendingEmbeddingJobs(ctx context.Context, profileFingerprint string) (bool, error) {
+	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
+		return false, ErrNotFound
+	}
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM embedding_jobs
+		WHERE profile_fingerprint=? AND state IN ('queued','running','retry_wait'))`,
+		profileFingerprint).Scan(&pending)
+	return pending, err
+}
+
 func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
 	return s.claimNextEmbeddingWork(ctx, owner, "", at, lease)
 }
