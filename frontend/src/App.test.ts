@@ -128,6 +128,12 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
                   revision: 1,
                   assignment_count: 3,
                 },
+                {
+                  id: "11111111-1111-4111-8111-111111111111",
+                  name: "matter/acme/reviewed",
+                  revision: 1,
+                  assignment_count: 6,
+                },
               ]
             : [
                 {
@@ -137,7 +143,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
                   assignment_count: 7,
                 },
               ],
-        total: tagCatalogReads === 1 ? 1 : 1001,
+        total: tagCatalogReads === 1 ? 2 : 1001,
         limit: 1000,
         offset: 0,
       });
@@ -248,6 +254,15 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
+  expect(screen.getByText("matter/acme")).toBeTruthy();
+  const groupedOption = screen.getByRole("option", {
+    name: "matter/acme/reviewed (6)",
+  });
+  expect(groupedOption.textContent).not.toContain("matter/acme/reviewed");
+  expect(
+    groupedOption.querySelector<HTMLElement>("[data-tag-swatch]")?.style
+      .backgroundColor,
+  ).toBe("rgb(188, 76, 0)");
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }),
@@ -435,7 +450,7 @@ it.each(["browse", "search"] as const)(
     };
     const reviewed = {
       id: "44444444-4444-4444-8444-444444444444",
-      name: "reviewed",
+      name: "matter/acme/reviewed",
       revision: 1,
       assignment_count: 1,
     };
@@ -632,6 +647,15 @@ it.each(["browse", "search"] as const)(
     }
 
     await screen.findByText("2 assigned");
+    const reviewedName = screen.getByText("matter/acme/reviewed");
+    const reviewedLabel = reviewedName.parentElement as HTMLElement;
+    const reviewedVisual = reviewedLabel.querySelector<HTMLElement>(
+      "[aria-hidden='true']",
+    );
+    expect(reviewedVisual?.textContent).toBe("reviewed");
+    expect(
+      (reviewedVisual?.firstElementChild as HTMLElement).style.backgroundColor,
+    ).toBe("rgb(130, 80, 223)");
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     const manage = screen.getByRole("button", { name: "Manage" });
     expect(manage.hasAttribute("disabled")).toBe(true);
@@ -709,7 +733,7 @@ it.each(["browse", "search"] as const)(
     await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
     await waitFor(() => expect(searchReads).toBe(4));
     const removeReviewed = screen.getByRole("button", {
-      name: "Remove tag reviewed",
+      name: "Remove tag matter/acme/reviewed",
     });
     expect(removeReviewed.hasAttribute("disabled")).toBe(true);
     await fireEvent.click(removeReviewed);

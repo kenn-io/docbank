@@ -38,7 +38,7 @@ const tax = {
 };
 const reviewed = {
   id: "22222222-2222-4222-8222-222222222222",
-  name: "reviewed",
+  name: "matter/acme/reviewed",
   revision: 1,
   assignment_count: 2,
 };
@@ -94,9 +94,20 @@ it("adds and removes existing tags under consecutive node revisions", async () =
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
   );
-  await fireEvent.click(screen.getByRole("option", { name: "reviewed (2)" }));
+  expect(screen.getByText("matter/acme")).toBeTruthy();
+  const reviewedOption = screen.getByRole("option", {
+    name: "matter/acme/reviewed (2)",
+  });
+  expect(reviewedOption.textContent).not.toContain("matter/acme/reviewed");
+  await fireEvent.click(reviewedOption);
   await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
-  expect(await screen.findByText("Added reviewed.")).toBeTruthy();
+  expect(await screen.findByText("Added matter/acme/reviewed.")).toBeTruthy();
+  expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
+  const assignedName = screen.getByText("matter/acme/reviewed");
+  expect(
+    assignedName.parentElement?.querySelector<HTMLElement>("[aria-hidden='true']")
+      ?.textContent,
+  ).toBe("reviewed");
 
   await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
   expect(await screen.findByText("Removed tax.")).toBeTruthy();
@@ -157,7 +168,9 @@ it("keeps a stale assignment decision visible for refresh", async () => {
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
   );
-  await fireEvent.click(screen.getByRole("option", { name: "reviewed (2)" }));
+  await fireEvent.click(
+    screen.getByRole("option", { name: "matter/acme/reviewed (2)" }),
+  );
   await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
 
   expect(

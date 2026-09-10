@@ -14,12 +14,10 @@
   import CheckIcon from "@lucide/svelte/icons/check";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import TagIcon from "@lucide/svelte/icons/tag";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import XIcon from "@lucide/svelte/icons/x";
   import {
     Button,
-    Chip,
     IconButton,
     Modal,
     Spinner,
@@ -32,6 +30,8 @@
     renameTag,
     type Tag,
   } from "./api.js";
+  import TagLabel from "./TagLabel.svelte";
+  import { groupTags, sortTags } from "./tagPresentation.js";
 
   let {
     session,
@@ -51,7 +51,7 @@
     onauthfailure: (cause: unknown) => void;
   } = $props();
 
-  let current = $state(untrack(() => [...catalog]));
+  let current = $state(untrack(() => sortTags(catalog)));
   let currentTotal = $state(untrack(() => catalogTotal));
   let newName = $state("");
   let editingID = $state("");
@@ -60,6 +60,7 @@
   let pending = $state(false);
   let failure = $state("");
   let notice = $state("");
+  const currentGroups = $derived(groupTags(current));
 
   function close(): void {
     if (!pending) onclose();
@@ -93,9 +94,7 @@
     notice = "";
     try {
       const tag = await createTag(session, newName);
-      current = [...current, tag].sort((left, right) =>
-        left.name.localeCompare(right.name),
-      );
+      current = sortTags([...current, tag]);
       currentTotal += 1;
       newName = "";
       notice = `Created ${tag.name}.`;
@@ -115,9 +114,9 @@
     notice = "";
     try {
       const renamed = await renameTag(session, tag.id, tag.revision, editName);
-      current = current
-        .map((item) => (item.id === renamed.id ? renamed : item))
-        .sort((left, right) => left.name.localeCompare(right.name));
+      current = sortTags(
+        current.map((item) => (item.id === renamed.id ? renamed : item)),
+      );
       editingID = "";
       editName = "";
       notice = `Renamed tag to ${renamed.name}.`;
@@ -187,63 +186,42 @@
     </div>
   {:else}
     <div class="tag-catalog">
-      <header class="catalog-heading">
-        <TagIcon size="20" aria-hidden="true" />
-        <div>
-          <strong>Organize the vault’s shared vocabulary</strong>
-          <span>
-            Names can change; stable tag IDs continue to identify the same definition.
-          </span>
-        </div>
-      </header>
-
-      <section aria-labelledby="create-tag-heading">
-        <div class="section-heading">
-          <div>
-            <span>NEW DEFINITION</span>
-            <strong id="create-tag-heading">Create a tag</strong>
-          </div>
-        </div>
-        <form
-          class="create-row"
-          onsubmit={(event) => {
-            event.preventDefault();
-            void create();
-          }}
+      <form
+        class="create-row"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void create();
+        }}
+      >
+        <TextInput
+          bind:value={newName}
+          block
+          ariaLabel="New tag name"
+          placeholder="New tag name"
+          disabled={disabled || pending}
+        />
+        <Button
+          size="sm"
+          tone="info"
+          surface="solid"
+          disabled={disabled || pending || newName === ""}
+          onclick={() => void create()}
         >
-          <TextInput
-            bind:value={newName}
-            block
-            ariaLabel="New tag name"
-            placeholder="e.g. reviewed"
-            disabled={disabled || pending}
-          />
-          <Button
-            size="sm"
-            tone="info"
-            surface="solid"
-            disabled={disabled || pending || newName === ""}
-            onclick={() => void create()}
-          >
-            {#if pending && !editingID}<Spinner size={13} />{:else}<PlusIcon size="14" />{/if}
-            Create
-          </Button>
-        </form>
-      </section>
+          {#if pending && !editingID}<Spinner size={13} />{:else}<PlusIcon size="14" />{/if}
+          Create
+        </Button>
+      </form>
 
-      <section aria-labelledby="tag-definitions-heading">
-        <div class="section-heading">
-          <div>
-            <span>TAG DEFINITIONS</span>
-            <strong id="tag-definitions-heading">{current.length} visible</strong>
-          </div>
-          <small>{currentTotal} total</small>
-        </div>
-        {#if current.length === 0}
-          <p class="empty">No tags have been defined yet.</p>
-        {:else}
-          <div class="definition-list">
-            {#each current as tag (tag.id)}
+      {#if current.length === 0}
+        <p class="empty">No tags yet.</p>
+      {:else}
+        <div class="definition-list" role="group" aria-label="Tags">
+          {#each currentGroups as group}
+            {#if group.name}
+              <div class="definition-group-heading">{group.name}</div>
+            {/if}
+            {#each group.tags as item (item.tag.id)}
+              {@const tag = item.tag}
               <div class="definition-row">
                 {#if editingID === tag.id}
                   <div class="rename-row">
@@ -282,7 +260,7 @@
                 {:else}
                   <div class="definition-authority">
                     <div>
-                      <Chip size="sm" tone="workspace" uppercase={false}>{tag.name}</Chip>
+                      <TagLabel {tag} size="sm" />
                       <span>{tag.assignment_count} assignment{tag.assignment_count === 1 ? "" : "s"}</span>
                     </div>
                     <code>{tag.id}</code>
@@ -315,15 +293,12 @@
                 {/if}
               </div>
             {/each}
-          </div>
-        {/if}
-        {#if currentTotal > current.length}
-          <p class="bounded">
-            Showing the first {current.length} of {currentTotal} definitions.
-            Use the CLI or API for definitions outside this bounded catalog.
-          </p>
-        {/if}
-      </section>
+          {/each}
+        </div>
+      {/if}
+      {#if currentTotal > current.length}
+        <p class="bounded">Showing the first {current.length} of {currentTotal} tags.</p>
+      {/if}
 
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
       {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
@@ -352,10 +327,9 @@
   .tag-catalog,
   .delete-confirmation {
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-4);
   }
 
-  .catalog-heading,
   .delete-target {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -367,58 +341,21 @@
     background: var(--bg-inset);
   }
 
-  .catalog-heading > :global(svg) {
-    margin-top: 2px;
-    color: var(--accent-cyan);
-  }
-
-  .catalog-heading > div,
   .delete-target > div {
     display: grid;
     min-width: 0;
     gap: var(--space-1);
   }
 
-  .catalog-heading strong,
   .delete-target strong {
     color: var(--text-primary);
     font-size: var(--font-size-md);
   }
 
-  .catalog-heading span,
   .delete-target span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     line-height: 1.4;
-  }
-
-  section {
-    display: grid;
-    gap: var(--space-3);
-  }
-
-  .section-heading {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: var(--space-3);
-  }
-
-  .section-heading > div {
-    display: grid;
-    gap: 2px;
-  }
-
-  .section-heading span,
-  .section-heading small {
-    color: var(--text-muted);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-  }
-
-  .section-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
   }
 
   .create-row,
@@ -450,6 +387,18 @@
 
   .definition-row:last-child {
     border-bottom: 0;
+  }
+
+  .definition-group-heading {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.05em;
+    overflow-wrap: anywhere;
+    text-transform: uppercase;
   }
 
   .definition-authority {

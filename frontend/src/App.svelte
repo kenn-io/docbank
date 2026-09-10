@@ -25,13 +25,11 @@
     EmptyState,
     IconButton,
     SearchInput,
-    SelectDropdown,
     Spinner,
     Table,
     TableHeaderCell,
     ThemeToggle,
     TopBar,
-    type SelectDropdownOption,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
@@ -45,6 +43,8 @@
   import TagCatalogModal, {
     type TagDefinitionChange,
   } from "./TagCatalogModal.svelte";
+  import TagLabel from "./TagLabel.svelte";
+  import TagPicker from "./TagPicker.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
   import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
@@ -69,6 +69,7 @@
   } from "./api.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
+  import { sortTags } from "./tagPresentation.js";
   import { VerifiedUploadChannel } from "./upload.js";
 
   type Row = { node: Node; path: string; match?: "name" | "content" };
@@ -139,14 +140,13 @@
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const membership = $derived(selectedAudit?.membership);
-  const tagOptions = $derived<SelectDropdownOption[]>([
-    { value: "", label: "All tags" },
-    ...tagCatalog.map((tag) => ({
-      value: tag.id,
-      label: `${tag.name} (${tag.assignment_count})`,
-      triggerLabel: tag.name,
-    })),
-  ]);
+  const tagPickerTitle = $derived(
+    tagCatalogError
+      ? `Tags unavailable: ${tagCatalogError}`
+      : tagCatalogTotal > tagCatalogListed
+        ? `Browse or filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
+        : "Browse or filter by tag",
+  );
   const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const sortedRows = $derived(
@@ -484,7 +484,7 @@
         }
       }
       if (request !== tagCatalogGeneration || session !== webSession) return;
-      tagCatalog = selectedTagID === tagFilterID ? items : page.items;
+      tagCatalog = sortTags(selectedTagID === tagFilterID ? items : page.items);
       tagCatalogTotal = page.total;
       tagCatalogListed = page.items.length;
       if (selectedMissing && tagFilterID === selectedTagID) {
@@ -517,7 +517,7 @@
     try {
       const page = await nodeTags(session, nodeID);
       if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
-      selectedTags = page.items;
+      selectedTags = sortTags(page.items);
       selectedTagsTotal = page.total;
     } catch (cause) {
       if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
@@ -641,10 +641,10 @@
     );
     if (selectedChanged) {
       if (assigned) {
-        selectedTags = [
+        selectedTags = sortTags([
           ...selectedTags.filter((tag) => tag.id !== receipt.tag.id),
           receipt.tag,
-        ].sort((left, right) => left.name.localeCompare(right.name));
+        ]);
         if (receipt.changed) selectedTagsTotal += 1;
       } else {
         selectedTags = selectedTags.filter((tag) => tag.id !== receipt.tag.id);
@@ -692,12 +692,16 @@
   function handleTagDefinitionChanged(change: TagDefinitionChange): void {
     const changedTag = change.tag;
     if (change.kind === "renamed") {
-      tagCatalog = tagCatalog
-        .map((tag) => (tag.id === changedTag.id ? changedTag : tag))
-        .sort((left, right) => left.name.localeCompare(right.name));
-      selectedTags = selectedTags
-        .map((tag) => (tag.id === changedTag.id ? changedTag : tag))
-        .sort((left, right) => left.name.localeCompare(right.name));
+      tagCatalog = sortTags(
+        tagCatalog.map((tag) =>
+          tag.id === changedTag.id ? changedTag : tag,
+        ),
+      );
+      selectedTags = sortTags(
+        selectedTags.map((tag) =>
+          tag.id === changedTag.id ? changedTag : tag,
+        ),
+      );
     } else if (change.kind === "deleted") {
       tagCatalog = tagCatalog.filter((tag) => tag.id !== changedTag.id);
       tagCatalogTotal = Math.max(0, tagCatalogTotal - 1);
@@ -960,14 +964,12 @@
             </div>
           </div>
           <div class="toolbar-actions">
-            <SelectDropdown
+            <TagPicker
               value={tagFilterID}
-              options={tagOptions}
-              title={tagCatalogError
-                ? `Tags unavailable: ${tagCatalogError}`
-                : tagCatalogTotal > tagCatalogListed
-                  ? `Browse or filter: showing ${tagCatalogListed} of ${tagCatalogTotal} tags`
-                  : "Browse or filter by tag"}
+              tags={tagCatalog}
+              title={tagPickerTitle}
+              placeholder="All tags"
+              includeAll
               disabled={!directory || tagCatalog.length === 0}
               onchange={changeTagFilter}
             />
@@ -1215,14 +1217,11 @@
                     ariaLabel="Assigned tags"
                   >
                     {#snippet chip(tag)}
-                      <Chip
+                      <TagLabel
+                        {tag}
                         size="sm"
-                        tone="workspace"
-                        uppercase={false}
-                        title={`${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
-                      >
-                        {tag.name}
-                      </Chip>
+                        title={`${tag.name} · ${tag.assignment_count} total assignment${tag.assignment_count === 1 ? "" : "s"} · ${tag.id}`}
+                      />
                     {/snippet}
                   </ChipStack>
                   {#if selectedTags.length < selectedTagsTotal}
