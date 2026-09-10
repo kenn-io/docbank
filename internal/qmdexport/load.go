@@ -15,19 +15,35 @@ import (
 
 const maxManifestBytes = int64(256 << 20)
 
-// LoadCurrent reads and validates the exact manifest selected by CURRENT.
-func LoadCurrent(root string) (Receipt, error) {
+// CurrentGeneration reads the generation identity selected by CURRENT without
+// loading its manifest. A generation identity is the manifest checksum, so an
+// unchanged identity means an unchanged manifest.
+func CurrentGeneration(root string) (string, error) {
+	_, generationID, err := currentPointer(root)
+	return generationID, err
+}
+
+func currentPointer(root string) (string, string, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil || filepath.Dir(absolute) == absolute {
-		return Receipt{}, errors.New("qmd export root is invalid")
+		return "", "", errors.New("qmd export root is invalid")
 	}
 	current, err := readRegularBounded(filepath.Join(absolute, "CURRENT"), sha256.Size*2+1)
 	if err != nil || len(current) != sha256.Size*2+1 || current[len(current)-1] != '\n' {
-		return Receipt{}, errors.New("qmd export CURRENT pointer is invalid")
+		return "", "", errors.New("qmd export CURRENT pointer is invalid")
 	}
 	generationID := string(current[:len(current)-1])
 	if !validChecksum(generationID) {
-		return Receipt{}, errors.New("qmd export CURRENT pointer is invalid")
+		return "", "", errors.New("qmd export CURRENT pointer is invalid")
+	}
+	return absolute, generationID, nil
+}
+
+// LoadCurrent reads and validates the exact manifest selected by CURRENT.
+func LoadCurrent(root string) (Receipt, error) {
+	absolute, generationID, err := currentPointer(root)
+	if err != nil {
+		return Receipt{}, err
 	}
 	generationRoot := filepath.Join(absolute, "generations", generationID)
 	if err := verifyDirectory(generationRoot); err != nil {

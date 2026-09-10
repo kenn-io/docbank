@@ -498,3 +498,51 @@ func TestSearchFiltersScopeAndReportsTruncation(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchRejectsInvalidRequestsBeforeEgress(t *testing.T) {
+	root, _, _ := exportFixture(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	t.Cleanup(server.Close)
+	client := newTestClient(t, server, root, &authorizerStub{}, &authorityStub{}, 1<<20)
+	client.profile.MaxQueryBytes = 16
+	lexical := []Search{{Type: SearchLexical, Query: "private"}}
+	for name, request := range map[string]Request{
+		"no searches":          {Limit: 1},
+		"unknown search type":  {Searches: []Search{{Type: "fuzzy", Query: "private"}}, Limit: 1},
+		"blank query":          {Searches: []Search{{Type: SearchLexical, Query: " \t"}}, Limit: 1},
+		"zero limit":           {Searches: lexical},
+		"limit above cap":      {Searches: lexical, Limit: client.profile.MaxCandidates + 1},
+		"score outside unit":   {Searches: lexical, Limit: 1, MinScore: 1.5},
+		"query and intent sum": {Searches: lexical, Intent: strings.Repeat("i", 10), Limit: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := client.Search(t.Context(), request)
+			require.ErrorContains(t, err, "invalid")
+		})
+	}
+	assert.Zero(t, requests)
+}
+
+func TestSearchRejectsNonJSONOrFailedResponses(t *testing.T) {
+	for name, handler := range map[string]http.HandlerFunc{
+		"error status": func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		},
+		"html body": func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, _, _ := exportFixture(t)
+			server := httptest.NewServer(handler)
+			t.Cleanup(server.Close)
+			client := newTestClient(t, server, root, &authorizerStub{}, &authorityStub{}, 1<<20)
+			_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 1})
+			require.ErrorIs(t, err, ErrInvalidResponse)
+		})
+	}
+}

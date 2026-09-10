@@ -121,10 +121,13 @@ func (client *Client) Search(ctx context.Context, request Request) (Report, erro
 	payload, err := json.Marshal(wireRequest{Searches: slices.Clone(request.Searches), Limit: client.profile.MaxCandidates,
 		MinScore: request.MinScore, Collections: []string{before.Manifest.Collection}, Intent: request.Intent,
 		Rerank: request.Rerank}, json.Deterministic(true))
-	if err != nil || int64(len(payload)) > client.profile.MaxRequestBytes {
-		return Report{}, errors.New("qmd bridge request exceeds bound")
+	if err != nil {
+		return Report{}, errors.New("qmd bridge request encoding failed")
 	}
 	defer clear(payload)
+	if int64(len(payload)) > client.profile.MaxRequestBytes {
+		return Report{}, errors.New("qmd bridge request exceeds bound")
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, client.profile.RequestTimeout)
 	defer cancel()
 	secret, err := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
@@ -146,46 +149,16 @@ func (client *Client) Search(ctx context.Context, request Request) (Report, erro
 	if err := requestCtx.Err(); err != nil {
 		return Report{}, err
 	}
-	httpRequest, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return Report{}, errors.New("qmd bridge request construction failed")
-	}
-	httpRequest.Header.Set("Accept", "application/json")
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+secret)
-	response, err := client.http.Do(httpRequest)
-	if err != nil {
-		if requestCtx.Err() != nil {
-			return Report{}, fmt.Errorf("qmd bridge request canceled: %w", requestCtx.Err())
-		}
-		return Report{}, errors.New("qmd bridge request failed")
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK || !jsonContentType(response.Header.Get("Content-Type")) {
-		return Report{}, ErrInvalidResponse
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, client.profile.MaxResponseBytes+1))
-	defer clear(body)
-	if err != nil {
-		if requestCtx.Err() != nil {
-			return Report{}, fmt.Errorf("qmd bridge response read canceled: %w", requestCtx.Err())
-		}
-		return Report{}, errors.New("qmd bridge response read failed")
-	}
-	if int64(len(body)) > client.profile.MaxResponseBytes {
-		return Report{}, ErrResponseBound
-	}
-	var decoded wireResponse
-	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
-		return Report{}, ErrInvalidResponse
-	}
-	mapped, entries, err := client.mapResults(decoded.Results, before)
+	items, err := client.exchange(requestCtx, payload, secret)
 	if err != nil {
 		return Report{}, err
 	}
-	after, err := qmdexport.LoadCurrent(client.root)
-	if err != nil || after.GenerationID != before.GenerationID || after.Manifest.Checksum != before.Manifest.Checksum {
-		return Report{}, ErrStaleGeneration
+	mapped, entries, err := client.mapResults(items, before)
+	if err != nil {
+		return Report{}, err
+	}
+	if err := client.fenceGeneration(before.GenerationID); err != nil {
+		return Report{}, err
 	}
 	live, err := client.authority.RevalidateQMDExportCandidates(requestCtx, entries, normalizedScope)
 	if err != nil {
@@ -194,9 +167,8 @@ func (client *Client) Search(ctx context.Context, request Request) (Report, erro
 	if len(live) != len(mapped) {
 		return Report{}, store.ErrQMDExportAuthorityStale
 	}
-	final, err := qmdexport.LoadCurrent(client.root)
-	if err != nil || final.GenerationID != before.GenerationID || final.Manifest.Checksum != before.Manifest.Checksum {
-		return Report{}, ErrStaleGeneration
+	if err := client.fenceGeneration(before.GenerationID); err != nil {
+		return Report{}, err
 	}
 	results := make([]Result, 0, len(mapped))
 	for index := range mapped {
@@ -213,8 +185,57 @@ func (client *Client) Search(ctx context.Context, request Request) (Report, erro
 			ManifestChecksum: before.Manifest.Checksum, AttachmentID: entries[index].AttachmentID,
 			BuildID: entries[index].BuildID, ArtifactID: entries[index].ArtifactID})
 	}
-	truncated := len(decoded.Results) == client.profile.MaxCandidates || len(results) > request.Limit
+	truncated := len(items) == client.profile.MaxCandidates || len(results) > request.Limit
 	return Report{Results: results[:min(len(results), request.Limit)], Truncated: truncated}, nil
+}
+
+// fenceGeneration fails when CURRENT no longer selects the generation the
+// results were mapped through. The identity is the manifest checksum, so the
+// pointer alone proves the manifest is unchanged.
+func (client *Client) fenceGeneration(generationID string) error {
+	current, err := qmdexport.CurrentGeneration(client.root)
+	if err != nil || current != generationID {
+		return ErrStaleGeneration
+	}
+	return nil
+}
+
+// exchange performs the authorized HTTP request and returns the decoded, bounded response.
+func (client *Client) exchange(ctx context.Context, payload []byte, secret string) ([]wireResult, error) {
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, errors.New("qmd bridge request construction failed")
+	}
+	httpRequest.Header.Set("Accept", "application/json")
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Authorization", "Bearer "+secret)
+	response, err := client.http.Do(httpRequest)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("qmd bridge request canceled: %w", ctx.Err())
+		}
+		return nil, errors.New("qmd bridge request failed")
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK || !jsonContentType(response.Header.Get("Content-Type")) {
+		return nil, ErrInvalidResponse
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, client.profile.MaxResponseBytes+1))
+	defer clear(body)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("qmd bridge response read canceled: %w", ctx.Err())
+		}
+		return nil, errors.New("qmd bridge response read failed")
+	}
+	if int64(len(body)) > client.profile.MaxResponseBytes {
+		return nil, ErrResponseBound
+	}
+	var decoded wireResponse
+	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
+		return nil, ErrInvalidResponse
+	}
+	return decoded.Results, nil
 }
 
 func (client *Client) validateRequest(request Request) (int, error) {
