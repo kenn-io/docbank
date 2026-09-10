@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -96,6 +97,33 @@ func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *tes
 	selector := map[string]any{"node_id": node.ID,
 		"content_version_id": node.CurrentVersionID, "profile": "private"}
 	assertProcessingSurvivesDisconnect(t, ts, selector, provider.started, provider.release)
+}
+
+func TestProcessingJobStreamPreservesRetryWait(t *testing.T) {
+	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &retryingProcessingProvider{inner: inner}
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithProvider(t, provider))
+	node := createFileWithContent(t, ts, catalog, "/retry.txt", "retry status\n")
+	selector := map[string]any{"node_id": node.ID,
+		"content_version_id": node.CurrentVersionID, "profile": "private"}
+
+	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
+		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	require.Len(t, lines, 2)
+	var statusEvent api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &statusEvent))
+	require.NotNil(t, statusEvent.Status)
+	assert.Equal(t, "retry_wait", statusEvent.Status.State)
+	assert.Equal(t, "provider", statusEvent.Status.Phase)
 }
 
 func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
@@ -445,6 +473,31 @@ type blockingProcessingProvider struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+}
+
+type retryingProcessingProvider struct {
+	inner document.RenditionProvider
+	once  sync.Once
+}
+
+func (provider *retryingProcessingProvider) Descriptor() document.RenditionDescriptor {
+	return provider.inner.Descriptor()
+}
+
+func (provider *retryingProcessingProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
+	authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	first := false
+	provider.once.Do(func() { first = true })
+	if first {
+		providerErr, err := document.NewRenditionProviderError(document.RenditionErrorTransient,
+			"", 0, errors.New("temporary"))
+		if err != nil {
+			return document.RenditionResult{}, err
+		}
+		return document.RenditionResult{}, providerErr
+	}
+	return provider.inner.Render(ctx, upload, authorization)
 }
 
 func (provider *blockingProcessingProvider) Descriptor() document.RenditionDescriptor {
