@@ -33,6 +33,14 @@ git fetch --quiet origin refs/heads/main:refs/remotes/origin/main --tags
 expected_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' origin/main)
 ./scripts/validate-docs-release.sh "$source_sha" "$expected_tag"
 
+upload_report=$(mktemp)
+trap 'rm -f -- "$upload_report"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+vercel deploy --prod --skip-domain --yes --dry --json > "$upload_report"
+node scripts/docs/assert-vercel-dry-run.mjs "$upload_report"
+
 deployment_url=$(vercel deploy --prod --skip-domain --yes)
 case "$deployment_url" in
   https://*.vercel.app) ;;

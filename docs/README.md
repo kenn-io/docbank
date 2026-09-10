@@ -116,9 +116,11 @@ make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)
 ```
 
 The command checks that the source is on `origin/main`, descends from the latest
-software release, and contains only approved documentation changes. It uploads
-an unpromoted production build, waits for Vercel to verify it, repeats the
-release check, and only then promotes the build. Deployment does not generate
+software release, and contains only approved documentation changes. It then
+checks Vercel's production upload report against the same file allowlist and
+10 MiB limit used in CI. An extra file or failed dry run stops deployment
+before upload. The command then uploads an unpromoted production build, waits
+for Vercel to verify it, repeats the release check, and only then promotes it. Deployment does not generate
 screenshots, build the product, run Docker, or install frontend dependencies.
 
 The protected `Deploy documentation` workflow provides the same path for an
@@ -127,9 +129,10 @@ the release policy from `main` before the protected production job receives
 the validated SHA. It has no automatic push, pull-request, tag, or release
 trigger.
 
-Pull-request documentation checks never receive Vercel credentials. The
-authenticated upload dry run runs only after a trusted push to `main` and
-requires the repository `VERCEL_TOKEN` secret. Production deployment requires
+Pull-request documentation checks never receive Vercel credentials.
+CI's authenticated upload dry run runs only after a trusted push to `main` and
+requires the repository `VERCEL_TOKEN` secret. The production wrapper repeats
+that check before upload. Production deployment requires
 the `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` secrets on the
 protected `production` environment.
 
