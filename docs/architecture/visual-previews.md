@@ -97,12 +97,18 @@ is JPEG. GIF inputs use their primary frame, including for animated sources.
 WebP inputs apply bounded EXIF orientation and reject embedded ICC profiles;
 animated WebP remains unsupported by the built-in decoder.
 Accepted images scale without upscaling to a 4096-pixel maximum edge
-and encode as a quality-90 JPEG. Malformed source bytes become a durable
+and encode as a quality-90 JPEG. The decoded source image must have positive
+dimensions and no more than 100,000,000 pixels; a larger image records
+`failed` with `source_dimensions_exceed_limit`. For camera RAW files, this
+limit applies to the embedded JPEG being decoded.
+
+Malformed source bytes become a durable
 `failed` result; unsupported media types, decoder features, and color profiles
 become a durable `unsupported` result. Read, verification, storage, and
 cancellation failures are retryable.
 
 Preview production is application-driven: opening a vault does not start a
-worker. Other still-image formats, RAW containers without a supported embedded
-JPEG, video frames, and managed color conversion require additional producers,
+worker. Reading source metadata from ORF, RW2, CR3, or MP4 does not mean the
+built-in producer can preview those formats. Other still-image formats, RAW
+containers without a supported embedded JPEG, video frames, and managed color conversion require additional producers,
 but they use the same generation, retention, backup, and read contracts.

@@ -176,8 +176,10 @@ for _, field := range metadata.Fields {
 It processes only the requested version and reuses the current extractor's
 result when one exists. It does not start background workers.
 
-The method holds the vault's mutation lock during extraction and reads at most
-64 MiB of the original. Concurrent `Put`, `Create`, and maintenance calls wait.
+The method holds the vault's mutation lock during extraction. It verifies the
+complete original, including large media files, then applies the
+[format-specific parsing limits](architecture/source-metadata.md#current-format-boundary).
+Concurrent `Put`, `Create`, and maintenance calls wait.
 If Docbank cannot open or verify the source bytes, it returns
 `ErrContentUnavailable`.
 
@@ -187,8 +189,10 @@ sensitive fields. Your application decides which fields it may disclose.
 
 ## Read canonical visual previews
 
-`EnsureVisualPreview` synchronously produces or reuses the current built-in
-preview for one immutable content version. Ready results identify exact preview
+`EnsureVisualPreview` synchronously processes one immutable content version
+when the current built-in recipe has no recorded result. It returns the active
+preview; if the recipe was already recorded, another recipe's active result
+stays selected. Ready results identify exact preview
 bytes and dimensions; unsupported and failed results carry a stable failure
 code without pretending that content is available.
 
@@ -212,7 +216,10 @@ content. It returns `ErrVisualPreviewUnavailable` for a cataloged unsupported
 or failed result and `ErrNotFound` when no preview result exists.
 `VisualPreview` remains a read-only lookup. Opening an embedded vault does not
 start a preview worker; applications choose when to call the synchronous
-producer.
+producer. The built-in producer supports JPEG, PNG, GIF, still WebP, and
+supported embedded JPEG previews in ARW, DNG, CR2, NEF, and RAF camera RAW
+files. See [Visual previews](architecture/visual-previews.md) for format limits,
+output size, and recipe selection.
 
 ## Inspect and repair stored content
 
@@ -457,6 +464,11 @@ To include your application's catalog in the same backup:
 1. Use `Prepare` to create an immutable catalog snapshot while writes are paused.
 2. Declare the file in `ExtraFiles`.
 3. Keep the file unchanged until `CreateBackup` returns.
+
+`RecordAs` is the file's relative location beneath the restored vault root.
+Your application must coordinate its own writes during `Prepare`; Docbank's
+freeze pauses Docbank mutations, not changes to an unrelated application
+database. The callback must not call vault mutations while that lock is held.
 
 Mark files containing credentials or tokens as `Sensitive`. Docbank rejects
 sensitive files in a plaintext repository unless your application explicitly

@@ -86,20 +86,24 @@ continues with the rest of the tree, and never alters the source.
 
 ### Choose files with include and exclude rules
 
-Include and exclude rules use Go's `path.Match` grammar over slash-normalized
-paths within each source. A rule without `/`, such as `*.pdf`, matches a
-basename at any depth; a rule with `/`, such as `reports/*.pdf`, matches that
-source-relative path. `*` and `?` do not cross `/`, and `**` is not a recursive
-globstar. Exclusions win, and matching directories prune their subtrees while
-include rules leave directories traversable. Rules must be relative and valid;
-empty rules, parent traversal, and malformed patterns are rejected before the
-walk. Commas are literal pattern characters, not separators; repeat each flag.
-Watched-inbox exclusions remain literal and do not use this glob syntax.
-`docbank add --exclude` uses glob matching. Rules must
-use `/` separators on every platform; backslashes are rejected, so backslash
-escaping is not available; match a literal `[`, `?`, or `*` with a bracket expression such as
-`report[[]1].txt`. Matching is case-sensitive on every platform, including
-Windows.
+Use include rules to select files and exclude rules to skip files or whole
+subtrees. Exclusions win. Include rules leave directories open for traversal.
+
+| Rule | Matches |
+|------|---------|
+| `*.pdf` | A basename at any depth |
+| `reports/*.pdf` | A path relative to each source root |
+| `cache` in `--exclude` | Entries named `cache`, including entire matching directory subtrees |
+| `report[[]1].txt` | The literal filename `report[1].txt` |
+
+Rules use Go's `path.Match` grammar. `*` and `?` do not cross `/`, and `**`
+does not mean recursive matching. Use `/` separators on every platform;
+backslashes are rejected. Use bracket expressions to match a literal `[`, `?`,
+or `*`. Matching is case-sensitive, including on Windows.
+
+Repeat flags for multiple rules; commas are literal characters. Empty rules,
+absolute paths, parent traversal, and malformed patterns are rejected before
+the walk. Watched-inbox exclusions remain literal and do not use this glob syntax.
 
 When the source argument is one explicit file, a basename rule such as `*.pdf`
 matches it; a path-form rule such as `reports/*.pdf` applies to a directory
@@ -187,6 +191,14 @@ only through the same authenticated API as the document itself.
 Reading provenance does not open or change the original file. A provenance
 record also does not prevent ordinary retention or deletion rules from removing
 a document version.
+
+Applications can append an origin learned later through the
+[HTTP API](../architecture/http-api.md#content-identity-and-verification-evidence)
+or [embedded Go API](../embedding.md). They can correct an active
+caller-supplied fact by adding a new fact that supersedes it. CLI and watched
+ingest facts cannot be superseded because Docbank uses them to recognize
+repeated imports; append an additional origin instead. The `provenance` CLI
+command reads this history.
 
 ## Failures don't abort the batch
 

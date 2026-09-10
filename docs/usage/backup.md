@@ -6,8 +6,9 @@ description: Create incremental, verifiable snapshots in an immutable repository
 # Backup & Restore
 
 Create a backup snapshot to recover the vault independently of its live
-storage. A snapshot includes the folder tree and every document blob recorded
-in the catalog, whether stored individually or in a pack. Restore verifies
+storage. A snapshot includes the folder tree, retained document versions, and
+their retained derivatives, whether stored individually or in a pack. It
+excludes unreferenced bytes waiting for garbage collection. Restore verifies
 the snapshot before publishing a usable vault at a separate target.
 
 A repository is a directory of backup files that Docbank adds to without
@@ -25,7 +26,8 @@ for the repository format.
     Protect the repository with filesystem permissions and encrypted storage,
     especially before placing it on removable or cloud-synchronized media.
 
-Snapshot pruning and repository retention commands are not available.
+The CLI has no snapshot pruning or retention commands. Embedded applications
+can [remove selected snapshots and reclaim backup storage](../embedding.md#remove-recovery-points-and-reclaim-storage).
 
 ## Quick start
 
@@ -139,8 +141,11 @@ match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
 Snapshots include the folder tree, trash state, retained versions, ingest and
-provenance records, watched-source cursors, tags, and extraction records.
-Restore rebuilds and validates these records before publishing the target.
+provenance records, watched-source cursors, tags, saved queries, and extraction
+records. They also retain source metadata, renditions, visual previews, and
+stored embedding results. Restore rebuilds and validates these records without
+calling processing providers. See [Backup architecture](../architecture/backup.md#which-retained-records-must-round-trip)
+for retained records and rebuildable indexes.
 
 ## Restore and prove a snapshot
 

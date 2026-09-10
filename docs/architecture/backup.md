@@ -79,9 +79,11 @@ artifact as `docbank-metadata-jsonl-v1`. It contains the complete virtual
 directory tree and file records,
 including stable IDs, content hashes, timestamps, trash coordinates, prior
 versions, ingest provenance, watched-source cursors, tags, and extracted text.
-It intentionally omits FTS rows and physical pack mappings: search indexes are
-rebuilt by importing nodes, while restore grants physical authority only after
-content has been verified and published.
+It omits rebuildable full-text and vector indexes and physical pack mappings.
+Restore rebuilds full-text search and vector indexes from retained records.
+When a vector source cannot be rebuilt locally, restore records that missing
+coverage instead of calling an external provider. Restore grants physical
+authority only after content has been verified and published.
 
 Import targets must be fresh
 current-schema databases;
@@ -228,23 +230,35 @@ endpoint returns one JSON document for agents.
 ## Which retained records must round-trip?
 
 Backup captures every blob still referenced by a retained content version,
-rendition artifact, visual preview, or staged rendition source. A blob with no
-remaining reference is a GC candidate, and the snapshot excludes it rather than
-preserving it.
+rendition build or job, rendition artifact, visual preview, or stored embedding
+input or vector set. Temporary holds used only to delay garbage collection do
+not make staged bytes part of a backup.
 
 The current JSONL authority round-trips the node allocator high-water mark,
 blobs, tree and trash state, content versions and current pointers, ingests,
-provenance, tags, and extraction records. Its relational validation runs before
-a restored database is published. Every disjoint permanent audit scope, its
-membership, and its independent chain are preserved; the complete
+provenance, tags, saved queries and highlight sets, and extraction records. It
+also retains auxiliary MD5 fingerprints, source-metadata generations and heads,
+rendition evidence and artifacts, lexical generations, processing profiles and
+consent, visual-preview generations and heads, and durable embedding results.
+Restore needs no provider call to recover those stored results. Rebuildable
+vector indexes, their build jobs, and reader leases are excluded.
+
+Manifest statistics distinguish retained derivative artifacts from rebuildable
+lexical projections. Capture and restore use the store's shared artifact-role
+registry to order those statistics consistently.
+
+Relational validation runs before a restored database is published. Every
+disjoint permanent audit scope, its membership, and its independent chain are
+preserved; the complete
 audited-history backup and restore contract is described in
 [Audited History](audited-history.md).
 
 ## Who can remove snapshots and reclaim repository space?
 
-Embedded repository cleanup is implemented in `backup_cleanup.go`.
-`BackupRepository.Forget` supplies exact snapshot IDs to Kit and preserves its
-last-recovery-point and incremental-parent errors. `BackupRepository.Prune`
+Embedded applications remove selected recovery points with
+`BackupRepository.Forget` and reclaim unused repository space with
+`BackupRepository.Prune`. Forget supplies exact snapshot IDs to Kit and preserves
+its last-recovery-point and incremental-parent errors. `BackupRepository.Prune`
 supplies Docbank's existing `backupapp` adapter so Kit traces the same metadata,
 content, auxiliary artifacts, and host-file references used by verification
 and restore. Docbank never enumerates or deletes Kit repository files itself.
