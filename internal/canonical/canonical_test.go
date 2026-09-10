@@ -51,3 +51,19 @@ func TestIsSHA256Hex(t *testing.T) {
 	assert.False(t, IsSHA256Hex(strings.Repeat("0", 63)))
 	assert.False(t, IsSHA256Hex(strings.Repeat("g", 64)))
 }
+
+func TestBoundedSizeMatchesCanonicalBytesAndStopsAtDecisionByte(t *testing.T) {
+	value := map[string]any{"escaped": "<\né", "integer": int64(1 << 60), "values": []int{2, 1}}
+	encoded, err := Marshal(value)
+	require.NoError(t, err)
+	for _, limit := range []int64{int64(len(encoded)) - 1, int64(len(encoded)), int64(len(encoded)) + 1} {
+		observed, exceeded, err := BoundedSize(value, limit)
+		require.NoError(t, err)
+		assert.Equal(t, int64(len(encoded)) > limit, exceeded)
+		if exceeded {
+			assert.Equal(t, limit+1, observed)
+		} else {
+			assert.Equal(t, int64(len(encoded)), observed)
+		}
+	}
+}

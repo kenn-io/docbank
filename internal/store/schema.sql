@@ -1338,3 +1338,51 @@ CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE OF name ON nodes BEGI
     INSERT INTO nodes_fts(nodes_fts, rowid, name) VALUES ('delete', old.id, old.name);
     INSERT INTO nodes_fts(rowid, name) VALUES (new.id, new.name);
 END;
+
+CREATE TABLE IF NOT EXISTS email_generations (
+    generation_id TEXT PRIMARY KEY,
+    source_sha256 TEXT NOT NULL,
+    source_size INTEGER NOT NULL CHECK (source_size >= 0),
+    recipe_fingerprint TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (source_sha256, source_size, recipe_fingerprint)
+);
+CREATE INDEX IF NOT EXISTS content_versions_email_mime
+ON content_versions(version_id)
+WHERE instr(lower(COALESCE(mime_type,'')),'message/rfc822')>0;
+CREATE TABLE IF NOT EXISTS email_part_artifacts (
+    generation_id TEXT NOT NULL REFERENCES email_generations(generation_id) ON DELETE CASCADE,
+    part_path TEXT NOT NULL,
+    role TEXT NOT NULL,
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    size INTEGER NOT NULL CHECK (size >= 0),
+    PRIMARY KEY (generation_id, part_path, role)
+);
+CREATE INDEX IF NOT EXISTS email_part_artifacts_blob ON email_part_artifacts(blob_hash);
+CREATE TABLE IF NOT EXISTS email_attachments (
+    attachment_id TEXT PRIMARY KEY,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL REFERENCES email_generations(generation_id),
+    attached_at TEXT NOT NULL,
+    UNIQUE (content_version_id, generation_id),
+    UNIQUE (content_version_id, attachment_id)
+);
+CREATE INDEX IF NOT EXISTS email_attachments_generation ON email_attachments(generation_id);
+CREATE TABLE IF NOT EXISTS email_heads (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    attachment_id TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    FOREIGN KEY (content_version_id, attachment_id)
+        REFERENCES email_attachments(content_version_id, attachment_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS email_body_results (
+    email_attachment_id TEXT PRIMARY KEY REFERENCES email_attachments(attachment_id) ON DELETE CASCADE,
+    body_recipe_fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL,
+    part_path TEXT,
+    rendition_attachment_id TEXT REFERENCES rendition_attachments(attachment_id),
+    reason TEXT
+);
+CREATE INDEX IF NOT EXISTS email_body_results_rendition ON email_body_results(rendition_attachment_id);

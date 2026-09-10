@@ -1633,6 +1633,8 @@ func (s *Store) verifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 		FROM rendition_builds b
 		JOIN blobs source ON source.hash=b.source_sha256
 		UNION
+		SELECT blob_hash,size FROM email_part_artifacts
+		UNION
 		SELECT artifact.blob_hash, artifact.size
 		FROM rendition_artifacts artifact
 		UNION
@@ -1713,6 +1715,8 @@ func (s *Store) verifyRenditionBlobAuthority(ctx context.Context, allowMissingVe
 func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowMissingVectorPayloads bool) (retErr error) {
 	query := `
 		SELECT source_sha256 FROM rendition_builds
+		UNION
+		SELECT blob_hash FROM email_part_artifacts
 		UNION
 		SELECT blob_hash FROM rendition_artifacts
 		UNION

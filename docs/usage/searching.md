@@ -194,6 +194,20 @@ The worker reads the stored content and checks its hash, whether Docbank stores
 it as an individual file or inside a pack. Text becomes searchable only after
 that complete read passes verification.
 
+The independent `extract:email` job handles files imported as
+`message/rfc822`. It preserves the raw message and canonical MIME inventory,
+then indexes only the selected outer body. Alternate bodies, nested forwarded
+messages, headers, and attachments do not leak into ordinary search. HTML is
+converted to bounded visible text before publication; an empty, unsupported,
+encrypted, or over-limit body remains explicit metadata but contributes no
+search hit.
+
+`.eml`, `.EML`, and mixed-case variants are declared as `message/rfc822` at
+new import, independent of the host MIME registry. Existing content with
+another stored media type is never reclassified from its filename. An embedded
+or master-API caller may explicitly ensure its email metadata without changing
+the original media type, hash, or bytes.
+
 Extraction is bounded to 16 MiB per blob. Larger documents, invalid UTF-8, and
 text containing NUL bytes remain stored and readable but are not body-indexed.
 Newly ingested or replaced content may take a few seconds to appear while the
@@ -204,7 +218,7 @@ extraction failure. `docbank jobs` shows whether that worker is running.
 ## Which text is not searched?
 
 The daemon does not automatically extract PDF text layers, office-document
-text, or text from images through optical character recognition (OCR). You
+text, email attachments, or text from images through optical character recognition (OCR). You
 can still find these files by name and read their stored bytes. The
 [document processing libraries](../document-understanding.md) provide additional
 processing options for applications; adding a file does not start them.

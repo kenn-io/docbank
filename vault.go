@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/home"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
@@ -65,7 +66,13 @@ var (
 	ErrAuditMutationUnsupported = store.ErrAuditMutationUnsupported
 	// ErrProvenanceMismatch reports a provenance correction whose predecessor
 	// is missing, belongs to another node, or is already superseded.
-	ErrProvenanceMismatch = store.ErrProvenanceMismatch
+	ErrProvenanceMismatch        = store.ErrProvenanceMismatch
+	ErrEmailPending              = store.ErrEmailPending
+	ErrEmailNotSupported         = store.ErrEmailNotSupported
+	ErrEmailDerivativeSuppressed = store.ErrEmailDerivativeSuppressed
+	ErrEmailCorrupt              = store.ErrEmailCorrupt
+	ErrEmailPartUnavailable      = store.ErrEmailPartUnavailable
+	ErrInvalidEmailPart          = store.ErrInvalidEmailPart
 )
 
 const (
@@ -114,10 +121,11 @@ type StoreBinding struct {
 // Vault is one independently locked Docbank namespace. Separate Vault values
 // may be open concurrently when their roots do not overlap.
 type Vault struct {
-	root     *os.Root
-	lock     *home.Lock
-	metadata *store.Store
-	blobs    *blob.Store
+	root             *os.Root
+	lock             *home.Lock
+	metadata         *store.Store
+	blobs            *blob.Store
+	emailSpoolParent string
 
 	lifecycle    sync.RWMutex
 	mutation     sync.Mutex
@@ -268,10 +276,16 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, blobs.Close())
 		}
 	}()
+	if _, err := emailmime.RecoverStale(context.Background(), layout.BlobTmpDir()); err != nil {
+		return nil, err
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return nil, err
 	}
-	return &Vault{root: root, lock: lock, metadata: metadata, blobs: blobs}, nil
+	return &Vault{
+		root: root, lock: lock, metadata: metadata, blobs: blobs,
+		emailSpoolParent: layout.BlobTmpDir(),
+	}, nil
 }
 
 // Close waits for active operations and readers, then releases storage and
