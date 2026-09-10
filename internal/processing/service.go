@@ -458,22 +458,27 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	if err != nil {
 		return renditionRun{}, err
 	}
-	processed, err := worker.RunJob(ctx, job.ID)
-	if err != nil {
+	for {
+		processed, err := worker.RunJob(ctx, job.ID)
+		if err != nil {
+			if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
+				current.State == store.RenditionJobCompleted {
+				return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
+			}
+			return renditionRun{}, err
+		}
+		if processed {
+			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
+		}
 		if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
 			current.State == store.RenditionJobCompleted {
 			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
 		}
-		return renditionRun{}, err
-	}
-	if !processed {
-		if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
-			current.State == store.RenditionJobCompleted {
-			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
+		// Shared work must finish before this caller can build its embeddings.
+		if err := waitRenditionWorker(ctx, 100*time.Millisecond); err != nil {
+			return renditionRun{}, err
 		}
-		return renditionRun{}, errors.New("processing job was not claimable")
 	}
-	return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
 }
 
 func (service *Service) Status(ctx context.Context, jobID string) (Status, error) {

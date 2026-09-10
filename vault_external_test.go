@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,6 +113,79 @@ func TestEmbeddedProcessingRejectsForeignFenceAndClosedVault(t *testing.T) {
 	require.NoError(t, vault.Close())
 	_, err = vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{})
 	require.ErrorIs(t, err, docbank.ErrClosed)
+}
+
+func TestEmbeddedProcessingWaitsForSharedRenditionAndHonorsCancellation(t *testing.T) {
+	plaintextProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &waitingRenditionProvider{RenditionProvider: plaintextProvider,
+		started: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(provider.release) })
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"shared": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	requests := make([]docbank.StartProcessingRequest, 2)
+	for index := range requests {
+		receipt, err := vault.Put(t.Context(), fmt.Sprintf("/shared-%d.txt", index),
+			strings.NewReader("shared rendition source"), docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
+			NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "shared"}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		requests[index] = docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
+	}
+	var first docbank.ProcessingJob
+	var firstErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		first, firstErr = vault.StartProcessing(t.Context(), requests[0])
+	}()
+	t.Cleanup(func() { release(); <-done })
+	select {
+	case <-provider.started:
+	case <-done:
+		t.Fatalf("first processing request returned before rendering: %v", firstErr)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	_, err = vault.StartProcessing(ctx, requests[1])
+	require.ErrorIs(t, err, context.DeadlineExceeded, "joining a live rendition must wait without failing its lease")
+	release()
+	<-done
+	require.NoError(t, firstErr)
+	joined, err := vault.StartProcessing(t.Context(), requests[1])
+	require.NoError(t, err)
+	require.Equal(t, first.RenditionJobID, joined.RenditionJobID)
+	require.Equal(t, int32(1), provider.calls.Load(), "both versions must share one provider execution")
+	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: joined.ID})
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+}
+
+type waitingRenditionProvider struct {
+	document.RenditionProvider
+
+	started, release chan struct{}
+	calls            atomic.Int32
+}
+
+func (provider *waitingRenditionProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
+	authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	if provider.calls.Add(1) == 1 {
+		close(provider.started)
+	}
+	select {
+	case <-ctx.Done():
+		return document.RenditionResult{}, ctx.Err()
+	case <-provider.release:
+		return provider.RenditionProvider.Render(ctx, upload, authorization)
+	}
 }
 
 func TestEmbeddedProcessingRunsDirectEmbeddingsAndSemanticSearch(t *testing.T) {

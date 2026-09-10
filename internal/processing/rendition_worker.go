@@ -341,6 +341,7 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 
 // RunJob claims and processes one exact ready shared build. It is used by
 // request/response surfaces that must not consume unrelated queued work.
+// A job with a held lease is not ready and returns processed=false.
 func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 	processed bool, retErr error,
 ) {
@@ -357,10 +358,13 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 			var claimErr error
 			claim, claimErr = target.ClaimRenditionJob(ctx, jobID, worker.owner,
 				worker.clock().UTC(), worker.leaseDuration)
+			if errors.Is(claimErr, store.ErrRenditionJobLeaseHeld) {
+				return nil
+			}
 			return claimErr
 		})
 	})
-	if err == nil {
+	if err == nil && claim.JobID != "" {
 		processed, err = worker.runClaim(ctx, claim)
 	}
 	if err != nil && ctx.Err() == nil && !errors.Is(err, store.ErrRenditionJobFenced) &&
