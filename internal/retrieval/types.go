@@ -129,9 +129,12 @@ type Report struct {
 }
 
 type Query struct {
-	Text                         string
-	Mode                         Mode
-	Limit                        int
+	Text  string
+	Mode  Mode
+	Limit int
+	// Lane limits bound candidates before fusion. Zero uses Limit.
+	LexicalLimit                 int
+	VectorLimit                  int
 	Scope                        store.SearchOptions
 	ProcessingProfileFingerprint string
 	BindingID                    string

@@ -244,7 +244,12 @@ func mergeVariantReports(reports []Report, limit int) (Report, error) {
 		return Report{}, errors.New("retrieval requires one query report")
 	}
 	if len(reports) == 1 {
-		return reports[0], nil
+		report := reports[0]
+		if len(report.Results) > limit {
+			report.Results = report.Results[:limit]
+			report.Truncated = true
+		}
+		return report, nil
 	}
 	merged := reports[0]
 	merged.Coverage = conservativeCoverage(reports)
@@ -411,7 +416,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	}
 	resolution, err := backend.ResolveSemanticCandidates(ctx, query.ProcessingProfileFingerprint,
 		query.BindingID, authority.InputKind, authority.VectorSpace.ID, stored.SourceManifestChecksum,
-		neighbors, query.Limit, query.Scope)
+		neighbors, query.VectorLimit, query.Scope)
 	if err != nil {
 		return nil, coverage, false, err
 	}
@@ -425,8 +430,8 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		coverage.State = CoverageIncomplete
 	}
 	resolved := resolution.Candidates
-	if len(resolved) > query.Limit {
-		resolved = resolved[:query.Limit]
+	if len(resolved) > query.VectorLimit {
+		resolved = resolved[:query.VectorLimit]
 		truncated = true
 	}
 	candidates := make([]Candidate, len(resolved))
@@ -458,17 +463,27 @@ func normalizeQuery(query Query) (Query, error) {
 		return Query{}, err
 	}
 	query.Mode, query.Limit = Mode(options.Mode), options.CandidateLimit
+	if query.LexicalLimit == 0 {
+		query.LexicalLimit = query.Limit
+	}
+	if query.VectorLimit == 0 {
+		query.VectorLimit = query.Limit
+	}
+	if query.LexicalLimit < 1 || query.LexicalLimit > document.MaxRetrievalCandidateLimit ||
+		query.VectorLimit < 1 || query.VectorLimit > document.MaxRetrievalCandidateLimit {
+		return Query{}, fmt.Errorf("retrieval lane limits must be between 1 and %d", document.MaxRetrievalCandidateLimit)
+	}
 
 	return query, nil
 }
 
 func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Candidate, bool, error) {
-	hits, truncated, err := searcher.backend.SearchExplainedLexicalCandidates(ctx, query.Text, query.Limit, query.Scope)
+	hits, truncated, err := searcher.backend.SearchExplainedLexicalCandidates(ctx, query.Text, query.LexicalLimit, query.Scope)
 	if err != nil {
 		return nil, false, err
 	}
-	if len(hits) > query.Limit {
-		hits = hits[:query.Limit]
+	if len(hits) > query.LexicalLimit {
+		hits = hits[:query.LexicalLimit]
 		truncated = true
 	}
 	candidates := make([]Candidate, len(hits))

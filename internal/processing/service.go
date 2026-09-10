@@ -63,11 +63,12 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
-	portable   document.ProcessingProfileV1
-	record     store.ProcessingProfileRecord
-	provider   document.RenditionProvider
-	embedders  map[string]document.EmbeddingProvider
-	tokenizers map[string]document.Tokenizer
+	portable          document.ProcessingProfileV1
+	record            store.ProcessingProfileRecord
+	provider          document.RenditionProvider
+	embedders         map[string]document.EmbeddingProvider
+	embeddingRuntimes map[string]*ProviderEmbeddingRuntime
+	tokenizers        map[string]document.Tokenizer
 }
 
 type Service struct {
@@ -212,8 +213,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
 		configured := configuredProfile{portable: profile, provider: supplied.RenditionProvider,
-			embedders:  make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
-			tokenizers: make(map[string]document.Tokenizer, len(supplied.Tokenizers)),
+			embedders:         make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
+			embeddingRuntimes: make(map[string]*ProviderEmbeddingRuntime, len(profile.Embeddings)),
+			tokenizers:        make(map[string]document.Tokenizer, len(supplied.Tokenizers)),
 			record: store.ProcessingProfileRecord{Fingerprint: fingerprints.Profile,
 				CanonicalProfile: jsontext.Value(canonical), RenditionRequestFingerprint: fingerprints.RenditionRequest,
 				EvidenceLexicalFingerprint:     fingerprints.EvidenceLexical,
@@ -271,6 +273,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 					"another profile's provider for the same descriptor", name, binding.Name)
 			}
 			configured.embedders[binding.Name] = provider
+			configured.embeddingRuntimes[binding.Name] = runtime
 			if binding.InputKind == document.EmbeddingInputRenditionChunk {
 				tokenizer := supplied.Tokenizers[binding.Name]
 				if renditionInterfaceNil(tokenizer) {
@@ -737,6 +740,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return retrieval.Report{}, err
 	}
 	return searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: mode, Limit: limit,
+		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Scope:                        store.SearchOptions{ContentVersionIDs: ids},
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: request.BindingID,
 		Authorization: authorization})
@@ -782,27 +786,40 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		jobIDs = append(jobIDs, job.ID)
 		vectorSpaces = append(vectorSpaces, fingerprints.VectorSpace[binding.Name])
 	}
-	worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
-		Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
-		GenerationBlobs: service.blobs, Runtime: service.embeddings, Gate: service.gate,
-		Owner: "embedded-embedding-worker", LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond,
-		RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
-		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
-		MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
-		DescriptorFingerprints: service.embeddings.Fingerprints(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, jobID := range jobIDs {
-		processed, runErr := worker.RunJob(ctx, jobID)
-		if runErr != nil {
-			return nil, runErr
+	for index, jobID := range jobIDs {
+		binding := profile.portable.Embeddings[index]
+		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
+			Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
+			GenerationBlobs: service.blobs, Runtime: profile.embeddingRuntimes[binding.Name], Gate: service.gate,
+			Owner: "embedded-embedding-worker", LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond,
+			RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
+			AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
+			MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
+			DescriptorFingerprints: []string{binding.Descriptor.Fingerprint},
+		})
+		if err != nil {
+			return nil, err
 		}
-		if !processed {
+		for {
+			processed, runErr := worker.RunJob(ctx, jobID)
+			if runErr != nil {
+				return nil, runErr
+			}
+			if processed {
+				break
+			}
 			status, statusErr := service.catalog.EmbeddingJobByID(ctx, jobID)
-			if statusErr != nil || status.State != "completed" {
+			if statusErr != nil {
+				return nil, statusErr
+			}
+			if status.State == "completed" || status.State == "failed" || status.State == "abandoned" {
+				break
+			}
+			if status.State != "running" {
 				return nil, errors.New("embedding job was not claimable")
+			}
+			if err := worker.wait(ctx, 100*time.Millisecond); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -816,8 +833,20 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		return nil, err
 	}
 	for _, vectorSpace := range sortedUnique(vectorSpaces) {
-		if _, err := indexer.Rebuild(ctx, vectorSpace); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return nil, err
+		for {
+			_, err := indexer.Rebuild(ctx, vectorSpace)
+			if errors.Is(err, store.ErrVectorIndexBuildInProgress) || errors.Is(err, store.ErrVectorIndexBuildFenced) ||
+				errors.Is(err, store.ErrVectorIndexSourceStale) {
+				// Another request can publish embeddings while this index builds.
+				if err := waitRenditionWorker(ctx, 100*time.Millisecond); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return nil, err
+			}
+			break
 		}
 	}
 	return jobIDs, nil

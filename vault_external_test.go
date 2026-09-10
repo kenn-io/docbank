@@ -272,6 +272,191 @@ func TestEmbeddedProcessingReturnsStatusWhenOptionalEmbeddingFails(t *testing.T)
 	require.NotEmpty(t, status.FailureCode)
 }
 
+func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
+	provider := newSyntheticEmbeddingProvider(t)
+	provider.started, provider.release = make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(provider.release) })
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"shared": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/shared.txt", strings.NewReader("shared embedding needle"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	planRequest := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
+		NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "shared"}}
+	plan, err := vault.PlanProcessing(t.Context(), planRequest)
+	require.NoError(t, err)
+	request := docbank.StartProcessingRequest{PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint, Consent: true}
+	type result struct {
+		job docbank.ProcessingJob
+		err error
+	}
+	first, joined := make(chan result, 1), make(chan result, 1)
+	var callers sync.WaitGroup
+	callers.Go(func() { job, err := vault.StartProcessing(t.Context(), request); first <- result{job, err} })
+	t.Cleanup(func() { release(); callers.Wait() })
+	select {
+	case <-provider.started:
+	case result := <-first:
+		t.Fatalf("processing returned before embedding: %v", result.err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	_, err = vault.StartProcessing(ctx, request)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	callers.Go(func() { job, err := vault.StartProcessing(t.Context(), request); joined <- result{job, err} })
+	select {
+	case result := <-joined:
+		t.Fatalf("joining caller returned before shared embedding finished: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	owner, waiter := <-first, <-joined
+	require.NoError(t, owner.err)
+	require.NoError(t, waiter.err)
+	require.Equal(t, owner.job.ID, waiter.job.ID)
+	require.Equal(t, int32(1), provider.calls.Load())
+	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: waiter.job.ID})
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+}
+
+func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
+	provider := newSyntheticEmbeddingProvider(t)
+	provider.failure = errors.New("synthetic provider failure")
+	profiles := make(map[string]docbank.ProcessingProfileConfig)
+	classifications := []docbank.EmbeddingFailureClass{docbank.EmbeddingFailurePermanent, docbank.EmbeddingFailureTransient}
+	for index, classification := range classifications {
+		profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+		profile.Rendition = nil
+		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+		profile.Retrieval.LexicalLimit = index + 1
+		profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+		profiles[fmt.Sprintf("profile-%d", index)] = docbank.ProcessingProfileConfig{Profile: profile,
+			EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider},
+			EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{
+				"direct": func(error) (docbank.EmbeddingFailureClass, time.Duration) { return classification, 0 },
+			}}
+	}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: profiles}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/classifiers.txt", strings.NewReader("classifier source"), docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	for index, classification := range classifications {
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+			ContentVersionID: receipt.Version.ID, Profile: fmt.Sprintf("profile-%d", index)}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+		status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+		require.NoError(t, err)
+		want := "input_rejected"
+		if classification == docbank.EmbeddingFailureTransient {
+			want = "provider_unavailable"
+		}
+		require.Equal(t, want, status.FailureCode)
+	}
+}
+
+func TestEmbeddedProcessingIndexesConcurrentDocuments(t *testing.T) {
+	provider := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"concurrent": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	var versions []string
+	var requests []docbank.StartProcessingRequest
+	for index := range 4 {
+		receipt, err := vault.Put(t.Context(), fmt.Sprintf("/concurrent-%d.txt", index), strings.NewReader("concurrent needle"),
+			docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
+			NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "concurrent"}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		requests = append(requests, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		versions = append(versions, receipt.Version.ID)
+	}
+	start := make(chan struct{})
+	results := make(chan error, len(requests))
+	var callers sync.WaitGroup
+	for _, request := range requests {
+		callers.Go(func() {
+			<-start
+			_, err := vault.StartProcessing(t.Context(), request)
+			results <- err
+		})
+	}
+	close(start)
+	callers.Wait()
+	for range requests {
+		require.NoError(t, <-results)
+	}
+	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "needle", Profile: "concurrent",
+		Mode: docbank.DocumentSearchSemantic, Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: versions}})
+	require.NoError(t, err)
+	require.Len(t, report.Results, len(requests))
+}
+
+func TestEmbeddedProcessingEnforcesProfileSearchLimits(t *testing.T) {
+	provider := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+	profile.Retrieval = document.RetrievalPolicyV1{LexicalLimit: 1, VectorLimit: 2}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"bounded": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	var versions []string
+	for index := range 3 {
+		receipt, err := vault.Put(t.Context(), fmt.Sprintf("/needle-%d.txt", index), strings.NewReader("semantic needle"),
+			docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+			ContentVersionID: receipt.Version.ID, Profile: "bounded"}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+		versions = append(versions, receipt.Version.ID)
+	}
+	for _, test := range []struct {
+		mode        docbank.DocumentSearchMode
+		limit, want int
+	}{
+		{docbank.DocumentSearchLexical, 10, 1},
+		{docbank.DocumentSearchSemantic, 10, 2},
+		{docbank.DocumentSearchHybrid, 1, 1},
+	} {
+		t.Run(string(test.mode), func(t *testing.T) {
+			report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "needle", Profile: "bounded",
+				Mode: test.mode, Limit: test.limit, Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: versions}})
+			require.NoError(t, err)
+			require.Len(t, report.Results, test.want)
+			require.True(t, report.Truncated)
+		})
+	}
+}
+
 func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testing.T) {
 	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
@@ -378,9 +563,12 @@ func plaintextDescriptorForProfile(t *testing.T) document.RenditionDescriptor {
 }
 
 type syntheticEmbeddingProvider struct {
-	descriptor document.EmbeddingDescriptor
-	filenames  []string
-	failure    error
+	descriptor       document.EmbeddingDescriptor
+	filenames        []string
+	filenamesMu      sync.Mutex
+	failure          error
+	started, release chan struct{}
+	calls            atomic.Int32
 }
 
 func newSyntheticEmbeddingProvider(t *testing.T) *syntheticEmbeddingProvider {
@@ -411,9 +599,19 @@ func (provider *syntheticEmbeddingProvider) Descriptor() document.EmbeddingDescr
 	return provider.descriptor
 }
 
-func (provider *syntheticEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
+func (provider *syntheticEmbeddingProvider) Embed(ctx context.Context, inputs []document.EmbeddingInput,
 	_ document.EmbeddingAuthorization,
 ) (document.EmbeddingResult, error) {
+	if provider.calls.Add(1) == 1 && provider.started != nil {
+		close(provider.started)
+	}
+	if provider.release != nil {
+		select {
+		case <-ctx.Done():
+			return document.EmbeddingResult{}, ctx.Err()
+		case <-provider.release:
+		}
+	}
 	if provider.failure != nil {
 		return document.EmbeddingResult{}, provider.failure
 	}
@@ -421,7 +619,9 @@ func (provider *syntheticEmbeddingProvider) Embed(_ context.Context, inputs []do
 	for index, input := range inputs {
 		text := input.Text
 		if input.Source != nil {
+			provider.filenamesMu.Lock()
 			provider.filenames = append(provider.filenames, input.Source.Metadata().Filename)
+			provider.filenamesMu.Unlock()
 			body, err := io.ReadAll(input.Source)
 			if err != nil {
 				return document.EmbeddingResult{}, err
