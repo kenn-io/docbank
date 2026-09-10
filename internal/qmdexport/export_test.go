@@ -543,3 +543,41 @@ func TestPublishActiveCatalogErrorReleasesLock(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestLoadCurrentReturnsOnlySelfConsistentManifest(t *testing.T) {
+	root := privateExportTestDir(t)
+	item, markdown := source(1, "00000000-0000-4000-8000-000000000001", "# One\n")
+	published, err := Publish(t.Context(), root, "docbank", []Source{item}, fakeReader{item.BlobSHA256: markdown}, Options{})
+	require.NoError(t, err)
+
+	loaded, err := LoadCurrent(root)
+	require.NoError(t, err)
+	assert.Equal(t, published.GenerationID, loaded.GenerationID)
+	assert.Equal(t, published.Manifest, loaded.Manifest)
+	assert.Equal(t, published.CollectionPath, loaded.CollectionPath)
+
+	manifestPath := filepath.Join(root, "generations", published.GenerationID, "manifest.json")
+	manifest := published.Manifest
+	manifest.Entries[0].AttachmentID = "drifted"
+	encoded, err := json.Marshal(manifest, json.Deterministic(true))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(manifestPath, append(encoded, '\n'), 0o600))
+	_, err = LoadCurrent(root)
+	require.ErrorContains(t, err, "identity")
+}
+
+func TestLoadCurrentRejectsUnsafePointer(t *testing.T) {
+	root := privateExportTestDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CURRENT"), []byte("../private\n"), 0o600))
+	_, err := LoadCurrent(root)
+	require.ErrorContains(t, err, "CURRENT")
+	volumeRoot := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
+	_, err = LoadCurrent(volumeRoot)
+	require.ErrorContains(t, err, "root")
+}
+
+func TestPublishRejectsManifestAbovePublicationBound(t *testing.T) {
+	item, markdown := source(1, "00000000-0000-4000-8000-000000000001", "---\nprivate: "+strings.Repeat("x", 256)+"\n---\nbody\n")
+	_, err := Publish(t.Context(), privateExportTestDir(t), "docbank", []Source{item}, fakeReader{item.BlobSHA256: markdown}, Options{MaxManifestBytes: 128})
+	require.ErrorContains(t, err, "manifest")
+}

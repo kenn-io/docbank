@@ -95,3 +95,61 @@ func TestQMDExportSourcesKeepsSeparateProfilesAndEnforcesMembershipLimit(t *test
 	require.ErrorContains(t, err, "membership exceeds limit")
 	assert.Nil(t, sources)
 }
+
+func TestRevalidateQMDExportCandidatesRequiresExactLiveAttachment(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: nowRFC3339()}
+	require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	sources, err := s.QMDExportSources(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+
+	allowed, err := s.RevalidateQMDExportCandidates(t.Context(), sources, SearchOptions{})
+	require.NoError(t, err)
+	require.Len(t, allowed, 1)
+	assert.Equal(t, sources[0].NodeID, allowed[0].NodeID)
+	assert.Equal(t, versions[0], allowed[0].ContentVersionID)
+	assert.Equal(t, "/synthetic-source-a.pdf", allowed[0].Path)
+	assert.Positive(t, allowed[0].NodeRevision)
+	assert.True(t, allowed[0].InScope)
+
+	excluded, err := s.RevalidateQMDExportCandidates(t.Context(), sources, SearchOptions{MIMEType: "text/plain"})
+	require.NoError(t, err, "an out-of-scope live document is not stale authority")
+	require.Len(t, excluded, 1)
+	assert.False(t, excluded[0].InScope)
+
+	drifted := sources[0]
+	drifted.AttachmentID = "different-attachment"
+	_, err = s.RevalidateQMDExportCandidates(t.Context(), []QMDExportSource{drifted}, SearchOptions{MIMEType: "text/plain"})
+	require.ErrorIs(t, err, ErrQMDExportAuthorityStale)
+
+	file, err := s.NodeViewByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), file.Node.ID, file.Node.Revision)
+	require.NoError(t, err)
+	_, err = s.RevalidateQMDExportCandidates(t.Context(), sources, SearchOptions{})
+	require.ErrorIs(t, err, ErrQMDExportAuthorityStale)
+}
+
+func TestRevalidateQMDExportCandidatesFiltersUnknownMIME(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	file, err := s.CreateFile(t.Context(), s.RootID(), "unknown-format", catalogSourceHash, 20, "")
+	require.NoError(t, err)
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: file.CurrentVersionID,
+		BuildID: build.ID, Profile: profile, AttachedAt: nowRFC3339(),
+	}))
+	sources, err := s.QMDExportSources(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	live, err := s.RevalidateQMDExportCandidates(t.Context(), sources, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	require.Len(t, live, 1)
+	assert.False(t, live[0].InScope)
+}

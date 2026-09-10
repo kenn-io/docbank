@@ -2,11 +2,20 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	"go.kenn.io/docbank/document"
 )
 
 const maxQMDExportSources = 100_000
+
+// ErrQMDExportAuthorityStale means an exported identity no longer names the
+// exact live node, content version, rendition head, and verified artifact.
+var ErrQMDExportAuthorityStale = errors.New("QMD export authority is stale")
 
 // QMDExportSource is one active live-node rendition head's retained
 // sanitized-Markdown artifact. Original vault paths are intentionally absent.
@@ -22,6 +31,16 @@ type QMDExportSource struct {
 	BlobSize                     int64
 	ArtifactChecksum             string
 	MarkdownChecksum             string
+}
+
+// QMDExportLiveCandidate is the current Docbank identity rejoined after an
+// external QMD result has been mapped through one exact export manifest.
+type QMDExportLiveCandidate struct {
+	NodeID           int64
+	NodeRevision     int64
+	InScope          bool
+	ContentVersionID string
+	Path             string
 }
 
 // QMDExportSources lists a bounded, deterministic snapshot of active retained
@@ -65,4 +84,95 @@ func (s *Store) QMDExportSources(ctx context.Context, limit int) (_ []QMDExportS
 		return nil, fmt.Errorf("listing QMD export sources: %w", err)
 	}
 	return sources, nil
+}
+
+// RevalidateQMDExportCandidates rejects the batch unless every supplied
+// manifest identity remains exact, live, and current. InScope reports each
+// candidate's scope membership in the same storage snapshot.
+func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []QMDExportSource,
+	opts SearchOptions,
+) ([]QMDExportLiveCandidate, error) {
+	if len(candidates) > document.MaxRetrievalCandidateLimit {
+		return nil, errors.New("QMD candidate revalidation exceeds the retrieval limit")
+	}
+	normalized, err := s.NormalizeSearchOptions(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int64]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if !validQMDExportSource(candidate) {
+			return nil, errors.New("QMD candidate authority is invalid")
+		}
+		if _, duplicate := seen[candidate.NodeID]; duplicate {
+			return nil, errors.New("QMD candidate authority is duplicated")
+		}
+		seen[candidate.NodeID] = struct{}{}
+	}
+	result := make([]QMDExportLiveCandidate, 0, len(candidates))
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		filterSQL, filterArgs := searchFilterSQL(normalized)
+		for _, candidate := range candidates {
+			args := []any{candidate.NodeID, candidate.ContentVersionID,
+				candidate.ProcessingProfileFingerprint, candidate.AttachmentID,
+				candidate.VaultUID, candidate.BuildID, candidate.ArtifactID,
+				candidate.BlobSHA256, candidate.BlobSize, candidate.ArtifactChecksum,
+				candidate.MarkdownChecksum}
+			args = append(append([]any(nil), filterArgs...), args...)
+			var live QMDExportLiveCandidate
+			err := tx.QueryRowContext(ctx, `SELECT n.id,n.revision,cv.version_id,CASE WHEN 1=1 `+filterSQL+` THEN 1 ELSE 0 END
+				FROM nodes n
+				JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+				JOIN rendition_heads h ON h.content_version_id=cv.version_id
+				JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+					AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
+				JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
+				JOIN rendition_artifacts artifact ON artifact.build_id=b.build_id
+				WHERE n.id=? AND cv.version_id=? AND h.profile_fingerprint=? AND h.attachment_id=?
+					AND a.vault_uid=? AND a.build_id=? AND artifact.artifact_id=?
+					AND artifact.role='sanitized_markdown'
+					AND artifact.blob_hash=? AND artifact.size=? AND artifact.checksum=?
+					AND b.markdown_checksum=? AND n.kind='file' AND n.trashed_at IS NULL `,
+				args...).Scan(&live.NodeID, &live.NodeRevision, &live.ContentVersionID, &live.InScope)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrQMDExportAuthorityStale
+			}
+			if err != nil {
+				return err
+			}
+			live.Path, err = pathOf(ctx, tx, live.NodeID)
+			if err != nil {
+				return err
+			}
+			result = append(result, live)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func validQMDExportSource(source QMDExportSource) bool {
+	if source.NodeID < 1 || source.BlobSize < 0 || source.BlobSHA256 != source.ArtifactChecksum ||
+		source.BlobSHA256 != source.MarkdownChecksum {
+		return false
+	}
+	for _, value := range []string{source.VaultUID, source.ContentVersionID,
+		source.ProcessingProfileFingerprint, source.AttachmentID, source.BuildID,
+		source.ArtifactID, source.BlobSHA256, source.ArtifactChecksum, source.MarkdownChecksum} {
+		if value == "" || len(value) > 1024 || !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+			return false
+		}
+	}
+	for _, value := range []string{source.ProcessingProfileFingerprint, source.BuildID,
+		source.BlobSHA256, source.ArtifactChecksum, source.MarkdownChecksum} {
+		if len(value) != 64 || strings.IndexFunc(value, func(r rune) bool {
+			return r < '0' || r > '9' && r < 'a' || r > 'f'
+		}) >= 0 {
+			return false
+		}
+	}
+	return true
 }
