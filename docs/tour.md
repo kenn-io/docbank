@@ -22,7 +22,8 @@ for controls and authentication.
 ## Organize independently of folders
 
 Group documents across folders with tags. Each tag keeps its UUID when its
-name changes. You can manage tags in the browser; people and agents use the
+name changes. The browser keeps its color and groups slash-separated names.
+You can manage tags in the browser; people and agents use the
 same daemon API, which rejects changes based on an outdated revision. See
 [Organizing & Tagging](usage/organizing.md).
 

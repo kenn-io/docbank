@@ -47,6 +47,7 @@ nav = [
   ]},
   {"How It Works" = [
     {"How Docbank Works" = "architecture/overview.md"},
+    {"Document Processing" = "architecture/document-processing.md"},
     {"Source Metadata" = "architecture/source-metadata.md"},
     {"Visual Previews" = "architecture/visual-previews.md"},
     {"Storage" = "architecture/storage.md"},

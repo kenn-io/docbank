@@ -39,7 +39,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Docbank for Agents](https://docbank.ai/docs/agents.md): Why agents use docbank, which interface to choose, and the safety model for document automation.
 - [Agent Integration Guide](https://docbank.ai/docs/agents/integration.md): Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 - [Embed in Go](https://docbank.ai/docs/embedding.md): Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
-- [Document Understanding in Go](https://docbank.ai/docs/document-understanding.md): Normalize and prepare documents for search, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
+- [Document Understanding in Go](https://docbank.ai/docs/document-understanding.md): Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 
 ## Reference
 - [CLI Reference](https://docbank.ai/docs/cli-reference.md): Every docbank command, flag, output format, and error behavior.
@@ -48,6 +48,7 @@ Every public page is also published as raw Markdown at the route listed below.
 
 ## How It Works
 - [How Docbank Works](https://docbank.ai/docs/architecture/overview.md): A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
+- [Document Processing](https://docbank.ai/docs/architecture/document-processing.md): How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
 - [Source Metadata](https://docbank.ai/docs/architecture/source-metadata.md): How Docbank records bounded facts found inside original files.
 - [Visual Previews](https://docbank.ai/docs/architecture/visual-previews.md): How Docbank identifies and retains canonical visual derivatives.
 - [Storage](https://docbank.ai/docs/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.

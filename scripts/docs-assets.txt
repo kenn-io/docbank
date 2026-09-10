@@ -6,6 +6,7 @@ web-search-results.png
 web-storage-status.png
 web-tag-assignment.png
 web-tag-catalog.png
+web-tag-filter.png
 web-trash-confirmation.png
 web-trash-restore-confirmation.png
 web-vault-browser.png

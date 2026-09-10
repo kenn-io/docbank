@@ -36,6 +36,8 @@ New to Docbank? Start with [setup](setup.md), then follow the
 - [Embed in Go](embedding.md) explains how an application can own its own vault.
 - [Document understanding in Go](document-understanding.md) covers text
   preparation, optical character recognition (OCR), and embedding packages.
+  [Document processing](architecture/document-processing.md) explains how the
+  vault retains those results and which workers the daemon runs.
 
 ## Look up a contract
 

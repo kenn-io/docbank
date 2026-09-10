@@ -18,7 +18,8 @@ API. Go applications can own separate vaults inside their own process.
 - Address live documents by path or keep stable numeric node IDs across moves,
   renames, trash, and restore.
 - Define stable tags, rename their display names, and assign them independently
-  of folder placement.
+  of folder placement. The web app groups slash-separated names and keeps each
+  tag's color when its name changes.
 - Move several nodes in one operation that either applies the whole plan or
   changes nothing.
 - Watch local inboxes and import files after they stop changing.
@@ -34,6 +35,8 @@ Start with [Importing Documents](usage/importing.md) and
   modification time, or tag ID.
 - Search verified extracted text for supported UTF-8 text, Markdown, JSON, and
   related textual formats.
+- List documents using bounded filters without a text query.
+- Save named queries and reusable highlight sets through the HTTP API.
 - Find every retained node and version that refers to a known SHA-256 hash.
 - Download current or historical content and verify its size, hash, and final
   verification result.
@@ -67,6 +70,8 @@ See [Editing & Versions](architecture/editing-and-versions.md).
   from inaccessible stores and invalid metadata.
 - Create incremental backups and verify their structure and bytes.
 - Restore into a separate vault and verify it before making it available.
+- Use the embedded Go API to preview removal of old backup snapshots and
+  reclaim repository data that no surviving snapshot needs.
 
 See [Trash, GC, Repack & Verify](usage/trash-and-gc.md),
 [Backup & Restore](usage/backup.md), and [Vault Lifecycle](usage/lifecycle.md).
@@ -116,14 +121,28 @@ trust boundaries.
 See [Docbank for Agents](agents.md), the
 [Agent Integration Guide](agents/integration.md), and [Embed in Go](embedding.md).
 
+## Process documents in Go
+
+Go applications can use the [document packages](document-understanding.md) to
+prepare text and Markdown renditions, call OCR and embedding providers, and
+keep results tied to the original content. The embedded vault API also reads
+source metadata and generates [visual previews](architecture/visual-previews.md).
+
+The vault retains processing profiles, disclosure consent, derived results, and
+independent embedding sets. Its internal retrieval components combine lexical
+and vector matches, with optional query expansion, reranking, and QMD retrieval.
+These components are described in
+[Document Processing](architecture/document-processing.md).
+
+The daemon registers plain-text extraction and two kinds of configured
+[embedding runtime](configuration.md#embedding-workers-and-credentials).
+Installing a provider package does not register it with the daemon or prepare
+an import for semantic search. The CLI, web app, and terminal browser expose
+lexical search; they do not expose the internal hybrid retrieval pipeline.
+
 ## Deliberate boundaries
 
 Docbank does not synchronize a mutable folder between devices, create public
 share links, provide collaborative editing, or encrypt live secondary stores.
-Vault text extraction covers formats Docbank can verify and decode directly.
-See [Searching](usage/searching.md) for current retrieval behavior and
-[embedding worker configuration](configuration.md#embedding-workers-and-credentials)
-for the requirements of retained embedding jobs. The reusable
-[document packages](document-understanding.md) also let Go applications build
-their own OCR and embedding workflows. The [Roadmap](roadmap.md) separates
-current features from planned work.
+See the [Roadmap](roadmap.md) for planned product work and the linked guides
+for each interface's current limits.

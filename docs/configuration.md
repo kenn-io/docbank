@@ -248,8 +248,11 @@ should be packed automatically; GC and repack remain explicit.
 
 ### Embedding workers and credentials
 
-The daemon runs retained embedding jobs for configured providers. An embedding
-is a numeric representation used to compare document meaning. Each provider
+The daemon runs retained embedding jobs for its configured OpenAI-compatible
+and Voyage runtimes. Other [provider packages](document-understanding.md) are
+available to Go applications; they are not additional daemon runtime choices.
+
+An embedding is a numeric representation used to compare document meaning. Each provider
 binding publishes its own results; one provider's failure does not remove
 another binding's completed vectors.
 

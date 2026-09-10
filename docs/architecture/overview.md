@@ -201,10 +201,11 @@ and [Embed in Go](../embedding.md) describe those boundaries.
 
 ## Backup reconstructs meaning, not a live database copy
 
-Snapshot repositories are append-only and incremental. Each snapshot contains
-a complete deterministic JSONL description of the logical vault plus every
-catalog-authorized content blob. Unchanged objects are reused by digest across
-snapshots.
+Snapshots are immutable and incremental. Embedded applications can explicitly
+forget selected snapshots and reclaim repository data that no surviving
+snapshot uses. Each snapshot contains a complete deterministic JSONL description
+of the logical vault plus every retained content and derivative blob. Unchanged
+objects are reused by digest across snapshots.
 
 Restore publishes a vault only after it verifies the repository, imports the
 logical metadata, rebuilds search and content locations, and checks the result.
@@ -230,6 +231,7 @@ and which threats require independent evidence.
 
 | If you want to understand… | Read… |
 | --- | --- |
+| How renditions, embeddings, and search indexes relate to originals | [Document Processing](document-processing.md) |
 | The on-disk database, blob tree, and enforced invariants | [Storage](storage.md) |
 | Loose publication, packs, GC, and repacking | [Loose & Packed Content](packed-storage.md) |
 | Stable versions, replacement, reversion, and pruning | [Editing & Versions](editing-and-versions.md) |

@@ -123,7 +123,7 @@ search, recoverable trash, maintenance, and restore.
 - [Web application](docs/usage/web.md) and [terminal browser](docs/usage/tui.md)
 - [Multi-store storage](docs/usage/storage.md) and [backup & restore](docs/usage/backup.md)
 - [Docbank for agents](docs/agents.md) and [integration guide](docs/agents/integration.md)
-- [Embed in Go](docs/embedding.md)
+- [Embed in Go](docs/embedding.md) and [document processing packages](docs/document-understanding.md)
 - [CLI reference](docs/cli-reference.md) and [architecture overview](docs/architecture/overview.md)
 
 Docbank belongs to a family of personal data tools alongside
