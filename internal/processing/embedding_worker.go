@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sync"
@@ -400,9 +401,7 @@ func cloneVectorSpaces(spaces map[string]store.EmbeddingVectorSpaceRecord) map[s
 		return nil
 	}
 	clone := make(map[string]store.EmbeddingVectorSpaceRecord, len(spaces))
-	for id, space := range spaces {
-		clone[id] = space
-	}
+	maps.Copy(clone, spaces)
 	return clone
 }
 
@@ -427,16 +426,6 @@ func (worker *EmbeddingWorker) reconcileProgress() (string, string, int) {
 	worker.stateMu.Lock()
 	defer worker.stateMu.Unlock()
 	return worker.reconcileAfter, worker.reconcileRenditionAfter, worker.reconcileEnqueued
-}
-
-func (worker *EmbeddingWorker) completedSpaces() []string {
-	worker.stateMu.Lock()
-	defer worker.stateMu.Unlock()
-	spaces := make([]string, 0, len(worker.completedVectorSpaces))
-	for space := range worker.completedVectorSpaces {
-		spaces = append(spaces, space)
-	}
-	return spaces
 }
 
 func validateWorkerFingerprint(value string) error {
