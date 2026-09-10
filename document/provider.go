@@ -242,7 +242,10 @@ func RenderRendition(
 	ctx context.Context, provider RenditionProvider, upload AuthorizedUpload,
 	authorization RenditionAuthorization,
 ) (RenditionResult, error) {
-	return renderRendition(ctx, provider, upload, authorization, provider.Render)
+	return renderRendition(ctx, provider, upload, authorization,
+		func(ctx context.Context, upload AuthorizedUpload, authorization RenditionAuthorization) (RenditionResult, error) {
+			return provider.Render(ctx, upload, authorization)
+		})
 }
 
 func renderRendition(

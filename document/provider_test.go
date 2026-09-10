@@ -838,12 +838,27 @@ func TestRenditionProviderContractRejectsTypedNilBoundaryValues(t *testing.T) {
 	metadata := validAuthorizedUploadMetadata()
 	authorization := validRenditionAuthorization(descriptor, metadata)
 
-	var provider *changingRenditionProvider
-	upload := &syntheticAuthorizedUpload{ReadCloser: io.NopCloser(bytes.NewReader(nil)), metadata: metadata}
-	assert.NotPanics(t, func() {
-		_, _, err := validateRenditionProviderRequestAt(time.Now().UTC(), provider, upload, authorization)
-		require.ErrorContains(t, err, "provider is required")
-	})
+	for _, testCase := range []struct {
+		name     string
+		provider RenditionProvider
+	}{
+		{name: "nil interface"},
+		{name: "typed nil", provider: (*changingRenditionProvider)(nil)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			closeErr := errors.New("close sentinel")
+			upload := &syntheticAuthorizedUpload{
+				ReadCloser: io.NopCloser(bytes.NewReader(nil)), closeErr: closeErr, metadata: metadata,
+			}
+			var err error
+			require.NotPanics(t, func() {
+				_, err = RenderRendition(t.Context(), testCase.provider, upload, authorization)
+			})
+			require.ErrorContains(t, err, "provider is required")
+			require.ErrorIs(t, err, closeErr)
+			assert.Equal(t, 1, upload.closeCalls)
+		})
+	}
 
 	validProvider := syntheticRenditionProvider{descriptor: descriptor}
 	var nilUpload *syntheticAuthorizedUpload
