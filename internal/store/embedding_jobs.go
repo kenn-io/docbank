@@ -263,8 +263,17 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return nil, ErrNotFound
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code
-		FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? ORDER BY binding_id,job_id`,
+	rows, err := s.db.QueryContext(ctx, `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code
+		FROM embedding_jobs j
+		JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+		LEFT JOIN rendition_heads rh ON rh.content_version_id=j.content_version_id
+			AND rh.profile_fingerprint=j.profile_fingerprint
+		WHERE j.content_version_id=? AND j.profile_fingerprint=?
+			AND ((j.input_kind='original_file' AND g.source_version_id=j.content_version_id
+				AND g.profile_fingerprint=j.profile_fingerprint AND g.attachment_id IS NULL)
+			OR (j.input_kind='rendition_chunk' AND g.source_version_id=j.content_version_id
+				AND g.profile_fingerprint=j.profile_fingerprint AND g.attachment_id=rh.attachment_id))
+		ORDER BY j.binding_id,j.job_id`,
 		versionID, profileFingerprint)
 	if err != nil {
 		return nil, err

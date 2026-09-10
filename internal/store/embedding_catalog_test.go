@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -476,6 +477,47 @@ func TestEmbeddingJobReconciliationRecoversMissingDirectBinding(t *testing.T) {
 	var jobs int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs`).Scan(&jobs))
 	assert.Equal(t, 2, jobs)
+}
+
+func TestEmbeddingJobsForVersionProfileExcludesStaleRenditionGeneration(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	old := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:stale-rendition", Scope: "embedding:chunk",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	_, err = s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID,
+		Profile: profile, BindingID: binding.Name, Descriptor: old.VectorSpace.Descriptor,
+		InputGeneration: old.InputGeneration, Authorization: consent})
+	require.NoError(t, err)
+
+	build := cloneCatalogBuild(catalogRenditionBuild(s, profile))
+	build.ID = catalogBuildReplacement
+	build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[{"max_count":2,"min_count":0,"role":"normalized_evidence"},{"max_count":2,"min_count":0,"role":"sanitized_markdown"}],"version":1}`)
+	build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	currentAttachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versionID,
+		BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime,
+	}
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), currentAttachment))
+	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{
+		ContentVersionID: versionID, ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: currentAttachment.ID, PublishedAt: embeddingCatalogTime,
+	}))
+
+	jobs, err := s.EmbeddingJobsForVersionProfile(t.Context(), versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	assert.Empty(t, jobs, "the old rendition generation must not satisfy the current binding")
 }
 
 func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T) {

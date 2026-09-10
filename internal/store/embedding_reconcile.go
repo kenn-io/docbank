@@ -457,7 +457,8 @@ func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request Embedd
 						WHERE j.vault_uid=? AND j.content_version_id=? AND j.profile_fingerprint=?
 						AND j.binding_id=? AND j.input_kind=? AND j.vector_space_id=?
 						AND g.source_version_id=? AND g.profile_fingerprint=? AND g.attachment_id=?)`
-					args = append(args, versionID, profileFingerprint, attachmentID)
+					args = append(args, s.vaultID, versionID, profileFingerprint, binding.Name,
+						binding.InputKind, space.ID, versionID, profileFingerprint, attachmentID)
 				} else {
 					query = `SELECT EXISTS(SELECT 1 FROM embedding_jobs j
 						WHERE j.vault_uid=? AND j.content_version_id=? AND j.profile_fingerprint=?
@@ -466,7 +467,9 @@ func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request Embedd
 						JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
 						WHERE h.content_version_id=? AND h.binding_id=? AND h.input_kind=?
 						AND s.profile_fingerprint=? AND s.vector_space_id=?)`
-					args = append(args, versionID, binding.Name, binding.InputKind, profileFingerprint, space.ID)
+					args = append(args, s.vaultID, versionID, profileFingerprint, binding.Name,
+						binding.InputKind, space.ID, versionID, binding.Name, binding.InputKind,
+						profileFingerprint, space.ID)
 				}
 				if err := tx.QueryRowContext(ctx, query, args...).Scan(&jobExists); err != nil {
 					return err
