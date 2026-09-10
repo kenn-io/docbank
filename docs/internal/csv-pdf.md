@@ -1,13 +1,84 @@
 # CSV to PDF conversion
 
-`document/csvpdf.Convert` owns local conversion from an `ocr.Source` declared as `text/csv` to independently identified PDF bytes. It imports neither vault storage nor a provider client. Applications compose `Result.Source` with the existing PDF OCR path and retain the conversion receipt separately from provider evidence and upload consent.
+`document/csvpdf.Convert` turns a verified `text/csv` source into independently
+identified PDF bytes. It has no dependency on vault storage or a provider
+client. Applications can pass `Result.Source` to the existing PDF OCR path.
 
-An immutable `Policy` captures six positive limits bounded by fixed hard ceilings. Its canonical JSON fingerprint includes those limits, the converter version, fixed layout identity and embedded font hash. Changes to parsing, layout, font or the pinned PDF writer require a converter version change. The zero policy cannot authorize conversion.
+The conversion receipt records how the PDF came from the CSV. It does not
+authorize upload. Applications retain it separately from provider evidence and
+upload consent.
 
-Conversion reads at most the declared source length plus one byte, bounded by the source ceiling, and recomputes SHA-256 before parsing. Go's CSV reader owns quoting, escaped quotes, blank-line handling and CRLF normalization. Parsing accepts variable-width records and bounds record count, cell count and per-cell bytes. Source byte limits also bound parser allocations before those finer limits can be checked. Conversion closes its input on every path. Cancellation stops between reads and during parsing and layout; an arbitrary blocking reader remains the caller's responsibility. A close failure discards a would-be result.
+## What authorizes conversion?
 
-Layout uses embedded Go Mono at 10 points on A4 pages, with 80 characters per content line and 48 lines per page. Each cell has a record/cell label followed by its value, including empty values and explicit empty lines. Labels consume layout lines. The renderer accepts only font-supported basic multilingual plane characters in Latin, Greek, Cyrillic or Common scripts, rejecting marks, formatting and control characters except newlines. This avoids silent glyph replacement or incorrect shaping. A fixed page heading identifies generated pages. Page spans record every page containing a cell label or value, including continuation pages.
+An immutable `Policy` supplies six positive limits, each bounded by a fixed
+hard ceiling. A zero policy cannot authorize conversion.
 
-The pinned fpdf writer uses a private embedded-font copy, explicit compression, fixed timestamps, sorted catalogs and disabled automatic page breaks. Layout checks the page limit before PDF creation. The output writer enforces the PDF byte limit, then `media.CountPDFPages` independently checks the generated object graph and its count against the planned pages. The PDF library builds an internal buffer before writing; source and page hard ceilings bound that work, while the output byte limit bounds retained output. Applications must bound simultaneous conversions to control process memory.
+The policy's canonical JSON fingerprint includes:
 
-Only a complete counted PDF yields a `Result`. Its receipt binds original and generated SHA-256 hashes, both byte counts, generated page count, policy fingerprint, converter version and page/record/cell spans. `PDF`, `Receipt` and `Source` return independent copies, so callers cannot mutate the authoritative bytes or mapping. Generated PDF pages never become an inferred count of original CSV records. A receipt supplies provenance, while the existing PDF manifest and application consent supply upload authority.
+- the six limits;
+- the converter version;
+- the fixed layout identity; and
+- the embedded font hash.
+
+Changes to parsing, layout, the font, or the pinned PDF writer require a new
+converter version.
+
+## How does the converter read and validate CSV?
+
+1. Read at most the declared source length plus one byte, bounded by the source
+   ceiling.
+2. Recompute SHA-256 and verify the source before parsing.
+3. Parse CSV while enforcing record-count, cell-count, and per-cell byte limits.
+4. Close the input. A close failure discards a would-be result.
+
+Go's CSV reader handles quoting, escaped quotes, blank lines, and CRLF
+normalization. The converter accepts variable-width records. The source byte
+limit bounds parser allocations before the finer record and cell limits can
+be checked.
+
+The converter closes its input on every path. Cancellation stops work between
+reads and during parsing and layout. The caller remains responsible for an
+arbitrary reader that blocks inside a read.
+
+## What does the generated page contain?
+
+The layout uses embedded Go Mono at 10 points on A4 pages. Each content line
+holds 80 characters, and each page holds 48 lines. A fixed heading identifies
+generated pages.
+
+Each cell has a record/cell label followed by its value. Empty values and
+explicit empty lines remain visible. Labels count toward the line limit.
+Page spans record every page that contains a cell's label or value, including
+continuation pages.
+
+The renderer accepts only font-supported basic multilingual plane characters
+in the Latin, Greek, Cyrillic, or Common scripts. It rejects marks, formatting
+characters, and control characters except newlines. This prevents silent glyph
+replacement or incorrect shaping.
+
+## How is the PDF bounded and checked?
+
+The pinned fpdf writer uses a private embedded-font copy, explicit compression,
+fixed timestamps, sorted catalogs, and disabled automatic page breaks.
+
+1. Layout checks the page limit before creating the PDF.
+2. The output writer enforces the PDF byte limit.
+3. `media.CountPDFPages` independently checks the generated object graph and
+   compares its page count with the planned count.
+
+The PDF library builds an internal buffer before writing. Source and page hard
+ceilings bound that work; the PDF byte limit bounds retained output.
+Applications must also limit simultaneous conversions to control process memory.
+
+## What does a successful result prove?
+
+Only a complete, counted PDF yields a `Result`. Its receipt binds the original
+and generated SHA-256 hashes, both byte counts, generated page count, policy
+fingerprint, converter version, and page/record/cell spans.
+
+`PDF`, `Receipt`, and `Source` return independent copies. Callers cannot mutate
+the authoritative bytes or mapping through those results. The PDF page count
+does not imply an original CSV record count.
+
+The receipt supplies provenance. The existing PDF manifest and the application's
+consent supply upload authority.

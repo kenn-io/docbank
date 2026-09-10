@@ -1,8 +1,13 @@
 # Storage design
 
-Docbank separates logical document identity from physical content storage.
-SQLite owns the virtual tree and application policy; `go.kenn.io/kit/packstore`
-owns application-neutral loose and packed storage mechanics.
+Keep document policy in Docbank and physical storage mechanics in Kit.
+SQLite records the virtual tree and which content the vault retains.
+`go.kenn.io/kit/packstore` publishes, reads, packs, and retires physical objects.
+
+This page owns contributor constraints and the recorded resource measurements.
+[Storage](../architecture/storage.md) owns the current schema and upgrade
+contract. [Audited History](../architecture/audited-history.md) owns the current
+audit boundary and normative record definitions.
 
 ## Authority model
 
@@ -66,7 +71,365 @@ exclusive side so logical JSONL membership and the deterministic placement
 artifact share one authority boundary. SQL triggers remain limited to
 mechanical pack aggregate projections, never placement policy.
 
-!!! info "Planned — full-audit authority"
+## Immutable content and mutable organization
+
+Canonical blobs are immutable SHA-256 objects. Rewriting bytes in place would
+make the path lie about content identity, surprise every deduplicated reader,
+and lose crash-safe history. All logical mutation therefore happens in SQLite:
+moves, renames, trash, restore, and content-pointer replacement.
+
+The schema enforces the invariants that every writer must obey:
+
+- exactly one root through a partial unique index on a constant expression;
+- live sibling names are unique while trashed names do not reserve a path;
+- file nodes have a current content version belonging to that node and
+  directories do not;
+- foreign keys prevent deleting a blob row while any content version references
+  it;
+- version and introducing-operation UUIDs are random, non-allocator identities,
+  with one version per node revision and node/operation pair; and
+- node IDs use `AUTOINCREMENT` and are never recycled into a dangling external
+  reference.
+
+Store code adds validation that SQL cannot express economically: Unicode NFC
+normalization, rejection of empty/dot/slash/NUL names, ancestry checks for
+cycle prevention, revision preconditions, and size agreement.
+
+## Durable write ordering
+
+The ingest invariant is **bytes before reference**:
+
+1. Open the source without following a final symlink and confirm the opened
+   object is a regular file.
+2. Stream and hash it into the Kit store.
+3. Kit writes staging bytes, fsyncs, renames to the canonical loose path, and
+   fsyncs the containing directory.
+4. Only after durable publication may the SQLite transaction insert the blob,
+   node, initial content version, ingest, and provenance rows.
+
+A crash after step 3 but before step 4 leaves an untracked physical object. It
+is harmless because no `blobs` row authorizes it; GC's physical scan can remove
+it. Reversing the order could commit a node whose bytes vanish after power
+loss, which is not recoverable through metadata.
+
+The dedup fast path validates that an existing canonical object is structurally
+eligible. It does not rehash same-sized bytes on every duplicate ingest because
+that doubles common-path I/O without systematically protecting existing
+references. Full content validation belongs to `verify`, which covers every
+authorized blob.
+
+Content replacement uses the same ordering. A cheap node/revision check occurs
+before reading a potentially large request, but it is only an optimization.
+After durable publication, the metadata transaction repeats the target and
+revision checks, authorizes the blob, inserts one `content_replace` version,
+advances the current pointer, and bumps the node revision. A race or failed
+precondition may leave an untracked physical object, never a half-installed
+head.
+
+## Ingest convergence
+
+Bulk ingest is intentionally restartable. For a destination name, the ingester
+scans the base name and numeric collision candidates. A candidate with the same
+blob hash is a skip; candidates with different content are preserved; the next
+free name receives the new node.
+
+Each successful file gets its own metadata transaction. Source errors are
+collected and the batch continues, so rerunning after permissions or mount
+problems converges without discarding prior progress. The destination directory
+is ID-based once resolved so a concurrent move cannot cause later files to
+recreate an old path.
+
+Preflight and import share one request-scoped source-selection compiler and
+explicit-root-symlink model. Include and exclude patterns use Go's
+`path.Match` grammar over slash-normalized source-relative paths; a pattern
+without `/` matches basenames at any depth, and exclusions win. Include rules
+filter regular files only, so a directory remains traversable when a descendant
+may match. Preflight stops at filesystem metadata: it never opens a regular
+file, hydrates cloud content, creates a destination, records an ingest, or
+writes a blob. Watched-inbox exclusions use a separate literal matcher. The
+report therefore predicts selection and size-policy outcomes, not future
+readability. Detailed findings and extension groups are bounded while their
+aggregate counts remain complete, preventing an adversarial tree from creating
+an unbounded API response.
+
+## Trash, permanent deletion, and GC
+
+Deletion is deliberately three-stage:
+
+1. Trash stamps a subtree and records original parent/name recovery context.
+2. Trash empty permanently removes eligible tree metadata.
+3. GC removes unreachable blob authority and any loose physical content.
+
+The third stage removes loose files immediately. For packed content it only
+makes the immutable range logically dead; a separate repack maintenance pass
+rewrites live ranges and retires sparse source packs. No removal command folds
+that physical rewrite into logical deletion.
+
+Trashed nodes retain their content versions. Permanent node deletion cascades
+through those versions and may make a blob row a GC candidate, but it does not
+itself claim disk space. GC treats every `content_versions` row—current or
+historical—as a reachability root, and backup capture uses the same shared root
+list for portable blob authority. GC-only holds stay outside portable backup
+authority; new logical reference types must be added to reachability before
+their schema is usable.
+
+GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
+prevents a mutation from deduplicating against bytes between GC's reachability
+decision and physical deletion.
+
+Loose bytes can be removed immediately and reported as reclaimed. Removing a
+packed mapping makes its immutable range logically dead; disk space is pending
+repack and must be reported separately.
+
+## Kit boundary
+
+Kit owns:
+
+- durable loose publication and canonical paths;
+- mixed loose/packed reads;
+- pack reader caching and reader-safe retirement;
+- staging cleanup, orphan reconciliation, pack, unpack, and repack mechanics;
+- physical deletion ordering, cancellation, and maintenance budgets.
+
+Docbank owns:
+
+- the SQLite schema and catalog adapter;
+- the meaning of blob membership and liveness;
+- transactional mapping changes and compare-and-swap policy;
+- trash, version, provenance, and future external-reference semantics;
+- daemon commands, scheduling, logging, and product output.
+
+Sequential reads use Kit's verified stream rather than its buffered
+read-seek compatibility API. Bytes from either a loose object or a pack are
+provisional until the reader reaches terminal EOF or `Verify` succeeds. An
+early `Close` deliberately reports incomplete verification and never drains
+the remaining object in the background. HTTP delivery, single-node and
+vault-wide verification, and backup capture must therefore consume through
+that terminal boundary; existence probes retain the buffered open-and-close
+path because they ask about catalog authority, not fresh byte evidence.
+
+Docbank deliberately separates two policies. New local and remote writes may
+admit one loose object through 4 GiB, matching the format-v1 backup ceiling.
+Kit's packed-read, maintenance, and packed-restore `BlobBytes` limit remains
+64 MiB. Kit v0.8 keeps
+catalog-authorized larger loose objects available through the same verified
+`OpenStream`; they remain eligible for backup but not packing. Do not add a
+second Docbank loose-stream adapter or mistake the packed limit for a
+read-availability boundary. Raising either application policy needs downstream
+measurements first: pack preparation can use about 2.004 times raw size in
+scratch per concurrent object, and active stream leases can temporarily raise
+open descriptors above the idle reader-cache bound.
+
+Repack commits replacement mappings before retiring an old immutable pack. If
+Kit returns `ErrPackRetirementDeferred`, the catalog change must not be rolled
+back: the old pack is now an untrusted physical orphan, not authority. Docbank
+reports the condition as retryable cleanup. After external readers or Windows
+file locks release it, the operator runs `storage pack`; Kit's orphan
+reconciliation verifies current authority and removes the redundant source.
+
+## Current resource envelope
+
+`internal/backupapp/resource_benchmark_test.go` is the reproducible downstream
+gate for the real SQLite catalog and Docbank adapters:
+
+```bash
+go test -tags fts5 ./internal/backupapp -run '^$' \
+  -bench '^BenchmarkDocbank' -benchtime=1x -benchmem -count=1
+```
+
+The peak-RSS figures use a prebuilt test binary so compilation is outside the
+measurement. On macOS, reproduce the full and 1 GiB loose-only runs with:
+
+```bash
+go test -c -tags fts5 -o /tmp/docbank-resource.test ./internal/backupapp
+/usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
+  -test.bench '^BenchmarkDocbank' -test.benchtime=1x -test.benchmem -test.count=1
+/usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
+  -test.bench '^BenchmarkDocbankLoose' \
+  -test.benchtime=1x -test.benchmem -test.count=1
+```
+
+Record `maximum resident set size`; other operating systems need their
+equivalent external process measurement rather than Go's cumulative `B/op`.
+
+The recorded darwin/arm64 baseline used an Apple M4 Max, Go 1.26.4, and Kit
+v0.8.0. These are measurements of that toolchain and hardware, not a claim about
+the current dependency versions:
+
+| Workload | Throughput | Heap allocated per operation | Additional stream descriptors |
+| --- | ---: | ---: | ---: |
+| verified loose read, 64 MiB | 2,570 MB/s | 12,944 bytes | 1 |
+| verified packed read, 64 MiB | 2,159 MB/s | 15,928 bytes | 1 |
+| write + pack + sparse repack, 64 MiB total | 145 MB/s | 75,589,880 bytes cumulative | — |
+| snapshot + verify + loose restore, 64 MiB, one job | 633 MB/s | 71,131,056 bytes cumulative | — |
+| durable loose write, 1 GiB | 295 MB/s | 49,624 bytes | — |
+| verified loose read, 1 GiB | 2,639 MB/s | 12,944 bytes | 1 |
+| snapshot + verify + loose restore, 1 GiB, one job | 950 MB/s | 49,987,056 bytes cumulative | — |
+
+A prebuilt benchmark binary running all seven workloads sequentially peaked at
+109,953,024 bytes (104.9 MiB) resident. Running only the three 1 GiB loose
+workloads peaked at 49,348,608 bytes (47.1 MiB) resident. The full
+suite retains allocator and codec high-water state from prior maintenance, so
+the larger number is the appropriate whole-process capacity baseline. `B/op`
+for compound maintenance and backup rows is cumulative allocation across
+several streaming stages, not peak live heap; the external RSS measurements
+are the process envelopes.
+
+Resource policy still needs capacity beyond RSS. Incompressible preparation at
+the 64 MiB ceiling can require about 128.256 MiB of scratch for one object.
+Docbank serializes maintenance, so pack/repack currently has one preparation in
+flight; future backup concurrency must multiply scratch and codec windows by
+its explicit job count. The mixed reader keeps at most 16 idle pack descriptors,
+and each concurrent loose or packed stream can add one descriptor until EOF or
+`Close`. Cancellation and early-close cleanup remain mandatory race-tested
+gates, not benchmark outcomes.
+
+The 1 GiB benchmarks exercise a representative large object through Docbank's
+production admission path, Kit's durable loose writer, the mutation and SQLite
+authority boundary, native
+verified `OpenStream`, and the real backup adapters. They do not admit the
+object to packing. They are bounded-memory evidence supporting the current
+4 GiB loose-ingestion ceiling while packed maintenance stays at 64 MiB, not a
+measurement of the ceiling itself or a performance guarantee. A large object
+still needs roughly its raw size for live storage, repository storage, and a
+simultaneous restore target in the incompressible case.
+
+Any proposal to change admission or maintenance limits, reader slots, or
+backup concurrency must rerun this suite on representative target hardware and
+revise this envelope.
+
+## Logical metadata portability
+
+SQLite is Docbank's runtime query and transaction engine, but its historical
+page layout is not the intended long-lived backup contract. The logical
+boundary is deterministic JSONL headed by `docbank-metadata` and an integer
+format version. Records are emitted in dependency-stable order and deterministic
+key order: blobs, nodes, ingests, node versions, provenance, watched-source
+cursors, tags, node tags, extracted text, and any audit authority. Audit
+projection rows precede their canonical records; import defers all foreign-key
+enforcement transaction-wide and validates the complete graph before commit.
+Nodes carry parent IDs, so
+directory structure, trash
+restore coordinates, and stable external node references survive a roundtrip.
+The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
+from the live rows; import restores it only after proving it is at least the
+maximum surviving node ID.
+
+Stable content, vault, tag, ingest, and provenance identities are native
+metadata-v1 fields. A zero-scope stream contains no audit rows. The codec also
+persists and validates the closed first-enrollment record set: topology and
+attached-metadata genesis, allocation genesis and first entry, one shared
+baseline and its memberships, one enrollment event and canonical mutation, and
+the first scope-chain entry. This is persistence infrastructure, not an
+enablement surface; ordinary vaults still export the compact zero-scope form.
+Once this authority exists, the Go store's logical-mutation boundary rejects
+mutation classes that do not have an audit-recording implementation. SQL retains
+only relational constraints; append-only semantics, canonical mutation
+construction, chain advancement, and independent replay remain backend-neutral
+Go logic. Implemented guarded transitions cover content replacement and revert,
+inherited node creation, move, trash, restore, creation of an unassigned tag,
+assignment or removal of an existing tag, and post-ingest provenance append.
+Each append records its generic ingest and immutable provenance attachment in
+one transaction. Physical pack maintenance and read-only backup/export remain
+available.
+
+The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
+derived index rebuilt by the node insert triggers. Pack tables describe one
+physical representation and must never regain authority merely because an old
+metadata snapshot mentioned offsets; Kit restore verifies and publishes the
+chosen loose or packed representation before installing fresh catalog mappings.
+
+Import runs only against a pristine current-schema database, in one transaction
+with deferred foreign-key checks. Unknown format versions, unknown record types
+or fields, uniqueness failures, orphaned extraction rows, and dangling
+references abort the transaction. Timestamps must use Docbank's canonical UTC
+representation because retention queries compare their fixed-width strings
+lexicographically. The exception is provenance `original_mtime`: it records an
+external filesystem value using canonical UTC `RFC3339Nano`, matching ordinary
+ingestion, and is never used as a retention cutoff.
+
+Trash roots remain detached beneath the tree root in portable metadata. Their
+saved `trash_parent` may be absent when the original directory was hard-deleted;
+`trash_name` remains authoritative and restore then falls back to the tree root.
+When a saved parent is present, import proves it is neither the trash root nor
+one of its descendants, so restore cannot create a cycle from hostile or
+corrupted coordinates. Every trashed node must belong to exactly one such root,
+and every member of that subtree must be trashed under the root's exact
+operation timestamp. This mirrors restore's timestamp-scoped update and rejects
+both permanently hidden orphans and live nodes nested beneath trash.
+Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
+invariant that a deleted historical ID is never silently reused.
+
+The Kit v0.9.0 backup adapter now uses this boundary for every new snapshot:
+export → verified metadata artifact → construct a fresh current-schema
+database → import → checkpoint → publish verified content and fresh pack
+authority → prove fidelity → atomic replacement. Historical SQLite page-map
+snapshots remain restorable, but new captures cannot select that legacy path.
+Physical pack authority must always travel through Kit's separately verified
+publication path.
+
+Do not move docbank SQL or reachability policy into Kit. Do not reimplement Kit
+reader or lifecycle mechanics in docbank. A physical-storage bug shared by
+msgvault belongs in Kit; a decision about whether a docbank reference keeps a
+blob alive belongs here.
+
+Kit owning a mechanic does not imply that docbank exposes it. In particular,
+`packstore.Maintainer.Unpack` remains available for conformance tests,
+migrations, and a purpose-built emergency recovery path, but is not part of the
+ordinary daemon API or CLI. A public unpack operation would reverse the
+small-file benefit, require transient duplicate disk capacity, and leak
+physical-format selection into the product. Do not add one without a concrete
+recovery workflow that cannot be served by verified backup/restore.
+
+## Released schema policy
+
+Store startup runs the embedded idempotent schema in one immediate transaction
+and ensures the root exists. This safely creates missing compatible tables and
+indexes, but it is not a general migration system.
+
+The embedded `schema.sql` is the authority for guarded current-layout columns.
+Startup derives the guarded table layouts by applying it to an isolated
+temporary database. Released layouts remain pinned by their versioned adapters.
+
+Metadata-v1 identity changes are vertical changes to the live store, ingest,
+reachability, and backup/restore paths. A parallel schema or codec that
+production code does not consume has no authority; shared metadata helpers
+belong here only when live paths use them.
+
+v0.9.0 established the first storage compatibility boundary. An incompatible
+released SQLite layout is never incrementally rewritten: Docbank reads its
+deterministic metadata-v1 authority, imports and validates that authority in a
+fresh current-schema database, restores the physical pack catalog separately,
+checkpoints and syncs the replacement, then publishes it atomically. The
+released source database remains as a recovery copy.
+
+Only schemas that actually shipped receive readers and exact fixtures.
+Unreleased development layouts are disposable; there is no speculative
+`ALTER TABLE` ledger, downgrade matrix, or compatibility decoder for them.
+
+## Extension constraints
+
+- An external-reference schema must define its liveness policy: either pin blob
+  authority or make dangling-reference detection the referrer's responsibility.
+- Every version writer preserves the implemented bytes-before-reference
+  ordering and adds reachability atomically with pointer replacement.
+  Reversion is the metadata-only exception: it reuses already-authoritative
+  source bytes and atomically adds a new reachability row and pointer.
+- Standalone pack and repack commands remain daemon/API operations; no CLI path
+  may open the physical store directly. An application that exclusively owns
+  an embedded vault may enter the same coordinated pack maintenance through
+  `docbank.Vault.Pack`.
+
+
+## Historical audit design context
+
+The following notes preserve the earlier audit design and its constraints.
+Their pre-release timing and implementation-status statements are historical.
+They do not override the current [Audited History](../architecture/audited-history.md)
+contract, which distinguishes implemented behavior from planned extensions.
+Keep durable rationale and constraints when revising these notes.
+
+!!! info "Historical design — full-audit authority"
     Full-audit policy adds a fourth logical authority: sticky membership and
     append-only history decide which node/version facts can never be removed by
     ordinary maintenance. That policy remains Docbank metadata rather than a
@@ -176,109 +539,7 @@ mechanical pack aggregate projections, never placement policy.
     alone is not proof: divergent copies are rejected even when their counters
     happen to match.
 
-## Immutable content and mutable organization
-
-Canonical blobs are immutable SHA-256 objects. Rewriting bytes in place would
-make the path lie about content identity, surprise every deduplicated reader,
-and lose crash-safe history. All logical mutation therefore happens in SQLite:
-moves, renames, trash, restore, and content-pointer replacement.
-
-The schema enforces the invariants that every writer must obey:
-
-- exactly one root through a partial unique index on a constant expression;
-- live sibling names are unique while trashed names do not reserve a path;
-- file nodes have a current content version belonging to that node and
-  directories do not;
-- foreign keys prevent deleting a blob row while any content version references
-  it;
-- version and introducing-operation UUIDs are random, non-allocator identities,
-  with one version per node revision and node/operation pair; and
-- node IDs use `AUTOINCREMENT` and are never recycled into a dangling external
-  reference.
-
-Store code adds validation that SQL cannot express economically: Unicode NFC
-normalization, rejection of empty/dot/slash/NUL names, ancestry checks for
-cycle prevention, revision preconditions, and size agreement.
-
-## Durable write ordering
-
-The ingest invariant is **bytes before reference**:
-
-1. Open the source without following a final symlink and confirm the opened
-   object is a regular file.
-2. Stream and hash it into the Kit store.
-3. Kit writes staging bytes, fsyncs, renames to the canonical loose path, and
-   fsyncs the containing directory.
-4. Only after durable publication may the SQLite transaction insert the blob,
-   node, initial content version, ingest, and provenance rows.
-
-A crash after step 3 but before step 4 leaves an untracked physical object. It
-is harmless because no `blobs` row authorizes it; GC's physical scan can remove
-it. Reversing the order could commit a node whose bytes vanish after power
-loss, which is not recoverable through metadata.
-
-The dedup fast path validates that an existing canonical object is structurally
-eligible. It does not rehash same-sized bytes on every duplicate ingest because
-that doubles common-path I/O without systematically protecting existing
-references. Full content validation belongs to `verify`, which covers every
-authorized blob.
-
-Content replacement uses the same ordering. A cheap node/revision check occurs
-before reading a potentially large request, but it is only an optimization.
-After durable publication, the metadata transaction repeats the target and
-revision checks, authorizes the blob, inserts one `content_replace` version,
-advances the current pointer, and bumps the node revision. A race or failed
-precondition may leave an untracked physical object, never a half-installed
-head.
-
-## Ingest convergence
-
-Bulk ingest is intentionally restartable. For a destination name, the ingester
-scans the base name and numeric collision candidates. A candidate with the same
-blob hash is a skip; candidates with different content are preserved; the next
-free name receives the new node.
-
-Each successful file gets its own metadata transaction. Source errors are
-collected and the batch continues, so rerunning after permissions or mount
-problems converges without discarding prior progress. The destination directory
-is ID-based once resolved so a concurrent move cannot cause later files to
-recreate an old path.
-
-Preflight and import share one request-scoped source-selection compiler and
-explicit-root-symlink model. Include and exclude patterns use Go's
-`path.Match` grammar over slash-normalized source-relative paths; a pattern
-without `/` matches basenames at any depth, and exclusions win. Include rules
-filter regular files only, so a directory remains traversable when a descendant
-may match. Preflight stops at filesystem metadata: it never opens a regular
-file, hydrates cloud content, creates a destination, records an ingest, or
-writes a blob. Watched-inbox exclusions use a separate literal matcher. The
-report therefore predicts selection and size-policy outcomes, not future
-readability. Detailed findings and extension groups are bounded while their
-aggregate counts remain complete, preventing an adversarial tree from creating
-an unbounded API response.
-
-## Trash, permanent deletion, and GC
-
-Deletion is deliberately three-stage:
-
-1. Trash stamps a subtree and records original parent/name recovery context.
-2. Trash empty permanently removes eligible tree metadata.
-3. GC removes unreachable blob authority and any loose physical content.
-
-The third stage removes loose files immediately. For packed content it only
-makes the immutable range logically dead; a separate repack maintenance pass
-rewrites live ranges and retires sparse source packs. No removal command folds
-that physical rewrite into logical deletion.
-
-Trashed nodes retain their content versions. Permanent node deletion cascades
-through those versions and may make a blob row a GC candidate, but it does not
-itself claim disk space. GC treats every `content_versions` row—current or
-historical—as a reachability root, and backup capture uses the same shared root
-list for portable blob authority. GC-only holds stay outside portable backup
-authority; new logical reference types must be added to reachability before
-their schema is usable.
-
-!!! info "Planned — full-audit maintenance"
+!!! info "Historical design — full-audit maintenance"
     Full-audit membership is sticky and protected historical versions remain
     reachability roots. A trash root containing any audited member is excluded
     explicitly from trash-empty eligibility and reported separately, while
@@ -287,254 +548,8 @@ their schema is usable.
     verified publication ordering; audit does not pin a particular loose file
     or pack container.
 
-GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
-prevents a mutation from deduplicating against bytes between GC's reachability
-decision and physical deletion.
-
-Loose bytes can be removed immediately and reported as reclaimed. Removing a
-packed mapping makes its immutable range logically dead; disk space is pending
-repack and must be reported separately.
-
-## Kit boundary
-
-Kit owns:
-
-- durable loose publication and canonical paths;
-- mixed loose/packed reads;
-- pack reader caching and reader-safe retirement;
-- staging cleanup, orphan reconciliation, pack, unpack, and repack mechanics;
-- physical deletion ordering, cancellation, and maintenance budgets.
-
-Sequential reads use Kit's verified stream rather than its buffered
-read-seek compatibility API. Bytes from either a loose object or a pack are
-provisional until the reader reaches terminal EOF or `Verify` succeeds. An
-early `Close` deliberately reports incomplete verification and never drains
-the remaining object in the background. HTTP delivery, single-node and
-vault-wide verification, and backup capture must therefore consume through
-that terminal boundary; existence probes retain the buffered open-and-close
-path because they ask about catalog authority, not fresh byte evidence.
-
-Docbank deliberately separates two policies. New local and remote writes may
-admit one loose object through 4 GiB, matching the format-v1 backup ceiling.
-Kit's packed-read, maintenance, and packed-restore `BlobBytes` limit remains
-64 MiB. Kit v0.8 keeps
-catalog-authorized larger loose objects available through the same verified
-`OpenStream`; they remain eligible for backup but not packing. Do not add a
-second Docbank loose-stream adapter or mistake the packed limit for a
-read-availability boundary. Raising either application policy needs downstream
-measurements first: pack preparation can use about 2.004 times raw size in
-scratch per concurrent object, and active stream leases can temporarily raise
-open descriptors above the idle reader-cache bound.
-
-Repack commits replacement mappings before retiring an old immutable pack. If
-Kit returns `ErrPackRetirementDeferred`, the catalog change must not be rolled
-back: the old pack is now an untrusted physical orphan, not authority. Docbank
-reports the condition as retryable cleanup. After external readers or Windows
-file locks release it, the operator runs `storage pack`; Kit's orphan
-reconciliation verifies current authority and removes the redundant source.
-
-## Current resource envelope
-
-`internal/backupapp/resource_benchmark_test.go` is the reproducible downstream
-gate for the real SQLite catalog and Docbank adapters:
-
-```bash
-go test -tags fts5 ./internal/backupapp -run '^$' \
-  -bench '^BenchmarkDocbank' -benchtime=1x -benchmem -count=1
-```
-
-The peak-RSS figures use a prebuilt test binary so compilation is outside the
-measurement. On macOS, reproduce the full and 1 GiB loose-only runs with:
-
-```bash
-go test -c -tags fts5 -o /tmp/docbank-resource.test ./internal/backupapp
-/usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
-  -test.bench '^BenchmarkDocbank' -test.benchtime=1x -test.benchmem -test.count=1
-/usr/bin/time -l /tmp/docbank-resource.test -test.run '^$' \
-  -test.bench '^BenchmarkDocbankLoose' \
-  -test.benchtime=1x -test.benchmem -test.count=1
-```
-
-Record `maximum resident set size`; other operating systems need their
-equivalent external process measurement rather than Go's cumulative `B/op`.
-
-The current darwin/arm64 baseline on an Apple M4 Max with Go 1.26.4 and Kit
-v0.8.0 is:
-
-| Workload | Throughput | Heap allocated per operation | Additional stream descriptors |
-| --- | ---: | ---: | ---: |
-| verified loose read, 64 MiB | 2,570 MB/s | 12,944 bytes | 1 |
-| verified packed read, 64 MiB | 2,159 MB/s | 15,928 bytes | 1 |
-| write + pack + sparse repack, 64 MiB total | 145 MB/s | 75,589,880 bytes cumulative | — |
-| snapshot + verify + loose restore, 64 MiB, one job | 633 MB/s | 71,131,056 bytes cumulative | — |
-| durable loose write, 1 GiB | 295 MB/s | 49,624 bytes | — |
-| verified loose read, 1 GiB | 2,639 MB/s | 12,944 bytes | 1 |
-| snapshot + verify + loose restore, 1 GiB, one job | 950 MB/s | 49,987,056 bytes cumulative | — |
-
-A prebuilt benchmark binary running all seven workloads sequentially peaked at
-109,953,024 bytes (104.9 MiB) resident. Running only the three 1 GiB loose
-workloads peaked at 49,348,608 bytes (47.1 MiB) resident. The full
-suite retains allocator and codec high-water state from prior maintenance, so
-the larger number is the appropriate whole-process capacity baseline. `B/op`
-for compound maintenance and backup rows is cumulative allocation across
-several streaming stages, not peak live heap; the external RSS measurements
-are the process envelopes.
-
-Resource policy still needs capacity beyond RSS. Incompressible preparation at
-the 64 MiB ceiling can require about 128.256 MiB of scratch for one object.
-Docbank serializes maintenance, so pack/repack currently has one preparation in
-flight; future backup concurrency must multiply scratch and codec windows by
-its explicit job count. The mixed reader keeps at most 16 idle pack descriptors,
-and each concurrent loose or packed stream can add one descriptor until EOF or
-`Close`. Cancellation and early-close cleanup remain mandatory race-tested
-gates, not benchmark outcomes.
-
-The 1 GiB benchmarks exercise a representative large object through Docbank's
-production admission path, Kit's durable loose writer, the mutation and SQLite
-authority boundary, native
-verified `OpenStream`, and the real backup adapters. They do not admit the
-object to packing. They are bounded-memory evidence supporting the current
-4 GiB loose-ingestion ceiling while packed maintenance stays at 64 MiB, not a
-measurement of the ceiling itself or a performance guarantee. A large object
-still needs roughly its raw size for live storage, repository storage, and a
-simultaneous restore target in the incompressible case.
-
-Any proposal to change admission or maintenance limits, reader slots, or
-backup concurrency must rerun this suite on representative target hardware and
-revise this envelope.
-
-Docbank owns:
-
-- the SQLite schema and catalog adapter;
-- the meaning of blob membership and liveness;
-- transactional mapping changes and compare-and-swap policy;
-- trash, version, provenance, and future external-reference semantics;
-- daemon commands, scheduling, logging, and product output.
-
-## Logical metadata portability
-
-SQLite is Docbank's runtime query and transaction engine, but its historical
-page layout is not the intended long-lived backup contract. The logical
-boundary is deterministic JSONL headed by `docbank-metadata` and an integer
-format version. Records are emitted in dependency-stable order and deterministic
-key order: blobs, nodes, ingests, node versions, provenance, watched-source
-cursors, tags, node tags, extracted text, and any audit authority. Audit
-projection rows precede their canonical records; import defers all foreign-key
-enforcement transaction-wide and validates the complete graph before commit.
-Nodes carry parent IDs, so
-directory structure, trash
-restore coordinates, and stable external node references survive a roundtrip.
-The header carries SQLite's node `AUTOINCREMENT` high-water mark separately
-from the live rows; import restores it only after proving it is at least the
-maximum surviving node ID.
-
-Stable content, vault, tag, ingest, and provenance identities are native
-metadata-v1 fields. A zero-scope stream contains no audit rows. The codec also
-persists and validates the closed first-enrollment record set: topology and
-attached-metadata genesis, allocation genesis and first entry, one shared
-baseline and its memberships, one enrollment event and canonical mutation, and
-the first scope-chain entry. This is persistence infrastructure, not an
-enablement surface; ordinary vaults still export the compact zero-scope form.
-Once this authority exists, the Go store's logical-mutation boundary rejects
-mutation classes that do not have an audit-recording implementation. SQL retains
-only relational constraints; append-only semantics, canonical mutation
-construction, chain advancement, and independent replay remain backend-neutral
-Go logic. Implemented guarded transitions cover content replacement and revert,
-inherited node creation, move, trash, restore, creation of an unassigned tag,
-assignment or removal of an existing tag, and post-ingest provenance append.
-Each append records its generic ingest and immutable provenance attachment in
-one transaction. Physical pack maintenance and read-only backup/export remain
-available.
-
-!!! info "Planned — audited mutations"
+!!! info "Historical design — audited mutations"
     Public audit enablement, the remaining guarded mutation classes,
     maintenance protection, and verification/status APIs will extend this same
     metadata-v1 authority before the first public release. Earlier development
     shapes are disposable and receive no compatibility decoder.
-
-The stream excludes `nodes_fts`, `blob_packs`, and `blob_pack_index`. FTS is a
-derived index rebuilt by the node insert triggers. Pack tables describe one
-physical representation and must never regain authority merely because an old
-metadata snapshot mentioned offsets; Kit restore verifies and publishes the
-chosen loose or packed representation before installing fresh catalog mappings.
-
-Import runs only against a pristine current-schema database, in one transaction
-with deferred foreign-key checks. Unknown format versions, unknown record types
-or fields, uniqueness failures, orphaned extraction rows, and dangling
-references abort the transaction. Timestamps must use Docbank's canonical UTC
-representation because retention queries compare their fixed-width strings
-lexicographically. The exception is provenance `original_mtime`: it records an
-external filesystem value using canonical UTC `RFC3339Nano`, matching ordinary
-ingestion, and is never used as a retention cutoff.
-
-Trash roots remain detached beneath the tree root in portable metadata. Their
-saved `trash_parent` may be absent when the original directory was hard-deleted;
-`trash_name` remains authoritative and restore then falls back to the tree root.
-When a saved parent is present, import proves it is neither the trash root nor
-one of its descendants, so restore cannot create a cycle from hostile or
-corrupted coordinates. Every trashed node must belong to exactly one such root,
-and every member of that subtree must be trashed under the root's exact
-operation timestamp. This mirrors restore's timestamp-scoped update and rejects
-both permanently hidden orphans and live nodes nested beneath trash.
-Explicit node IDs advance SQLite's `AUTOINCREMENT` sequence, preserving the
-invariant that a deleted historical ID is never silently reused.
-
-The Kit v0.9.0 backup adapter now uses this boundary for every new snapshot:
-export → verified metadata artifact → construct a fresh current-schema
-database → import → checkpoint → publish verified content and fresh pack
-authority → prove fidelity → atomic replacement. Historical SQLite page-map
-snapshots remain restorable, but new captures cannot select that legacy path.
-Physical pack authority must always travel through Kit's separately verified
-publication path.
-
-Do not move docbank SQL or reachability policy into Kit. Do not reimplement Kit
-reader or lifecycle mechanics in docbank. A physical-storage bug shared by
-msgvault belongs in Kit; a decision about whether a docbank reference keeps a
-blob alive belongs here.
-
-Kit owning a mechanic does not imply that docbank exposes it. In particular,
-`packstore.Maintainer.Unpack` remains available for conformance tests,
-migrations, and a purpose-built emergency recovery path, but is not part of the
-ordinary daemon API or CLI. A public unpack operation would reverse the
-small-file benefit, require transient duplicate disk capacity, and leak
-physical-format selection into the product. Do not add one without a concrete
-recovery workflow that cannot be served by verified backup/restore.
-
-## Released schema policy
-
-Store startup runs the embedded idempotent schema in one immediate transaction
-and ensures the root exists. This safely creates missing compatible tables and
-indexes, but it is not a general migration system.
-
-The embedded `schema.sql` is the authority for guarded current-layout columns.
-Startup derives the guarded table layouts by applying it to an isolated
-temporary database. Released layouts remain pinned by their versioned adapters.
-
-Metadata-v1 identity changes are vertical changes to the live store, ingest,
-reachability, and backup/restore paths. A parallel schema or codec that
-production code does not consume has no authority; shared metadata helpers
-belong here only when live paths use them.
-
-v0.9.0 established the first storage compatibility boundary. An incompatible
-released SQLite layout is never incrementally rewritten: Docbank reads its
-deterministic metadata-v1 authority, imports and validates that authority in a
-fresh current-schema database, restores the physical pack catalog separately,
-checkpoints and syncs the replacement, then publishes it atomically. The
-released source database remains as a recovery copy.
-
-Only schemas that actually shipped receive readers and exact fixtures.
-Unreleased development layouts are disposable; there is no speculative
-`ALTER TABLE` ledger, downgrade matrix, or compatibility decoder for them.
-
-## Extension constraints
-
-- An external-reference schema must define its liveness policy: either pin blob
-  authority or make dangling-reference detection the referrer's responsibility.
-- Every version writer preserves the implemented bytes-before-reference
-  ordering and adds reachability atomically with pointer replacement.
-  Reversion is the metadata-only exception: it reuses already-authoritative
-  source bytes and atomically adds a new reachability row and pointer.
-- Standalone pack and repack commands remain daemon/API operations; no CLI path
-  may open the physical store directly. An application that exclusively owns
-  an embedded vault may enter the same coordinated pack maintenance through
-  `docbank.Vault.Pack`.

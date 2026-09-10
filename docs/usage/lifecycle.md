@@ -5,18 +5,18 @@ description: Operate a docbank vault safely from first import through maintenanc
 
 # Vault lifecycle
 
-A docbank vault is deliberately low-maintenance: data commands start the
-daemon when needed, imports never alter their sources, deletion is staged, and
-integrity checks are explicit. This page connects those pieces into an
-operating routine.
+Keep a recoverable vault by backing it up, testing restore, and checking
+integrity before permanent cleanup. Data commands start the daemon when needed.
+You choose when to delete retained data and reclaim its storage.
 
 ## Know what owns the vault
 
 In standalone CLI mode, the daemon is the only process that opens `docbank.db`
 and the blob store. Embedded Go applications own separately rooted vaults
 in-process; they never share a root with a daemon.
-Ordinary commands are HTTP clients of it and start a compatible background
-daemon automatically.
+Ordinary CLI commands send HTTP requests to the daemon and start a compatible
+background daemon automatically. See [Daemon](../architecture/daemon.md) for
+ownership and startup rules.
 
 ```bash
 docbank daemon status
@@ -93,7 +93,7 @@ A clean result proves that each cataloged hash can be read and still matches
 its content. It does not replace a backup: verification can identify missing
 or corrupt bytes, but it cannot recreate them.
 
-## Upgrade without daemon drift
+## Upgrade the CLI and daemon together
 
 Check first, then install when ready:
 
@@ -113,15 +113,16 @@ allow replacing an unversioned development build.
 
 ## Take a coherent backup
 
-Docbank provides `backup init`, `backup create`, `backup list`, `backup
-verify`, and `backup restore` for incremental capture and proved recovery from
-an immutable Kit repository; see [Backup](backup.md). Those repositories are
-compressed but **not encrypted**.
+Use `backup init`, `backup create`, `backup list`, `backup verify`, and
+`backup restore` to capture and test recovery snapshots. Unchanged content is
+reused across captures. See [Backup & Restore](backup.md) for the procedure.
+Backup repositories are compressed but **not encrypted**.
 
-A stopped-vault copy captures the SQLite database and built-in primary as a
-coherent local-state snapshot. It is not a topology-independent backup: any
-blob held only by a secondary store is absent. The live reports can help
-diagnose primary coverage:
+### When is a directory copy enough?
+
+Copying a stopped vault captures its database and built-in primary store. It
+does not copy blobs held only by secondary stores. The live reports can help
+you check how much content the primary holds:
 
 ```bash
 docbank info --json
@@ -154,9 +155,10 @@ tar -C "$(dirname "$vault")" -czf "docbank-$(date +%F).tar.gz" "$(basename "$vau
 docbank daemon start
 ```
 
-The whole directory is the simplest primary-complete snapshot. Its archive
-state is `docbank.db` plus `blobs/`; `config.toml` is worth retaining when
-customized. Logs, lock files, and stale runtime records are not archive data.
+When the primary holds all content, copying the whole stopped vault directory
+captures it. The stored archive consists of `docbank.db` and `blobs/`; retain
+`config.toml` too when you have customized it. Logs, lock files, and stale
+runtime records are not archive data.
 
 Protect the snapshot like the vault itself: document contents and a configured
 API key may both be present. Test restoration into a separate
@@ -192,14 +194,14 @@ The portable path is a verified backup restore:
 4. Run `docbank verify`, then `docbank tree /`.
 5. Start using the destination only after both checks succeed.
 
-Default restore collapses every source location into a fresh local primary, so
+Default restore puts all recovered content in a fresh local primary store, so
 the destination does not inherit source paths, endpoints, credentials, or
 ownership epochs. Use an owner-private store mapping only when deliberately
 reconstructing selected placement; see
 [Multi-store Storage](storage.md#backup-and-restore).
 
-For a primary-complete vault, a stopped directory copy is also valid: stop the
-source daemon, copy the complete vault directory, and run the same two checks.
+If the primary holds every blob, you can also copy the stopped vault directory.
+Stop the source daemon, copy the complete directory, and run the same two checks.
 Linux, macOS, and Windows share the logical vault format. A copied customized
 `config.toml` may contain machine-specific watched paths, secondary bindings,
 or credential profiles; review it before starting the destination daemon.

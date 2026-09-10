@@ -5,23 +5,27 @@ description: Create incremental, verifiable snapshots in an immutable repository
 
 # Backup & Restore
 
-Docbank snapshot repositories are append-only directories of immutable,
-checksummed files. A snapshot contains the deterministic JSONL description of
-the virtual tree plus every catalog-authorized document blob, whether its live
-representation is loose or packed. Unchanged metadata and content are reused
-across snapshots, so repeated captures add only new repository objects and a
-new manifest. Metadata is a complete logical JSONL description per snapshot,
-not a row-level delta: an unchanged description is reused by hash, while any
-logical change stores one new compressed metadata object.
+Create a backup snapshot to recover the vault independently of its live
+storage. A snapshot includes the folder tree and every document blob recorded
+in the catalog, whether stored individually or in a pack. Restore verifies
+the snapshot before publishing a usable vault at a separate target.
 
-The command surface initializes repositories, creates incremental snapshots,
-lists and verifies them, and restores a proved vault into a separate target.
+A repository is a directory of backup files that Docbank adds to without
+changing existing files. Each snapshot has a manifest, the record of which
+files belong to it. Repeated captures reuse unchanged content by hash.
+
+Each snapshot also includes a complete metadata description in JSONL, with one
+JSON record per line. Docbank reuses this description when it is unchanged. A
+metadata change stores one new compressed description, rather than a set of
+individual row changes. See [Backup architecture](../architecture/backup.md)
+for the repository format.
 
 !!! warning "Repositories are not encrypted"
     Snapshot metadata and document content are compressed but not encrypted.
     Protect the repository with filesystem permissions and encrypted storage,
     especially before placing it on removable or cloud-synchronized media.
-    Snapshot pruning and repository retention commands are also not exposed yet.
+
+Snapshot pruning and repository retention commands are not available.
 
 ## Quick start
 
@@ -72,15 +76,15 @@ docbank backup create [--repo DIR] [--tag LABEL] [--jobs N]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 ```
 
-Creation runs inside the one vault-owning daemon. It briefly pauses mutations
-while opening a deferred SQLite read transaction, then normal writes resume
-into the WAL while JSONL and document content stream from the pinned
-point-in-time view. GC, trash empty, verification, and packed-storage
-maintenance queue until capture finishes so they cannot remove content the
-snapshot still requires. Every loose or packed content stream must reach
-verified EOF before its bytes are accepted into the repository. A failure never
-publishes a partial snapshot manifest; rerun the command after addressing the
-error.
+The daemon captures one consistent view of the vault. It briefly pauses
+changes while opening a SQLite read transaction. Normal writes then resume
+into SQLite's write-ahead log (WAL), while backup reads the earlier view.
+
+GC, trash empty, verification, and packed-storage maintenance wait until the
+capture finishes. This keeps them from removing content needed by the snapshot.
+The daemon accepts a document into the repository only after reading and
+verifying all of its bytes. If capture fails, it publishes no partial snapshot
+manifest. Address the error, then rerun the command.
 
 During an interactive run, `--progress auto` draws an in-place bar for each
 stage (freeze, metadata, attachments, and seal), including item and byte
@@ -112,11 +116,15 @@ docbank backup verify [SNAPSHOT] [--repo DIR] [--all] [--quick] [--jobs N]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 ```
 
-With no snapshot argument, verification proves the latest snapshot. Pass an
-immutable snapshot ID to prove one historical snapshot, or `--all` to prove
-every manifest. A full verification resolves repository indexes and pack
-footers, materializes the snapshot's JSONL metadata, reads and SHA-256 verifies
-every referenced content object, and checks Docbank's recorded logical totals.
+With no snapshot argument, Docbank verifies the latest snapshot. Pass an
+immutable snapshot ID to check a historical snapshot, or `--all` to check
+every manifest. A full verification performs these checks:
+
+1. Read the repository indexes and pack footers.
+2. Reconstruct the snapshot's JSONL metadata.
+3. Read every referenced content object and verify its SHA-256 hash.
+4. Compare the recovered logical totals with Docbank's recorded totals.
+
 Content shared by several selected snapshots is read only once during one
 verification pass. Every finding is reported with the affected snapshot, and
 the command exits non-zero if any problems were found.
@@ -130,10 +138,9 @@ disks and latency-sensitive network storage. The progress and JSON contracts
 match `backup create`: progress is written to stderr, and `--json` suppresses
 progress so stdout contains one typed report.
 
-Snapshots include the current virtual tree, trash state, stable content
-versions, ingest/provenance metadata, watched-source cursors, tags, and
-extraction records. Restoring rebuilds and validates that logical authority
-before publishing the target.
+Snapshots include the folder tree, trash state, retained versions, ingest and
+provenance records, watched-source cursors, tags, and extraction records.
+Restore rebuilds and validates these records before publishing the target.
 
 ## Restore and prove a snapshot
 
@@ -152,6 +159,8 @@ Direct paths, parents, descendants, and symlink aliases that overlap either
 one are rejected. Filesystem-identity checks also reject differently cased or
 Unicode-normalized spellings that identify the same tree on filesystems where
 those names are equivalent.
+
+### How does restore protect the target?
 
 Every restore pins the target directory and takes its vault-tree lock before
 writing, including for a fresh or empty target. That excludes a second restore,
@@ -177,17 +186,21 @@ validated identity of whichever database was actually published when the vault
 is opened or the restore is retried. An unrelated file named `docbank.db` is
 never opened for mutation merely to decide which side won.
 
-Compatible repository packs are copied, verified, durably published, and
-granted catalog authority by default. A pack or object that exceeds Docbank's
-current storage policy is restored as a verified loose blob instead; the
+### Where does restored content go?
+
+By default, restore copies compatible repository packs, verifies them, writes
+them durably, and records them as readable locations in the catalog. If a pack
+or object exceeds Docbank's current storage policy, restore writes it as a
+verified individual blob file instead; the
 result reports the loose count and grouped fallback reasons. This is a
 representation choice, not an integrity failure.
 
 Snapshots also carry a non-secret `docbank-placement-v1` description of source
-store identities and per-hash placement. Default restore deliberately ignores
-that topology and rebuilds every verified blob under a fresh local primary
-store ID and ownership epoch. No source path, endpoint, credential, bucket,
-binding, or ownership epoch is inherited.
+stores and the hashes held by each. Default restore places all verified content
+in a fresh local primary store. It gives that store a new ID and ownership
+epoch, the value used to distinguish one store owner from the next. It does not
+inherit source paths, endpoints, credentials, buckets, bindings, or ownership
+epochs.
 
 `--store-map` explicitly maps source store IDs to binding profiles already
 loaded by the daemon performing the restore. The TOML file must be an
@@ -209,6 +222,8 @@ binding profiles, so the restored vault can prove and read remote-only
 authority after restart. An existing target configuration is preserved and
 must already define the same mappings exactly.
 
+### What does the restore report mean?
+
 Interactive restore shows metadata, document, extras, SQLite integrity, and
 manifest-statistics progress as separate stages.
 `--json` suppresses progress and returns one report containing physical layout
@@ -225,10 +240,9 @@ DOCBANK_HOME=~/Restores/docbank-test docbank storage status
 DOCBANK_HOME=~/Restores/docbank-test docbank storage repack
 ```
 
-This reporting never performs maintenance automatically. If the proved
-restore succeeded but this ancillary inventory cannot be read, the report
-remains successful and carries a `storage_warning` instead of claiming that
-the committed restore failed.
+Reading this inventory does not run maintenance. If restore succeeds but the
+inventory read fails, the report still records a successful restore and adds
+a `storage_warning`.
 
 A successful report means the target is a complete vault, but it does not
 automatically replace or start it. Inspect it under its own home first:
@@ -241,10 +255,9 @@ DOCBANK_HOME=~/Restores/docbank-test docbank daemon stop
 
 ## Backups move forward only
 
-A backup records every kind of authority the writing release knows about. An
-older release refuses a snapshot that contains a record kind it does not
-understand rather than restoring a vault with silent gaps, so restore with the
-release that wrote the backup or a newer one.
+Restore with the release that wrote the backup or a newer one. Older releases
+reject snapshots containing record kinds they do not understand. They do not
+restore a vault while silently omitting those records.
 
 ## Repository placement
 

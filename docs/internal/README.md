@@ -1,13 +1,13 @@
 # Internal design documentation
 
-This directory is the definitive agent/developer description of **how docbank
-works and why**. It is living documentation: update it in place whenever the
-implementation or its rationale changes.
+Use these guides to decide where a code change belongs and which contracts it
+must preserve. They explain package ownership, design rationale, rejected
+approaches, and constraints for contributors. Update the owning page when a
+design changes.
 
-It is intentionally excluded from the public Zensical site. Public pages under
-`docs/architecture/` explain product behavior and stable boundaries to users;
-these internal pages include package ownership, rejected approaches, change
-constraints, and implementation seams.
+The public [architecture overview](../architecture/overview.md) explains the
+product model and links to each public contract. This internal directory adds
+contributor guidance and is excluded from the public Zensical site.
 
 ## Design map
 
@@ -20,6 +20,8 @@ constraints, and implementation seams.
 - [Development guide](development.md) — where changes belong, which
   cross-layer contracts must move together, and how design documentation stays
   current.
+- [CSV to PDF conversion](csv-pdf.md) — bounded local conversion, receipts,
+  and the separate upload-authorization boundary.
 
 ## Documentation boundary
 

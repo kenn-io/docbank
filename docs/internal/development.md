@@ -1,7 +1,8 @@
 # Development guide
 
-This page routes changes through docbank's architecture so agents and
-developers update the right layer and preserve cross-layer contracts.
+Start with the component that owns the behavior, then update each client and
+contract affected by the change. This page maps package responsibilities and
+lists the checks contributors must preserve.
 
 ## Package ownership
 
@@ -22,17 +23,22 @@ developers update the right layer and preserve cross-layer contracts.
 
 ### Add a data operation
 
-Start with the transactional store operation and tests. Add the API route and
-wire types, classify it against the maintenance gate, add the internal client
-call, then expose the CLI command. Generate and inspect OpenAPI, update public
-reference and agent guidance, and ensure the CLI still has no direct vault path.
+1. Add the transactional store operation and tests for its behavior.
+2. Add the API route and wire types.
+3. Choose the operation's side of the maintenance gate.
+4. Add the internal client call, then the CLI command.
+5. Generate and inspect OpenAPI.
+6. Update the public reference and agent guidance.
+7. Check that the CLI still reaches the vault only through HTTP.
 
 ### Change a wire contract
 
-Update API types, route tests, client decoding, OpenAPI assertions, public HTTP
-documentation, and agent examples together. Decide whether a running old daemon
-could misinterpret the new request. If safety is not exact, bump the daemon
-protocol revision so `Ensure` replaces it before any data call.
+Update the API types, route tests, client decoding, OpenAPI assertions, public
+HTTP documentation, and agent examples together.
+
+Check whether an older running daemon could misinterpret the new request. If
+it could, bump the daemon protocol revision. `Ensure` then replaces that daemon
+before sending a data call.
 
 Never rely on an optional JSON field to make a formerly destructive endpoint
 safe against a daemon that ignores unknown fields. Use capability/protocol
@@ -81,7 +87,9 @@ rationale.
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:
 
-- every Go build/test/lint uses CGO and the `fts5` tag;
+- every Go build, test, and lint uses the `fts5` tag; the complete suite must
+  pass with both CGO SQLite and `CGO_ENABLED=0` pure-Go SQLite, as required by
+  `AGENTS.md`;
 - Linux, macOS, and Windows exercise the real daemon and vault lifecycle, with
   Windows CI covering amd64 and arm64;
 - docs build strictly, publish Markdown counterparts, and exclude this internal
@@ -94,8 +102,8 @@ design-specific checks are:
 
 ## Review posture
 
-Review the actual trust and scale model: local, loopback-only, one user, one
-daemon, personal-archive scale. Focus security review on authentication gaps,
-non-loopback exposure, data loss, stale compatibility, crash ordering, and
-incorrect authority boundaries—not multi-tenant controls the product does not
-claim.
+Review against Docbank's [trust boundary](../architecture/integrity.md): local
+operation, loopback-only service, one user, one owner per vault, and personal
+archive scale. Focus on authentication gaps, non-loopback exposure, data loss,
+incompatible daemons, crash ordering, and incorrect authority decisions.
+Multi-tenant controls require a separate product decision.

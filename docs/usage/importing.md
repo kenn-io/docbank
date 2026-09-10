@@ -1,25 +1,28 @@
 ---
 title: Importing Documents
-description: Bulk import semantics — recursion, idempotency, collision suffixing, and failure handling.
+description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
 ---
 
 # Importing Documents
 
-`docbank add` is the bulk-migration path for decades of accumulated
-`Documents/`, Dropbox, and old-drive trees. It is designed to be run
-repeatedly against the same sources without ever duplicating a document
-or touching the originals.
+Use `docbank add` to copy files or entire folders into the vault. Docbank leaves
+the originals unchanged. Repeat the same command after an interruption: it
+skips matching content already imported under a destination name.
 
 ## What an import does
 
-For each regular file:
+For each regular file, Docbank performs two steps:
 
-1. The content is hashed (SHA-256, streaming) and written to the blob
-   store — durably, before any database row references it. Content that
-   already exists in the vault is not written twice.
-2. One database transaction creates the tree node, its stable revision-one
-   `content_create` version, the blob authority, and provenance: the original
-   filesystem path and modification time survive any later renames or moves.
+1. Docbank computes the SHA-256 content hash while reading the file. It stores
+   the bytes durably before adding database records. Identical content already
+   stored in the vault is reused.
+2. Docbank creates the file entry, its revision-one `content_create` version,
+   the record of its stored content, and its provenance in one database
+   transaction. Provenance records the original path and modification time;
+   these facts survive later renames and moves.
+
+See [Storage](../architecture/storage.md) for the content records and
+[Editing & Versions](../architecture/editing-and-versions.md) for version identity.
 
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
@@ -53,20 +56,20 @@ docbank add ~/Dropbox --preflight \
 ```
 
 The report separates files currently eligible for packing (through 64 MiB),
-larger files that will remain authoritative loose objects, and files above the
+larger files that will remain individual stored files, and files above the
 current format-v1 ingest ceiling. It also reports logical bytes, directory
 count, skipped non-regular entries, filesystem errors, and the largest groups
 by lowercase filename extension. Use `--json` for a structured, bounded report.
 
-Preflight is metadata-only. In particular, it does not open cloud-provider
-placeholder content merely to estimate the import. That avoids an inventory
-silently hydrating an entire cloud tree, but it also means successful preflight
-cannot promise that every file will remain readable when the later import
-opens it. It does report how much of the tree is in that state: on macOS,
-`cloud placeholders` counts the regular files whose bytes are not present
-locally (iCloud Drive, Google Drive for Desktop, and similar dataless files),
-so a source that is mostly placeholders is visible before the import spends
-network time on it. Those files are also counted in the size classes above.
+Preflight reads metadata only. It does not open cloud placeholders: file
+entries whose contents still need to be downloaded from a provider. This lets
+you estimate an import without downloading the whole tree. A successful scan
+does not guarantee that the later import can read every file.
+
+On macOS, `cloud placeholders` counts regular files whose bytes are not local,
+including iCloud Drive and Google Drive for Desktop placeholders. These files
+also count toward the report's size classes. Check this count before starting
+an import that may require substantial downloading.
 
 A provider may decline to hydrate a placeholder for the process that opens it —
 a daemon started by launchd as a background job is the usual case, while an
@@ -81,6 +84,8 @@ filesystems that permit other byte sequences, preflight and ingest report each
 such entry with an escaped, printable path; Docbank does not open or import it,
 continues with the rest of the tree, and never alters the source.
 
+### Choose files with include and exclude rules
+
 Include and exclude rules use Go's `path.Match` grammar over slash-normalized
 paths within each source. A rule without `/`, such as `*.pdf`, matches a
 basename at any depth; a rule with `/`, such as `reports/*.pdf`, matches that
@@ -90,7 +95,7 @@ include rules leave directories traversable. Rules must be relative and valid;
 empty rules, parent traversal, and malformed patterns are rejected before the
 walk. Commas are literal pattern characters, not separators; repeat each flag.
 Watched-inbox exclusions remain literal and do not use this glob syntax.
-Existing `--exclude` values on `docbank add` now use glob matching. Rules must
+`docbank add --exclude` uses glob matching. Rules must
 use `/` separators on every platform; backslashes are rejected, so backslash
 escaping is not available; match a literal `[`, `?`, or `*` with a bracket expression such as
 `report[[]1].txt`. Matching is case-sensitive on every platform, including
@@ -118,11 +123,11 @@ machine-readable terminal report.
 The scan totals are an estimate rather than a filesystem lock: a source may
 change before Docbank opens it. Byte progress counts content actually read,
 while a file counts as done only after its individual blob and metadata
-operation returns. Interrupting the command cancels the daemon request. Files
-that already completed remain authoritative and make a rerun converge; an
-incomplete file never receives node authority.
+operation returns. Interrupting the command cancels the daemon request.
+Docbank keeps files that completed successfully and skips them on a rerun. It
+does not create a file entry for an incomplete import.
 
-## Idempotency: safe to re-run
+## What happens when I run the import again?
 
 Interrupted a 200,000-file import? Run the same command again. For each
 source file, docbank walks the candidate names in the destination
@@ -135,9 +140,9 @@ directory — `report.pdf`, `report (2).pdf`, `report (3).pdf`, … — and:
   suffix is used;
 - otherwise the first free candidate name is taken.
 
-Re-runs therefore converge instead of duplicating. Identity is content,
-not filename: the same bytes under two source names import as two nodes
-sharing one stored blob but carrying distinct version UUIDs.
+Repeating the same source import does not create extra copies of its entries.
+Two differently named source files with identical bytes still import as two
+file entries. They share stored content but have distinct version UUIDs.
 
 ## Collisions
 
@@ -164,9 +169,8 @@ content current. Omit `--replace` for ordinary collision suffixing.
 
 ## Inspect where a document came from
 
-Docbank keeps provenance as durable metadata rather than leaving it hidden in
-an import log. Query a live file by virtual path or any retained file by stable
-node ID:
+Docbank retains the facts about where a document came from as provenance.
+Query a live file by vault path or any retained file by stable node ID:
 
 ```bash
 docbank provenance /archive/Documents/report.pdf
@@ -180,9 +184,9 @@ supersedes it; corrections retain earlier facts instead of rewriting them.
 Because a source path can disclose machine-local names, provenance is available
 only through the same authenticated API as the document itself.
 
-This is inspection, not source management. Reading provenance neither opens nor
-changes the original file, and provenance alone does not pin a document version
-against ordinary retention or deletion policy.
+Reading provenance does not open or change the original file. A provenance
+record also does not prevent ordinary retention or deletion rules from removing
+a document version.
 
 ## Failures don't abort the batch
 
@@ -206,9 +210,8 @@ source arguments.
 ## Sources are read-only
 
 Import never deletes or modifies source files, including a followed root
-directory symlink. Delete originals yourself
-once `docbank verify` and your own spot-checks satisfy you — the same
-archive-first, delete-later posture msgvault takes with mailboxes.
+directory symlink. Before deleting originals yourself, run `docbank verify`,
+spot-check the imported documents, and capture a [backup](backup.md).
 
 ## Remote API imports
 
@@ -282,9 +285,9 @@ not delete source files, prune versions, run GC, or rewrite existing packs.
 Portable [backup and restore](backup.md) preserve the mirrored hierarchy,
 source provenance, every retained version, and its verified bytes.
 
-The destination is exact rather than collision-suffixed. If unrelated content
-already occupies the intended path, or the previously mapped node is in the
-trash, the watcher fails closed instead of guessing. `docbank jobs` reports the
+The watcher uses the exact destination name; it does not add a collision
+suffix. It stops with an error if unrelated content already occupies that path
+or the previously mapped node is in trash. `docbank jobs` reports the
 named `watch:<name>` job and any terminal error; correct the problem and restart
 the daemon. Successful additions, updates, and unchanged observations appear
 in the daemon log. See [Configuration](../configuration.md#watched-inboxes) for

@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev frontend-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -60,7 +60,7 @@ frontend-test:
 frontend-dev:
 	cd frontend && npm run dev
 
-frontend-screenshots:
+docs-screenshots:
 	cd frontend && npm run screenshots
 
 fmt:
@@ -93,14 +93,23 @@ install-hooks:
 docs-install:
 	cd docs && uv sync --frozen
 
+docs-subpath-test:
+	cd docs && uv run --project . --frozen --no-dev python scripts/check_zensical_subpath.py
+
 bridge-contract:
 	go test -tags fts5 ./document/bridge -run '^TestBridgeContractNormativeDocuments'
 
-docs-build: bridge-contract
-	cd docs && ./zensical-docs.sh build
+docs-assets-test:
+	bash scripts/docs-assets-sync.test.sh
+
+docs-assets-sync:
+	./scripts/sync-docs-assets.sh
+
+docs-build: bridge-contract docs-subpath-test
+	node scripts/docs/build.mjs
 
 docs-serve:
-	cd docs && ./zensical-docs.sh serve
+	node scripts/docs/serve.mjs
 
 # Deploys use the operator's installed Vercel CLI; install it with
 # `npm install -g vercel` or from https://vercel.com/docs/cli.
@@ -109,20 +118,19 @@ docs-link:
 		echo "vercel CLI not found. Install: https://vercel.com/docs/cli" >&2; \
 		exit 1; \
 	fi
-	cd docs && vercel link
+	vercel link
+	@test -f .vercel/project.json || { \
+		echo "Vercel did not create .vercel/project.json at the repository root." >&2; \
+		exit 1; \
+	}
 
-docs-deploy: docs-build
-	@if ! command -v vercel >/dev/null 2>&1; then \
-		echo "vercel CLI not found. Install: https://vercel.com/docs/cli" >&2; \
+docs-deploy:
+	@if [ -z "$(DOCS_SOURCE)" ]; then \
+		echo "DOCS_SOURCE is required and must be a full source commit SHA." >&2; \
+		echo "Run: make docs-deploy DOCS_SOURCE=$$(git rev-parse HEAD)" >&2; \
 		exit 1; \
 	fi
-	@if [ ! -f docs/.vercel/project.json ]; then \
-		echo "docs are not linked to a Vercel project yet." >&2; \
-		echo "Run: vercel login && make docs-link" >&2; \
-		exit 1; \
-	fi
-	cp -R docs/.vercel docs/site/.vercel
-	vercel deploy docs/site --prod --yes
+	DOCS_SOURCE="$(DOCS_SOURCE)" ./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev frontend-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

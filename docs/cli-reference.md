@@ -5,18 +5,18 @@ description: Every docbank command, flag, output format, and error behavior.
 
 # CLI Reference
 
-All commands operate on the vault at `~/.docbank` (override with
-`DOCBANK_HOME`; see [Configuration](configuration.md)). Errors go to
-stderr and produce a non-zero exit code. Virtual paths are absolute,
-`/`-separated, and case-sensitive.
+Use this page to look up command syntax, flags, output, and failure behavior.
+For a first import, follow [Quickstart](quickstart.md).
 
-Every data command below (`info`, `stat`, `add`, `ls`, `tree`, `cat`, `put`, `edit`, `versions`, `version`, `refs`, `revert`, `tag`, `audit`, `mv`, `rm`,
-`restore`, `search`, `trash`, `gc`, `verify`, `storage`, `backup`, `jobs`) talks to the `docbank`
-daemon over its HTTP API rather than opening the vault itself; if none
-is running, the command auto-starts one in the background. `docbank
-daemon status` and `docbank daemon stop` never auto-start. See
-[Daemon](architecture/daemon.md) and
-[Ownership & Concurrency](architecture/locking.md).
+Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location;
+see [Configuration](configuration.md). Virtual paths are absolute,
+`/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
+exit code.
+
+Data commands send HTTP requests to the daemon and start it in the background
+if needed. They never open the vault directly. `docbank daemon status` and
+`docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
+and [Ownership & Concurrency](architecture/locking.md).
 
 ## docbank info
 
@@ -24,11 +24,15 @@ daemon status` and `docbank daemon stop` never auto-start. See
 docbank info [--json]
 ```
 
-Identifies the vault selected by `DOCBANK_HOME` and confirms that its daemon is
-reachable. Human output shows the canonical machine-local vault path, stable
-vault ID, live file and directory counts, trash size, retained version count
-and logical bytes, tracked content blobs, and physical loose/packed usage.
-The virtual root itself is not counted as a directory.
+Shows which vault `DOCBANK_HOME` selects and confirms that its daemon is
+reachable. Human output includes:
+
+- The canonical local vault path and stable vault ID.
+- Live file and directory counts, excluding the virtual root.
+- Trash size.
+- Retained version count and logical bytes.
+- Tracked content blobs.
+- Physical storage used by loose files and packs.
 
 `--json` exposes the same values as stable fields. Agents should record
 `vault_id` as identity and use `vault_path` only to confirm local placement:
@@ -111,11 +115,11 @@ never modified or deleted.
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.
-- An explicitly named symlink to a directory is followed as the import root;
-  its supplied basename and provenance spelling are retained. Symlinks inside
-  that tree, symlinks to files, and other selected non-regular files are skipped
-  and reported as failures; include-filtered entries are excluded without
-  failure, and neither case aborts the run.
+- An explicitly named directory symlink is followed as the import root.
+  Docbank keeps the supplied basename and source-path spelling.
+- Selected symlinks within the tree, file symlinks, and other non-regular files
+  are skipped and reported as failures. They do not abort the run.
+- Entries removed by include filters are excluded without failure.
 - Include and exclude patterns use `/` separators on every platform; a
   backslash in a pattern is rejected.
 - Name collisions with different content auto-suffix:
@@ -123,33 +127,44 @@ never modified or deleted.
 - `--replace` records the destination node revision before reading the source,
   then replaces that exact live file when the bytes differ.
 - `--replace` skips unchanged bytes without changing the stored MIME type or
-  creating a content version. A live directory fails the file. A destination
-  that appears after the pre-read fails with an exact-name conflict instead of
-  using a suffix. Without `--replace`, ordinary suffixing remains unchanged.
+  creating a content version.
+- With `--replace`, a live directory fails the file. A destination created
+  after the initial read also fails with an exact-name conflict; Docbank does
+  not add a suffix. Without `--replace`, ordinary suffixing still applies.
 - Re-running an import converges: a file whose content already exists
   under any candidate name in the destination is skipped, so an
   interrupted bulk import can simply be re-run. See
   [Importing Documents](usage/importing.md).
 
-Run `--preflight` before a large import. On macOS the report also names how
-many regular files are cloud placeholders whose bytes are not present locally;
-importing them downloads the content through the provider. It reports regular-file and directory
-counts, logical bytes, pack-eligible files, larger loose-only files, files over
-the ingest ceiling, exclusions, skipped non-regular entries, filesystem errors,
-and the largest extension groups. The scan reads filesystem metadata only: it
-does not open cloud placeholders, create the destination, record an ingest, or
-write blobs. `--json` retains a bounded set of detailed findings and file-type
-groups for agents and scripts.
+### Preview an import
 
-Selection rules are shared by preflight and import. A pattern without `/`, such
-as `*.pdf`, matches a basename at any depth. A pattern with `/`, such as
-`project/*.pdf`, matches the source-relative path; `*` and `?` do not cross `/`,
-and `**` is not a recursive globstar. Include rules filter regular files but do
-not prune directories. Exclusions win and matching directories prune their
-subtrees. Patterns must be relative and valid; absolute paths and `..` escapes
-are rejected. Commas are ordinary pattern characters; repeat each flag. Watch
-configuration keeps its separate literal exclusion rules.
-Patterns are case-sensitive on every platform, including Windows.
+Run `--preflight` before a large import. The report counts files, directories,
+and logical bytes. It separates pack-eligible files, larger loose-only files,
+files above the ingest limit, exclusions, non-regular entries, and filesystem
+errors. It also summarizes the largest extension groups.
+
+On macOS, preflight counts cloud placeholders whose bytes are not local.
+Importing those files downloads them through the provider. Preflight itself
+reads only filesystem metadata. It does not open placeholders, create the
+destination, record an ingest, or write blobs. `--json` includes a bounded set
+of detailed findings and file-type groups.
+
+### Select files with patterns
+
+Preflight and import share these selection rules:
+
+- A pattern without `/`, such as `*.pdf`, matches a basename at any depth.
+- A pattern with `/`, such as `project/*.pdf`, matches a source-relative path.
+- `*` and `?` do not cross `/`; `**` is not a recursive globstar.
+- Include rules filter regular files without pruning directories.
+- Exclusions win. Excluding a directory prunes its subtree.
+- Absolute patterns and `..` escapes are rejected.
+- Commas are ordinary characters. Repeat the flag for multiple patterns.
+- Patterns are case-sensitive on every platform, including Windows.
+
+Watch configuration uses separate literal exclusion rules.
+
+### Read progress and failures
 
 An ordinary import first scans source metadata for file and byte totals, then
 shows ingest progress on stderr. `auto` uses a redrawable bar on a terminal and
@@ -289,16 +304,17 @@ redirected lines, and `plain` always emits durable lines. `--json` suppresses
 progress and returns the new node, immutable version, and server-computed hash
 and size. `--mime-type` overrides extension/content detection.
 
-The command completes its local hash before starting or contacting the daemon,
-then resolves the target to a stable node ID and revision immediately before
-upload. This keeps a slow local read outside the daemon's idle lifetime and
-shortens the optimistic-concurrency window. The raw `PUT` carries the inspected
-revision as `If-Match`; if another actor moves, trashes, or replaces the node
-afterward, the operation fails with `stale_revision` rather than losing the
-concurrent update. A successful put bumps the node revision, creates a
-`content_replace` version, and leaves the older bytes reachable through
-`docbank versions cat <id>`. Replacing with identical bytes still records
-an explicit versioned operation while the blob itself deduplicates.
+The command hashes locally before starting or contacting the daemon. It then
+resolves the target's node ID and revision immediately before upload. Slow
+hashing therefore does not use the daemon's idle timeout.
+
+The raw `PUT` sends the inspected revision as `If-Match`. If someone moves,
+trashes, or replaces the node before the write, Docbank returns
+`stale_revision`.
+
+Success advances the node revision and creates a `content_replace` version.
+Older bytes remain available through `docbank versions cat <id>`. Even identical
+replacement bytes record a versioned operation, while sharing the existing blob.
 
 ## docbank edit
 
@@ -384,11 +400,15 @@ docbank versions prune <path-or-id> --older-than <age> [--run] [--json]
 docbank versions prune <path-or-id> --all-prior [--run] [--json]
 ```
 
-Selects unwanted non-current history for one file. Exactly one selector is
-required. `--version` is repeatable and literal, `--keep-newest` retains at
-least that many newest rows including the current head, `--older-than` accepts
-Go durations plus whole days such as `90d`, and `--all-prior` selects the
-complete old graph. The command is a dry run unless `--run` is present.
+Selects prior versions to remove from one file. The command previews by
+default; `--run` applies removal. Choose exactly one selector:
+
+| Selector | Selection |
+|----------|-----------|
+| `--version` | Exact version ID; repeat for multiple IDs |
+| `--keep-newest` | Keep at least this many newest versions, including the current one |
+| `--older-than` | Versions older than a Go duration or whole-day age such as `90d` |
+| `--all-prior` | All prior version history |
 
 The current content is always retained. Ordinary selectors cannot select the
 current row. If one includes a source still required by a retained reversion,
@@ -405,16 +425,19 @@ set, pass its candidate IDs back through repeated `--version` flags.
 Explicit-ID requests accept at most 1,000 IDs; re-read the node revision between
 batches when applying a larger exact set.
 
-Human and JSON reports separate selected versions and logical bytes from
-physical consequences: shared blobs remain reachable, loose unreferenced blobs
-wait for `docbank gc --run`, and dead packed payload waits for GC followed by
-`docbank storage repack`. When the same blob has loose and packed locations in
-different stores, the report includes both consequences and identifies the
-overlap rather than counting the blob twice as releasable. Physical byte totals
-cover every affected authoritative location. Pruning itself never claims to
-reclaim disk space.
-Deleted version IDs stop resolving. Backups made afterward preserve that
-result, while snapshots made before pruning still contain their earlier state.
+Pruning removes version records; it does not reclaim disk space. Human and
+JSON reports distinguish these storage effects:
+
+- Shared blobs remain reachable through other retained references.
+- Unreferenced loose blobs wait for `docbank gc --run`.
+- Dead packed content waits for GC, then `docbank storage repack`.
+
+A blob can have loose and packed locations in different stores. The report
+identifies that overlap without counting the blob twice as releasable.
+Physical byte totals cover every affected authorized location.
+
+Deleted version IDs stop resolving. Later backups preserve the pruned state;
+earlier snapshots still contain their original history.
 
 ## docbank refs
 
@@ -508,15 +531,16 @@ docbank audit verify [--expected <prior-json-report>] [--json]
 ```
 
 `audit enable` permanently protects a directory scope and all retained content
-versions beneath it. Enrollment cannot be disabled. The default invocation is
-a read-only preview that reports the exact protected set, storage impact,
-baseline digest, vault-wide permanent metadata, and a one-use token. The first
-scope permanently retains enrollment-time names, topology, tags, assignments,
-ingests, and provenance across the vault, including outside the selected scope;
-unrelated content does not become a scope member. Execution is a separate
-command that accepts only that token and the explicit permanent-retention
-acknowledgment; target selectors are deliberately absent from the execution
-command.
+versions beneath it. You cannot disable enrollment.
+
+1. Run the default command to preview the exact protected set, storage impact,
+   baseline digest, and vault-wide permanent metadata. Keep its one-use token.
+2. Review the retention effect. The first scope preserves enrollment-time
+   names, tree structure, tags, assignments, ingests, and provenance across
+   the whole vault, including outside the scope. Unrelated content does not
+   become a scope member.
+3. Execute with the token and explicit permanent-retention acknowledgment.
+   The execution command accepts no target selector.
 
 The token expires after ten minutes, is consumed by one execution attempt, and
 does not survive daemon restart. The daemon recomputes the reviewed authority
@@ -656,10 +680,11 @@ returns the complete restored node with its resulting path and revision.
 docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--limit <n>] [--json]
 ```
 
-Full-text search over live node names and verified extracted text (FTS5).
-Every whitespace-separated term is matched as a prefix; FTS operator syntax
-in the query is escaped, not interpreted. Name matches retain their existing
-BM25 order and appear before content-only matches, whose ranking is independent.
+Searches live node names and verified extracted text with SQLite FTS5, its
+full-text search engine. Each whitespace-separated term matches as a prefix.
+Docbank escapes FTS operator syntax instead of interpreting it. Name matches
+use BM25 relevance ranking and appear before separately ranked content-only
+matches.
 The default limit is 50 and `--limit` accepts 1–1000. When more matches exist,
 the command says that the result is truncated rather than silently implying
 completeness. Output columns are `SELECTOR`, `MATCH`, and `PATH`; no matches prints
@@ -668,14 +693,17 @@ completeness. Output columns are `SELECTOR`, `MATCH`, and `PATH`; no matches pri
 `--tag` requires one current tag assignment. It accepts a tag's exact name or
 stable UUID using the same selector rules as `docbank tag show`; the CLI
 resolves names before searching, so the request is bound to stable identity.
+
 `--mime-type` accepts one valid parameter-free media type and matches the
 current version's base type case-insensitively. Stored parameters do not affect
 the match: `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
 excludes directories and retained non-current versions.
+
 `--under` accepts an absolute virtual path or stable `id:N` selector for one
 live directory and searches its descendants. The CLI resolves paths before the
 request and the daemon uses the resulting stable directory ID. The directory
 itself is excluded; a file, missing node, or trashed directory is rejected.
+
 `--modified-since` and `--modified-before` accept absolute RFC3339 timestamps
 and filter the live node's current modification time. The lower bound is
 inclusive and the upper bound is exclusive. Either may be used alone; when
@@ -728,17 +756,17 @@ capability boundary.
 docbank web [--no-browser]
 ```
 
-Starts or reconnects to the selected vault's compatible daemon and opens the
-embedded web application. It can browse and search the vault, inspect and
-download verified document authority, and upload local files into the current
-folder through the caller-declared/server-verified byte-identity contract. An
-owner-private launch file transfers the
-daemon-issued browser session without putting it in a child-process argument.
-The master API key stays on the ownership-pinned CLI connection and never
-enters the browser. Each daemon uses a separate, ephemeral loopback origin for
-the web application even when the API port is fixed. The application removes
-its scoped session token from the address bar before making requests and keeps
-it only in page memory.
+Opens the embedded web application, starting or reconnecting to a compatible
+daemon for the selected vault. Use the application to browse, search, inspect,
+download verified documents, and upload files into the current folder.
+See the [web application guide](usage/web.md) for all available workflows.
+
+The CLI transfers a daemon-issued browser session through an owner-private
+launch file, without putting it in a child-process argument. The master API
+key stays on the CLI's connection to the verified daemon and never enters the
+browser. Each daemon uses its own temporary loopback origin, even when the API
+port is fixed. The application removes its scoped session token from the
+address bar before requests and keeps it only in page memory.
 
 `--no-browser` prints that authenticated URL instead of opening it. The output
 contains a live scoped browser session and must be handled as a secret. See the
@@ -911,23 +939,32 @@ docbank backup restore [snapshot] --target <dir> [--repo <dir>] [--overwrite]
                        [--progress auto|bar|plain] [--json]
 ```
 
-Initializes an immutable Kit repository, captures a verified JSONL-native
-snapshot through the daemon, lists snapshot history, independently proves
-repository integrity, and restores a proved vault. `--repo` overrides
-`[backup] repo`; one of them is required. `create` briefly quiesces mutations
-only while pinning its logical view, then streams loose or packed content while
-normal daemon work resumes. `--jobs 1` serializes repository readers;
-`--force-unlock` is only for a repository lock whose owner is known to be gone.
-`create` and `verify` draw per-stage progress bars on a terminal and durable
-progress lines when redirected; `--progress` can force either form. `verify`
-checks the latest snapshot by default, one named snapshot positionally, or all
-snapshots with `--all`; `--quick` skips content reads. `restore` targets the
-latest snapshot by default and requires a separate `--target`; non-empty
-targets require `--overwrite`, which merges rather than clearing unrelated
-files. Compatible content is restored packed, with verified loose fallbacks
-reported explicitly. Every subcommand supports typed `--json` output;
-long-running operations suppress progress in that mode. See
-[Backup](usage/backup.md).
+Creates, lists, verifies, and restores recovery points in a Kit backup
+repository. Supply `--repo` or configure `[backup] repo`; the flag takes
+precedence.
+
+| Command | Behavior |
+|---------|----------|
+| `init` | Initialize a repository |
+| `create` | Capture a verified snapshot using logical JSONL metadata |
+| `list` | List snapshot history |
+| `verify` | Check the latest snapshot, a named snapshot, or every snapshot with `--all`; `--quick` skips content reads |
+| `restore` | Restore the latest or a named snapshot to a separate `--target` |
+
+`create` pauses mutations briefly to fix the metadata view for the snapshot.
+It then streams loose or packed content while normal daemon work resumes.
+
+A nonempty restore target requires `--overwrite`. Restore merges into it
+without clearing unrelated files. Compatible content is restored packed;
+the report identifies any verified loose fallback.
+
+`--jobs 1` serializes repository readers. Use `--force-unlock` only when the
+repository lock's owner is known to be gone.
+
+`create` and `verify` show per-stage progress bars on a terminal and persistent
+lines when redirected. `--progress` chooses the format. Every subcommand
+supports `--json`; long-running commands suppress progress in that mode.
+See [Backup & Restore](usage/backup.md) for the procedure.
 
 ## docbank daemon
 
@@ -939,24 +976,27 @@ docbank daemon restart
 docbank daemon stop
 ```
 
-`daemon run` runs the daemon in the foreground, logging to stderr, until
-signaled or stopped; it's usually invoked by `daemon start` in the
-background, and is useful directly for debugging. `daemon start` spawns
-it detached in the background, logging JSON to `$DOCBANK_HOME/logs/`.
-`daemon status` reports whether a daemon is running (pid, address,
-version, uptime) without starting one; `--json` emits `{"running": bool,
-"pid", "address", "version", "started_at"}` for agents. `daemon restart`
-stops the daemon if one is running (tolerating it not already running),
-then starts it again, printing `restarted: ...` or `started (was not
-running): ...` accordingly. `daemon stop` gracefully stops the running
-daemon (or prints `no daemon running`) without starting one. Every data
-command auto-starts a daemon if none is running — `daemon start` exists
-for explicit control (long-running background use, inspecting logs
-before running commands). `daemon start`, `daemon restart`, and
-auto-start all converge the same way: a running daemon whose version or
-API protocol does not match the invoking binary is stopped and replaced
-(printed as `replaced daemon <old> (pid N) with <new>: ...`), so after
-any of them succeeds, the one running daemon is current. See
+| Command | Behavior |
+|---------|----------|
+| `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
+| `daemon start` | Start detached in the background; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon status` | Report pid, address, version, and uptime without starting a daemon |
+| `daemon restart` | Stop a running daemon, then start it; also works when none is running |
+| `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
+
+`status --json` emits `{"running": bool, "pid", "address", "version",
+"started_at"}`. Restart prints `restarted: ...` or
+`started (was not running): ...` according to the prior state.
+
+Data commands start a daemon automatically when needed. Use `daemon start`
+for explicit control, such as inspecting logs before sending data commands.
+It normally invokes `daemon run` in the background; foreground use is useful
+for debugging.
+
+Start, restart, and automatic startup also replace an incompatible daemon.
+If its version or API protocol differs from the invoking binary, the CLI stops
+it and starts the matching one. It prints
+`replaced daemon <old> (pid N) with <new>: ...`. See
 [Daemon](architecture/daemon.md).
 
 ## docbank jobs
@@ -997,16 +1037,17 @@ change a watch.
 docbank update [--check] [--yes] [--force]
 ```
 
-Checks GitHub for a newer release and, unless `--check`, installs it:
-stops a running daemon, replaces the binary, and restarts the daemon
-from the new executable (rolling back to a restart of the old daemon on
-install failure). `--check` prints the current and latest versions and
-stops there. `--yes` skips the install confirmation prompt (required in
-non-interactive use, since there is no default without a terminal to
-prompt on). `--force` bypasses the cached check (release metadata is
-refetched) and allows replacing an unversioned dev build; it does not
-reinstall a release that is already current. Refuses to install a
-release with no published SHA256 checksum.
+Checks GitHub for a newer release and installs it unless `--check` is set.
+During installation, the command stops a running daemon, replaces the binary,
+and restarts from the new executable. If installation fails, it restarts the
+old daemon.
+
+- `--check` prints the current and latest versions without installing.
+- `--yes` skips confirmation. It is required for noninteractive installation.
+- `--force` fetches release metadata again and permits replacing an unversioned
+  development build. It does not reinstall an already-current release.
+
+The command refuses a release without a published SHA256 checksum.
 
 ## docbank openapi
 

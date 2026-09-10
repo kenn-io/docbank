@@ -6,16 +6,21 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
 
 # HTTP API
 
-The endpoints below exist in `docbank daemon run` and back the CLI's data
-commands — the CLI is an HTTP client of exactly this surface, with no other
-path into the vault.
+The HTTP API lets clients browse, retrieve, file, and reorganize documents.
+`docbank daemon run` serves it, and every CLI data command uses it. CLI commands
+cannot open the vault directly.
 
-**Design test: an agent must be able to do everything the CLI can,
-through the API alone.** Agents are not a secondary interface bolted
-onto a human tool; browsing, retrieving, filing, and reorganizing the
-tree must work for a client that only speaks HTTP — and the CLI itself
-takes no shortcut, so this is enforced by construction rather than by
-discipline.
+This page owns the wire contract: routes, authentication, preconditions, content
+verification, and errors. Use [Agent Guide](../agents.md) for a task-oriented
+starting point.
+
+| Reader question | Contract |
+| --- | --- |
+| Which operation should I call? | [Endpoint map](#shape) |
+| How do I reject a stale write? | [Revisions and `If-Match`](#concurrency-resource-revisions-and-if-match) |
+| When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
+| Which credentials does a request need? | [Authentication](#auth) |
+| How do I handle a failed request? | [Error mapping](#error-mapping) |
 
 ## Shape
 

@@ -7,54 +7,35 @@
 > **Alpha software.** Keep independent copies of irreplaceable material and
 > verify backups before relying on them.
 
-**Your documents. Your agents. One system.**
+**Keep, find, and recover documents in a vault you control.**
 
-Docbank is a self-sovereign document system for the records you and your
-agents need to keep, find, change, and prove. It combines a familiar virtual
-tree with stable document IDs, immutable content versions, indexed retrieval,
-recoverable deletion, verified backup, and optional permanent audited history.
-The vault catalog stays under your control instead of inside a provider
-account.
+Docbank is an open-source document vault for people, applications, and agents.
+Import files, organize them in folders, and search their names and extracted
+text. Move or rename a document without changing its ID. Save new versions
+without overwriting earlier ones, and verify backups before you need them.
 
-![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-vault-browser.png)
+![The Docbank web application browsing a synthetic vault.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
-The standalone CLI, web application, TUI, scripts, and agents all use the same
-authenticated daemon contract. Go applications can instead embed independently
-rooted vaults in-process through the public module at `go.kenn.io/docbank`.
+Use the command line, local web app, terminal browser, or authenticated HTTP
+API. A local background process, the daemon, owns the vault and handles these
+requests. Go applications can also [embed separately rooted vaults](docs/embedding.md).
 
-## Why Docbank?
+## What can I use it for?
 
-A path is a useful place to find a file, but a poor long-term identity. Cloud
-drives also make account access and provider policy part of the authority for
-your archive. Docbank separates those concerns:
-
-- a stable node ID continues to identify a document after moves and renames;
-- every content version is immutable and named by a verifiable SHA-256 digest;
-- revisions turn stale automation into explicit conflicts instead of silent
-  overwrites;
-- trash, permanent deletion, garbage collection, and pack reclamation are
-  separate decisions;
-- incremental backups are verified before restore results are published; and
-- physical content can be placed in fenced filesystem or S3-compatible stores
-  without making those stores the document catalog.
-
-Docbank is an archive and system of record, not a sync-and-share service. It
-does not mirror a working folder across devices or create public share links.
-
-## What you can do
-
-| Need | Docbank capability |
+| Task | Guide |
 | --- | --- |
-| File and find records | Recursive import, verified upload, virtual folders, tags, ranked name and extracted-text search |
-| Keep identity through change | Stable node IDs, immutable version UUIDs, verified replacement, reversion, and explicit version pruning |
-| Work safely with agents | Authenticated HTTP and OpenAPI, bounded listings, structured errors, revision preconditions, and digest receipts |
-| Recover from mistakes | Recoverable trash, revision-bound restore, explicit GC and repack, whole-vault verification |
-| Prove recovery | Incremental snapshot repositories, complete content verification, topology-independent restore |
-| Retain a permanent record | Preview-first audited scopes with sticky retention and independently replayed evidence |
-| Manage physical capacity | Loose and packed storage, automatic bounded packing, and deliberate multi-store placement, repair, salvage, and evacuation |
+| Import and organize records | [Importing](docs/usage/importing.md) and [tagging](docs/usage/organizing.md) |
+| Find a document | [Searching](docs/usage/searching.md) |
+| Keep earlier content versions | [Editing and versions](docs/architecture/editing-and-versions.md) |
+| Automate filing and retrieval | [Agent integration](docs/agents/integration.md) |
+| Recover deleted documents | [Trash and recovery](docs/usage/trash-and-gc.md) |
+| Create and verify backups | [Backup and restore](docs/usage/backup.md) |
+| Retain a permanent record of changes | [Audited history](docs/usage/audited-history.md) |
+| Add filesystem or S3-compatible storage | [Multi-store storage](docs/usage/storage.md) |
 
-See the [capability guide](docs/capabilities.md) for the full product map and
-the [visual tour](docs/tour.md) for the current web and terminal interfaces.
+Docbank does not synchronize a working folder across devices or create public
+share links. See [capabilities](docs/capabilities.md) for the product overview
+and [roadmap](docs/roadmap.md) for planned work.
 
 ## Install
 
@@ -83,12 +64,11 @@ cd docbank
 make install
 ```
 
-The [setup guide](docs/setup.md) is the toolchain authority for every platform.
+The [setup guide](docs/setup.md) lists the build requirements for each platform.
 
 ## Start a vault
 
-There is no initialization ceremony. The first data command creates the vault
-and starts its daemon:
+The first data command creates the vault and starts its daemon:
 
 ```bash
 docbank add ~/Documents --dest /archive
@@ -108,7 +88,7 @@ docbank mv /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
 docbank verify
 ```
 
-Create and prove an incremental recovery point:
+Create a backup, verify it, and restore a separate copy to inspect:
 
 ```bash
 docbank backup init --repo ~/Backups/docbank
@@ -120,19 +100,20 @@ docbank backup restore --repo ~/Backups/docbank --target ~/Restores/docbank-test
 The [ten-minute quickstart](docs/quickstart.md) walks through versions, tags,
 search, recoverable trash, maintenance, and restore.
 
-## Deployment and trust boundaries
+## Who owns the vault and its storage?
 
 - **Standalone:** one daemon owns a vault; every CLI, browser, TUI, script, and
-  external agent goes through its loopback-authenticated API.
+  external agent goes through its authenticated API on the local machine.
 - **Embedded:** one Go application owns each independently rooted vault
   in-process, with selectable CGO or pure-Go SQLite.
 - **Secondary storage:** Docbank verifies content in configured filesystem and
   S3-compatible stores but does not encrypt it. Protect those namespaces with
   owner access controls and storage encryption appropriate to their operator.
 - **Backup:** a stopped copy of the local database and primary blob directory
-  is complete only when every retained blob still has primary authority.
-  `docbank backup create` remains complete across remote-only placement and is
-  the preferred portable recovery path.
+  is complete only when primary storage has a verified copy of every retained
+  content file.
+  Use `docbank backup create` to include retained content held only in secondary
+  stores. See the [backup guide](docs/usage/backup.md) for the full rules.
 
 ## Documentation
 

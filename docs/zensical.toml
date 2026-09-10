@@ -1,7 +1,7 @@
 [project]
 site_name = "docbank"
-site_url = "https://www.docbank.ai/"
-site_description = "Docbank is a self-sovereign document system for people and agents, with indexed retrieval, stable identity, verifiable content, incremental recovery, and audited history."
+site_url = "https://docbank.ai/docs/"
+site_description = "Keep, find, update, and recover documents in a vault you control."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>.'
 docs_dir = "docs"
@@ -70,6 +70,7 @@ homepage = "/"
 [project.theme]
 variant = "modern"
 custom_dir = "overrides"
+font = false
 features = [
   "navigation.instant",
   "navigation.instant.progress",

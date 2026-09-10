@@ -5,46 +5,21 @@ description: Why agents use docbank, which interface to choose, and the safety m
 
 # Docbank for agents
 
-Docbank is a document system of record with an agent-ready interface, not a
-database that an automation should open directly. One daemon owns the vault.
-The CLI, agents, scripts, and external applications all use its authenticated
-HTTP contract and therefore share the same validation, concurrency, integrity,
-and maintenance rules.
-
-This makes Docbank useful when an agent needs to file, retrieve, reorganize,
-or verify documents without taking ownership of their physical storage format.
+Use Docbank to file, find, update, and verify documents through one authenticated
+API. The daemon owns the vault and checks each request. Agents use the same
+validation, revision checks, and maintenance rules as the CLI.
 
 ## What the contract gives an agent
 
-<div class="feature-grid">
-  <section>
-    <h3>Stable identity</h3>
-    <p>Node IDs survive renames and moves; immutable SHA-256 identities describe file content.</p>
-  </section>
-  <section>
-    <h3>Conflict evidence</h3>
-    <p>Revisions and <code>If-Match</code> turn stale read-modify-write decisions into explicit HTTP 412 responses.</p>
-  </section>
-  <section>
-    <h3>Byte evidence</h3>
-    <p>Uploads declare hash and size; downloads can be checked against headers, a verified digest trailer, and the node record.</p>
-  </section>
-  <section>
-    <h3>Bounded automation</h3>
-    <p>Pagination, search limits, structured problem codes, dry runs, and NDJSON progress avoid scraping human output.</p>
-  </section>
-</div>
-
-In prose: node IDs survive renames and moves while immutable SHA-256
-identities describe content, so an agent's references stay valid across
-reorganization. Revisions with `If-Match` preconditions turn stale
-read-modify-write races into explicit HTTP 412 conflicts instead of silent
-overwrites. Uploads declare hash and size, and downloads carry digest
-evidence, so byte identity is checked rather than assumed. Node listings
-and search are bounded, and errors and maintenance are structured —
-pagination and search limits where the contract defines them, problem
-codes, dry runs, NDJSON progress — so automations never scrape
-human-oriented output.
+- **Stable references:** a node ID keeps identifying the same document after a
+  rename or move. A SHA-256 hash identifies its exact content.
+- **Conflict detection:** send the revision you inspected with `If-Match`.
+  If another writer changed the node, the daemon returns HTTP 412.
+- **Content checks:** uploads declare their hash and size. Downloads provide
+  headers and a final digest trailer that the client must verify.
+- **Structured results:** use paginated listings, bounded search, problem
+  codes, and progress records instead of parsing human output. NDJSON progress
+  sends one JSON record per line.
 
 ## Choose the right surface
 
@@ -63,56 +38,31 @@ non-goals.
 
 ## The mental model
 
-1. **The daemon is the authority.** Never open `docbank.db`, rewrite pack
-   files, or infer live content from filesystem layout.
-2. **IDs identify nodes; paths describe current placement.** Retain a node ID
-   after inspecting it. Re-resolve paths when the intent is path-specific.
-3. **Content identity is immutable.** A file node names a stable current-version
-   UUID plus SHA-256 and size. List or retrieve versions by stable ID; `put`
-   adds verified bytes and `revert` adds a new head from a prior version rather
-   than modifying stored history in place.
-4. **A stream is not verified until it finishes.** Read through successful EOF
-   and require the digest evidence before publishing downloaded bytes.
-5. **Destruction has stages.** Trash is recoverable; trash empty removes tree
-   history; GC removes unreachable loose bytes or marks packed payload dead;
-   repack reclaims physical packed space.
-6. **Dry run before policy-changing maintenance.** Preview destructive work,
-   evaluate the result, then make the separate explicit run request.
-7. **Placement is authority, not a copy hint.** A successful storage operation
-   may change which store is allowed to satisfy reads. Bind the preview token
-   to the reviewed plan, follow its durable job ID, and inspect an uncertain
-   result rather than replaying the move blindly.
+- **The daemon owns storage.** Never open `docbank.db`, rewrite pack files, or
+  infer live content from the filesystem layout.
+- **IDs identify nodes; paths give their current location.** Keep the ID after
+  inspecting a node. Resolve the path again when the request depends on its
+  current location.
+- **Versions preserve prior content.** A file has a current version UUID,
+  SHA-256, and size. `put` adds a version. `revert` creates a new current version
+  from a prior one and leaves stored history intact.
+- **A download needs a final check.** Read through successful EOF and verify
+  the digest evidence before publishing the bytes.
+- **Deletion has stages.** Trash, trash empty, GC, and repack have different
+  effects. See [destructive maintenance](agents/integration.md#treat-destructive-maintenance-as-a-two-step-decision).
+- **Storage moves change where Docbank may read content.** Review a preview,
+  execute its token, and follow the durable job ID. Inspect an uncertain result
+  before retrying the move. See [Multi-store Storage](usage/storage.md).
 
 ## Common agent workflows
 
-- **File local material:** preflight large server-side trees with the intended
-  include and exclude patterns, require no errors or over-limit files, then
-  ingest with the same selection and inspect every added, skipped, excluded,
-  and failed result.
-- **Write from another machine:** upload one file with declared SHA-256, size,
-  name, and destination directory ID; accept success only when the returned
-  server-computed identity matches.
-- **Resolve known bytes:** query content references by canonical SHA-256 before
-  uploading; inspect every bounded result because the same bytes may be current
-  or historical on several live or trashed nodes.
-- **Replace an inspected file:** retain its node ID and revision, send raw bytes
-  with declared SHA-256 and size, and require the returned node, new version,
-  computed identity, and ETag to agree before accepting success.
-- **Adopt a prior version:** retain the target node ID and revision, select a
-  version belonging to it, and require the reversion receipt's node, source,
-  new head, content authority, and ETag to agree. No byte transfer is involved.
-- **Reorganize after inspection:** read by ID, retain the revision, and mutate
-  with `If-Match`. On `stale_revision`, re-read and reconsider rather than
-  blindly replaying the action.
-- **Retrieve for another system:** stage the response privately, hash while
-  reading, require successful EOF and the digest trailer, then publish.
-- **Protect a workflow boundary:** create a tagged incremental snapshot, follow
-  structured progress to a terminal result, and verify the repository on the
-  schedule appropriate for its storage medium.
-- **Manage capacity without losing authority:** inspect store health, preview
-  placement or evacuation, execute the one-use token, and reconcile the durable
-  job receipt. Treat unavailable, fenced, missing, and corrupt locations as
-  different outcomes with different recovery actions.
+| Reader task | Follow this guide |
+|-------------|-------------------|
+| Import a local tree or upload from another machine | [Create and ingest safely](agents/integration.md#create-and-ingest-safely) |
+| Find existing content or download a version | [Read a tree without unbounded responses](agents/integration.md#read-a-tree-without-unbounded-responses) |
+| Replace content, adopt a prior version, or reorganize inspected nodes | [Use revisions for read-modify-write](agents/integration.md#use-revisions-for-read-modify-write) |
+| Capture a backup and check its final result | [Follow backup progress](agents/integration.md#follow-backup-progress-without-scraping-a-cli) |
+| Preview placement, repair storage, or evacuate a store | [Multi-store Storage](usage/storage.md) |
 
 ## Start integrating
 
@@ -120,5 +70,5 @@ non-goals.
 2. Configure a stable loopback port and strong API key.
 3. Follow the [integration guide](agents/integration.md) through health,
    authentication, bounded reads, and a revision-aware filing loop.
-4. Treat the running OpenAPI document and structured problem codes as the wire
-   authority; treat these pages as the maintained operating model.
+4. Use the running OpenAPI document for exact request and response fields.
+   Use structured problem codes to decide how to handle failures.

@@ -5,10 +5,12 @@ description: Connect an agent to docbank safely using its OpenAPI contract, auth
 
 # Agent integration guide
 
-Standalone Docbank is daemon-first: the CLI, external agents, and scripts all
-use the same HTTP API. An external integration never opens `docbank.db` or the
-blob store directly. Go applications that own a separately rooted archive can
-instead use the [embedded API](../embedding.md).
+Connect an agent through Docbank's authenticated HTTP API. The daemon owns
+the vault; the CLI, agents, and scripts send requests to it. An external
+integration must not open `docbank.db` or stored content directly.
+
+Go applications that own a separate archive can use the
+[embedded API](../embedding.md).
 
 ## Choose the interface
 
@@ -48,12 +50,14 @@ configuration and runner state rather than assuming the local file is active:
 docbank watch list --json
 ```
 
-Each item reports the machine-local source, virtual destination, full settle
-window, optional minimum source age, scan interval, literal exclusions, and
-current job record. A nonzero minimum age composes with rather than replaces
-the settle window, which is useful when append-heavy session JSONL may pause
-without being complete. This is a read-only view; changing `config.toml` still
-requires a daemon restart.
+Each item reports the local source, virtual destination, settle window,
+minimum source age, scan interval, literal exclusions, and current job record.
+The settle window is the time a file must remain unchanged. A nonzero minimum
+age adds a separate check; it does not replace that window.
+
+This command only inspects configuration. After changing `config.toml`, restart
+the daemon. See [Watched inboxes](../configuration.md#watched-inboxes) for the
+complete timing and source-identity rules.
 
 The canonical contract is generated from the running route definitions:
 
@@ -103,7 +107,8 @@ export DOCBANK_API_KEY=replace-with-a-long-random-secret
 
 ## Prove reachability and authentication separately
 
-`/health` is intentionally auth-exempt:
+First check that the daemon is reachable. `/health` does not require
+authentication, so success here does not prove that your key works:
 
 ```bash
 curl --fail "$DOCBANK_URL/health"
@@ -119,16 +124,25 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/path"
 ```
 
-A node response includes stable `id`, mutable `revision`, `kind`, and
-timestamps. File nodes also include stable `current_version_id`, immutable
-SHA-256 `blob_hash`, an auxiliary `md5`, and raw `size`; directories omit
-content identity. Live single-node responses include the current `path` and,
-once the daemon has extracted it, `source_metadata` with typed facts read from
-the original bytes. Fields the extractor marks sensitive, such as GPS
-coordinates, are returned to API-key callers and omitted from browser
-sessions; treat that as a display rule, not a boundary, because the same
-session can download the original. Node and version IDs survive renames; use a
-live path only for display or a one-shot path operation.
+A node response identifies what the agent inspected:
+
+| Field | Meaning |
+|-------|---------|
+| `id` | Stable node ID; unchanged by renames and moves |
+| `revision` | Current node revision; use it for later conditional writes |
+| `kind`, timestamps | Node type and recorded times |
+| `current_version_id` | Current content version ID, for files |
+| `blob_hash`, `md5`, `size` | SHA-256 identity, auxiliary MD5, and raw byte count, for files |
+| `path` | Current path, on live single-node responses |
+| `source_metadata` | Typed facts extracted from original bytes, once available |
+
+Directories omit content identity. Version IDs also survive renames. Use a
+live path for display or a one-shot operation on that location.
+
+API-key callers receive source fields marked sensitive, such as GPS
+coordinates. Browser responses omit those fields, but the same session can
+still download the original file. The omission controls display, not access
+to information in the original.
 
 The CLI exposes the same distinction without requiring JSON parsing. Human
 listings print copyable selectors such as `id:42`, and existing-node commands
@@ -177,32 +191,34 @@ curl --fail-with-body \
   "$DOCBANK_URL/api/v1/nodes/1/children?limit=500&offset=0"
 ```
 
-Search is bounded separately. Always inspect `truncated`; increase the limit
-or refine the query rather than assuming the returned array is complete.
-Each result's `match` is `name`, `content`, or `filter`. Name matches keep their established
-ranking and always precede content-only matches, so adding content indexing does
-not reorder an agent's filename-based workflow. Content search covers only the
-current version of verified UTF-8 plain text, Markdown, JSON, and JSONL documents
-up to 16 MiB. Extraction runs asynchronously; after a write, inspect
-`docbank jobs` or retry briefly instead of treating an immediate content miss as
-permanent. PDF, Office, image, and OCR text extraction are not implemented.
-To restrict the same ranking to one current tag assignment, send the canonical
-tag UUID as `tag_id`; retain the echoed `tag_id` as the filter authority rather
-than relying on the tag's mutable display name.
-To restrict results by the current file version's format, send a valid
-parameter-free base type as `mime_type`. The response echoes its normalized
-spelling. For example, `text/plain` includes stored charset parameters but does
-not match a retained historical version or a directory.
-To restrict results to one subtree, resolve its live directory once and send
-the stable ID as `under_node_id`. The selected directory is excluded; all
-descendant name and content candidates share the same constraint. Retain the
-echoed ID as authority instead of treating the directory's mutable path as the
-filter identity.
-Use `modified_since` and `modified_before` for an absolute current-node time
-window. The first bound is inclusive and the second exclusive. Both accept
-RFC3339 offsets; the response echoes canonical UTC values. These fields refer
-to the live node's `modified_at`, not source-file provenance or historical
-content-version time.
+### Search current documents
+
+Always inspect `truncated` before treating search results as complete.
+Each result's `match` is `name`, `content`, or `filter`. Name matches keep their
+ranking and appear before content-only matches.
+
+Content search covers current versions of verified UTF-8 plain text, Markdown,
+JSON, and JSONL documents up to 16 MiB. Extraction runs in the background.
+After a write, inspect `docbank jobs` or retry briefly before treating a
+missing content match as permanent. Vault text search does not extract PDF,
+Office, image, or OCR text.
+
+Use these filters to narrow the same ranking:
+
+- **`tag_id`:** send a canonical tag UUID for one current assignment. Keep the
+  echoed ID; a tag's display name can change.
+- **`mime_type`:** send a valid base media type without parameters. The daemon
+  returns its normalized spelling. `text/plain` includes stored charset
+  parameters, but excludes directories and non-current versions.
+- **`under_node_id`:** resolve a live directory and send its stable ID. Results
+  include descendants, excluding the selected directory. Keep the echoed ID;
+  the directory's path can change.
+- **`modified_since`:** include nodes at or after this modification time.
+- **`modified_before`:** include nodes strictly before this modification time.
+
+Time filters accept RFC3339 offsets and return canonical UTC values. They
+refer to the live node's `modified_at`, not the source file's timestamp or a
+historical content version's time.
 
 The `q` parameter may be omitted when `tag_id`, `modified_since`, or
 `modified_before` is present. This returns a bounded filter page ordered by
@@ -230,7 +246,8 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/search"
 ```
 
-To list every live node changed in a window, leave out `q`:
+To request live nodes changed in a time window, leave out `q`. The result is
+still bounded; inspect `truncated`:
 
 ```bash
 curl --fail-with-body --get \
@@ -241,9 +258,11 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/search"
 ```
 
-For shell automation, prefer `get` when the bytes must become a local file. It
-keeps incomplete bytes private and emits a structured proof receipt only after
-the complete stream verifies and is atomically published:
+### Download and verify content
+
+Use `get` when a shell workflow needs a local file. It keeps incomplete bytes
+private and returns a JSON receipt only after verifying and publishing the
+complete file:
 
 ```bash
 docbank get id:42 ./document.bin --json
@@ -258,17 +277,21 @@ curl --fail \
   --output document.bin.staging
 ```
 
-The content response sends `X-Docbank-Content-Version`,
-`X-Docbank-Blob-Hash`, and `X-Docbank-Blob-Size` before the body. After the body
-it sends an
+Before the body, the daemon sends `X-Docbank-Content-Version`,
+`X-Docbank-Blob-Hash`, and `X-Docbank-Blob-Size`. After the body, it sends an
 [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) `Content-Digest`
-trailer computed from the bytes actually streamed. A client
-that needs independent transfer proof writes to private staging, hashes the
-staged bytes itself, and compares that digest, the trailer, and the file node's
-`blob_hash`. Require the version
-header to equal the node's `current_version_id`; do not treat catalog headers
-alone as a fresh physical verification. Sync and close the staging file before
-publishing it at the caller-visible destination.
+trailer computed from the bytes it streamed. A trailer is an HTTP field sent
+after the response body.
+
+The client must verify the download before publishing it:
+
+1. Write the response to a private staging file and hash the received bytes.
+2. Read through successful EOF and require the digest trailer.
+3. Compare the computed digest, the trailer, and the node's `blob_hash`.
+4. Require the version header to equal `current_version_id` from the node.
+5. Sync and close the staging file, then publish it at the destination.
+
+The initial catalog headers alone do not prove that the streamed bytes verify.
 
 List a node's immutable versions with bounded pagination, then address one
 record or byte stream without relying on its current path:
@@ -294,8 +317,13 @@ recording time, transition kind, and introducing operation UUID. Version-byte
 responses use the same headers and terminal digest contract as current-node
 content.
 
-Resolve known bytes to every authoritative node/version reference without
-guessing from paths or physical storage:
+Discard staged content if the request is cancelled, the body ends in error,
+or the trailer is absent. A partial stream is not verified content. Docbank
+does not drain an abandoned response to complete verification.
+
+### Find references to known content
+
+Find the nodes and versions that retain a known SHA-256 hash:
 
 ```bash
 curl --fail-with-body --get \
@@ -311,13 +339,9 @@ then live prior versions, then trash. A result's path is present only for a
 live node. No result means no logical content version currently retains the
 hash, even if unreferenced physical bytes have not yet been swept by GC.
 
-Read the response through successful EOF and require the trailer. A readable
-prefix is not verified content: if the request is cancelled, the body ends in
-error, or the trailer is absent, discard any staged output rather than
-publishing it. Docbank does not drain an abandoned response merely to complete
-verification.
+### Verify one stored file
 
-For a bounded server-side check, send the revision from the node response:
+For a server-side check of one blob, send the revision from the node response:
 
 ```bash
 curl --fail-with-body -X POST \
@@ -337,9 +361,9 @@ what content to verify.
 
 ## Organize with stable tags
 
-Create a tag once, then retain its returned UUID and revision/ETag. Names are
-mutable display labels; IDs are durable authority. A tag revision covers both
-its definition and complete assignment set.
+Create a tag once and keep its UUID and revision/ETag. The ETag is the HTTP
+representation of the revision. Names can change; IDs continue identifying
+the same tag. A tag revision covers its definition and all assignments.
 
 ```bash
 curl --fail-with-body -X POST \
@@ -355,16 +379,17 @@ curl --fail-with-body -X PUT \
 ```
 
 Assignment receipts return `changed`, the resulting node revision/ETag, and
-the tag's current revision and assignment count. `changed: false` is a successful
-idempotent convergence, not an error. Page `GET /nodes/{id}/tags` and `GET
-/tags/{tag_id}/nodes`; the latter includes trashed nodes without pretending
-they have a live path. Set `live_only=true` when one bounded response must
-contain only live nodes and paths from the same metadata snapshot;
-`omitted_trashed` reports the assignments excluded by that projection. Rename
-and delete by UUID with the most recently
-inspected tag ETag in `If-Match`; a concurrent definition or assignment change
-returns `412 stale_revision`. Deleting a tag removes assignments only, never
-nodes or document bytes.
+the tag's current revision and assignment count. `changed: false` means the
+requested assignment state already exists; it is a successful result.
+
+Page through `GET /nodes/{id}/tags` or `GET /tags/{tag_id}/nodes`. The latter
+includes trashed nodes with no live path. Set `live_only=true` to receive only
+live nodes and paths from one metadata snapshot. `omitted_trashed` counts the
+excluded assignments.
+
+Rename or delete by UUID with the inspected tag ETag in `If-Match`. If its
+definition or assignments changed, the daemon returns `412 stale_revision`.
+Deleting a tag removes its assignments, not nodes or document bytes.
 
 When the desired target is a path, send `{"path":"/records/report.pdf"}` to
 `PUT` or `DELETE /path/tags/{tag_id}`. Do not resolve the path with `GET /path`
@@ -387,7 +412,8 @@ curl --no-buffer --fail-with-body \
   "$DOCBANK_URL/api/v1/backup/snapshots/stream"
 ```
 
-The response is NDJSON. Each `progress` line contains `stage`, `done`, `total`,
+The response is NDJSON: one JSON record per line. Each `progress` line contains
+`stage`, `done`, `total`,
 `bytes_done`, `bytes_total`, and `final`. The last line is either `result` with
 the stable snapshot summary or `error` with the normal problem fields. Treat
 EOF before that terminal line as failure. In particular, do not interpret HTTP
@@ -451,13 +477,18 @@ curl --fail-with-body -X PUT \
   "$DOCBANK_URL/api/v1/nodes/42/content"
 ```
 
-Do not accept HTTP 200 alone. Require the receipt's `computed_hash` and
-`computed_size` to equal the local values; require its node and version to both
-name node 42; require `content_replace`, the next node revision, matching blob
-identity, and `node.current_version_id == version.id`; and require the response
-ETag to encode that resulting revision. The old version remains addressable.
-A `412` means the decision is stale—re-read and decide again rather than
-blindly retrying with a fresh revision.
+Accept replacement only when every receipt check passes:
+
+- `computed_hash` and `computed_size` equal the local values.
+- The node and version both name node 42.
+- The operation is `content_replace`.
+- The node revision advances by one.
+- The returned blob identity matches.
+- `node.current_version_id == version.id`.
+- The response ETag encodes the resulting revision.
+
+HTTP 200 alone is insufficient. The old version remains available. On `412`,
+read the node again and reconsider the decision before retrying.
 
 `docbank edit` is a human-directed wrapper around this same contract: it opens
 an interactive local editor and intentionally has no JSON mode. Agents should
@@ -476,13 +507,18 @@ curl --fail-with-body -X POST \
   "$DOCBANK_URL/api/v1/nodes/42/revert"
 ```
 
-Require `source_version.id` to equal the requested ID and all three records to
-name node 42. Require the new version to be `content_revert`, to name that source,
-and to reproduce its hash, size, and media type exactly. The node must install
-the new version at revision 9 and the ETag must agree. Reversion is metadata-only,
-so it has no computed digest receipt; it relies on already-authoritative source
-bytes and does not copy them. Use the ordinary content verification surface when
-a fresh physical proof is part of the workflow.
+Accept reversion only when every receipt check passes:
+
+- `source_version.id` equals the requested version ID.
+- All three records name node 42.
+- The new version is `content_revert` and names the selected source.
+- Its hash, size, and media type exactly match that source.
+- The node installs the new version at revision 9.
+- The ETag matches the resulting revision.
+
+Reversion changes metadata without copying bytes, so it returns no newly
+computed digest. Use content verification when the workflow also needs a fresh
+check of stored bytes.
 
 Version retention is unlimited by default. To release unwanted non-current
 history, preview exactly one selector through the authenticated pruning route:
@@ -640,15 +676,20 @@ curl --fail-with-body -X POST \
   "$DOCBANK_URL/api/v1/ingest"
 ```
 
-Inspect `added`, `skipped`, `excluded`, and every member of `failed`. Repeating the same
-ingest after fixing a partial failure is safe; successful content converges to
-`skipped` rather than another copy. Set `replace` to `true` on either ingest
-form when the exact destination file represents one changing source. The
-daemon checks the destination node and revision before reading source bytes,
-versions changed content in place, skips equal hash and size without changing
-stored MIME or history, and fails directories, stale revisions, and exact-name
-create races without falling back to a suffix. Omit the field for ordinary
-suffixing.
+Inspect `added`, `skipped`, `excluded`, and every item in `failed`. After fixing
+a partial failure, repeat the same ingest. Files already accepted become
+`skipped` instead of creating another copy.
+
+Set `replace: true` on either ingest form when one destination file represents
+a changing source. The daemon then:
+
+1. Reads the destination node and revision before reading source bytes.
+2. Adds a version when the content changes, keeping the node ID.
+3. Skips equal hash and size without changing stored MIME type or history.
+
+Directories, stale revisions, and concurrent creation of the exact destination
+name fail that file. Replacement does not fall back to a suffix. Omit `replace`
+to use ordinary collision suffixing.
 
 Include and exclude values use Go's `path.Match` grammar on slash-separated
 source-relative paths. Use `/` separators on every platform; backslashes are
@@ -658,15 +699,16 @@ are rejected before traversal. Use bracket expressions such as
 `report[[]1].txt` for literal metacharacters instead of backslash escaping.
 Watched-inbox exclusions remain literal.
 
-For an interactive or long-running local integration, send the same body to
-`POST /api/v1/ingest/stream` with `Accept: application/x-ndjson`. Read every
-line through EOF. `progress` events cover the metadata-only `scan` and content
-`ingest` stages; a `result` carrying the final report or an `error` is the
-single terminal event. HTTP 200 means only that streaming started. Treat EOF
-without a terminal event, malformed events, or data after the terminal event
-as failure. Cancelling or disconnecting cancels traversal and the active blob
-write; only files whose individual publication already completed retain
-authority and are safely reported as skipped on a rerun.
+For streaming progress, send the same body to `POST /api/v1/ingest/stream`
+with `Accept: application/x-ndjson`. Read every line through EOF. `progress`
+events cover the metadata-only `scan` and content `ingest` stages. The one
+terminal event is either `result` with the final report or `error`.
+
+HTTP 200 means streaming started. Treat missing terminal events, malformed
+events, or data after the terminal event as failure.
+
+Cancellation or disconnection stops traversal and the active blob write.
+Files already published remain in the vault and are skipped on a rerun.
 
 Remote writers use a file-granular multipart request. Compute the expected
 identity before sending bytes, and address the destination by stable directory
@@ -744,18 +786,19 @@ curl --fail-with-body \
   "$DOCBANK_URL/api/v1/audit/history?node_id=57&limit=50"
 ```
 
-Events are newest first and bind stable event, operation, scope, node-revision,
-and optional path/content identities. A path state distinguishes `/live/paths`
-from canonical `@trash/known/...` and `@trash/unknown/...` coordinates. Tag and
-provenance events include an `attachment` object with a discriminating `kind`,
-stable `identity`, and typed `before`/`after` states, so clients do not need to
-decode canonical audit internals. Follow `next_cursor` to read older events;
-send it back unchanged and never derive meaning from its encoding. The cursor
-is node-bound and remains stable when newer operations append. Treat
-`audit_not_enrolled` as a valid answer that the node is outside permanent
-retention, and `invalid_audit_cursor` as a request error. A protected node may
-have an empty timeline when it was adopted at enrollment and has not changed;
-use status membership, not event count, to decide protection.
+Events appear newest first. Each identifies its event, operation, scope, and
+node revision, plus path or content identities when applicable. Path states
+use `/live/paths`, `@trash/known/...`, or `@trash/unknown/...`. Tag and
+provenance events include an `attachment` with `kind`, stable `identity`, and
+typed `before`/`after` states.
+
+Send `next_cursor` back unchanged to read older events. It belongs to that
+node and stays valid when newer events arrive. Do not interpret its encoding.
+
+`audit_not_enrolled` means the node is outside permanent retention.
+`invalid_audit_cursor` is a request error. An enrolled node can have no events
+if it has not changed since enrollment. Use status membership to determine
+protection; an empty timeline is insufficient.
 
 To answer “what changed anywhere in this protected scope?”, use the stable
 scope ID returned by audit status:
@@ -807,7 +850,10 @@ and `scope_diverged`. Evidence mismatch is reported in the body rather than as
 an HTTP transport error so agents can inspect the current verified evidence and
 byte state before escalating.
 
-The current public boundary permits one permanent scope per vault.
+A vault can have several disjoint permanent directory scopes. Overlapping and
+nested scopes are rejected. See
+[Permanent Audited History](../usage/audited-history.md) for scope membership
+and maintenance rules.
 
 ## Treat destructive maintenance as a two-step decision
 

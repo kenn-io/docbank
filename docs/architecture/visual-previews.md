@@ -5,18 +5,23 @@ description: How Docbank identifies and retains canonical visual derivatives.
 
 # Visual previews
 
-Docbank has a separate catalog for visual previews of images, camera RAW files,
-and video. A preview is a retained derivative of one immutable content version.
-It does not replace the original and does not change document identity.
+A visual preview lets an application display a document without decoding the
+original each time. Docbank retains the preview as one image tied to an
+immutable content version. The original bytes and document identity remain
+unchanged.
 
-The catalog is deliberately separate from document renditions. Document
-renditions describe normalized evidence, text, and provider artifacts. A visual
-preview is a single display-oriented image that another application can resize
-for grids, detail views, or search results without decoding the original again.
+The preview catalog can describe image, camera RAW, and video sources. The
+[built-in producer](#backup-and-embedded-reads) supports the still-image formats
+listed below. Applications can resize a preview for grids, details, or search
+results.
+
+Docbank keeps previews separate from **document renditions**, which retain
+normalized evidence, text, and provider artifacts.
 
 ## Recipe identity
 
-Every preview records the complete recipe that can affect its bytes:
+A **recipe** records every choice that can affect the preview's bytes. Each
+preview stores:
 
 - the maximum output edge;
 - output image format;

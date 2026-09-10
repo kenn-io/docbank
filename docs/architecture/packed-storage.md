@@ -5,14 +5,19 @@ description: The shared Kit packed-CAS layer and docbank's application-owned aut
 
 # Loose and packed content
 
-The shared engine is implemented in `go.kenn.io/kit/packstore`, and msgvault has
-adopted it without changing its pack format or migration behavior. docbank uses
-the same engine for durable raw or zstd loose publication, catalog-authorized
-mixed reads, and physical lifecycle coordination. Existing vaults require no
-conversion: ordinary writes still land loose, and raw loose files remain valid
-indefinitely. New loose objects of at least 4 KiB use zstd when it reduces the
-stored size by at least 10%; otherwise Docbank keeps the raw bytes. Compression
-is a managed physical choice, not a format setting exposed to standalone users.
+Docbank first stores new content as individual **loose objects**. Packing later
+combines eligible objects into sealed, immutable **pack files**. The catalog
+selects the stored copy for each read, so packing does not change document or
+content identity.
+
+Docbank uses the shared `go.kenn.io/kit/packstore` engine for writes, reads, and
+physical maintenance. msgvault uses the same engine without changing its pack
+format or migration behavior. Existing raw loose files remain valid
+indefinitely and need no conversion.
+
+New loose objects of at least 4 KiB use zstd when it saves at least 10% of their
+size. Otherwise Docbank keeps the raw bytes. Docbank manages this choice;
+standalone users do not select a compression format.
 
 `docbank storage status` exposes loose and packed inventory through the
 authenticated daemon API, and `docbank storage pack` explicitly moves authorized
@@ -100,15 +105,18 @@ keeps its raw or zstd encoding so publication and catalog replacement remain
 crash-safe. Packed or missing authority follows the configured loose-compression
 policy. Retired immutable pack bytes are reclaimed only by a later repack pass.
 
-The separate limits are deliberate. The 4 GiB admission ceiling matches Kit's
-format-v1 raw-object ceiling, preserving backup eligibility for every admitted
-object. Verified loose streaming and backup keep the measured 1 GiB workload
-within the recorded memory envelope, while even a 1 GiB pack candidate could
-require about 2.004 GiB of scratch for preparation before frame overhead.
-Raising the 64 MiB packed-content limit therefore remains a separate decision
-that requires representative measurements of temporary space, descriptors,
-throughput, cancellation, and restore behavior. Active streams can also
-temporarily exceed the idle reader-cache descriptor count.
+The limits serve different purposes:
+
+- The 4 GiB admission ceiling matches Kit's format-v1 raw-object ceiling. Every
+  admitted object can therefore participate in backup.
+- The 64 MiB packed-content limit bounds pack preparation. A 1 GiB pack
+  candidate could require about 2.004 GiB of scratch space before frame overhead.
+
+Measured 1 GiB loose streaming and backup workloads stay within the recorded
+memory envelope. That does not measure pack preparation at 1 GiB. Raising the
+packed-content limit requires representative measurements of temporary space,
+file descriptors, throughput, cancellation, and restore behavior. Active streams
+can temporarily exceed the idle reader cache's descriptor count.
 
 Large loose objects retain the filesystem tradeoff that packing solves for
 small-object collections. In the incompressible case, one large object can

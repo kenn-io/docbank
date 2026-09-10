@@ -12,6 +12,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  docs:
+    name: Public documentation
+    runs-on: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install pinned documentation tools
+        run: |
+          ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Install browser test dependencies
+        run: |
+          npm ci --prefix frontend
+          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium webkit
+
+      - name: Verify documentation sources and assets
+        run: |
+          bash scripts/docs-assets-sync.test.sh
+          npm --prefix frontend run screenshots:check
+          make docs-subpath-test
+          node --test scripts/docs/*.test.mjs
+          make docs-build
+
+      - name: Verify Vercel upload boundary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN must be configured for trusted main-branch documentation checks" >&2
+            exit 1
+          fi
+          npm install --global vercel@58.4.4
+          mkdir -p .superpowers
+          vercel deploy --dry --json --project docbank.ai --scope kenn-software --token "$VERCEL_TOKEN" > .superpowers/vercel-dry-run.json
+          node scripts/docs/assert-vercel-dry-run.mjs .superpowers/vercel-dry-run.json
+
+      - name: Verify documentation in Chromium and WebKit
+        run: |
+          npm --prefix frontend run docs-site:check
+          npm --prefix frontend run docs-site:test
+
   frontend:
     name: Web application
     runs-on: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}

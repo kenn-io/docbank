@@ -5,10 +5,14 @@ description: How Docbank records bounded facts found inside original files.
 
 # Source metadata
 
-Docbank extracts metadata from verified original bytes and stores it as local,
-immutable evidence. The evidence belongs to the content SHA-256, not to a
-filename or current path. A content version joins that evidence with its node
-and attachment facts when it is read.
+Docbank records facts found inside original files, such as image dimensions,
+camera settings, and PDF properties. It verifies the original bytes before
+extracting this **source metadata** and retains each result as immutable
+local evidence.
+
+The evidence belongs to the content SHA-256. When a caller reads a content
+version, Docbank returns that evidence with the version's node and attachment
+facts. Moving or renaming the file does not change the extracted evidence.
 
 Source metadata does not change document identity and is not user-authored
 annotation. Embedded values can be incomplete, incorrect, or sensitive. They
@@ -16,14 +20,13 @@ are useful evidence, not authority over the original bytes.
 
 ## Typed fields
 
-Every field has a canonical key, a source namespace and label, a typed value,
-and a sensitive flag. The current contract supports strings, string lists,
-integers, numbers, booleans, and timestamps that preserve the precision and
-timezone stated by the source.
+Each field records a canonical key, source namespace, source label, typed
+value, and sensitive flag. A **namespace** identifies the format or metadata
+family from which the extractor read the field.
 
-Values are one of `string`, `string_list`, `integer`, `number`, `boolean`,
-or `timestamp`; the `kind` field names which payload is present. The current
-extractor publishes these namespaces:
+The `kind` field selects one payload: `string`, `string_list`, `integer`,
+`number`, `boolean`, or `timestamp`. Timestamps preserve the source's stated
+precision and timezone. The current extractor publishes these namespaces:
 
 | Namespace | Sources | Keys |
 |-----------|---------|------|
@@ -65,20 +68,20 @@ use a 20 MiB leading metadata window. The resulting generation includes a
 `metadata_window_limited` warning because metadata after that window may be
 omitted.
 
-For larger MP4 files, the worker verifies the complete content identity, scans
-the top-level box headers, skips media payload boxes, and reads only bounded
-file-type and movie metadata, including the movie-header creation time when
-present. Malformed or oversized MP4 metadata produces a
-durable warning. Storage and read failures remain retryable errors. Other
-large RAF files similarly read only the fixed header, a bounded embedded-JPEG
-metadata window, and a bounded raw-metadata directory after full verification.
-Malformed RAF structure produces a durable warning; storage and read failures
-remain retryable. Large CR3 files are also verified in full, but the extractor
-walks only the ISO base media file headers and bounded Canon metadata boxes; it
-does not buffer or decode the RAW image payload. Malformed CR3 structure
-produces a durable warning, while storage and read failures remain retryable.
-Other formats larger than 64 MiB still receive `input_too_large` until they
-have a bounded parser.
+For large media files, the worker verifies the complete content identity
+before bounded parsing:
+
+- **MP4:** scan top-level box headers, skip media payload boxes, and read bounded
+  file-type and movie metadata. Include the movie-header creation time when
+  present. Malformed or oversized metadata produces a durable warning.
+- **RAF:** read the fixed header, a bounded embedded-JPEG metadata window, and a
+  bounded raw-metadata directory. Malformed structure produces a durable warning.
+- **CR3:** walk ISO base media file headers and bounded Canon metadata boxes.
+  Do not buffer or decode the RAW image payload. Malformed structure produces a
+  durable warning.
+
+Storage and read failures remain retryable for all three formats. Other formats
+larger than 64 MiB receive `input_too_large` until they have a bounded parser.
 
 ## Generations and reads
 

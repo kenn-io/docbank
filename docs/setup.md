@@ -5,8 +5,9 @@ description: Install docbank on Linux, macOS, or Windows and create the vault.
 
 # Setup
 
-docbank is pre-1.0. Linux, macOS, and 64-bit Windows are supported on amd64 and
-arm64.
+Install a release archive to start using Docbank without a build toolchain.
+Docbank is pre-1.0 and runs on Linux, macOS, and 64-bit Windows, on amd64 and
+arm64 processors.
 
 ## Requirements
 
@@ -50,30 +51,28 @@ to the user `PATH`. `DOCBANK_INSTALL_DIR` and `DOCBANK_VERSION` provide the
 same overrides as on Unix; set `DOCBANK_NO_MODIFY_PATH=1` to leave `PATH`
 unchanged.
 
-Both installers are maintained in the repository as `scripts/install.sh`
-and `scripts/install.ps1`; docbank.ai serves those files verbatim. Every
-downloaded archive is verified against the `SHA256SUMS` file published
-with its GitHub release before anything is installed, and the installers
-fail rather than substitute an unverified archive. If you prefer to
-bootstrap from a trust origin independent of the docbank.ai hosting, run
-the repository copy directly:
+The repository maintains both installers as `scripts/install.sh` and
+`scripts/install.ps1`; docbank.ai serves the same files. To fetch the shell
+installer directly from GitHub instead, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
 ```
 
-The installers fail closed: the archive is not extracted or installed unless
-`SHA256SUMS` is available, contains exactly one matching entry, and verifies.
-They also reject an archive that contains anything other than the expected
+Neither installer extracts or installs an archive unless `SHA256SUMS` is
+available, has exactly one matching entry, and the checksum matches. Each
+installer also rejects archives containing anything other than the expected
 top-level executable.
 
 ### Manual installation
 
-For a published release, download the archive for your platform and
-`SHA256SUMS` from the
-[GitHub Releases](https://github.com/kenn-io/docbank/releases) page. Verify
-the archive against `SHA256SUMS`, extract it, and place `docbank` somewhere
-on your `PATH` (for example, `~/.local/bin`). Release archives are named:
+1. Download your platform's archive and `SHA256SUMS` from
+   [GitHub Releases](https://github.com/kenn-io/docbank/releases).
+2. Verify the archive against its entry in `SHA256SUMS`.
+3. Extract the archive.
+4. Place `docbank` on your `PATH`, for example in `~/.local/bin`.
+
+Release archives are named:
 
 ```
 docbank_<version>_<goos>_<goarch>.tar.gz  # Linux and macOS
@@ -132,8 +131,9 @@ docbank ls /inbox
 Set `DOCBANK_HOME` to keep the vault somewhere else — see
 [Configuration](configuration.md).
 
-Before importing irreplaceable material, read [Vault Lifecycle](usage/lifecycle.md)
-and decide how the vault will be snapshotted.
+Before importing irreplaceable material, choose a backup location and plan a
+restore test. [Vault Lifecycle](usage/lifecycle.md) explains the operating
+routine, and [Backup & Restore](usage/backup.md) gives the commands.
 
 ## Verifying the toolchain
 

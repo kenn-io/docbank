@@ -5,20 +5,22 @@ description: Browse documents, inspect authority, storage, backups, and permanen
 
 # Interactive terminal browser
 
-Run:
+Browse and search your vault from the terminal, inspect document details, and
+move documents to or from recoverable trash. Start the terminal user interface
+(TUI) with:
 
 ```bash
 docbank tui
 ```
 
-The TUI uses the same authenticated daemon API as the ordinary CLI. It never
-opens SQLite or the blob store and cannot bypass the vault's exclusive owner.
-Starting it reuses or starts the daemon in the normal way. A TUI session may
-outlive the background daemon's idle window, so each bounded interaction
-rediscovers or restarts a compatible daemon before issuing its request; leaving
-the terminal open does not pin an otherwise idle process.
+The TUI uses the same authenticated daemon API as the CLI. It starts or reuses
+the daemon, which owns the database and stored content. Before each request,
+the TUI finds or restarts a compatible daemon. Leaving the TUI open does not
+keep an otherwise idle daemon running. See [Daemon](../architecture/daemon.md).
 
-![The Docbank TUI showing physical storage inventory and two synthetic backup recovery points.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/tui-storage-backup/tui-storage-backup.png)
+![The Docbank TUI showing physical storage inventory, two content stores, and two synthetic backup recovery points.](https://docbank.ai/assets/generated/tui-multi-store-storage.png)
+
+## Browse and inspect documents
 
 The main view is a full-width document table. At ordinary terminal widths it
 shows each document's name, type, size, and UTC modification time; search results
@@ -32,6 +34,8 @@ media type. The same authority view lists every assigned tag name with its
 stable UUID, so renames remain distinguishable from identity. Long authority
 values wrap rather than truncate.
 
+## Read permanent history
+
 Press <kbd>a</kbd> on any selected node to open its permanent audited history.
 The timeline is newest first and shows when each event was recorded, what
 happened, and the primary path, version, or attached-metadata change. Press
@@ -40,14 +44,15 @@ IDs, revisions, path states, version identities, and typed tag or provenance
 details. Nodes outside an audit scope are identified plainly rather than shown
 with an empty or invented timeline.
 
+## Inspect jobs, storage, and backups
+
 Press <kbd>J</kbd> to inspect daemon-owned background work without leaving the
 document view. The activity screen shows each stable job name, whether it is
 running, completed, failed, or cancelled, and its start and finish times.
 Inspecting a job exposes its complete terminal failure text. Refresh asks the
 current compatible daemon for a new snapshot; closing the screen returns to the
-same document selection. The current daemon contract reports lifecycle rather
-than invented percentages: workers will show numeric progress only when they
-can supply an authoritative completed and total count.
+same document selection. The current job report shows lifecycle status, not
+completion percentages.
 
 Press <kbd>O</kbd> for a read-only operational summary. It separates logical
 catalog authority from physical loose-file and pack inventory, including live
@@ -56,6 +61,8 @@ screen lists the configured backup repository's recovery points with their
 creation time, tag, snapshot ID, file count, and newly added bytes. Storage
 status remains useful when no backup repository is configured; the two
 independent results report their own errors.
+
+## Trash and restore documents
 
 Press <kbd>x</kbd> to review moving the selected live node to recoverable
 trash. The confirmation names the escaped path, stable node ID, and exact
@@ -70,6 +77,8 @@ or origin-parent fallback. Restoration does not guess or promise the old path.
 Permanent deletion and physical reclamation are deliberately absent from the
 TUI; use the preview-first CLI or authenticated HTTP workflows when that is
 really intended.
+
+## Keyboard controls
 
 | Key | Action |
 |-----|--------|
@@ -94,14 +103,19 @@ Within audited history, <kbd>n</kbd>/<kbd>→</kbd> loads the next older page an
 same directory or search result and selected document. Each page is bounded to
 100 events; the heading reports its position in the complete history.
 
-Search has the same semantics as `docbank search`: name matches precede
-content-only matches, and content is available only for supported documents
+## Search and result limits
+
+Search follows [the same rules as `docbank search`](searching.md). Name matches
+precede content-only matches, and content is available only for supported documents
 whose current bytes completed verified extraction. Results say whether the
 match came from the name or content. Relevance order remains the search default;
 pressing <kbd>s</kbd> opts into a column sort, and cycling through the columns
-returns to relevance. The first interface loads at most 1,000
-directory entries or search hits and says when more exist; use the CLI or HTTP
-pagination for exhaustive automation.
+returns to relevance. The TUI loads at most 1,000 directory entries or search
+hits and says when more exist. Use CLI or HTTP pagination to list complete directories. Search
+has no continuation cursor; narrow a truncated query as described in
+[Searching](searching.md#how-do-i-handle-incomplete-results).
+
+## Current limits
 
 Other mutations, permanent deletion, permanent-audit enrollment, independent
 verification, backup creation/verification/restore, and storage maintenance

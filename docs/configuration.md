@@ -5,12 +5,15 @@ description: Vault location, data layout, config.toml, and environment variables
 
 # Configuration
 
-The only required knob is where the vault lives. `config.toml` is optional and
-controls the daemon's listen address, auth, idle behavior, default backup
-repository, watched inboxes, and deployment bindings for secondary stores. A
-primary-only vault works without the file; every registered secondary needs a
-matching configured binding after restart. Backup commands require either a
-configured repository or their explicit `--repo` flag.
+Docbank uses `~/.docbank/` with default settings unless you choose another
+vault. Use `DOCBANK_HOME` to select its location. Add `config.toml` when you need
+to change how the daemon runs.
+
+The file controls the listening address, authentication, idle timeout, backup
+repository, watched inboxes, and secondary-store connections. A vault with only
+a primary store needs no configuration file. Each registered secondary store
+needs a matching connection profile after restart. Backup commands need either
+a configured repository or an explicit `--repo` flag.
 
 ## Vault location
 
@@ -46,27 +49,27 @@ The directory layout is created on first use:
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
 
-`docbank.db` and `blobs/` are the local catalog and built-in primary. The
-optional `.zst` suffix is only a physical encoding: hashes and reported
-document sizes
-always describe the decoded content. Docbank chooses it for worthwhile new
-writes and continues to read existing raw files without converting them.
-`config.toml` is configuration, not archive data — optional, but back it
-up if you've customized it (it can hold an `api_key`, filesystem paths, S3
-coordinates, and credential-profile names). `vault.lock` and
-`daemon.<pid>.json`, `web-launch/`, and `web-downloads/` are
-coordination/runtime state, safe to ignore in backups and safe to delete when
-no daemon or restore is running
-(`docbank daemon stop` removes its own record cleanly on graceful
-shutdown).
+`docbank.db` holds the local catalog; `blobs/` holds the built-in primary
+store. A `.zst` file contains compressed content. Hashes and document sizes
+always describe the decoded bytes. Docbank may compress new writes when the
+savings justify it, but it reads existing raw files without converting them.
 
-A stopped copy of `docbank.db` plus `blobs/` is complete only when every
-retained blob has authority in the primary. A vault with remote-only content
-also needs its configured secondary stores; copying `config.toml` preserves
-binding coordinates but does not copy those bytes. Prefer `docbank backup
-create`: it reads one verified location for every logical blob and produces a
-topology-independent recovery point. Stop the daemon before taking a local-state
-filesystem snapshot; see
+Back up `config.toml` separately if you customize it. It can contain an
+`api_key`, filesystem paths, S3 coordinates, and credential-profile names.
+
+`vault.lock`, `daemon.<pid>.json`, `web-launch/`, and `web-downloads/` coordinate
+running processes. You can omit them from backups. Delete them only when no
+daemon or restore is running. `docbank daemon stop` removes its own runtime
+record on graceful shutdown.
+
+Use `docbank backup create` to capture every retained blob from a verified
+location, including content held only in a secondary store. The resulting
+backup can restore without recreating the original store layout.
+
+A stopped copy of `docbank.db` and `blobs/` is complete only when the primary
+is an authorized location for every retained blob. Copying `config.toml` saves
+secondary-store coordinates, but does not copy their content. Stop the daemon
+before taking a filesystem snapshot. See
 [Vault Lifecycle](usage/lifecycle.md#take-a-coherent-backup).
 
 Docbank also keeps persistent per-user coordination files under
@@ -131,17 +134,15 @@ exclude = [".DS_Store", "cache/"]
 - **`api_port`** — `0` picks an ephemeral port; the CLI never needs to
   know it in advance because it discovers the actual bound address from
   the daemon's runtime record.
-- **`api_key`** — checked against `X-Api-Key` or `Authorization: Bearer`
-  on every authenticated request; the daemon always enforces one. Empty
-  means "generate an ephemeral key at startup" rather than "no auth
-  required" — the generated key is published to same-user clients via
-  the runtime record, the same mechanism the shutdown token already
-  uses. Set it only when a client can't read the runtime record (an SSH
-  tunnel from another machine).
+- **`api_key`** — the daemon checks `X-Api-Key` or `Authorization: Bearer`
+  on every authenticated request. An empty setting makes the daemon generate
+  a key at startup and publish it to same-user clients in the runtime record.
+  Set a fixed key when a client cannot read that record, such as a client
+  using an SSH tunnel from another machine.
 - **`idle_timeout`** — how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
   Foreground `docbank daemon run` ignores this and never idles out.
-- **`[web] enabled`** — serves the embedded read-only web application at `/`.
+- **`[web] enabled`** — serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
   independent of a configured `api_port`. Disabling it 404s `/` and `/assets/`;
@@ -181,19 +182,22 @@ Windows directory reparse points, or nested mounts; configure another
 imported. This boundary prevents an aliased vault directory from becoming its
 own input.
 
-A file must remain the same filesystem object with the same size and
-modification time for the complete `settle_time` before Docbank reads its
-content. Optional `minimum_age` adds a second gate based on the source's
-modification time. For example, `"168h"` requires a file to be at least seven
-days old *and* unchanged for the complete settle window. It defaults to `"0s"`
-(disabled), and unlike the in-memory settle observation, its source timestamp
-still applies after a daemon restart. This is useful for append-heavy agent
-sessions and recording streams that may pause without being finished.
+The daemon checks each file in this order:
 
-After the read, the daemon verifies that the confined source path still names
-that object and grants no node authority if it changed. `scan_interval`
-controls how often it looks for new observations. Zero values select the
-defaults shown above; explicit settle and scan values must be positive.
+1. Observe the same filesystem object, size, and modification time for the
+   complete `settle_time`.
+2. Require the source modification time to satisfy `minimum_age`, if enabled.
+3. Read the file, then check that the source path still names the same object.
+   If it changed, do not accept the read as a Docbank node.
+
+For example, `minimum_age = "168h"` requires a file to be at least seven days
+old and unchanged for the complete settle window. The default `"0s"` disables
+this age check. The source timestamp still applies after a daemon restart;
+the in-memory settle observation starts again. This helps with sessions or
+recordings that pause before they finish.
+
+`scan_interval` controls observation frequency. Zero settle and scan values
+select the defaults shown above; explicit values must be positive.
 `minimum_age` must not be negative.
 
 Minimum age is a conservative time policy, not proof that the producing
@@ -205,13 +209,14 @@ A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
 Other read failures remain visible job errors rather than being ignored.
 
-The pair `(name, relative source path)` is the durable source identity. Keep a
-watch name stable when moving its machine-local `source` root: a changed file
-then becomes a new immutable version of the same Docbank node, even if that
-node was reorganized elsewhere in the virtual tree. Renaming a relative source
-path intentionally creates a new source identity. Each source identity owns
-one Docbank node, and one node cannot be claimed by two watched sources.
-Deleting a source file never deletes its Docbank node.
+Docbank identifies each watched source by `(name, relative source path)`.
+Keep the watch name when moving its local `source` root. Later content changes
+then add versions to the same Docbank node, even if someone moved that node in
+the virtual tree.
+
+Renaming the relative source path creates a new source identity. Each identity
+owns one Docbank node; two watched sources cannot claim the same node.
+Deleting a source file does not delete its Docbank node.
 
 Docbank separately remembers the last bytes accepted from each source. If a
 person edits or reverts the Docbank node while the source stays unchanged, a
@@ -243,13 +248,21 @@ should be packed automatically; GC and repack remain explicit.
 
 ### Embedding workers and credentials
 
-The daemon executes retained embedding work for configured providers. Each
-binding publishes independently: a failed provider does not remove another
-binding's completed vectors. Configuring a provider does not create input
-generations or apply a processing profile to newly imported documents. Work
-requires an existing input generation, a matching processing profile and
-provider descriptor, and current disclosure consent. After restore, the daemon
-recreates jobs from retained inputs once those requirements are met again.
+The daemon runs retained embedding jobs for configured providers. An embedding
+is a numeric representation used to compare document meaning. Each provider
+binding publishes its own results; one provider's failure does not remove
+another binding's completed vectors.
+
+Configuring a provider does not prepare inputs or apply a processing profile
+to new imports. A job requires all of the following:
+
+- An existing input generation: the retained set of prepared provider inputs.
+- A matching processing profile.
+- A matching provider descriptor.
+- Current consent to disclose the inputs to that provider.
+
+After restore, the daemon recreates jobs from retained inputs once these
+requirements are met again.
 
 `[processing_profiles.<name>]` selects embedding bindings by name in its
 `embeddings` array. `[embedding_profiles.<name>]` defines each binding's model,
@@ -272,13 +285,14 @@ credential_binding = "credential:embedding-primary"
 # The remaining pinned profile fields are also required.
 ```
 
-A missing or empty secret does not prevent daemon startup or ordinary document
-operations. Affected embedding jobs record an authorization failure and remain
-eligible for recovery. Secrets are resolved for each request from the running
-daemon's environment. Exporting a variable in another shell does not update
-that environment: set the variable for the daemon and restart it. An undefined
-credential binding, invalid runtime configuration, or mismatched descriptor
-still fails startup.
+A missing or empty secret leaves ordinary document operations available.
+Affected embedding jobs record an authorization failure and can recover later.
+The daemon reads secrets from its own environment for each request. To change
+a secret, set the variable for the daemon and restart it; exporting a variable
+in another shell does not update a running daemon.
+
+Startup still fails for an undefined credential binding, invalid runtime
+configuration, or mismatched descriptor.
 
 #### Runtime settings
 
@@ -336,14 +350,20 @@ from logical metadata, audit evidence, and backups. Restart after editing a
 profile; Docbank reports a typed stale-configuration error rather than
 hot-reloading credentials or paths underneath active jobs.
 
-S3 binding endpoints must use authenticated HTTPS, including loopback
-services. Plain HTTP is rejected because a loopback TCP port does not prove
-which process received an ownership marker or document bytes. Active stores
-must also have disjoint namespaces: filesystem roots may not overlap the vault,
-a watched inbox, or another filesystem store, and S3 prefixes may not be equal
-or nested under the same canonical endpoint and bucket. A store's ownership
-marker and epoch remain the authoritative fence against aliases that path
-comparison cannot recognize.
+S3 endpoints must use authenticated HTTPS, including loopback services.
+Docbank rejects plain HTTP: a loopback port does not identify which process
+receives an ownership marker or document bytes.
+
+Active stores must use separate locations:
+
+- A filesystem root must not overlap the vault, a watched inbox, or another
+  filesystem store.
+- S3 prefixes must not be equal or nested within the same canonical endpoint
+  and bucket.
+
+Docbank also checks each store's ownership marker and epoch, a value that
+identifies the current ownership claim. These checks catch aliases that path
+comparisons cannot recognize.
 
 Secondary objects are verified but not encrypted by Docbank. Raw readers of a
 filesystem root or S3 prefix can decode document content without the daemon API
@@ -353,8 +373,8 @@ encryption and access policy.
 
 ### Bind validation
 
-Validated once, at daemon startup — a misconfiguration fails `docbank
-daemon run` immediately rather than silently serving insecurely:
+The daemon validates its listening address at startup. An invalid setting makes
+`docbank daemon run` fail immediately:
 
 - A **loopback** `bind_addr` (`127.0.0.1`, `::1`, `localhost`) is the
   only accepted value. An empty `api_key` is fine there: the daemon
