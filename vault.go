@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
@@ -270,6 +271,13 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, blobs.Close())
 		}
 	}()
+	spoolDirectory := config.Processing.SpoolDirectory
+	if spoolDirectory == "" {
+		spoolDirectory = layout.BlobTmpDir()
+	}
+	if _, err := upload.RecoverStale(context.Background(), spoolDirectory); err != nil {
+		return nil, fmt.Errorf("recovering processing uploads: %w", err)
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return nil, err
 	}
@@ -292,10 +300,6 @@ func openVaultWithRootOpener(
 			EmbeddingProviders:   profile.EmbeddingProviders,
 			EmbeddingClassifiers: classifiers,
 			Tokenizers:           profile.Tokenizers}
-	}
-	spoolDirectory := config.Processing.SpoolDirectory
-	if spoolDirectory == "" {
-		spoolDirectory = layout.BlobTmpDir()
 	}
 	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
 		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},

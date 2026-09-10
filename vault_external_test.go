@@ -31,6 +31,49 @@ func TestRootPackageConstructor(t *testing.T) {
 	require.NoError(t, vault.Close())
 }
 
+func TestRootPackageRecoversInterruptedProcessingUploads(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		name := "default"
+		if custom {
+			name = "custom"
+		}
+		t.Run(name, func(t *testing.T) {
+			config := docbank.Config{Root: t.TempDir()}
+			spool := filepath.Join(config.Root, "blobs", "tmp")
+			if custom {
+				spool = t.TempDir()
+				config.Processing.SpoolDirectory = spool
+			}
+			vault, err := docbank.New(t.Context(), config)
+			require.NoError(t, err)
+			require.NoError(t, vault.Close())
+
+			stale := filepath.Join(spool, ".docbank-upload-synthetic")
+			require.NoError(t, os.Mkdir(stale, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(stale, "source"), []byte("partial upload"), 0o600))
+			loose := filepath.Join(config.Root, "blobs", "tmp", "partial-blob")
+			require.NoError(t, os.WriteFile(loose, []byte("partial blob"), 0o600))
+			unrelated := filepath.Join(spool, "keep.txt")
+			if custom {
+				require.NoError(t, os.WriteFile(unrelated, []byte("keep"), 0o600))
+			}
+
+			vault, err = docbank.New(t.Context(), config)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			_, err = os.Stat(stale)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			_, err = os.Stat(loose)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			if custom {
+				content, err := os.ReadFile(unrelated)
+				require.NoError(t, err)
+				require.Equal(t, "keep", string(content))
+			}
+		})
+	}
+}
+
 func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
