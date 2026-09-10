@@ -567,7 +567,7 @@ func (s *Store) ClaimRenditionJob(
 func (s *Store) ClaimNextRenditionJob(
 	ctx context.Context, owner string, at time.Time, lease time.Duration,
 ) (RenditionJobClaim, bool, error) {
-	return s.claimNextRenditionJob(ctx, owner, "", at, lease)
+	return s.claimNextRenditionJob(ctx, owner, "", nil, at, lease)
 }
 
 func (s *Store) ClaimNextRenditionJobForProfile(ctx context.Context, owner, profileFingerprint string,
@@ -576,10 +576,25 @@ func (s *Store) ClaimNextRenditionJobForProfile(ctx context.Context, owner, prof
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return RenditionJobClaim{}, false, err
 	}
-	return s.claimNextRenditionJob(ctx, owner, profileFingerprint, at, lease)
+	return s.claimNextRenditionJob(ctx, owner, profileFingerprint, nil, at, lease)
 }
 
-func (s *Store) claimNextRenditionJob(ctx context.Context, owner, profileFingerprint string,
+// ClaimNextRenditionJobForProfiles claims work whose waiter profile is in the supplied set.
+func (s *Store) ClaimNextRenditionJobForProfiles(ctx context.Context, owner string, profileFingerprints []string,
+	at time.Time, lease time.Duration,
+) (RenditionJobClaim, bool, error) {
+	if len(profileFingerprints) == 0 {
+		return RenditionJobClaim{}, false, errors.New("rendition profile filter is empty")
+	}
+	for _, fingerprint := range profileFingerprints {
+		if err := validateCatalogSHA256(fingerprint, "processing profile fingerprint"); err != nil {
+			return RenditionJobClaim{}, false, err
+		}
+	}
+	return s.claimNextRenditionJob(ctx, owner, "", profileFingerprints, at, lease)
+}
+
+func (s *Store) claimNextRenditionJob(ctx context.Context, owner, profileFingerprint string, profileFingerprints []string,
 	at time.Time, lease time.Duration,
 ) (RenditionJobClaim, bool, error) {
 	query := `
@@ -597,6 +612,17 @@ func (s *Store) claimNextRenditionJob(ctx context.Context, owner, profileFingerp
 		    WHERE w.job_id=rendition_jobs.job_id AND w.profile_fingerprint=?)
 		`
 		args = append(args, profileFingerprint)
+	} else if len(profileFingerprints) != 0 {
+		query = `
+		SELECT job_id FROM rendition_jobs
+		WHERE ((state IN ('queued','retry_wait') AND available_at<=?)
+		   OR (state='running' AND lease_expires_at<=?))
+		  AND EXISTS(SELECT 1 FROM rendition_job_waiters w
+		    WHERE w.job_id=rendition_jobs.job_id AND w.profile_fingerprint IN (` + placeholders(len(profileFingerprints)) + `))
+		`
+		for _, fingerprint := range profileFingerprints {
+			args = append(args, fingerprint)
+		}
 	}
 	query += ` ORDER BY available_at,job_id LIMIT 64`
 	rows, err := s.db.QueryContext(ctx, query, args...)

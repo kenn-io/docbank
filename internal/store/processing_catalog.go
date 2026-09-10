@@ -1035,6 +1035,7 @@ func loadProcessingProfile(ctx context.Context, tx metadataQuerier, fingerprint 
 	return record, nil
 }
 
+// ProcessingProfileByFingerprint returns persisted canonical profile authority.
 func (s *Store) ProcessingProfileByFingerprint(ctx context.Context, fingerprint string) (ProcessingProfileRecord, error) {
 	if err := validateCatalogSHA256(fingerprint, "processing profile fingerprint"); err != nil {
 		return ProcessingProfileRecord{}, ErrNotFound

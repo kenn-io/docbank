@@ -55,6 +55,11 @@ type profileEmbeddingWorkerCatalog interface {
 		at time.Time, lease time.Duration) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 }
 
+type profilesEmbeddingWorkerCatalog interface {
+	ClaimNextEmbeddingWorkForProfiles(ctx context.Context, owner string, profileFingerprints []string,
+		at time.Time, lease time.Duration) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
+}
+
 type targetedEmbeddingWorkerCatalog interface {
 	ClaimEmbeddingWork(ctx context.Context, jobID, owner string, at time.Time,
 		lease time.Duration) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
@@ -205,6 +210,7 @@ type EmbeddingWorkerConfig struct {
 	Wait                   func(context.Context, time.Duration) error
 	DescriptorFingerprints []string
 	ProfileFingerprint     string
+	ProfileFingerprints    []string
 	MaxJobs                int
 	VectorSpaces           map[string]store.EmbeddingVectorSpaceRecord
 	BoundedReconciliation  bool
@@ -229,6 +235,7 @@ type EmbeddingWorker struct {
 	wait                                           func(context.Context, time.Duration) error
 	descriptorFingerprints                         []string
 	profileFingerprint                             string
+	profileFingerprints                            []string
 	maxJobs                                        int
 	vectorSpaces                                   map[string]store.EmbeddingVectorSpaceRecord
 	reconcileAfter                                 string
@@ -274,6 +281,9 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 			return nil, err
 		}
 	}
+	if config.ProfileFingerprint != "" && len(config.ProfileFingerprints) != 0 {
+		return nil, errors.New("embedding worker profile filters conflict")
+	}
 	if config.MaxJobs < 0 {
 		return nil, errors.New("embedding worker job limit must not be negative")
 	}
@@ -293,6 +303,7 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait,
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
 		profileFingerprint:     config.ProfileFingerprint, maxJobs: config.MaxJobs,
+		profileFingerprints:    slices.Clone(config.ProfileFingerprints),
 		vectorSpaces:           cloneVectorSpaces(config.VectorSpaces),
 		boundedReconciliation:  config.BoundedReconciliation,
 		generateRenditionChunk: config.GenerateRenditionChunk,
@@ -337,6 +348,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 					After: after, Limit: 100, At: worker.clock().UTC(),
 					ProfileFingerprint:       worker.profileFingerprint,
+					ProfileFingerprints:      worker.profileFingerprints,
 					DescriptorFingerprints:   worker.descriptorFingerprints,
 					VectorSpaces:             worker.vectorSpaces,
 					AfterRenditionAttachment: afterRendition,
@@ -398,6 +410,14 @@ func (worker *EmbeddingWorker) claimNextEmbeddingWork(ctx context.Context) (Embe
 			return EmbeddingWorkClaim{}, EmbeddingWork{}, false, errors.New("embedding catalog does not support profile claims")
 		}
 		return catalog.ClaimNextEmbeddingWorkForProfile(ctx, worker.owner, worker.profileFingerprint,
+			at, worker.leaseDuration)
+	}
+	if len(worker.profileFingerprints) != 0 {
+		catalog, ok := worker.catalog.(profilesEmbeddingWorkerCatalog)
+		if !ok {
+			return EmbeddingWorkClaim{}, EmbeddingWork{}, false, errors.New("embedding catalog does not support profile claims")
+		}
+		return catalog.ClaimNextEmbeddingWorkForProfiles(ctx, worker.owner, worker.profileFingerprints,
 			at, worker.leaseDuration)
 	}
 	return worker.catalog.ClaimNextEmbeddingWork(ctx, worker.owner, at, worker.leaseDuration)
@@ -473,6 +493,7 @@ func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
 		result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 			After: "", Limit: 1000, At: worker.clock().UTC(),
 			ProfileFingerprint:     worker.profileFingerprint,
+			ProfileFingerprints:    worker.profileFingerprints,
 			DescriptorFingerprints: worker.descriptorFingerprints,
 			VectorSpaces:           worker.vectorSpaces,
 			RenditionAttachments:   attachments,

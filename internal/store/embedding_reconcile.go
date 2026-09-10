@@ -19,6 +19,7 @@ type EmbeddingReconcileRequest struct {
 	Limit                  int
 	At                     time.Time
 	ProfileFingerprint     string
+	ProfileFingerprints    []string
 	DescriptorFingerprints []string
 	// VectorSpaces carries exact runtime descriptor authority for a missing E1 record.
 	VectorSpaces             map[string]EmbeddingVectorSpaceRecord
@@ -87,6 +88,14 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			return EmbeddingReconcileResult{}, err
 		}
 	}
+	if request.ProfileFingerprint != "" && len(request.ProfileFingerprints) != 0 {
+		return EmbeddingReconcileResult{}, errors.New("embedding reconciliation profile filters conflict")
+	}
+	for _, fingerprint := range request.ProfileFingerprints {
+		if err := validateCatalogSHA256(fingerprint, "processing profile fingerprint"); err != nil {
+			return EmbeddingReconcileResult{}, err
+		}
+	}
 	executable := make(map[string]struct{}, len(request.DescriptorFingerprints))
 	for _, fingerprint := range request.DescriptorFingerprints {
 		if err := validateCatalogSHA256(fingerprint, "embedding runtime descriptor fingerprint"); err != nil {
@@ -108,6 +117,11 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			if request.ProfileFingerprint != "" {
 				query += ` AND g.profile_fingerprint=?`
 				args = append(args, request.ProfileFingerprint)
+			} else if len(request.ProfileFingerprints) != 0 {
+				query += ` AND g.profile_fingerprint IN (` + placeholders(len(request.ProfileFingerprints)) + `)`
+				for _, fingerprint := range request.ProfileFingerprints {
+					args = append(args, fingerprint)
+				}
 			}
 			query += ` ORDER BY g.generation_id LIMIT ?`
 			args = append(args, request.Limit+1)
@@ -223,10 +237,13 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				continue
 			}
 		}
-		if _, err := s.EnqueueEmbeddingJob(ctx, candidate.request); err != nil {
+		job, err := s.EnqueueEmbeddingJob(ctx, candidate.request)
+		if err != nil {
 			return EmbeddingReconcileResult{}, fmt.Errorf("reconciling embedding job: %w", err)
 		}
-		result.Enqueued++
+		if job.Created {
+			result.Enqueued++
+		}
 	}
 	if more && len(generationIDs) != 0 {
 		result.Next = generationIDs[len(generationIDs)-1]
@@ -246,7 +263,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if ctx.Err() != nil {
 					return EmbeddingReconcileResult{}, ctx.Err()
 				}
-				continue
+				return EmbeddingReconcileResult{}, fmt.Errorf("generating rendition chunk input: %w", err)
 			}
 			result.Generated++
 			candidate.request.InputGeneration = generated
@@ -264,10 +281,13 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			if exists {
 				continue
 			}
-			if _, err := s.EnqueueEmbeddingJob(ctx, candidate.request); err != nil {
+			job, err := s.EnqueueEmbeddingJob(ctx, candidate.request)
+			if err != nil {
 				return EmbeddingReconcileResult{}, fmt.Errorf("reconciling rendition embedding job: %w", err)
 			}
-			result.Enqueued++
+			if job.Created {
+				result.Enqueued++
+			}
 		}
 		result.NextRenditionAttachment = next
 	}
@@ -287,13 +307,19 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				AND n.kind='file' AND n.trashed_at IS NULL`
 		args := make([]any, 0, len(request.RenditionAttachments)+2)
 		paged := len(request.RenditionAttachments) == 0
+		hasProfileFilter := request.ProfileFingerprint != "" || len(request.ProfileFingerprints) != 0
 		where := " WHERE "
 		if request.ProfileFingerprint != "" {
 			where += "rh.profile_fingerprint=?"
 			args = append(args, request.ProfileFingerprint)
+		} else if len(request.ProfileFingerprints) != 0 {
+			where += `rh.profile_fingerprint IN (` + placeholders(len(request.ProfileFingerprints)) + `)`
+			for _, fingerprint := range request.ProfileFingerprints {
+				args = append(args, fingerprint)
+			}
 		}
 		if paged {
-			if request.ProfileFingerprint != "" {
+			if hasProfileFilter {
 				where += " AND "
 			}
 			where += "rh.attachment_id>?"
@@ -304,7 +330,7 @@ func (s *Store) renditionChunkCandidates(ctx context.Context, request EmbeddingR
 				placeholders[index] = "?"
 				args = append(args, attachmentID)
 			}
-			if request.ProfileFingerprint != "" {
+			if hasProfileFilter {
 				where += " AND "
 			}
 			where += `rh.attachment_id IN (` + strings.Join(placeholders, ",") + `)`

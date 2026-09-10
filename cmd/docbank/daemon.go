@@ -226,6 +226,7 @@ func runServe(ctx context.Context) (retErr error) {
 				AttemptLifetime: 30 * time.Minute, MaxRows: 100_000,
 				MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
 				DescriptorFingerprints: embeddingRuntimeRegistry.Fingerprints(),
+				ProfileFingerprints:    processingService.ProfileFingerprints(),
 				VectorSpaces:           processingService.EmbeddingVectorSpaces(),
 				GenerateRenditionChunk: processingService.RenditionChunkGenerationHook(),
 			})
@@ -249,7 +250,8 @@ func runServe(ctx context.Context) (retErr error) {
 			Catalog: s, Blobs: blobs, Runtime: runtimeRegistry, Gate: operationGate,
 			Continuation: continuation,
 			Owner:        "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
-			IdleDelay: time.Second,
+			IdleDelay:           time.Second,
+			ProfileFingerprints: processingService.ProfileFingerprints(),
 		})
 		if workerErr != nil {
 			return fmt.Errorf("configuring rendition worker: %w", workerErr)

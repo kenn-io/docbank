@@ -27,7 +27,10 @@ type EmbeddingJobRequest struct {
 	Authorization    ProviderOperationAuthorizationRequest
 }
 
-type EmbeddingJob struct{ ID string }
+type EmbeddingJob struct {
+	ID      string
+	Created bool
+}
 
 // EmbeddingJobStatus is the bounded provider-neutral state exposed to an
 // aggregate processing service. It deliberately excludes receipts, consent
@@ -80,16 +83,28 @@ type EmbeddingAttemptReceipt struct {
 }
 
 func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobRequest) (EmbeddingJob, error) {
-	jobIDs, err := s.EnqueueEmbeddingJobs(ctx, []EmbeddingJobRequest{request})
+	jobs, err := s.enqueueEmbeddingJobs(ctx, []EmbeddingJobRequest{request})
 	if err != nil {
 		return EmbeddingJob{}, err
 	}
-	return EmbeddingJob{ID: jobIDs[0]}, nil
+	return jobs[0], nil
 }
 
 // EnqueueEmbeddingJobs admits one complete embedding batch in one storage
 // transaction. It returns IDs only after the transaction commits.
 func (s *Store) EnqueueEmbeddingJobs(ctx context.Context, requests []EmbeddingJobRequest) ([]string, error) {
+	jobs, err := s.enqueueEmbeddingJobs(ctx, requests)
+	if err != nil {
+		return nil, err
+	}
+	jobIDs := make([]string, len(jobs))
+	for index, job := range jobs {
+		jobIDs[index] = job.ID
+	}
+	return jobIDs, nil
+}
+
+func (s *Store) enqueueEmbeddingJobs(ctx context.Context, requests []EmbeddingJobRequest) ([]EmbeddingJob, error) {
 	if len(requests) == 0 {
 		return nil, errors.New("enqueueing embedding jobs: at least one request is required")
 	}
@@ -101,8 +116,9 @@ func (s *Store) EnqueueEmbeddingJobs(ctx context.Context, requests []EmbeddingJo
 			return nil, err
 		}
 	}
+	created := make([]bool, len(prepared))
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		for _, job := range prepared {
+		for index, job := range prepared {
 			if err := ensureProcessingProfileTx(ctx, tx, job.profile); err != nil {
 				return err
 			}
@@ -118,15 +134,21 @@ func (s *Store) EnqueueEmbeddingJobs(ctx context.Context, requests []EmbeddingJo
 			if _, err := authorizeProviderOperationTx(ctx, tx, s.vaultID, job.request.Authorization, job.authorizedAt); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
+			inserted, err := tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
 				job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
 				generation_id,vector_space_id,principal,scope,state,available_at,created_at,updated_at
 			) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?) ON CONFLICT(job_id) DO NOTHING`,
 				job.id, s.vaultID, job.request.ContentVersionID, job.profile.Fingerprint, job.binding.Name,
 				job.binding.InputKind, job.request.InputGeneration.ID, job.space.ID, job.authority.principal,
-				job.authority.scope, job.now, job.now, job.now); err != nil {
+				job.authority.scope, job.now, job.now, job.now)
+			if err != nil {
 				return err
 			}
+			rows, err := inserted.RowsAffected()
+			if err != nil {
+				return err
+			}
+			created[index] = rows > 0
 			if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET claim_epoch=max(claim_epoch,
 				COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots WHERE root_id=?),0))
 				WHERE job_id=?`, job.id, job.id); err != nil {
@@ -138,11 +160,11 @@ func (s *Store) EnqueueEmbeddingJobs(ctx context.Context, requests []EmbeddingJo
 	if err != nil {
 		return nil, err
 	}
-	jobIDs := make([]string, len(prepared))
+	jobs := make([]EmbeddingJob, len(prepared))
 	for index, job := range prepared {
-		jobIDs[index] = job.id
+		jobs[index] = EmbeddingJob{ID: job.id, Created: created[index]}
 	}
-	return jobIDs, nil
+	return jobs, nil
 }
 
 type preparedEmbeddingJob struct {
@@ -264,6 +286,7 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	return result, rows.Err()
 }
 
+// PendingEmbeddingJobs reports whether a profile has any nonterminal job.
 func (s *Store) PendingEmbeddingJobs(ctx context.Context, profileFingerprint string) (bool, error) {
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return false, ErrNotFound
@@ -277,7 +300,7 @@ func (s *Store) PendingEmbeddingJobs(ctx context.Context, profileFingerprint str
 }
 
 func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
-	return s.claimNextEmbeddingWork(ctx, owner, "", at, lease)
+	return s.claimNextEmbeddingWork(ctx, owner, "", nil, at, lease)
 }
 
 func (s *Store) ClaimNextEmbeddingWorkForProfile(ctx context.Context, owner, profileFingerprint string,
@@ -286,10 +309,25 @@ func (s *Store) ClaimNextEmbeddingWorkForProfile(ctx context.Context, owner, pro
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, err
 	}
-	return s.claimNextEmbeddingWork(ctx, owner, profileFingerprint, at, lease)
+	return s.claimNextEmbeddingWork(ctx, owner, profileFingerprint, nil, at, lease)
 }
 
-func (s *Store) claimNextEmbeddingWork(ctx context.Context, owner, profileFingerprint string,
+// ClaimNextEmbeddingWorkForProfiles claims work whose profile is in the supplied set.
+func (s *Store) ClaimNextEmbeddingWorkForProfiles(ctx context.Context, owner string, profileFingerprints []string,
+	at time.Time, lease time.Duration,
+) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
+	if len(profileFingerprints) == 0 {
+		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, errors.New("embedding profile filter is empty")
+	}
+	for _, fingerprint := range profileFingerprints {
+		if err := validateCatalogSHA256(fingerprint, "processing profile fingerprint"); err != nil {
+			return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, err
+		}
+	}
+	return s.claimNextEmbeddingWork(ctx, owner, "", profileFingerprints, at, lease)
+}
+
+func (s *Store) claimNextEmbeddingWork(ctx context.Context, owner, profileFingerprint string, profileFingerprints []string,
 	at time.Time, lease time.Duration,
 ) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
 	if !validRenditionWorkerOwner(owner) || at.IsZero() || lease <= 0 {
@@ -313,6 +351,11 @@ func (s *Store) claimNextEmbeddingWork(ctx context.Context, owner, profileFinger
 		if profileFingerprint != "" {
 			query += ` AND j.profile_fingerprint=?`
 			args = append(args, profileFingerprint)
+		} else if len(profileFingerprints) != 0 {
+			query += ` AND j.profile_fingerprint IN (` + placeholders(len(profileFingerprints)) + `)`
+			for _, fingerprint := range profileFingerprints {
+				args = append(args, fingerprint)
+			}
 		}
 		query += ` ORDER BY j.available_at,j.job_id LIMIT 1`
 		err := tx.QueryRowContext(ctx, query, args...).Scan(&jobID)

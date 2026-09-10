@@ -431,6 +431,16 @@ func (service *Service) Profiles() []ProfileSummary {
 	return result
 }
 
+// ProfileFingerprints returns the configured processing profiles in stable order.
+func (service *Service) ProfileFingerprints() []string {
+	result := make([]string, 0, len(service.profiles))
+	for _, profile := range service.profiles {
+		result = append(result, profile.record.Fingerprint)
+	}
+	slices.Sort(result)
+	return result
+}
+
 func (service *Service) profileByFingerprint(fingerprint string) (configuredProfile, bool) {
 	for _, profile := range service.profiles {
 		if profile.record.Fingerprint == fingerprint {
@@ -1438,6 +1448,15 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 	if profileName != "" {
 		profileFingerprint = profiles[0].record.Fingerprint
 	}
+	profileFingerprints := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		profileFingerprints = append(profileFingerprints, profile.record.Fingerprint)
+	}
+	slices.Sort(profileFingerprints)
+	profileFingerprints = slices.Compact(profileFingerprints)
+	if profileFingerprint != "" {
+		profileFingerprints = nil
+	}
 	descriptorFingerprints := make([]string, 0)
 	for _, profile := range profiles {
 		for _, binding := range profile.portable.Embeddings {
@@ -1458,8 +1477,9 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 			AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
 			MaxVectorBlobBytes: 64 << 20, Clock: service.clock,
 			DescriptorFingerprints: descriptorFingerprints, ProfileFingerprint: profileFingerprint,
-			VectorSpaces: service.EmbeddingVectorSpaces(),
-			MaxJobs:      maxJobs, BoundedReconciliation: true,
+			ProfileFingerprints: profileFingerprints,
+			VectorSpaces:        service.EmbeddingVectorSpaces(),
+			MaxJobs:             maxJobs, BoundedReconciliation: true,
 			GenerateRenditionChunk: service.RenditionChunkGenerationHook(),
 		})
 		if err != nil {
@@ -1470,7 +1490,7 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		Catalog: service.catalog, Blobs: service.blobs, Runtime: service.renditions,
 		Gate: service.gate, Owner: "embedded-rendition-resume", LeaseDuration: 5 * time.Minute,
 		IdleDelay: time.Millisecond, Clock: service.clock,
-		ProfileFingerprint: profileFingerprint,
+		ProfileFingerprint: profileFingerprint, ProfileFingerprints: profileFingerprints,
 	})
 	if err != nil {
 		return ResumeReport{}, err

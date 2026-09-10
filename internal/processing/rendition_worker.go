@@ -202,6 +202,11 @@ type profileRenditionWorkerCatalog interface {
 		at time.Time, lease time.Duration) (store.RenditionJobClaim, bool, error)
 }
 
+type profilesRenditionWorkerCatalog interface {
+	ClaimNextRenditionJobForProfiles(ctx context.Context, owner string, profileFingerprints []string,
+		at time.Time, lease time.Duration) (store.RenditionJobClaim, bool, error)
+}
+
 type targetedRenditionWorkerCatalog interface {
 	ClaimRenditionJob(ctx context.Context, jobID, owner string, at time.Time,
 		lease time.Duration) (store.RenditionJobClaim, error)
@@ -209,16 +214,17 @@ type targetedRenditionWorkerCatalog interface {
 
 // RenditionWorkerConfig binds the provider-neutral state machine to one vault.
 type RenditionWorkerConfig struct {
-	Catalog            renditionWorkerCatalog
-	Blobs              renditionBlobWriter
-	Runtime            RenditionRuntime
-	Gate               RenditionMutationGate
-	Continuation       func(context.Context, []store.RenditionPublicationTarget) error
-	ProfileFingerprint string
-	Owner              string
-	LeaseDuration      time.Duration
-	IdleDelay          time.Duration
-	Clock              func() time.Time
+	Catalog             renditionWorkerCatalog
+	Blobs               renditionBlobWriter
+	Runtime             RenditionRuntime
+	Gate                RenditionMutationGate
+	Continuation        func(context.Context, []store.RenditionPublicationTarget) error
+	ProfileFingerprint  string
+	ProfileFingerprints []string
+	Owner               string
+	LeaseDuration       time.Duration
+	IdleDelay           time.Duration
+	Clock               func() time.Time
 }
 
 // RenditionWorker claims, resumes, validates, stages, and publishes shared
@@ -232,6 +238,7 @@ type RenditionWorker struct {
 	continuationMu      sync.Mutex
 	continuationTargets []store.RenditionPublicationTarget
 	profileFingerprint  string
+	profileFingerprints []string
 	owner               string
 	leaseDuration       time.Duration
 	idleDelay           time.Duration
@@ -291,14 +298,26 @@ func NewRenditionWorker(config RenditionWorkerConfig) (*RenditionWorker, error) 
 			return nil, errors.New("rendition worker profile fingerprint is invalid")
 		}
 	}
+	if config.ProfileFingerprint != "" && len(config.ProfileFingerprints) != 0 {
+		return nil, errors.New("rendition worker profile filters conflict")
+	}
+	for _, fingerprint := range config.ProfileFingerprints {
+		if len(fingerprint) != sha256.Size*2 {
+			return nil, errors.New("rendition worker profile fingerprint is invalid")
+		}
+		if _, err := hex.DecodeString(fingerprint); err != nil {
+			return nil, errors.New("rendition worker profile fingerprint is invalid")
+		}
+	}
 	if config.Clock == nil {
 		config.Clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &RenditionWorker{
 		catalog: config.Catalog, blobs: config.Blobs, runtime: config.Runtime,
 		gate: config.Gate, continuation: config.Continuation,
-		profileFingerprint: config.ProfileFingerprint,
-		owner:              config.Owner, leaseDuration: config.LeaseDuration,
+		profileFingerprint:  config.ProfileFingerprint,
+		profileFingerprints: slices.Clone(config.ProfileFingerprints),
+		owner:               config.Owner, leaseDuration: config.LeaseDuration,
 		idleDelay: config.IdleDelay, clock: config.Clock,
 	}, nil
 }
@@ -435,6 +454,13 @@ func (worker *RenditionWorker) runOneUnderGate(ctx context.Context) (
 			}
 			claim, found, claimErr = catalog.ClaimNextRenditionJobForProfile(
 				ctx, worker.owner, worker.profileFingerprint, now, worker.leaseDuration)
+		} else if len(worker.profileFingerprints) != 0 {
+			catalog, ok := worker.catalog.(profilesRenditionWorkerCatalog)
+			if !ok {
+				return errors.New("rendition catalog does not support profile claims")
+			}
+			claim, found, claimErr = catalog.ClaimNextRenditionJobForProfiles(
+				ctx, worker.owner, worker.profileFingerprints, now, worker.leaseDuration)
 		} else {
 			claim, found, claimErr = worker.catalog.ClaimNextRenditionJob(
 				ctx, worker.owner, now, worker.leaseDuration)
