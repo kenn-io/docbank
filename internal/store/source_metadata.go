@@ -120,8 +120,12 @@ func (s *Store) PublishSourceMetadata(
 
 // ActiveSourceMetadata returns the selected generation for one retained blob.
 func (s *Store) ActiveSourceMetadata(ctx context.Context, sourceSHA256 string) (SourceMetadataGeneration, document.SourceMetadataV1, error) {
+	return activeSourceMetadata(ctx, s.db, sourceSHA256)
+}
+
+func activeSourceMetadata(ctx context.Context, q rowQuerier, sourceSHA256 string) (SourceMetadataGeneration, document.SourceMetadataV1, error) {
 	var generation SourceMetadataGeneration
-	err := s.db.QueryRowContext(ctx, `SELECT g.generation_id,g.source_sha256,g.contract_version,
+	err := q.QueryRowContext(ctx, `SELECT g.generation_id,g.source_sha256,g.contract_version,
 		g.extractor_fingerprint,g.canonical_json,g.checksum,g.created_at
 		FROM source_metadata_heads h JOIN source_metadata_generations g ON g.generation_id=h.generation_id
 		WHERE h.source_sha256=?`, sourceSHA256).Scan(&generation.GenerationID, &generation.SourceSHA256,
@@ -183,25 +187,52 @@ func (s *Store) MissingSourceMetadataTargetsAfter(
 // ContentVersionSourceMetadata joins active evidence with attachment facts for
 // an authenticated content-version detail read.
 func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID string) (SourceMetadataView, error) {
-	version, err := s.ContentVersionByID(ctx, versionID)
+	if err := validateUUIDv4(versionID); err != nil {
+		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SourceMetadataView{}, fmt.Errorf("starting source metadata snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	version, err := scanContentVersion(tx.QueryRowContext(ctx,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
+	if err != nil {
+		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, err)
+	}
+	node, err := nodeByIDTx(tx, version.NodeID)
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
-	generation, metadata, err := s.ActiveSourceMetadata(ctx, version.BlobHash)
+	generation, metadata, err := activeSourceMetadata(ctx, tx, version.BlobHash)
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
-	node, err := s.NodeByID(ctx, version.NodeID)
-	if err != nil {
-		return SourceMetadataView{}, err
+
+	facts := SourceMetadataAttachmentFacts{NodeID: node.ID, ContentVersionID: version.ID}
+	if node.TrashedAt == nil && node.CurrentVersionID == version.ID {
+		facts.Filename = node.Name
+		facts.Extension = strings.ToLower(filepath.Ext(node.Name))
+		facts.Path, err = pathOf(ctx, tx, node.ID)
+		if err != nil {
+			return SourceMetadataView{}, fmt.Errorf("reading source metadata path for node %d: %w", node.ID, err)
+		}
+		var originalMTime sql.NullString
+		err = tx.QueryRowContext(ctx, `SELECT p.original_path,COALESCE(p.original_mtime,''),i.started_at
+			FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=?
+			AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+			ORDER BY i.started_at DESC,p.identity DESC LIMIT 1`, node.ID).Scan(
+			&facts.SourcePath, &originalMTime, &facts.IngestedAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return SourceMetadataView{}, fmt.Errorf("reading provenance for node %d: %w", node.ID, err)
+		}
+		if originalMTime.Valid {
+			facts.FilesystemMTime = originalMTime.String
+		}
 	}
-	path, _ := s.Path(ctx, node.ID)
-	facts := SourceMetadataAttachmentFacts{NodeID: node.ID, ContentVersionID: version.ID,
-		Filename: node.Name, Extension: strings.ToLower(filepath.Ext(node.Name)), Path: path}
-	_ = s.db.QueryRowContext(ctx, `SELECT p.original_path,COALESCE(p.original_mtime,''),i.started_at
-		FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=?
-		AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
-		ORDER BY i.started_at DESC,p.identity DESC LIMIT 1`, node.ID).Scan(
-		&facts.SourcePath, &facts.FilesystemMTime, &facts.IngestedAt)
+	if err := tx.Commit(); err != nil {
+		return SourceMetadataView{}, fmt.Errorf("closing source metadata snapshot: %w", err)
+	}
 	return SourceMetadataView{Generation: generation, Metadata: metadata, Attachment: facts}, nil
 }

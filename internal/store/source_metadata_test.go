@@ -56,6 +56,89 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 	require.Error(t, err, "a head must not select another original's evidence")
 }
 
+func TestContentVersionSourceMetadataOmitsCurrentFactsForHistoricalVersion(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
+	require.NoError(t, err)
+	node, _, err := s.IngestFile(ctx, ingest, s.RootID(), "original.pdf", fakeHash("a1"), 12,
+		"application/pdf", "/synthetic/original.pdf", "2024-01-02T03:04:05Z")
+	require.NoError(t, err)
+	historicalVersion, err := s.ContentVersionByID(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("b2"), 13, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.Move(ctx, node.ID, s.RootID(), "current.pdf", updated.Revision)
+	require.NoError(t, err)
+
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: "Historical"}}},
+	})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, historicalVersion.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+
+	view, err := s.ContentVersionSourceMetadata(ctx, historicalVersion.ID)
+	require.NoError(t, err)
+	assert.Equal(t, node.ID, view.Attachment.NodeID)
+	assert.Equal(t, historicalVersion.ID, view.Attachment.ContentVersionID)
+	assert.Empty(t, view.Attachment.Filename)
+	assert.Empty(t, view.Attachment.Extension)
+	assert.Empty(t, view.Attachment.Path)
+	assert.Empty(t, view.Attachment.SourcePath)
+	assert.Empty(t, view.Attachment.IngestedAt)
+	assert.Empty(t, view.Attachment.FilesystemMTime)
+}
+
+func TestContentVersionSourceMetadataOmitsCurrentFactsForTrashedNode(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
+	require.NoError(t, err)
+	node, _, err := s.IngestFile(ctx, ingest, s.RootID(), "archived.pdf", fakeHash("a1"), 12,
+		"application/pdf", "/synthetic/archived.pdf", "2024-01-02T03:04:05Z")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+	})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	trashed, _, err := s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+
+	view, err := s.ContentVersionSourceMetadata(ctx, trashed.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, trashed.ID, view.Attachment.NodeID)
+	assert.Equal(t, trashed.CurrentVersionID, view.Attachment.ContentVersionID)
+	assert.Empty(t, view.Attachment.Filename)
+	assert.Empty(t, view.Attachment.Extension)
+	assert.Empty(t, view.Attachment.Path)
+	assert.Empty(t, view.Attachment.SourcePath)
+	assert.Empty(t, view.Attachment.IngestedAt)
+	assert.Empty(t, view.Attachment.FilesystemMTime)
+}
+
+func TestContentVersionSourceMetadataPropagatesProvenanceLookupErrors(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "report.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+	})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`DROP TABLE provenance`)
+	require.NoError(t, err)
+
+	_, err = s.ContentVersionSourceMetadata(ctx, node.CurrentVersionID)
+	require.ErrorContains(t, err, "reading provenance")
+}
+
 func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
