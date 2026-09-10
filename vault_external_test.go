@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -245,7 +246,8 @@ func TestEmbeddedProcessingReturnsStatusWhenOptionalEmbeddingFails(t *testing.T)
 	binding := syntheticEmbeddingBinding(provider.descriptor)
 	binding.Activation = document.EmbeddingOptional
 	profile.Embeddings = []document.EmbeddingBindingV1{binding}
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+	root := t.TempDir()
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root,
 		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
 			"optional": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider},
 				EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{
@@ -268,8 +270,14 @@ func TestEmbeddedProcessingReturnsStatusWhenOptionalEmbeddingFails(t *testing.T)
 	require.NoError(t, err)
 	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
 	require.NoError(t, err)
-	require.Equal(t, "failed", status.State)
+	require.Equal(t, "partial", status.State)
 	require.NotEmpty(t, status.FailureCode)
+	require.NoError(t, vault.Close())
+	vault, err = docbank.New(t.Context(), docbank.Config{Root: root})
+	require.NoError(t, err)
+	reopened, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+	require.NoError(t, err)
+	require.Equal(t, status, reopened, "status must use the stored profile when providers are no longer configured")
 }
 
 func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
@@ -1249,4 +1257,65 @@ func TestContentMetadataErrorsRemainDistinctFromPhysicalUnavailability(t *testin
 
 func looseBlobPath(root, hash string) string {
 	return filepath.Join(root, "blobs", hash[:2], hash)
+}
+
+func TestEmbeddedProcessingSharesOnlyMatchingRenditionExecution(t *testing.T) {
+	for _, disclose := range []bool{false, true} {
+		t.Run(strconv.FormatBool(disclose), func(t *testing.T) {
+			provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+			require.NoError(t, err)
+			profile := embeddedProcessingProfile(t, provider.Descriptor())
+			profile.Rendition.DiscloseFilename = disclose
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": {Profile: profile, RenditionProvider: provider}}}})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			var jobs []docbank.ProcessingJob
+			for _, name := range []string{"/first.txt", "/second.txt"} {
+				receipt, err := vault.Put(t.Context(), name, strings.NewReader("identical synthetic document"), docbank.PutOptions{MediaType: "text/plain"})
+				require.NoError(t, err)
+				request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+				plan, err := vault.PlanProcessing(t.Context(), request)
+				require.NoError(t, err)
+				job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+				require.NoError(t, err)
+				jobs = append(jobs, job)
+			}
+			if disclose {
+				require.NotEqual(t, jobs[0].RenditionJobID, jobs[1].RenditionJobID)
+			} else {
+				require.Equal(t, jobs[0].RenditionJobID, jobs[1].RenditionJobID)
+			}
+		})
+	}
+}
+
+func TestEmbeddedProcessingRejectsMismatchedProviderBoundaries(t *testing.T) {
+	for _, kind := range []string{"rendition", "embedding"} {
+		for _, boundary := range []string{"local_process", "hosted_provider", "unknown"} {
+			t.Run(kind+"/"+boundary, func(t *testing.T) {
+				rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+				require.NoError(t, err)
+				profile := embeddedProcessingProfile(t, rendition.Descriptor())
+				config := docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: rendition}
+				if kind == "rendition" {
+					config.Profile.Rendition.TrustBoundary = boundary
+				} else {
+					embedding := newSyntheticEmbeddingProvider(t)
+					binding := syntheticEmbeddingBinding(embedding.Descriptor())
+					binding.TrustBoundary = boundary
+					config.Profile.Embeddings = []document.EmbeddingBindingV1{binding}
+					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"direct": embedding}
+				}
+				vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+				if vault != nil {
+					t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				}
+				if boundary == "local_process" {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err, "configuration must reject a misleading processing boundary")
+				}
+			})
+		}
+	}
 }

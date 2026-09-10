@@ -37,6 +37,7 @@ type EmbeddingJobStatus struct {
 	ContentVersionID   string
 	ProfileFingerprint string
 	BindingID          string
+	Activation         document.EmbeddingActivation
 	State              string
 	FailureCode        EmbeddingFailureCode
 }
@@ -212,6 +213,15 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 	if failure.Valid {
 		status.FailureCode = EmbeddingFailureCode(failure.String)
 	}
+	profile, err := loadProcessingProfile(ctx, s.db, status.ProfileFingerprint)
+	if err != nil {
+		return EmbeddingJobStatus{}, err
+	}
+	binding, _, err := embeddingBindingFromProfile(profile, status.BindingID)
+	if err != nil {
+		return EmbeddingJobStatus{}, err
+	}
+	status.Activation = binding.Activation
 	return status, nil
 }
 
@@ -223,6 +233,10 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	}
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return nil, ErrNotFound
+	}
+	profile, err := loadProcessingProfile(ctx, s.db, profileFingerprint)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code
 		FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=? ORDER BY binding_id,job_id`,
@@ -242,6 +256,11 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 		if failure.Valid {
 			status.FailureCode = EmbeddingFailureCode(failure.String)
 		}
+		binding, _, err := embeddingBindingFromProfile(profile, status.BindingID)
+		if err != nil {
+			return nil, err
+		}
+		status.Activation = binding.Activation
 		result = append(result, status)
 	}
 	return result, rows.Err()

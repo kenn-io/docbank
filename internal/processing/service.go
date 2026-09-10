@@ -230,8 +230,14 @@ func NewService(config ServiceConfig) (*Service, error) {
 			}
 			descriptor := supplied.RenditionProvider.Descriptor()
 			if descriptor.ID != profile.Rendition.Descriptor.ID ||
-				descriptor.Fingerprint != profile.Rendition.Descriptor.Fingerprint {
+				descriptor.Fingerprint != profile.Rendition.Descriptor.Fingerprint ||
+				string(descriptor.TrustBoundary) != profile.Rendition.TrustBoundary {
 				return nil, fmt.Errorf("processing profile %q rendition provider differs from its descriptor", name)
+			}
+			switch descriptor.TrustBoundary {
+			case document.RenditionTrustLocalProcess, document.RenditionTrustOperatorNetwork, document.RenditionTrustHostedProvider:
+			default:
+				return nil, fmt.Errorf("processing profile %q rendition provider has an invalid trust boundary", name)
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
@@ -251,8 +257,14 @@ func NewService(config ServiceConfig) (*Service, error) {
 				return nil, fmt.Errorf("processing profile %q embedding %q is unavailable", name, binding.Name)
 			}
 			descriptor := provider.Descriptor()
-			if descriptor.ID != binding.Descriptor.ID || descriptor.Fingerprint != binding.Descriptor.Fingerprint {
+			if descriptor.ID != binding.Descriptor.ID || descriptor.Fingerprint != binding.Descriptor.Fingerprint ||
+				string(descriptor.TrustBoundary) != binding.TrustBoundary {
 				return nil, fmt.Errorf("processing profile %q embedding %q differs from its descriptor", name, binding.Name)
+			}
+			switch descriptor.TrustBoundary {
+			case document.EmbeddingTrustLocalProcess, document.EmbeddingTrustOperatorNetwork, document.EmbeddingTrustHostedProvider:
+			default:
+				return nil, fmt.Errorf("processing profile %q embedding %q has an invalid trust boundary", name, binding.Name)
 			}
 			classifier := supplied.EmbeddingClassifiers[binding.Name]
 			if classifier == nil {
@@ -555,10 +567,14 @@ func aggregateStatus(jobID string, rendition *store.RenditionJob,
 	if rendition != nil && rendition.State != store.RenditionJobCompleted {
 		return status
 	}
-	for _, wanted := range []string{"failed", "abandoned", "retry_wait", "running", "queued"} {
+	for _, wanted := range []string{"failed", "abandoned", "retry_wait", "running", "queued", "partial"} {
 		for _, embedding := range embeddings {
-			if embedding.State == wanted {
-				status.State, status.Phase = embedding.State, "embedding"
+			state := embedding.State
+			if embedding.Activation == document.EmbeddingOptional && (state == "failed" || state == "abandoned") {
+				state = "partial"
+			}
+			if state == wanted {
+				status.State, status.Phase = state, "embedding"
 				status.FailureCode = string(embedding.FailureCode)
 				return status
 			}
@@ -815,7 +831,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			if status.State == "completed" || status.State == "failed" || status.State == "abandoned" {
 				break
 			}
-			if status.State != "running" {
+			if status.State != "running" && status.State != "retry_wait" {
 				return nil, errors.New("embedding job was not claimable")
 			}
 			if err := worker.wait(ctx, 100*time.Millisecond); err != nil {

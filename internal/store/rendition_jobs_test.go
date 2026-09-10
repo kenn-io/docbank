@@ -52,12 +52,12 @@ func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 	)
 }
 
-func TestRenditionJobsRejectExecutionIdentityThatConflictsWithBuildIdentity(t *testing.T) {
+func TestRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	baseRequest := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, baseRequest)
-	_, _, err := s.EnqueueRenditionJob(t.Context(), baseRequest)
+	first, _, err := s.EnqueueRenditionJob(t.Context(), baseRequest)
 	require.NoError(t, err)
 
 	mutations := map[string]func(*document.RenditionExecutionIdentityV1){
@@ -78,8 +78,9 @@ func TestRenditionJobsRejectExecutionIdentityThatConflictsWithBuildIdentity(t *t
 				[]document.EvidenceArtifactRole(nil),
 				baseRequest.ExecutionIdentity.Authorization.AllowedArtifactRoles...)
 			mutate(&request.ExecutionIdentity)
-			_, _, err := s.EnqueueRenditionJob(t.Context(), request)
-			require.ErrorContains(t, err, "incompatible execution identity")
+			second, _, err := s.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			require.NotEqual(t, first.ID, second.ID)
 		})
 	}
 }
@@ -237,9 +238,11 @@ func TestEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
+	_, executionFingerprint, err := document.CanonicalRenditionExecutionIdentityV1(request.ExecutionIdentity)
+	require.NoError(t, err)
 	jobID := renditionSharedBuildID(
 		s.VaultID(), catalogSourceHash, profile.RenditionRequestFingerprint,
-		profile.EvidenceLexicalFingerprint, digestCatalogJSON(request.CapturedArtifactPolicy),
+		profile.EvidenceLexicalFingerprint, digestCatalogJSON(request.CapturedArtifactPolicy), executionFingerprint,
 	)
 	build := catalogRenditionBuild(s, profile)
 	build.ID = jobID
@@ -745,7 +748,7 @@ func TestRenditionJobMetadataRestoreRejectsCapturedPolicyOutsideProfile(t *testi
 			job.CapturedArtifactPolicyFingerprint = digestCatalogJSON(policy.canonical)
 			job.ID = renditionSharedBuildID(job.VaultID, job.SourceSHA256,
 				job.RenditionRequestFingerprint, job.EvidenceLexicalFingerprint,
-				job.CapturedArtifactPolicyFingerprint)
+				job.CapturedArtifactPolicyFingerprint, job.ExecutionIdentityFingerprint)
 			replacementJobID = job.ID
 			line, err = json.Marshal(job, json.Deterministic(true))
 			require.NoError(t, err)

@@ -1,12 +1,18 @@
 package processing
 
 import (
+	"context"
+	"encoding/json/v2"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -71,4 +77,66 @@ func BenchmarkProcessingServiceSourceFence4096(b *testing.B) {
 
 func frontmatterHashForService(value string) string {
 	return fmt.Sprintf("%064s", value)
+}
+
+func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing.T) {
+	fixture, fake, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	fake.runtime.failures[request.BindingID] = []error{embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{}}
+	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: request.Descriptor}
+	runtime, err := NewProviderEmbeddingRuntime(provider, fixture.blobs, t.TempDir(), fake.runtime.Classify)
+	require.NoError(t, err)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+	profile := configuredProfile{portable: portable, record: request.Profile,
+		embedders:         map[string]document.EmbeddingProvider{request.BindingID: provider},
+		embeddingRuntimes: map[string]*ProviderEmbeddingRuntime{request.BindingID: runtime}}
+	var clockOffset atomic.Int64
+	clockOffset.Store(int64(time.Second))
+	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: processingServiceTestGate{fake.gate},
+		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+	require.NoError(t, err)
+	jobs, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
+	require.NoError(t, err)
+	require.Equal(t, "retry_wait", status.State)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
+	clockOffset.Store(int64(2 * time.Minute))
+	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	require.NoError(t, err)
+	require.Equal(t, jobs, retried)
+	status, err = fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+}
+
+func TestAggregateStatusUsesBindingActivation(t *testing.T) {
+	for _, activation := range []document.EmbeddingActivation{document.EmbeddingRequired, document.EmbeddingOptional} {
+		for _, state := range []string{"failed", "abandoned"} {
+			t.Run(string(activation)+"/"+state, func(t *testing.T) {
+				embeddings := []store.EmbeddingJobStatus{{ID: "a", State: "completed", Activation: document.EmbeddingRequired}, {ID: "b", State: state, Activation: activation}}
+				status := aggregateStatus("a", nil, embeddings)
+				want := state
+				if activation == document.EmbeddingOptional {
+					want = "partial"
+				}
+				require.Equal(t, want, status.State)
+				require.Equal(t, 1, status.CompletedBindings)
+				embeddings = append(embeddings, store.EmbeddingJobStatus{ID: "c", State: "failed", Activation: document.EmbeddingRequired})
+				require.Equal(t, "failed", aggregateStatus("a", nil, embeddings).State, "required failure must take precedence")
+			})
+		}
+	}
+}
+
+type processingServiceTestGate struct{ *api.OperationGate }
+
+func (gate processingServiceTestGate) PreserveContext(ctx context.Context, fn func() error) error {
+	return gate.MutateContext(ctx, fn)
 }

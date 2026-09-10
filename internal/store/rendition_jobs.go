@@ -211,7 +211,7 @@ func (s *Store) EnqueueRenditionJob(
 		policyFingerprint := digestCatalogJSON(policy.canonical)
 		jobID := renditionSharedBuildID(s.vaultID, sourceSHA256,
 			profile.RenditionRequestFingerprint, profile.EvidenceLexicalFingerprint,
-			policyFingerprint)
+			policyFingerprint, executionFingerprint)
 		if request.ExecutionIdentity.Upload.SHA256 != sourceSHA256 ||
 			request.ExecutionIdentity.Authorization.SourceSHA256 != sourceSHA256 {
 			return errors.New("rendition execution identity does not match exact source authority")
@@ -1621,10 +1621,10 @@ func renditionWaiterAuthorizationTx(
 }
 
 func renditionSharedBuildID(
-	vaultID, source, rendition, evidence, capturedPolicy string,
+	vaultID, source, rendition, evidence, capturedPolicy, execution string,
 ) string {
-	digest := sha256.Sum256([]byte("docbank:rendition-build:v3\x00" + vaultID + "\x00" +
-		source + "\x00" + rendition + "\x00" + evidence + "\x00" + capturedPolicy))
+	digest := sha256.Sum256([]byte("docbank:rendition-build:v4\x00" + vaultID + "\x00" +
+		source + "\x00" + rendition + "\x00" + evidence + "\x00" + capturedPolicy + "\x00" + execution))
 	return hex.EncodeToString(digest[:])
 }
 

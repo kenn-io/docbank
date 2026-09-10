@@ -318,22 +318,6 @@ func stageRenditionBuildTx(
 	}
 	if inserted == 0 {
 		stored, loadErr := loadRenditionBuild(ctx, tx, normalized.ID)
-		if errors.Is(loadErr, ErrNotFound) {
-			var existingID string
-			identityErr := tx.QueryRowContext(ctx, `
-					SELECT build_id FROM rendition_builds
-					WHERE vault_uid=? AND source_sha256=?
-					  AND rendition_request_fingerprint=?
-					  AND evidence_lexical_fingerprint=?
-					  AND captured_artifact_policy_fingerprint=?`,
-				normalized.VaultID, normalized.SourceSHA256,
-				normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
-				normalized.CapturedArtifactPolicyFingerprint,
-			).Scan(&existingID)
-			if identityErr == nil {
-				return fmt.Errorf("rendition build identity already belongs to immutable build %s", existingID)
-			}
-		}
 		if loadErr != nil {
 			return loadErr
 		}

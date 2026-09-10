@@ -1342,7 +1342,7 @@ func validateMetadataRenditionJob(value metadataRenditionJob) error {
 	}
 	if renditionSharedBuildID(value.VaultID, value.SourceSHA256,
 		value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
-		value.CapturedArtifactPolicyFingerprint) != value.ID {
+		value.CapturedArtifactPolicyFingerprint, value.ExecutionIdentityFingerprint) != value.ID {
 		return errors.New("rendition job ID does not match immutable shared-build identity")
 	}
 	if value.ExecutionSnapshot != nil {
