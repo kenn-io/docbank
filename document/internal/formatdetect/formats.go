@@ -3,6 +3,8 @@ package formatdetect
 import (
 	"fmt"
 	"slices"
+
+	"go.kenn.io/docbank/document"
 )
 
 const (
@@ -20,33 +22,17 @@ type CandidateFormat struct {
 	UnitKind  string `json:"unit_kind"`
 }
 
-var candidateFormats = []CandidateFormat{
-	{ID: formatIDPDF, Family: formatIDPDF, MediaType: mediaTypePDF, UnitKind: "page"},
-	{ID: "docx", Family: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", UnitKind: "page"},
-	{ID: "doc", Family: "word", MediaType: "application/msword", UnitKind: "page"},
-	{ID: "odt", Family: "word", MediaType: "application/vnd.oasis.opendocument.text", UnitKind: "page"},
-	{ID: "rtf", Family: "word", MediaType: "application/rtf", UnitKind: "page"},
-	{ID: "pptx", Family: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", UnitKind: "slide"},
-	{ID: "ppt", Family: "presentation", MediaType: "application/vnd.ms-powerpoint", UnitKind: "slide"},
-	{ID: "xlsx", Family: "spreadsheet", MediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", UnitKind: "sheet"},
-	{ID: "xls", Family: "spreadsheet", MediaType: "application/vnd.ms-excel", UnitKind: "sheet"},
-	{ID: "ods", Family: "spreadsheet", MediaType: "application/vnd.oasis.opendocument.spreadsheet", UnitKind: "sheet"},
-	{ID: "numbers", Family: "spreadsheet", MediaType: "application/vnd.apple.numbers", UnitKind: "sheet"},
-	{ID: "csv", Family: "spreadsheet", MediaType: "text/csv", UnitKind: "record"},
-	{ID: "epub", Family: "ebook", MediaType: "application/epub+zip", UnitKind: "spine"},
-	{ID: "txt", Family: "text", MediaType: "text/plain", UnitKind: "section"},
-	{ID: "markdown", Family: "text", MediaType: "text/markdown", UnitKind: "section"},
-	{ID: "rst", Family: "text", MediaType: "text/x-rst", UnitKind: "section"},
-	{ID: "latex", Family: "text", MediaType: "application/x-tex", UnitKind: "section"},
-	{ID: "json", Family: "structured", MediaType: mediaTypeJSON, UnitKind: "record"},
-	{ID: "jsonl", Family: "structured", MediaType: "application/x-ndjson", UnitKind: "record"},
-	{ID: "xml", Family: "structured", MediaType: "application/xml", UnitKind: "record"},
-	{ID: "yaml", Family: "structured", MediaType: "application/yaml", UnitKind: "record"},
-	{ID: "go", Family: "source", MediaType: "text/x-go", UnitKind: "section"},
-	{ID: "python", Family: "source", MediaType: "text/x-python", UnitKind: "section"},
-	{ID: "javascript", Family: "source", MediaType: "text/javascript", UnitKind: "section"},
-	{ID: "eml", Family: "mail", MediaType: "message/rfc822", UnitKind: "message"},
-	{ID: "msg", Family: "mail", MediaType: "application/vnd.ms-outlook", UnitKind: "message"},
+var candidateFormats = providerCandidateFormats()
+
+func providerCandidateFormats() []CandidateFormat {
+	var formats []CandidateFormat
+	for _, metadata := range document.FormatMetadataCatalog() {
+		if metadata.Provider {
+			formats = append(formats, CandidateFormat{ID: metadata.ID, Family: metadata.Family,
+				MediaType: metadata.MediaType, UnitKind: metadata.UnitKind})
+		}
+	}
+	return formats
 }
 
 // CandidateFormats returns a defensive copy in stable probe order.

@@ -1,0 +1,122 @@
+{
+  "format": "docbank-query-identity-v1",
+  "queries": [
+    {
+      "name": "query_zero_size_max",
+      "input_json": "{\"filters\":{\"size_max\":0}}",
+      "canonical_utf8": "{\"filters\":{\"size_max\":0},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:b203dd89dec8cc2a6ef7c80cfc310b218da696be69553a9aa03adae4cd5661c3"
+    },
+    {
+      "name": "query_zero_size_range",
+      "input_json": "{\"filters\":{\"size_min\":0,\"size_max\":0}}",
+      "canonical_utf8": "{\"filters\":{\"size_max\":0},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:b203dd89dec8cc2a6ef7c80cfc310b218da696be69553a9aa03adae4cd5661c3"
+    },
+    {
+      "name": "query_defaults",
+      "input_json": "{}",
+      "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:5e60ffa8c5c733830f8dddba716f9bfce8a17121b5f8eb4de97cf23cf2fbe460"
+    },
+    {
+      "name": "query_optional_filter_nulls",
+      "input_json": "{\"filters\":{\"paths\":null,\"exclude_paths\":null,\"collection_ids\":null,\"exclude_collection_ids\":null,\"tag_ids\":null,\"exclude_tag_ids\":null,\"no_tags\":null,\"media_families\":null,\"mime_types\":null,\"extensions\":null,\"modified_after\":null,\"modified_before\":null,\"size_min\":null,\"size_max\":null,\"text_coverage\":null,\"has_duplicates\":null,\"collapse_duplicates\":null}}",
+      "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:5e60ffa8c5c733830f8dddba716f9bfce8a17121b5f8eb4de97cf23cf2fbe460"
+    },
+    {
+      "name": "query_unicode_sets",
+      "input_json": "{\"v\":1,\"text\":\"café \\\"<>&\\\"   雪\",\"syntax\":\"advanced\",\"mode\":\"lexical\",\"filters\":{\"extensions\":[\"txt\",\"pdf\",\"pdf\"],\"tag_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\"],\"no_tags\":false,\"size_min\":0},\"sort\":{\"direction\":\"desc\",\"field\":\"modified_at\"}}",
+      "canonical_utf8": "{\"filters\":{\"extensions\":[\"pdf\",\"txt\"],\"tag_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"desc\",\"field\":\"modified_at\"},\"syntax\":\"advanced\",\"text\":\"café \\\"<>&\\\"   雪\",\"v\":1}",
+      "fingerprint": "sha256:eb02681565bd5e54af25b8b0dbbfad35e087a0c02c904010d8015f2f00497972"
+    },
+    {
+      "name": "query_full_expression",
+      "input_json": "{\"v\":1,\"text\":\"name:\\\"draft memo\\\" OR saved:\\\"project notes\\\" -tag:archive/excluded\",\"syntax\":\"advanced\",\"mode\":\"lexical\",\"filters\":{},\"sort\":{\"field\":\"name\",\"direction\":\"asc\"}}",
+      "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"advanced\",\"text\":\"name:\\\"draft memo\\\" OR saved:\\\"project notes\\\" -tag:archive/excluded\",\"v\":1}",
+      "fingerprint": "sha256:a8753567a97eb48148e21480d5c69623ce1fc2af612bc7f59255eb1d762793ca"
+    },
+    {
+      "name": "query_astral_scalar_order",
+      "input_json": "{\"text\":\"paragraph separator\",\"filters\":{\"paths\":[\"/😀\",\"/\",\"/😀\"]}}",
+      "canonical_utf8": "{\"filters\":{\"paths\":[\"/\",\"/😀\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"paragraph separator\",\"v\":1}",
+      "fingerprint": "sha256:810ff125a347315dcc9592c9aa454f89a18975430a0ed0d2678ad7373e5e306b"
+    },
+    {
+      "name": "query_all_filter_shapes",
+      "input_json": "{\"v\":1,\"text\":\"synthetic\",\"syntax\":\"simple\",\"mode\":\"hybrid\",\"filters\":{\"paths\":[\"/beta\",\"/alpha\"],\"exclude_paths\":[\"/archive\"],\"collection_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\"],\"exclude_collection_ids\":[\"00000000-0000-4000-8000-000000000003\"],\"tag_ids\":[\"00000000-0000-4000-8000-000000000005\"],\"exclude_tag_ids\":[\"00000000-0000-4000-8000-000000000004\"],\"media_families\":[\"text\",\"document\"],\"mime_types\":[\"text/plain\",\"application/pdf\"],\"extensions\":[\"txt\",\"pdf\"],\"modified_after\":\"2026-09-09T10:30:00+02:30\",\"modified_before\":\"2026-09-10T00:00:00.123400000Z\",\"size_min\":1,\"size_max\":9007199254740991,\"text_coverage\":[\"partial\",\"complete\"],\"has_duplicates\":true,\"collapse_duplicates\":true},\"sort\":{\"field\":\"relevance\",\"direction\":\"desc\"}}",
+      "canonical_utf8": "{\"filters\":{\"collapse_duplicates\":true,\"collection_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"],\"exclude_collection_ids\":[\"00000000-0000-4000-8000-000000000003\"],\"exclude_paths\":[\"/archive\"],\"exclude_tag_ids\":[\"00000000-0000-4000-8000-000000000004\"],\"extensions\":[\"pdf\",\"txt\"],\"has_duplicates\":true,\"media_families\":[\"document\",\"text\"],\"mime_types\":[\"application/pdf\",\"text/plain\"],\"modified_after\":\"2026-09-09T08:00:00Z\",\"modified_before\":\"2026-09-10T00:00:00.1234Z\",\"paths\":[\"/alpha\",\"/beta\"],\"size_max\":9007199254740991,\"size_min\":1,\"tag_ids\":[\"00000000-0000-4000-8000-000000000005\"],\"text_coverage\":[\"complete\",\"partial\"]},\"mode\":\"hybrid\",\"sort\":{\"direction\":\"desc\",\"field\":\"relevance\"},\"syntax\":\"simple\",\"text\":\"synthetic\",\"v\":1}",
+      "fingerprint": "sha256:3562cd9f159730e238eb153be4b348f9b17948bd4515542c09b30203521502db"
+    },
+    {
+      "name": "query_strict_nanosecond_and_mime_token",
+      "input_json": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00.123456789+00:00\",\"mime_types\":[\"application/x~synthetic\"]}}",
+      "canonical_utf8": "{\"filters\":{\"mime_types\":[\"application/x~synthetic\"],\"modified_after\":\"2026-09-09T00:00:00.123456789Z\"},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:dbc6e8cac96d94ccb8c55dcebc63c4db7aae7e9ee1f23cc9c05fceda89a2a44b"
+    }
+  ],
+  "highlight_sets": [
+    {
+      "name": "ordered_literal_terms",
+      "input_json": "{\"v\":1,\"terms\":[{\"text\":\"first <literal>\",\"color\":\"#a0b1c2\"},{\"text\":\"雪 😀\",\"color\":\"#ffffff\"}]}",
+      "canonical_utf8": "{\"terms\":[{\"color\":\"#a0b1c2\",\"text\":\"first <literal>\"},{\"color\":\"#ffffff\",\"text\":\"雪 😀\"}],\"v\":1}",
+      "fingerprint": "sha256:e9c10a1278ea399545e8d5b08317c0e3459979d60654527eb9400e45d98ceb08"
+    },
+    {
+      "name": "omitted_version_defaults_to_one",
+      "input_json": "{\"terms\":[{\"text\":\"omitted version\",\"color\":\"#123abc\"}]}",
+      "canonical_utf8": "{\"terms\":[{\"color\":\"#123abc\",\"text\":\"omitted version\"}],\"v\":1}",
+      "fingerprint": "sha256:21f9347b62f957ac3dc31f22a4ffc19d6f0237d1ed5e29483648b2d2b5e71ae8"
+    }
+  ],
+  "invalid_queries": [
+    {"name": "positive_minimum_with_zero_maximum", "json_text": "{\"filters\":{\"size_min\":5,\"size_max\":0}}"},
+    {"name": "duplicate_object_keys", "json_text": "{\"v\":1,\"v\":1}"},
+    {"name": "nested_duplicate_keys", "json_text": "{\"filters\":{\"extensions\":[\"txt\"],\"extensions\":[\"pdf\"]}}"},
+    {"name": "unsafe_integer", "json_text": "{\"filters\":{\"size_max\":9007199254740992}}"},
+    {"name": "packet_unsafe_integer", "json_text": "{\"n\":9007199254740992}"},
+    {"name": "decimal_integer", "json_text": "{\"filters\":{\"size_min\":1.0}}"},
+    {"name": "exponent_integer", "json_text": "{\"v\":1e0}"},
+    {"name": "nonfinite", "json_text": "{\"n\":NaN}"},
+    {"name": "lone_surrogate", "json_text": "{\"text\":\"\\ud800\"}"},
+    {"name": "unknown_query_field", "json_text": "{\"NameOnly\":true}"},
+    {"name": "packet_unknown_query_field", "json_text": "{\"v\":1,\"text\":\"\",\"syntax\":\"simple\",\"mode\":\"lexical\",\"filters\":{},\"sort\":{\"field\":\"name\",\"direction\":\"asc\"},\"NameOnly\":true}"},
+    {"name": "unknown_nested_field", "json_text": "{\"sort\":{\"field\":\"name\",\"future\":true}}"},
+    {"name": "explicit_null_envelope", "json_text": "{\"text\":null}"},
+    {"name": "highlight_kind_confusion", "json_text": "{\"v\":1,\"terms\":[{\"text\":\"term\",\"color\":\"#ffffff\"}]}"},
+    {"name": "timestamp_single_digit_hour", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T1:00:00Z\"}}"},
+    {"name": "timestamp_comma_fraction", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00,1Z\"}}"},
+    {"name": "timestamp_truncated_tenth_digit", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00.1234567891Z\"}}"},
+    {"name": "timestamp_invalid_offset_hour", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00+24:00\"}}"},
+    {"name": "timestamp_invalid_offset_minute", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00+23:60\"}}"},
+    {"name": "timestamp_normalizes_before_year_zero", "json_text": "{\"filters\":{\"modified_after\":\"0000-01-01T00:00:00+23:59\"}}"},
+    {"name": "timestamp_normalizes_after_year_9999", "json_text": "{\"filters\":{\"modified_after\":\"9999-12-31T23:59:59-23:59\"}}"}
+  ],
+  "invalid_highlight_sets": [
+    {"name": "null_terms", "json_text": "{\"v\":1,\"terms\":null}"},
+    {"name": "null_term_text", "json_text": "{\"v\":1,\"terms\":[{\"text\":null,\"color\":\"#abcdef\"}]}"}
+  ],
+  "bounds": {
+    "oversized_query_path_ascii_bytes": 71680,
+    "highlight_max_terms": 64,
+    "highlight_max_term_scalars": 256,
+    "oversized_highlight_astral_scalars": 254
+  },
+  "media_cases": [
+    {"name": "extended_parameter", "media_type": "image/png; name*=utf-8''synthetic.png", "filename": "message.eml", "family": "image"},
+    {"name": "apostrophe_parameter_value", "media_type": "image/png; name=a'b", "filename": "message.eml", "family": "image"},
+    {"name": "wildcard_is_not_concrete", "media_type": "image/*", "filename": "scan.png", "family": "unknown"},
+    {"name": "ascii_mime_whitespace_and_case", "media_type": " \tIMAGE/PNG\r\n", "filename": "message.eml", "family": "image"},
+    {"name": "nel_is_not_mime_whitespace", "media_type": "image/png", "filename": "message.eml", "family": "unknown"},
+    {"name": "bom_is_not_mime_whitespace", "media_type": "﻿image/png", "filename": "message.eml", "family": "unknown"},
+    {"name": "non_ascii_mime_case_is_rejected", "media_type": "İmage/png", "filename": "message.eml", "family": "unknown"},
+    {"name": "non_ascii_extension_missing_mime", "media_type": "", "filename": "synthetic.İCS", "family": "unknown"},
+    {"name": "non_ascii_extension_generic_mime", "media_type": "application/octet-stream", "filename": "synthetic.İCS", "family": "unknown"},
+    {"name": "ascii_uppercase_extension_fallback", "media_type": "application/octet-stream", "filename": "REPORT.PDF", "family": "document"},
+    {"name": "jsonl_alias_conflicting_extension", "media_type": "application/jsonl", "filename": "synthetic.pdf", "family": "text"},
+    {"name": "jsonl_alias_ascii_case_and_parameters", "media_type": " APPLICATION/JSONL ; charset=utf-8 ", "filename": "synthetic.pdf", "family": "text"},
+    {"name": "jsonl_canonical_mime", "media_type": "application/x-ndjson", "filename": "synthetic.pdf", "family": "text"},
+    {"name": "jsonl_generic_mime_extension_fallback", "media_type": "application/octet-stream", "filename": "synthetic.JSONL", "family": "text"}
+  ]
+}

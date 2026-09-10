@@ -24,7 +24,8 @@ const (
 // lifetime. Tokens are random, retained only as digests, and authorize only
 // the deliberately limited routes used by the built-in browser. Most are
 // reads; verified upload plus revision-bound trash, restore, tag assignment,
-// and tag-definition management are the only document-authority mutations.
+// tag-definition management, and saved-definition management are the only
+// document-authority mutations.
 type webSessionRegistry struct {
 	mu          sync.Mutex
 	tokens      map[[sha256.Size]byte]webSessionState
@@ -170,6 +171,16 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
+	if path == "/api/v1/saved-queries" {
+		return method == http.MethodGet ||
+			(method == http.MethodPost && r.URL.RawQuery == "")
+	}
+	if savedQueryID, ok := strings.CutPrefix(path, "/api/v1/saved-queries/"); ok &&
+		savedQueryID != "" && !strings.Contains(savedQueryID, "/") {
+		return method == http.MethodGet ||
+			((method == http.MethodPatch || method == http.MethodDelete) &&
+				r.URL.RawQuery == "")
+	}
 	if method == http.MethodPost && path == webDownloadPreparePath {
 		return true
 	}

@@ -140,6 +140,7 @@ func NewServer(d Deps) *Server {
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
+	registerSavedQueryRoutes(humaAPI, d, g)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
@@ -202,6 +203,8 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodDelete},
 		{"/api/v1/tags/{tag_id}", http.MethodPatch},
 		{"/api/v1/tags/{tag_id}", http.MethodDelete},
+		{"/api/v1/saved-queries/{saved_query_id}", http.MethodPatch},
+		{"/api/v1/saved-queries/{saved_query_id}", http.MethodDelete},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

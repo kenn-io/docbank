@@ -31,6 +31,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -278,6 +279,7 @@ var codeToTypedErr = map[string]error{
 	"invalid_provenance_time":      store.ErrInvalidProvenanceTime,
 	"invalid_name":                 store.ErrInvalidName,
 	"invalid_tag":                  store.ErrInvalidTag,
+	"invalid_saved_query":          store.ErrInvalidSavedQuery,
 	"invalid_batch_move":           store.ErrInvalidBatchMove,
 	"not_trashed":                  store.ErrNotTrashed,
 	"is_root":                      store.ErrIsRoot,
@@ -289,6 +291,7 @@ var codeToTypedErr = map[string]error{
 	"audit_scope_limit":            store.ErrAuditScopeLimit,
 	"audit_preview_stale":          store.ErrAuditPreviewStale,
 	"audit_not_enrolled":           store.ErrAuditNotEnrolled,
+	"audit_mutation_unsupported":   store.ErrAuditMutationUnsupported,
 	"invalid_audit_cursor":         store.ErrInvalidAuditCursor,
 	"backup_locked":                backup.ErrRepoLocked,
 	"backup_restore_target_active": home.ErrVaultLocked,
@@ -1584,6 +1587,202 @@ func validateAuditEvidenceCheck(check api.AuditEvidenceCheck) error {
 			(!scopeProblem && problem.ScopeID != "") {
 			return fmt.Errorf("audit evidence problem %d is invalid", index)
 		}
+	}
+	return nil
+}
+
+// SavedQueries returns one bounded, name-sorted page of saved definitions.
+func (c *Client) SavedQueries(
+	ctx context.Context, kind string, limit, offset int,
+) (api.SavedQueryPage, error) {
+	var page api.SavedQueryPage
+	if kind != "" && kind != store.SavedQueryKindQuery &&
+		kind != store.SavedQueryKindHighlightSet {
+		return page, errors.New("saved query kind is unknown")
+	}
+	if limit < 1 || limit > 1000 || offset < 0 {
+		return page, errors.New("saved query page is outside the supported bounds")
+	}
+	values := url.Values{
+		"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)},
+	}
+	if kind != "" {
+		values.Set("kind", kind)
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/saved-queries?"+values.Encode(),
+		nil, nil, &page); err != nil {
+		return page, err
+	}
+	if err := validateSavedQueryPage(page, kind, limit, offset); err != nil {
+		return api.SavedQueryPage{}, err
+	}
+	return page, nil
+}
+
+// SavedQuery returns one saved definition by stable ID.
+func (c *Client) SavedQuery(ctx context.Context, id string) (api.SavedQuery, error) {
+	var saved api.SavedQuery
+	if !validUUIDv4(id) {
+		return saved, errors.New("saved query ID must be a canonical UUIDv4")
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodGet,
+		"/api/v1/saved-queries/"+url.PathEscape(id), nil, nil, &saved)
+	if err != nil {
+		return saved, err
+	}
+	if err := validateSavedQueryResponse(saved, headers.Get("ETag")); err != nil {
+		return api.SavedQuery{}, err
+	}
+	if saved.ID != id {
+		return api.SavedQuery{}, errors.New("saved query response does not match requested ID")
+	}
+	return saved, nil
+}
+
+// CreateSavedQuery stores one complete query or literal highlight definition.
+func (c *Client) CreateSavedQuery(
+	ctx context.Context, request api.SavedQueryCreateRequest,
+) (api.SavedQuery, error) {
+	var saved api.SavedQuery
+	headers, err := c.doWithHeaders(ctx, http.MethodPost, "/api/v1/saved-queries",
+		nil, request, &saved)
+	if err != nil {
+		return saved, err
+	}
+	if err := validateSavedQueryResponse(saved, headers.Get("ETag")); err != nil {
+		return api.SavedQuery{}, err
+	}
+	if saved.Revision != 1 || saved.Name == "" || saved.Kind != request.Kind {
+		return api.SavedQuery{}, errors.New("created saved query response has inconsistent authority")
+	}
+	return saved, nil
+}
+
+// UpdateSavedQuery applies supplied mutable fields under revision fencing.
+func (c *Client) UpdateSavedQuery(
+	ctx context.Context, id string, revision int64, patch api.SavedQueryPatch,
+) (api.SavedQuery, error) {
+	var saved api.SavedQuery
+	if !validUUIDv4(id) {
+		return saved, errors.New("saved query ID must be a canonical UUIDv4")
+	}
+	if revision < 1 {
+		return saved, errors.New("saved query revision must be positive")
+	}
+	if patch.Name == nil && patch.Description == nil && patch.Payload == nil {
+		return saved, errors.New("saved query patch must set at least one field")
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodPatch,
+		"/api/v1/saved-queries/"+url.PathEscape(id), ifMatch(revision), patch, &saved)
+	if err != nil {
+		return saved, err
+	}
+	if err := validateSavedQueryResponse(saved, headers.Get("ETag")); err != nil {
+		return api.SavedQuery{}, err
+	}
+	if saved.ID != id || (saved.Revision != revision && saved.Revision != revision+1) {
+		return api.SavedQuery{}, errors.New("updated saved query response has inconsistent authority")
+	}
+	return saved, nil
+}
+
+// DeleteSavedQuery removes one definition under revision fencing.
+func (c *Client) DeleteSavedQuery(
+	ctx context.Context, id string, revision int64,
+) (api.SavedQuery, error) {
+	var saved api.SavedQuery
+	if !validUUIDv4(id) {
+		return saved, errors.New("saved query ID must be a canonical UUIDv4")
+	}
+	if revision < 1 {
+		return saved, errors.New("saved query revision must be positive")
+	}
+	headers, err := c.doWithHeaders(ctx, http.MethodDelete,
+		"/api/v1/saved-queries/"+url.PathEscape(id), ifMatch(revision), nil, &saved)
+	if err != nil {
+		return saved, err
+	}
+	if err := validateSavedQueryResponse(saved, headers.Get("ETag")); err != nil {
+		return api.SavedQuery{}, err
+	}
+	if saved.ID != id || saved.Revision != revision {
+		return api.SavedQuery{}, errors.New("deleted saved query response has inconsistent authority")
+	}
+	return saved, nil
+}
+
+func validateSavedQueryPage(page api.SavedQueryPage, kind string, limit, offset int) error {
+	expectedItems := 0
+	if offset < page.Total {
+		expectedItems = min(limit, page.Total-offset)
+	}
+	if page.Limit != limit || page.Offset != offset || page.Total < 0 ||
+		len(page.Items) != expectedItems {
+		return errors.New("saved query page has inconsistent bounds")
+	}
+	for index, saved := range page.Items {
+		if err := validateSavedQueryRecord(saved); err != nil {
+			return fmt.Errorf("saved query page item %d: %w", index, err)
+		}
+		if kind != "" && saved.Kind != kind {
+			return errors.New("saved query page contains the wrong kind")
+		}
+		if index > 0 {
+			previous := page.Items[index-1]
+			if previous.Name > saved.Name ||
+				(previous.Name == saved.Name && previous.ID >= saved.ID) {
+				return errors.New("saved query page is not strictly name-sorted")
+			}
+		}
+	}
+	return nil
+}
+
+func validateSavedQueryResponse(saved api.SavedQuery, etag string) error {
+	if etag != strconv.Quote(strconv.FormatInt(saved.Revision, 10)) {
+		return errors.New("saved query response ETag disagrees with its revision")
+	}
+	return validateSavedQueryRecord(saved)
+}
+
+func validateSavedQueryRecord(saved api.SavedQuery) error {
+	if !validUUIDv4(saved.ID) || saved.Name == "" || saved.Revision < 1 {
+		return errors.New("saved query response lacks valid identity authority")
+	}
+	created, err := time.Parse(time.RFC3339Nano, saved.CreatedAt)
+	if err != nil {
+		return errors.New("saved query response has an invalid creation timestamp")
+	}
+	updated, err := time.Parse(time.RFC3339Nano, saved.UpdatedAt)
+	if err != nil || updated.Before(created) {
+		return errors.New("saved query response has an invalid update timestamp")
+	}
+	var canonical []byte
+	var fingerprint string
+	switch saved.Kind {
+	case store.SavedQueryKindQuery:
+		value, parseErr := query.Parse(saved.Payload)
+		if parseErr != nil {
+			return fmt.Errorf("saved query response payload: %w", parseErr)
+		}
+		canonical, err = query.Canonical(value)
+		if err == nil {
+			fingerprint, err = query.Fingerprint(value)
+		}
+	case store.SavedQueryKindHighlightSet:
+		value, parseErr := query.ParseHighlightSet(saved.Payload)
+		if parseErr != nil {
+			return fmt.Errorf("saved highlight response payload: %w", parseErr)
+		}
+		canonical, err = query.CanonicalHighlightSet(value)
+		if err == nil {
+			fingerprint, err = query.HighlightSetFingerprint(value)
+		}
+	default:
+		return errors.New("saved query response has an unknown kind")
+	}
+	if err != nil || !bytes.Equal(canonical, saved.Payload) || fingerprint != saved.Fingerprint {
+		return errors.New("saved query response payload authority is inconsistent")
 	}
 	return nil
 }
