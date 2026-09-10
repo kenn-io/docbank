@@ -1240,7 +1240,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			return jobIDs, runErr
 		}
 		if !processed {
-			if err := service.waitEmbeddingTerminal(executionCtx, jobID); err != nil {
+			if err := service.waitEmbeddingSettled(executionCtx, jobID); err != nil {
 				return jobIDs, err
 			}
 		}
@@ -1269,7 +1269,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	return jobIDs, nil
 }
 
-func (service *Service) waitEmbeddingTerminal(ctx context.Context, jobID string) error {
+func (service *Service) waitEmbeddingSettled(ctx context.Context, jobID string) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -1277,7 +1277,7 @@ func (service *Service) waitEmbeddingTerminal(ctx context.Context, jobID string)
 		if err != nil {
 			return err
 		}
-		if job.State == "completed" || job.State == "failed" {
+		if job.State == "completed" || job.State == "failed" || job.State == "retry_wait" {
 			return nil
 		}
 		select {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -234,6 +235,49 @@ func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *te
 	require.Len(t, report.Results, 1)
 }
 
+func TestEmbeddedProcessingReturnsDuringEmbeddingRetryWait(t *testing.T) {
+	base := newSyntheticEmbeddingProvider(t)
+	provider := &retryWaitEmbeddingProvider{base: base}
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(base.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{"direct": {
+			Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider},
+			EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{
+				"direct": classifyRetryWaitEmbeddingError,
+			},
+		}},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("retryable embedding"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "direct"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	job, err := vault.SubmitProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	status := waitForProcessingStatus(t, vault, job.ID, "retry_wait")
+	require.Equal(t, job.ID, status.JobID)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	retryJob, err := vault.SubmitProcessing(ctx, docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, job.ID, retryJob.ID)
+	status, err = vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: retryJob.ID})
+	require.NoError(t, err)
+	require.Equal(t, "retry_wait", status.State)
+}
+
 func TestEmbeddedProcessingAcknowledgesCompleteEmbeddingBatchBeforeCancellation(t *testing.T) {
 	base := newSyntheticEmbeddingProvider(t)
 	embeddingProvider := &gatedEmbeddingProvider{base: base, release: make(chan struct{})}
@@ -379,6 +423,31 @@ type cancelOnEmbeddingProvider struct {
 	base    *syntheticEmbeddingProvider
 	entered chan struct{}
 	once    sync.Once
+}
+
+type retryWaitEmbeddingProvider struct {
+	base *syntheticEmbeddingProvider
+}
+
+type retryWaitEmbeddingError struct{}
+
+func (retryWaitEmbeddingError) Error() string { return "temporary embedding failure" }
+
+func (provider *retryWaitEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.base.Descriptor()
+}
+
+func (*retryWaitEmbeddingProvider) Embed(context.Context, []document.EmbeddingInput,
+	document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	return document.EmbeddingResult{}, retryWaitEmbeddingError{}
+}
+
+func classifyRetryWaitEmbeddingError(err error) (docbank.EmbeddingFailureClass, time.Duration) {
+	if _, ok := errors.AsType[retryWaitEmbeddingError](err); ok {
+		return docbank.EmbeddingFailureTransient, time.Minute
+	}
+	return docbank.EmbeddingFailurePermanent, 0
 }
 
 func (provider *cancelOnEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
