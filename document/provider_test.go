@@ -860,6 +860,33 @@ func TestRenditionProviderContractRejectsTypedNilBoundaryValues(t *testing.T) {
 		})
 	}
 
+	t.Run("nil upload wins before nil provider", func(t *testing.T) {
+		var provider RenditionProvider
+		var upload *syntheticAuthorizedUpload
+		var err error
+		require.NotPanics(t, func() {
+			_, err = RenderRendition(t.Context(), provider, upload, authorization)
+		})
+		require.ErrorContains(t, err, "authorized upload is required")
+	})
+
+	t.Run("pre-canceled context wins before nil provider", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		closeErr := errors.New("close sentinel")
+		upload := &syntheticAuthorizedUpload{
+			ReadCloser: io.NopCloser(bytes.NewReader(nil)), closeErr: closeErr, metadata: metadata,
+		}
+		var provider RenditionProvider
+		var err error
+		require.NotPanics(t, func() {
+			_, err = RenderRendition(ctx, provider, upload, authorization)
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, closeErr)
+		assert.Equal(t, 1, upload.closeCalls)
+	})
+
 	validProvider := syntheticRenditionProvider{descriptor: descriptor}
 	var nilUpload *syntheticAuthorizedUpload
 	assert.NotPanics(t, func() {
