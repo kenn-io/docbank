@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/suppliedtranscript"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/maintenance"
@@ -285,9 +286,15 @@ func NewService(config ServiceConfig) (*Service, error) {
 		scope:          config.Scope,
 		spoolDirectory: config.SpoolDirectory, clock: config.Clock, lifecycle: config.Lifecycle,
 		renditions: renditionRuntimes, embeddings: NewEmbeddingRuntimeRegistry()}
-	registeredRenditions := make(map[string]struct{})
+	registeredRenditions := make(map[string]document.RenditionProvider)
 	registeredEmbeddings := make(map[string]struct{})
-	for name, supplied := range config.Profiles {
+	profileNames := make([]string, 0, len(config.Profiles))
+	for name := range config.Profiles {
+		profileNames = append(profileNames, name)
+	}
+	slices.Sort(profileNames)
+	for _, name := range profileNames {
+		supplied := config.Profiles[name]
 		if err := validateProfileName(name); err != nil {
 			return nil, err
 		}
@@ -330,13 +337,21 @@ func NewService(config ServiceConfig) (*Service, error) {
 					return nil, fmt.Errorf("processing profile %q rendition provider evidence policy differs from profile", name)
 				}
 			}
+			if suppliedProvider, ok := supplied.RenditionProvider.(*suppliedtranscript.Provider); ok &&
+				suppliedProvider.DeploymentFingerprint() != profile.Rendition.DeploymentFingerprint {
+				return nil, fmt.Errorf("processing profile %q supplied transcript deployment differs from its binding", name)
+			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
-			if _, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
+			if existing, exists := registeredRenditions[descriptor.Fingerprint]; exists {
+				if err := equivalentRenditionProviderRegistration(existing, supplied.RenditionProvider); err != nil {
+					return nil, fmt.Errorf("processing profile %q: %w", name, err)
+				}
+			} else {
 				if err := service.renditions.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
 				}
-				registeredRenditions[descriptor.Fingerprint] = struct{}{}
+				registeredRenditions[descriptor.Fingerprint] = supplied.RenditionProvider
 			}
 		}
 		for _, binding := range profile.Embeddings {
@@ -379,6 +394,18 @@ func NewService(config ServiceConfig) (*Service, error) {
 		service.profiles[name] = configured
 	}
 	return service, nil
+}
+
+func equivalentRenditionProviderRegistration(existing, incoming document.RenditionProvider) error {
+	existingSupplied, existingIsSupplied := existing.(*suppliedtranscript.Provider)
+	incomingSupplied, incomingIsSupplied := incoming.(*suppliedtranscript.Provider)
+	if !existingIsSupplied && !incomingIsSupplied {
+		return nil
+	}
+	if existingIsSupplied && incomingIsSupplied && existingSupplied == incomingSupplied {
+		return nil
+	}
+	return errors.New("supplied transcript providers with an equal descriptor must reuse the same provider instance")
 }
 
 func (service *Service) Profiles() []ProfileSummary {
@@ -499,10 +526,11 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		var renditionRun renditionRun
 		renditionRun, err = service.runRendition(ctx, node, version, profile, principal, scope,
 			renditionProgress)
-		if err != nil {
-			return announced, processingConsentBoundaryError(err)
-		}
 		processingJobID, renditionJobID, attachmentID = renditionRun.waiterID, renditionRun.jobID, renditionRun.attachmentID
+		if err != nil {
+			return acceptedProcessingJob(announced, processingJobID, renditionJobID, attachmentID, nil,
+				profile.record.Fingerprint, version.ID), processingConsentBoundaryError(err)
+		}
 	}
 	var embeddingProgress func([]string)
 	if onEnqueued != nil {
@@ -521,7 +549,8 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	embeddingJobIDs, err := service.runEmbeddings(embeddingCtx, version, profile, principal, scope,
 		embeddingProgress)
 	if err != nil {
-		return announced, processingConsentBoundaryError(err)
+		return acceptedProcessingJob(announced, processingJobID, renditionJobID, attachmentID, embeddingJobIDs,
+			profile.record.Fingerprint, version.ID), processingConsentBoundaryError(err)
 	}
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
@@ -534,6 +563,22 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		ContentVersionID: version.ID}
 	notify(completed)
 	return completed, nil
+}
+
+func acceptedProcessingJob(announced Job, processingJobID, renditionJobID, attachmentID string,
+	embeddingJobIDs []string, profileFingerprint, contentVersionID string,
+) Job {
+	if announced.ID == "" {
+		if processingJobID == "" && len(embeddingJobIDs) != 0 {
+			processingJobID = embeddingJobIDs[0]
+		}
+		announced = Job{ID: processingJobID, RenditionJobID: renditionJobID, AttachmentID: attachmentID,
+			ProfileFingerprint: profileFingerprint, ContentVersionID: contentVersionID}
+	}
+	if len(embeddingJobIDs) != 0 {
+		announced.EmbeddingJobIDs = slices.Clone(embeddingJobIDs)
+	}
+	return announced
 }
 
 func processingConsentBoundaryError(err error) error {
@@ -815,7 +860,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		Runtime: service.renditions, Gate: service.gate, Owner: "embedded-rendition-worker",
 		LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 	if err != nil {
-		return renditionRun{}, err
+		return run, err
 	}
 	processed, err := worker.RunJob(executionCtx, job.ID)
 	if err != nil {
@@ -1137,7 +1182,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	if err != nil {
 		return nil, err
 	}
-	jobIDs := make([]string, 0, len(profile.portable.Embeddings))
+	requests := make([]store.EmbeddingJobRequest, 0, len(profile.portable.Embeddings))
 	vectorSpaceByJob := make(map[string]string, len(profile.portable.Embeddings))
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	for _, binding := range profile.portable.Embeddings {
@@ -1157,16 +1202,18 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		authorization := store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
-		job, enqueueErr := service.catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
+		requests = append(requests, store.EmbeddingJobRequest{
 			ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
 			Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
 			Authorization: authorization,
 		})
-		if enqueueErr != nil {
-			return nil, enqueueErr
-		}
-		jobIDs = append(jobIDs, job.ID)
-		vectorSpaceByJob[job.ID] = fingerprints.VectorSpace[binding.Name]
+	}
+	jobIDs, err := service.catalog.EnqueueEmbeddingJobs(ctx, requests)
+	if err != nil {
+		return nil, err
+	}
+	for index, jobID := range jobIDs {
+		vectorSpaceByJob[jobID] = fingerprints.VectorSpace[profile.portable.Embeddings[index].Name]
 	}
 	if onEnqueued != nil {
 		onEnqueued(slices.Clone(jobIDs))
@@ -1185,21 +1232,21 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		DescriptorFingerprints: service.embeddings.Fingerprints(),
 	})
 	if err != nil {
-		return nil, err
+		return jobIDs, err
 	}
 	for _, jobID := range jobIDs {
 		processed, runErr := worker.RunJob(executionCtx, jobID)
 		if runErr != nil {
-			return nil, runErr
+			return jobIDs, runErr
 		}
 		if !processed {
 			if err := service.waitEmbeddingTerminal(executionCtx, jobID); err != nil {
-				return nil, err
+				return jobIDs, err
 			}
 		}
 		status, statusErr := service.catalog.EmbeddingJobByID(executionCtx, jobID)
 		if statusErr != nil {
-			return nil, statusErr
+			return jobIDs, statusErr
 		}
 		if status.State == "completed" {
 			vectorSpaces = append(vectorSpaces, vectorSpaceByJob[jobID])
@@ -1212,11 +1259,11 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		Gate: service.gate, Owner: "embedded-index-worker", BuildLease: 5 * time.Minute,
 		ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 	if err != nil {
-		return nil, err
+		return jobIDs, err
 	}
 	for _, vectorSpace := range sortedUnique(vectorSpaces) {
 		if _, err := indexer.Rebuild(executionCtx, vectorSpace); err != nil {
-			return nil, err
+			return jobIDs, err
 		}
 	}
 	return jobIDs, nil

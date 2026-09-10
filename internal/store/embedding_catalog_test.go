@@ -263,6 +263,74 @@ func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
 	assert.False(t, found, "the unexpired resumed lease must survive daemon restart")
 }
 
+func TestEmbeddingJobCatalogAdmitsBindingsAsOneIdempotentBatch(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	first := embeddingJobTestRequest(t, s, versionID, profile, "batch-first")
+	secondRecord := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "required", "")
+	secondBinding := workerProfileEmbeddingBinding(t, profile, "required")
+	secondConsent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:batch-second", Scope: "embedding:required",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: secondBinding.DisclosureFingerprint,
+		InputClasses: []string{string(secondBinding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: secondConsent.Principal, Scope: secondConsent.Scope,
+		ProfileFingerprint: secondConsent.ProfileFingerprint, DisclosureFingerprint: secondConsent.DisclosureFingerprint,
+		InputClasses: secondConsent.InputClasses, RetainedArtifactClasses: secondConsent.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	second := EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: secondBinding.Name,
+		Descriptor: secondRecord.VectorSpace.Descriptor, InputGeneration: secondRecord.InputGeneration,
+		Authorization: secondConsent}
+
+	jobIDs, err := s.EnqueueEmbeddingJobs(t.Context(), []EmbeddingJobRequest{first, second})
+	require.NoError(t, err)
+	require.Len(t, jobIDs, 2)
+	require.NotEqual(t, jobIDs[0], jobIDs[1])
+	for _, jobID := range jobIDs {
+		_, err := s.EmbeddingJobByID(t.Context(), jobID)
+		require.NoError(t, err)
+	}
+
+	repeated, err := s.EnqueueEmbeddingJobs(t.Context(), []EmbeddingJobRequest{first, second})
+	require.NoError(t, err)
+	assert.Equal(t, jobIDs, repeated)
+	var count int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND profile_fingerprint=?`,
+		versionID, profile.Fingerprint).Scan(&count))
+	assert.Equal(t, 2, count)
+}
+
+func TestEmbeddingJobCatalogBatchRollbackLeavesPreexistingRows(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	preexisting := embeddingJobTestRequest(t, s, versionID, profile, "batch-preexisting")
+	preexistingJob, err := s.EnqueueEmbeddingJob(t.Context(), preexisting)
+	require.NoError(t, err)
+
+	valid := embeddingJobTestRequest(t, s, versionID, profile, "batch-valid")
+	invalid := embeddingJobTestRequest(t, s, versionID, profile, "batch-invalid")
+	invalid.InputGeneration.GenerationChecksum = testSHA256([]byte("wrong-source"))
+
+	counts := func() [5]int {
+		var result [5]int
+		err := s.db.QueryRow(`SELECT
+			(SELECT COUNT(*) FROM processing_profiles),
+			(SELECT COUNT(*) FROM embedding_vector_spaces),
+			(SELECT COUNT(*) FROM embedding_input_generations),
+			(SELECT COUNT(*) FROM embedding_generation_inputs),
+			(SELECT COUNT(*) FROM embedding_jobs)`).Scan(&result[0], &result[1], &result[2], &result[3], &result[4])
+		require.NoError(t, err)
+		return result
+	}
+	before := counts()
+	_, err = s.EnqueueEmbeddingJobs(t.Context(), []EmbeddingJobRequest{valid, invalid})
+	require.ErrorContains(t, err, "direct embedding generation does not name exact source")
+	assert.Equal(t, before, counts())
+	_, err = s.EmbeddingJobByID(t.Context(), preexistingJob.ID)
+	require.NoError(t, err)
+}
+
 func TestEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	firstRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-first")

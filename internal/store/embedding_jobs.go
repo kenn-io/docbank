@@ -80,26 +80,107 @@ type EmbeddingAttemptReceipt struct {
 }
 
 func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobRequest) (EmbeddingJob, error) {
+	jobIDs, err := s.EnqueueEmbeddingJobs(ctx, []EmbeddingJobRequest{request})
+	if err != nil {
+		return EmbeddingJob{}, err
+	}
+	return EmbeddingJob{ID: jobIDs[0]}, nil
+}
+
+// EnqueueEmbeddingJobs admits one complete embedding batch in one storage
+// transaction. It returns IDs only after the transaction commits.
+func (s *Store) EnqueueEmbeddingJobs(ctx context.Context, requests []EmbeddingJobRequest) ([]string, error) {
+	if len(requests) == 0 {
+		return nil, errors.New("enqueueing embedding jobs: at least one request is required")
+	}
+	prepared := make([]preparedEmbeddingJob, len(requests))
+	for index, request := range requests {
+		var err error
+		prepared[index], err = s.prepareEmbeddingJob(request)
+		if err != nil {
+			return nil, err
+		}
+	}
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, job := range prepared {
+			if err := ensureProcessingProfileTx(ctx, tx, job.profile); err != nil {
+				return err
+			}
+			if err := validateEmbeddingJobGenerationTx(ctx, tx, job.binding, job.request.InputGeneration); err != nil {
+				return err
+			}
+			if err := insertVectorSpaceTx(ctx, tx, job.space); err != nil {
+				return err
+			}
+			if err := insertInputGenerationTx(ctx, tx, job.generationProjection); err != nil {
+				return err
+			}
+			if _, err := authorizeProviderOperationTx(ctx, tx, s.vaultID, job.request.Authorization, job.authorizedAt); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
+				job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
+				generation_id,vector_space_id,principal,scope,state,available_at,created_at,updated_at
+			) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?) ON CONFLICT(job_id) DO NOTHING`,
+				job.id, s.vaultID, job.request.ContentVersionID, job.profile.Fingerprint, job.binding.Name,
+				job.binding.InputKind, job.request.InputGeneration.ID, job.space.ID, job.authority.principal,
+				job.authority.scope, job.now, job.now, job.now); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET claim_epoch=max(claim_epoch,
+				COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots WHERE root_id=?),0))
+				WHERE job_id=?`, job.id, job.id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	jobIDs := make([]string, len(prepared))
+	for index, job := range prepared {
+		jobIDs[index] = job.id
+	}
+	return jobIDs, nil
+}
+
+type preparedEmbeddingJob struct {
+	request              EmbeddingJobRequest
+	profile              ProcessingProfileRecord
+	binding              document.EmbeddingBindingV1
+	authority            normalizedConsentAuthority
+	space                EmbeddingVectorSpaceRecord
+	generationProjection EmbeddingInputGenerationRecord
+	id                   string
+	now                  string
+	authorizedAt         time.Time
+}
+
+func (s *Store) prepareEmbeddingJob(request EmbeddingJobRequest) (preparedEmbeddingJob, error) {
 	profile, err := normalizeProcessingProfileRecord(request.Profile)
 	if err != nil {
-		return EmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
+		return preparedEmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
 	}
 	descriptor, err := document.NewEmbeddingDescriptor(request.Descriptor)
 	if err != nil || !reflect.DeepEqual(descriptor, request.Descriptor) {
-		return EmbeddingJob{}, errors.New("enqueueing embedding job: descriptor is not canonical")
+		return preparedEmbeddingJob{}, errors.New("enqueueing embedding job: descriptor is not canonical")
 	}
 	binding, fingerprints, err := embeddingBindingFromProfile(profile, request.BindingID)
 	if err != nil {
-		return EmbeddingJob{}, err
+		return preparedEmbeddingJob{}, err
 	}
 	if binding.Descriptor.Fingerprint != descriptor.Fingerprint || binding.Descriptor.ID != descriptor.ID ||
 		request.InputGeneration.SourceVersionID != request.ContentVersionID ||
 		request.InputGeneration.ProcessingProfileFingerprint != profile.Fingerprint {
-		return EmbeddingJob{}, errors.New("enqueueing embedding job: immutable authority does not match binding")
+		return preparedEmbeddingJob{}, errors.New("enqueueing embedding job: immutable authority does not match binding")
 	}
 	authority, err := normalizeConsentAuthority(request.Authorization)
 	if err != nil || authority.profile != profile.Fingerprint || authority.disclosure != binding.DisclosureFingerprint {
-		return EmbeddingJob{}, errors.New("enqueueing embedding job: consent does not match binding")
+		return preparedEmbeddingJob{}, errors.New("enqueueing embedding job: consent does not match binding")
+	}
+	if err := validateEmbeddingInputGeneration(request.InputGeneration); err != nil {
+		return preparedEmbeddingJob{}, err
 	}
 	space := EmbeddingVectorSpaceRecord{ID: fingerprints.VectorSpace[binding.Name],
 		ContractVersion: EmbeddingVectorSpaceContractV1, Descriptor: descriptor,
@@ -110,56 +191,24 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		QueryFormatter: descriptor.QueryFormatter, ModelInputFingerprint: descriptor.ModelInput.Fingerprint}
 	if binding.InputKind == document.EmbeddingInputRenditionChunk {
 		if len(request.InputGeneration.GenerationJSON) == 0 {
-			return EmbeddingJob{}, errors.New("enqueueing embedding job: exact E2 generation is required")
+			return preparedEmbeddingJob{}, errors.New("enqueueing embedding job: exact E2 generation is required")
 		}
 		record := EmbeddingSetRecord{BindingID: binding.Name, InputKind: binding.InputKind,
 			ProcessingProfileFingerprint: profile.Fingerprint,
 			EmbeddingInputFingerprint:    fingerprints.EmbeddingInput[binding.Name],
 			VectorSpace:                  space, InputGeneration: request.InputGeneration}
 		if err := validateEmbeddingBindingAuthority(record, binding, fingerprints); err != nil {
-			return EmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
+			return preparedEmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
 		}
 	}
-	now := time.Now().UTC().Format(timestampLayout)
+	now := time.Now().UTC()
 	generationProjection := request.InputGeneration
 	generationProjection.GenerationJSON = nil
 	jobID := embeddingJobID(s.vaultID, request.ContentVersionID, profile.Fingerprint,
 		binding.Name, binding.InputKind, request.InputGeneration.ID)
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
-			return err
-		}
-		if err := validateEmbeddingInputGeneration(request.InputGeneration); err != nil {
-			return err
-		}
-		if err := insertVectorSpaceTx(ctx, tx, space); err != nil {
-			return err
-		}
-		if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, request.InputGeneration); err != nil {
-			return err
-		}
-		if err := insertInputGenerationTx(ctx, tx, generationProjection); err != nil {
-			return err
-		}
-		if _, err := authorizeProviderOperationTx(ctx, tx, s.vaultID, request.Authorization, time.Now().UTC()); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
-			job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
-			generation_id,vector_space_id,principal,scope,state,available_at,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?) ON CONFLICT(job_id) DO NOTHING`,
-			jobID, s.vaultID, request.ContentVersionID, profile.Fingerprint, binding.Name,
-			binding.InputKind, request.InputGeneration.ID, space.ID, authority.principal,
-			authority.scope, now, now, now)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE embedding_jobs SET claim_epoch=max(claim_epoch,
-			COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots WHERE root_id=?),0))
-			WHERE job_id=?`, jobID, jobID)
-		return err
-	})
-	return EmbeddingJob{ID: jobID}, err
+	return preparedEmbeddingJob{request: request, profile: profile, binding: binding, authority: authority,
+		space: space, generationProjection: generationProjection, id: jobID,
+		now: now.Format(timestampLayout), authorizedAt: now}, nil
 }
 
 func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobStatus, error) {

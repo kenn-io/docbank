@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,6 +234,127 @@ func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *te
 	require.Len(t, report.Results, 1)
 }
 
+func TestEmbeddedProcessingAcknowledgesCompleteEmbeddingBatchBeforeCancellation(t *testing.T) {
+	base := newSyntheticEmbeddingProvider(t)
+	embeddingProvider := &gatedEmbeddingProvider{base: base, release: make(chan struct{})}
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	first := syntheticEmbeddingBinding(base.descriptor)
+	second := first
+	second.Name = "second"
+	second.DisclosureFingerprint = embeddedHash("second-embedding-disclosure")
+	profile.Embeddings = []document.EmbeddingBindingV1{first, second}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"direct": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{
+				"direct": embeddingProvider, "second": embeddingProvider,
+			}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		embeddingProvider.Release()
+		require.NoError(t, vault.Close())
+	})
+	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("direct-only needle"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "direct"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan struct {
+		job docbank.ProcessingJob
+		err error
+	}, 1)
+	go func() {
+		job, err := vault.SubmitProcessing(ctx, docbank.StartProcessingRequest{
+			PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+		})
+		result <- struct {
+			job docbank.ProcessingJob
+			err error
+		}{job: job, err: err}
+	}()
+	select {
+	case outcome := <-result:
+		require.NoError(t, outcome.err)
+		require.Len(t, outcome.job.EmbeddingJobIDs, 2)
+		require.Equal(t, outcome.job.EmbeddingJobIDs[0], outcome.job.ID)
+		cancel()
+		embeddingProvider.Release()
+		status := waitForProcessingStatus(t, vault, outcome.job.ID, "completed")
+		require.Equal(t, 2, status.CompletedBindings)
+		require.Equal(t, outcome.job.EmbeddingJobIDs, status.EmbeddingJobIDs)
+	case <-time.After(5 * time.Second):
+		t.Fatal("submission waited for embedding execution after admission")
+	}
+}
+
+func TestEmbeddedProcessingCancellationAfterBatchAdmissionReturnsCommittedIDsWithWorkerError(t *testing.T) {
+	base := newSyntheticEmbeddingProvider(t)
+	embeddingProvider := &cancelOnEmbeddingProvider{base: base, entered: make(chan struct{})}
+	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	first := syntheticEmbeddingBinding(base.descriptor)
+	second := first
+	second.Name = "second"
+	second.DisclosureFingerprint = embeddedHash("second-cancel-disclosure")
+	profile.Embeddings = []document.EmbeddingBindingV1{first, second}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"direct": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{
+				"direct": embeddingProvider, "second": embeddingProvider,
+			}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/private.txt", strings.NewReader("direct-only needle"),
+		docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "direct"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan struct {
+		job docbank.ProcessingJob
+		err error
+	}, 1)
+	go func() {
+		job, err := vault.StartProcessing(ctx, docbank.StartProcessingRequest{
+			PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+		})
+		result <- struct {
+			job docbank.ProcessingJob
+			err error
+		}{job: job, err: err}
+	}()
+	select {
+	case <-embeddingProvider.Entered():
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("embedding worker did not reach the provider after batch admission")
+	}
+	select {
+	case outcome := <-result:
+		require.Error(t, outcome.err)
+		require.NotEmpty(t, outcome.job.ID)
+		require.Len(t, outcome.job.EmbeddingJobIDs, 2)
+		require.Equal(t, outcome.job.EmbeddingJobIDs[0], outcome.job.ID)
+		for _, jobID := range outcome.job.EmbeddingJobIDs {
+			_, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: jobID})
+			require.NoError(t, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("processing did not return the committed batch after cancellation")
+	}
+}
+
 func plaintextDescriptorForProfile(t *testing.T) document.RenditionDescriptor {
 	t.Helper()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -244,6 +366,58 @@ type syntheticEmbeddingProvider struct {
 	descriptor document.EmbeddingDescriptor
 	filenames  []string
 }
+
+type gatedEmbeddingProvider struct {
+	base       *syntheticEmbeddingProvider
+	release    chan struct{}
+	releaseOne sync.Once
+	entered    chan struct{}
+	enterOnce  sync.Once
+}
+
+type cancelOnEmbeddingProvider struct {
+	base    *syntheticEmbeddingProvider
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (provider *cancelOnEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.base.Descriptor()
+}
+
+func (provider *cancelOnEmbeddingProvider) Embed(ctx context.Context, _ []document.EmbeddingInput,
+	_ document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	provider.once.Do(func() { close(provider.entered) })
+	<-ctx.Done()
+	return document.EmbeddingResult{}, ctx.Err()
+}
+
+func (provider *cancelOnEmbeddingProvider) Entered() <-chan struct{} { return provider.entered }
+
+func (provider *gatedEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.base.Descriptor()
+}
+
+func (provider *gatedEmbeddingProvider) Embed(ctx context.Context, inputs []document.EmbeddingInput,
+	authorization document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	if provider.entered != nil {
+		provider.enterOnce.Do(func() { close(provider.entered) })
+	}
+	select {
+	case <-provider.release:
+		return provider.base.Embed(ctx, inputs, authorization)
+	case <-ctx.Done():
+		return document.EmbeddingResult{}, ctx.Err()
+	}
+}
+
+func (provider *gatedEmbeddingProvider) Release() {
+	provider.releaseOne.Do(func() { close(provider.release) })
+}
+
+func (provider *gatedEmbeddingProvider) Entered() <-chan struct{} { return provider.entered }
 
 func newSyntheticEmbeddingProvider(t *testing.T) *syntheticEmbeddingProvider {
 	t.Helper()

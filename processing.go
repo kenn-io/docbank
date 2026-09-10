@@ -35,7 +35,7 @@ func (v *Vault) StartProcessing(ctx context.Context, request StartProcessingRequ
 		Selector:        toProcessingSelector(request.PlanRequest.Selector),
 		PlanFingerprint: request.PlanFingerprint, Consent: request.Consent})
 	if err != nil {
-		return ProcessingJob{}, err
+		return fromProcessingJob(job), err
 	}
 	return fromProcessingJob(job), nil
 }

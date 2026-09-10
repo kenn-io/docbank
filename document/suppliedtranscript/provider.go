@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -37,9 +38,10 @@ type Profile struct {
 
 // Provider renders supplied transcript text for an authorized audio upload.
 type Provider struct {
-	descriptor     document.RenditionDescriptor
-	source         Source
-	evidencePolicy document.EvidencePolicy
+	descriptor            document.RenditionDescriptor
+	source                Source
+	evidencePolicy        document.EvidencePolicy
+	deploymentFingerprint string
 }
 
 // New constructs one immutable local supplied-transcript provider.
@@ -47,11 +49,27 @@ func New(profile Profile) (*Provider, error) {
 	if profile.Source == nil {
 		return nil, errors.New("supplied transcript: source is required")
 	}
+	if profile.ProcessingProfile.Rendition == nil {
+		return nil, errors.New("supplied transcript: rendition binding is required")
+	}
+	deploymentFingerprint := profile.ProcessingProfile.Rendition.DeploymentFingerprint
+	if len(deploymentFingerprint) != sha256.Size*2 {
+		return nil, errors.New("supplied transcript: deployment fingerprint is invalid")
+	}
+	if _, err := hex.DecodeString(deploymentFingerprint); err != nil ||
+		deploymentFingerprint != strings.ToLower(deploymentFingerprint) {
+		return nil, errors.New("supplied transcript: deployment fingerprint is invalid")
+	}
 	evidencePolicy, err := document.NewEvidencePolicyForProcessingProfile(profile.ProcessingProfile)
 	if err != nil {
 		return nil, fmt.Errorf("supplied transcript: processing profile: %w", err)
 	}
-	policyBytes, err := json.Marshal(evidencePolicy.Identity())
+	policyIdentity := struct {
+		DeploymentFingerprint string                          `json:"deployment_fingerprint"`
+		EvidencePolicy        document.EvidencePolicyIdentity `json:"evidence_policy"`
+	}{DeploymentFingerprint: deploymentFingerprint,
+		EvidencePolicy: evidencePolicy.Identity()}
+	policyBytes, err := json.Marshal(policyIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("supplied transcript: encode evidence policy: %w", err)
 	}
@@ -72,7 +90,8 @@ func New(profile Profile) (*Provider, error) {
 		return nil, fmt.Errorf("supplied transcript: construct descriptor: %w", err)
 	}
 	return &Provider{descriptor: cloneDescriptor(descriptor), source: profile.Source,
-		evidencePolicy: evidencePolicy}, nil
+		evidencePolicy:        evidencePolicy,
+		deploymentFingerprint: deploymentFingerprint}, nil
 }
 
 // Descriptor returns the immutable provider identity fixed by the profile.
@@ -90,6 +109,15 @@ func (provider *Provider) EvidencePolicy() document.EvidencePolicy {
 		return document.EvidencePolicy{}
 	}
 	return provider.evidencePolicy
+}
+
+// DeploymentFingerprint returns the stable transcript namespace and revision
+// selected by the caller for this provider.
+func (provider *Provider) DeploymentFingerprint() string {
+	if provider == nil {
+		return ""
+	}
+	return provider.deploymentFingerprint
 }
 
 // Render resolves the transcript by the authorized sealed audio digest. The

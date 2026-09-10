@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -180,6 +181,217 @@ func TestEmbeddedSuppliedAudioRejectsMismatchedEvidencePolicy(t *testing.T) {
 	}})
 	require.ErrorContains(t, err, "evidence policy")
 	assert.False(t, called)
+}
+
+func TestEmbeddedSuppliedAudioRejectsAmbiguousProviderRegistrationInEitherOrder(t *testing.T) {
+	provider := newTestSuppliedAudioProvider(t, func(string) (document.SuppliedTranscript, error) {
+		return document.SuppliedTranscript{Provider: "beeper", Text: "transcript"}, nil
+	})
+	equivalent := newTestSuppliedAudioProvider(t, func(string) (document.SuppliedTranscript, error) {
+		return document.SuppliedTranscript{Provider: "beeper", Text: "other transcript"}, nil
+	})
+	require.Equal(t, provider.Descriptor(), equivalent.Descriptor())
+	ordinary := collidingRenditionProvider{descriptor: provider.Descriptor()}
+	profile := suppliedAudioProfileForProvider(t, provider)
+
+	for _, test := range []struct {
+		name          string
+		suppliedFirst bool
+	}{
+		{name: "supplied provider first", suppliedFirst: true},
+		{name: "ordinary provider first", suppliedFirst: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profiles := map[string]docbank.ProcessingProfileConfig{}
+			if test.suppliedFirst {
+				profiles["a"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: provider}
+				profiles["b"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: ordinary}
+			} else {
+				profiles["a"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: ordinary}
+				profiles["b"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: provider}
+			}
+			_, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: profiles}})
+			require.ErrorContains(t, err, "same provider instance")
+		})
+	}
+	for _, test := range []struct {
+		name          string
+		suppliedFirst bool
+	}{
+		{name: "first supplied instance", suppliedFirst: true},
+		{name: "second supplied instance", suppliedFirst: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profiles := map[string]docbank.ProcessingProfileConfig{}
+			if test.suppliedFirst {
+				profiles["a"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: provider}
+				profiles["b"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: equivalent}
+			} else {
+				profiles["a"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: equivalent}
+				profiles["b"] = docbank.ProcessingProfileConfig{Profile: profile, RenditionProvider: provider}
+			}
+			_, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: profiles}})
+			require.ErrorContains(t, err, "same provider instance")
+		})
+	}
+
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{
+			"a": {Profile: profile, RenditionProvider: provider},
+			"b": {Profile: profile, RenditionProvider: provider},
+		},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+}
+
+func TestEmbeddedSuppliedAudioUsesDeploymentBindingForSharedBuildIdentityAcrossReopen(t *testing.T) {
+	root := t.TempDir()
+	stableDeployment := strings.Repeat("a", 64)
+	firstRotatedDeployment := strings.Repeat("b", 64)
+	secondRotatedDeployment := strings.Repeat("c", 64)
+	stableProvider, stableProfile := newTestSuppliedAudioProviderWithDeployment(t, stableDeployment,
+		func(string) (document.SuppliedTranscript, error) {
+			return document.SuppliedTranscript{Provider: "beeper", Text: "stable transcript"}, nil
+		})
+	firstRotatedProvider, firstRotatedProfile := newTestSuppliedAudioProviderWithDeployment(t, firstRotatedDeployment,
+		func(string) (document.SuppliedTranscript, error) {
+			return document.SuppliedTranscript{Provider: "beeper", Text: "rotated transcript v1"}, nil
+		})
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{
+			"stable":  {Profile: stableProfile, RenditionProvider: stableProvider},
+			"rotated": {Profile: firstRotatedProfile, RenditionProvider: firstRotatedProvider},
+		},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if vault != nil {
+			_ = vault.Close()
+		}
+	})
+	audio := mediatest.WAV()
+	receipt, err := vault.Put(t.Context(), "/voice.wav", bytes.NewReader(audio), docbank.PutOptions{MediaType: "audio/wav"})
+	require.NoError(t, err)
+	stableSelector := docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "stable"}
+	rotatedSelector := stableSelector
+	rotatedSelector.Profile = "rotated"
+	stableJob, err := submitAndWaitForSuppliedAudio(t, vault, stableSelector)
+	require.NoError(t, err)
+	firstRotatedJob, err := submitAndWaitForSuppliedAudio(t, vault, rotatedSelector)
+	require.NoError(t, err)
+	stableText, stableBuildID := readSuppliedAudioRendition(t, vault, stableSelector)
+	firstRotatedText, firstRotatedBuildID := readSuppliedAudioRendition(t, vault, rotatedSelector)
+	assert.Contains(t, stableText, "stable transcript")
+	assert.Contains(t, firstRotatedText, "rotated transcript v1")
+	assert.NotEqual(t, stableBuildID, firstRotatedBuildID)
+	assert.NotEmpty(t, stableJob.ID)
+	assert.NotEmpty(t, firstRotatedJob.ID)
+	require.NoError(t, vault.Close())
+	vault = nil
+
+	stableProvider, stableProfile = newTestSuppliedAudioProviderWithDeployment(t, stableDeployment,
+		func(string) (document.SuppliedTranscript, error) {
+			return document.SuppliedTranscript{Provider: "beeper", Text: "stable transcript"}, nil
+		})
+	secondRotatedProvider, secondRotatedProfile := newTestSuppliedAudioProviderWithDeployment(t, secondRotatedDeployment,
+		func(string) (document.SuppliedTranscript, error) {
+			return document.SuppliedTranscript{Provider: "beeper", Text: "rotated transcript v2"}, nil
+		})
+	vault, err = docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{
+			"stable":  {Profile: stableProfile, RenditionProvider: stableProvider},
+			"rotated": {Profile: secondRotatedProfile, RenditionProvider: secondRotatedProvider},
+		},
+	}})
+	require.NoError(t, err)
+	_, err = submitAndWaitForSuppliedAudio(t, vault, stableSelector)
+	require.NoError(t, err)
+	_, err = submitAndWaitForSuppliedAudio(t, vault, rotatedSelector)
+	require.NoError(t, err)
+	stableText, reopenedStableBuildID := readSuppliedAudioRendition(t, vault, stableSelector)
+	rotatedText, reopenedRotatedBuildID := readSuppliedAudioRendition(t, vault, rotatedSelector)
+	assert.Contains(t, stableText, "stable transcript")
+	assert.Contains(t, rotatedText, "rotated transcript v2")
+	assert.Equal(t, stableBuildID, reopenedStableBuildID)
+	assert.NotEqual(t, firstRotatedBuildID, reopenedRotatedBuildID)
+}
+
+func TestEmbeddedSuppliedAudioRejectsDeploymentBindingMismatch(t *testing.T) {
+	provider, profile := newTestSuppliedAudioProviderWithDeployment(t, strings.Repeat("a", 64),
+		func(string) (document.SuppliedTranscript, error) {
+			return document.SuppliedTranscript{Provider: "beeper", Text: "transcript"}, nil
+		})
+	profile.Rendition.DeploymentFingerprint = strings.Repeat("b", 64)
+	_, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{
+			"audio": {Profile: profile, RenditionProvider: provider},
+		},
+	}})
+	require.ErrorContains(t, err, "supplied transcript deployment differs from its binding")
+}
+
+func TestEmbeddedSuppliedAudioCancellationAfterRenditionAcknowledgementKeepsLaterEmbeddings(t *testing.T) {
+	renderer := newTestSuppliedAudioProvider(t, func(string) (document.SuppliedTranscript, error) {
+		return document.SuppliedTranscript{Provider: "beeper", Text: "supplied transcript"}, nil
+	})
+	embeddingBase := newSyntheticEmbeddingProvider(t)
+	embeddingProvider := &gatedEmbeddingProvider{base: embeddingBase, release: make(chan struct{}), entered: make(chan struct{})}
+	profile := suppliedAudioProfileForProvider(t, renderer)
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(embeddingBase.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+		Profiles: map[string]docbank.ProcessingProfileConfig{"audio": {
+			Profile: profile, RenditionProvider: renderer,
+			EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": embeddingProvider},
+		}},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		embeddingProvider.Release()
+		require.NoError(t, vault.Close())
+	})
+	receipt, err := vault.Put(t.Context(), "/voice.wav", bytes.NewReader(mediatest.WAV()), docbank.PutOptions{MediaType: "audio/wav"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "audio"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan struct {
+		job docbank.ProcessingJob
+		err error
+	}, 1)
+	go func() {
+		job, err := vault.SubmitProcessing(ctx, docbank.StartProcessingRequest{
+			PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+		})
+		result <- struct {
+			job docbank.ProcessingJob
+			err error
+		}{job: job, err: err}
+	}()
+	var outcome struct {
+		job docbank.ProcessingJob
+		err error
+	}
+	select {
+	case outcome = <-result:
+		require.NoError(t, outcome.err)
+		require.NotEmpty(t, outcome.job.RenditionJobID)
+		require.Empty(t, outcome.job.EmbeddingJobIDs)
+	case <-time.After(5 * time.Second):
+		t.Fatal("submission did not return the announced rendition waiter")
+	}
+	select {
+	case <-embeddingProvider.Entered():
+		cancel()
+		embeddingProvider.Release()
+	case <-time.After(5 * time.Second):
+		t.Fatal("later embedding stage did not reach the provider")
+	}
+	status := waitForProcessingStatus(t, vault, outcome.job.ID, "completed")
+	require.Len(t, status.EmbeddingJobIDs, 1)
+	require.Equal(t, 1, status.CompletedBindings)
 }
 
 func TestEmbeddedSuppliedAudioSubmitCloseWaitsForAcceptedWork(t *testing.T) {
@@ -372,6 +584,20 @@ type lookupTranscriptSource struct {
 	lookup func(string) (document.SuppliedTranscript, error)
 }
 
+type collidingRenditionProvider struct {
+	descriptor document.RenditionDescriptor
+}
+
+func (provider collidingRenditionProvider) Descriptor() document.RenditionDescriptor {
+	return provider.descriptor
+}
+
+func (collidingRenditionProvider) Render(context.Context, document.AuthorizedUpload,
+	document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	return document.RenditionResult{}, errors.New("colliding provider must not run")
+}
+
 func (source lookupTranscriptSource) Transcript(_ context.Context, digest string) (document.SuppliedTranscript, error) {
 	return source.lookup(digest)
 }
@@ -383,6 +609,21 @@ func newTestSuppliedAudioProvider(t *testing.T, lookup func(string) (document.Su
 	})
 	require.NoError(t, err)
 	return provider
+}
+
+func newTestSuppliedAudioProviderWithDeployment(t *testing.T, deployment string,
+	lookup func(string) (document.SuppliedTranscript, error),
+) (*suppliedtranscript.Provider, document.ProcessingProfileV1) {
+	t.Helper()
+	processingProfile := suppliedAudioProfileTemplate(t)
+	processingProfile.Rendition.DeploymentFingerprint = deployment
+	provider, err := suppliedtranscript.New(suppliedtranscript.Profile{
+		Source: lookupTranscriptSource{lookup: lookup}, ProcessingProfile: processingProfile,
+	})
+	require.NoError(t, err)
+	descriptor := provider.Descriptor()
+	processingProfile.Rendition.Descriptor = document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}
+	return provider, processingProfile
 }
 
 func newSuppliedAudioVault(t *testing.T, provider *suppliedtranscript.Provider) (*docbank.Vault, docbank.ProcessingSelector, docbank.ProcessingPlan) {
@@ -449,6 +690,32 @@ func waitForProcessingStatus(t *testing.T, vault *docbank.Vault, jobID, want str
 	require.NoError(t, err)
 	require.Equal(t, want, status.State, "status: %+v", status)
 	return status
+}
+
+func submitAndWaitForSuppliedAudio(t *testing.T, vault *docbank.Vault, selector docbank.ProcessingSelector) (docbank.ProcessingJob, error) {
+	t.Helper()
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	if err != nil {
+		return docbank.ProcessingJob{}, err
+	}
+	job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	if err != nil {
+		return job, err
+	}
+	waitForProcessingStatus(t, vault, job.ID, "completed")
+	return job, nil
+}
+
+func readSuppliedAudioRendition(t *testing.T, vault *docbank.Vault, selector docbank.ProcessingSelector) (string, string) {
+	t.Helper()
+	rendition, err := vault.Rendition(t.Context(), docbank.RenditionRequest{Selector: selector})
+	require.NoError(t, err)
+	body, err := io.ReadAll(rendition.Reader)
+	require.NoError(t, err)
+	require.NoError(t, rendition.Reader.Close())
+	return string(body), rendition.BuildID
 }
 
 func versionIDs(versions []docbank.ContentVersion) []string {

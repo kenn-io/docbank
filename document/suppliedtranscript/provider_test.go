@@ -73,6 +73,37 @@ func TestProviderDescriptorIsBoundedAndImmutable(t *testing.T) {
 	assert.NotEqual(t, descriptor.ArtifactRoles, provider.Descriptor().ArtifactRoles)
 }
 
+func TestProviderDescriptorIncludesDeploymentFingerprint(t *testing.T) {
+	firstProfile := testProcessingProfile(100_000)
+	firstProfile.Rendition.DeploymentFingerprint = strings.Repeat("a", 64)
+	secondProfile := firstProfile
+	bindingCopy := *firstProfile.Rendition
+	secondProfile.Rendition = &bindingCopy
+	secondProfile.Rendition.DeploymentFingerprint = strings.Repeat("b", 64)
+
+	first, err := New(Profile{ProcessingProfile: firstProfile, Source: sourceFunc(func(context.Context, string) (document.SuppliedTranscript, error) {
+		return document.SuppliedTranscript{Provider: "beeper", Text: "first"}, nil
+	})})
+	require.NoError(t, err)
+	second, err := New(Profile{ProcessingProfile: secondProfile, Source: sourceFunc(func(context.Context, string) (document.SuppliedTranscript, error) {
+		return document.SuppliedTranscript{Provider: "beeper", Text: "second"}, nil
+	})})
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first.Descriptor().Fingerprint, second.Descriptor().Fingerprint)
+	assert.Equal(t, firstProfile.Rendition.DeploymentFingerprint, first.DeploymentFingerprint())
+	assert.Equal(t, secondProfile.Rendition.DeploymentFingerprint, second.DeploymentFingerprint())
+}
+
+func TestProviderRequiresRenditionBinding(t *testing.T) {
+	profile := testProcessingProfile(100_000)
+	profile.Rendition = nil
+	_, err := New(Profile{ProcessingProfile: profile, Source: sourceFunc(func(context.Context, string) (document.SuppliedTranscript, error) {
+		return document.SuppliedTranscript{}, nil
+	})})
+	require.ErrorContains(t, err, "rendition binding is required")
+}
+
 func TestProviderAcceptsDeclaredProcessingProfileBoundaries(t *testing.T) {
 	for _, test := range []struct {
 		name          string
@@ -162,7 +193,7 @@ func TestProviderRejectsWrongAuthorizedDigestBeforeSourceExecution(t *testing.T)
 
 	_, err = document.RenderRendition(t.Context(), provider, upload, authorization)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "authorization does not match exact upload bytes")
+	require.ErrorContains(t, err, "authorization does not match exact upload bytes")
 	assert.False(t, called)
 }
 
@@ -220,6 +251,6 @@ func testAuthorization(
 func testProcessingProfile(maxUnitRunes int) document.ProcessingProfileV1 {
 	return document.ProcessingProfileV1{
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{MaxUnitRunes: maxUnitRunes},
-		Rendition:       &document.RenditionBindingV1{MaxUnits: 1},
+		Rendition:       &document.RenditionBindingV1{DeploymentFingerprint: strings.Repeat("0", 64), MaxUnits: 1},
 	}
 }

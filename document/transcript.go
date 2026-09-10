@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
-
-	"go.kenn.io/docbank/internal/canonical"
 )
 
 const suppliedTranscriptContractV1 = "supplied-transcript/v1"
@@ -87,7 +85,7 @@ func BuildTranscriptSourceEvidenceV1(
 		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 
-	payload, err := canonical.Marshal(suppliedTranscriptArtifactV1{
+	payload, err := canonicalJSON(suppliedTranscriptArtifactV1{
 		ContractVersion: suppliedTranscriptContractV1,
 		Provider:        transcript.Provider,
 		Text:            transcript.Text,

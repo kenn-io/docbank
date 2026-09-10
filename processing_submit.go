@@ -36,6 +36,15 @@ func (v *Vault) SubmitProcessing(ctx context.Context, request StartProcessingReq
 		finished <- submitProcessingResult{job: job, err: err}
 	}()
 
+	return awaitSubmitProcessingResult(ctx, started, finished)
+}
+
+func awaitSubmitProcessingResult(ctx context.Context, started <-chan internalprocessing.Job,
+	finished <-chan submitProcessingResult,
+) (ProcessingJob, error) {
+	if ctx.Err() != nil {
+		return awaitSubmitProcessingCancellation(ctx, started, finished)
+	}
 	for {
 		select {
 		case job := <-started:
@@ -46,23 +55,33 @@ func (v *Vault) SubmitProcessing(ctx context.Context, request StartProcessingReq
 				return fromProcessingJob(job), nil
 			default:
 			}
+			if result.job.ID != "" {
+				return fromProcessingJob(result.job), nil
+			}
 			if result.err != nil {
 				return ProcessingJob{}, result.err
 			}
 			return fromProcessingJob(result.job), nil
 		case <-ctx.Done():
-			select {
-			case job := <-started:
-				return fromProcessingJob(job), nil
-			case result := <-finished:
-				if result.err == nil {
-					return fromProcessingJob(result.job), nil
-				}
-				return ProcessingJob{}, errors.Join(result.err, ctx.Err())
-			default:
-			}
-			return ProcessingJob{}, ctx.Err()
+			return awaitSubmitProcessingCancellation(ctx, started, finished)
 		}
+	}
+}
+
+func awaitSubmitProcessingCancellation(ctx context.Context, started <-chan internalprocessing.Job,
+	finished <-chan submitProcessingResult,
+) (ProcessingJob, error) {
+	select {
+	case job := <-started:
+		return fromProcessingJob(job), nil
+	case result := <-finished:
+		if result.job.ID != "" {
+			return fromProcessingJob(result.job), nil
+		}
+		if result.err == nil {
+			return fromProcessingJob(result.job), nil
+		}
+		return ProcessingJob{}, errors.Join(result.err, ctx.Err())
 	}
 }
 

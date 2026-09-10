@@ -1,6 +1,7 @@
 package document_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -42,6 +43,25 @@ func TestBuildTranscriptEvidenceV1(t *testing.T) {
 	assert.Equal(t, "supplied-transcript/v1", payload.ContractVersion)
 	assert.Equal(t, "beeper", payload.Provider)
 	assert.Equal(t, "The shipment arrives at dock seven.", payload.Text)
+	if !bytes.Equal([]byte(`{"contract_version":"supplied-transcript/v1","provider":"beeper","text":"The shipment arrives at dock seven."}`), artifact.Payload) {
+		t.Fatalf("artifact payload bytes changed: %q", artifact.Payload)
+	}
+}
+
+func TestBuildTranscriptSourceEvidenceUsesTheExistingCanonicalEncoder(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(100)
+	require.NoError(t, err)
+
+	_, artifact, err := document.BuildTranscriptSourceEvidenceV1(document.SuppliedTranscript{
+		Provider: "beeper", Text: "Café\r\narrival",
+	}, policy)
+	require.NoError(t, err)
+
+	digest := sha256.Sum256(artifact.Payload)
+	assert.Equal(t, hex.EncodeToString(digest[:]), artifact.SHA256)
+	if !bytes.Equal([]byte(`{"contract_version":"supplied-transcript/v1","provider":"beeper","text":"Café\r\narrival"}`), artifact.Payload) {
+		t.Fatalf("artifact payload bytes changed: %q", artifact.Payload)
+	}
 }
 
 func TestBuildTranscriptSourceEvidenceV1MatchesNormalizedHelperSource(t *testing.T) {
