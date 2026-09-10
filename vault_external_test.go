@@ -173,11 +173,13 @@ type waitingRenditionProvider struct {
 
 	started, release chan struct{}
 	calls            atomic.Int32
+	filenames        []string
 }
 
 func (provider *waitingRenditionProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
+	provider.filenames = append(provider.filenames, upload.Metadata().Filename)
 	if provider.calls.Add(1) == 1 {
 		close(provider.started)
 	}
@@ -1372,6 +1374,52 @@ func TestEmbeddedProcessingStatusExcludesHistoricalChunkJobs(t *testing.T) {
 			require.Equal(t, "completed", after.State)
 			require.Equal(t, 1, after.CompletedBindings)
 			require.Empty(t, after.FailureCode)
+		})
+	}
+}
+
+func TestEmbeddedProcessingRejectsRenamedConsent(t *testing.T) {
+	for _, disclose := range []bool{false, true} {
+		t.Run(strconv.FormatBool(disclose), func(t *testing.T) {
+			base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+			require.NoError(t, err)
+			provider := &waitingRenditionProvider{RenditionProvider: base, started: make(chan struct{}), release: make(chan struct{})}
+			close(provider.release)
+			profile := embeddedProcessingProfile(t, provider.Descriptor())
+			profile.Rendition.DiscloseFilename = disclose
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": {Profile: profile, RenditionProvider: provider}}}})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			receipt, err := vault.Put(t.Context(), "/before.txt", strings.NewReader("synthetic consent source"), docbank.PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+			before, err := vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			_, err = vault.MovePath(t.Context(), "/before.txt", "/after.txt", docbank.RevisionOptions{})
+			require.NoError(t, err)
+			after, err := vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, disclose, before.Flow[0].DiscloseFilename)
+			if disclose {
+				require.Equal(t, "before.txt", before.Flow[0].Filename)
+				require.Equal(t, "after.txt", after.Flow[0].Filename)
+				require.Contains(t, before.DisclosedClasses, "filename")
+				require.NotEqual(t, before.Fingerprint, after.Fingerprint)
+				_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: before.Fingerprint, Consent: true})
+				require.ErrorIs(t, err, docbank.ErrProcessingPlanChanged)
+				require.Zero(t, provider.calls.Load())
+			} else {
+				require.Empty(t, before.Flow[0].Filename)
+				require.NotContains(t, before.DisclosedClasses, "filename")
+				require.Equal(t, before.Fingerprint, after.Fingerprint)
+			}
+			_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: after.Fingerprint, Consent: true})
+			require.NoError(t, err)
+			if disclose {
+				require.Equal(t, []string{"after.txt"}, provider.filenames)
+			} else {
+				require.Equal(t, []string{""}, provider.filenames)
+			}
 		})
 	}
 }

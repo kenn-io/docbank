@@ -66,10 +66,12 @@ type ProcessingPlanRequest struct {
 }
 
 type ProcessingFlowHop struct {
-	Capability    string   `json:"capability"`
-	ProviderID    string   `json:"provider_id"`
-	TrustBoundary string   `json:"trust_boundary"`
-	InputClasses  []string `json:"input_classes"`
+	Capability       string   `json:"capability"`
+	ProviderID       string   `json:"provider_id"`
+	TrustBoundary    string   `json:"trust_boundary"`
+	InputClasses     []string `json:"input_classes"`
+	DiscloseFilename bool     `json:"disclose_filename"`
+	Filename         string   `json:"filename,omitzero"`
 }
 
 type ProcessingEstimate struct {

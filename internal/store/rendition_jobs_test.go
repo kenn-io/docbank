@@ -1679,3 +1679,42 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	assert.Equal(t, "rejected", rejectedWaiter.State)
 	assert.Equal(t, RenditionFailureStaleAuthority, rejectedWaiter.FailureCode)
 }
+
+func TestRenditionJobFencesDisclosedFilenameAfterRename(t *testing.T) {
+	for _, disclose := range []bool{false, true} {
+		t.Run(map[bool]string{false: "hidden", true: "disclosed"}[disclose], func(t *testing.T) {
+			s, versions := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) { p.Rendition.DiscloseFilename = disclose })
+			version, err := s.ContentVersionByID(t.Context(), versions[0])
+			require.NoError(t, err)
+			node, err := s.NodeByID(t.Context(), version.NodeID)
+			require.NoError(t, err)
+			request := renditionJobTestRequest(version.ID, profile)
+			if disclose {
+				request.ExecutionIdentity.Authorization.DiscloseFilename = true
+				request.ExecutionIdentity.Upload.Filename = node.Name
+			}
+			grantRenditionJobConsent(t, s, request)
+			job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "rename-fence-test", now, time.Minute)
+			require.NoError(t, err)
+			_, err = s.RenditionJobWorkByClaim(t.Context(), claim, now)
+			require.NoError(t, err)
+			_, _, err = s.Move(t.Context(), node.ID, *node.ParentID, "renamed.pdf", UnconditionalRev)
+			require.NoError(t, err)
+			_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID, now.Add(time.Second), renditionJobTestSnapshot(request))
+			if disclose {
+				require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
+				rejected, err := s.RenditionJobWaiterByID(t.Context(), waiter.ID)
+				require.NoError(t, err)
+				require.Equal(t, "rejected", rejected.State)
+				_, _, err = s.EnqueueRenditionJob(t.Context(), request)
+				require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

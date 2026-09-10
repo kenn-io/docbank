@@ -94,10 +94,12 @@ type Selector struct {
 }
 
 type FlowHop struct {
-	Capability    string
-	ProviderID    string
-	TrustBoundary string
-	InputClasses  []string
+	Capability       string
+	ProviderID       string
+	TrustBoundary    string
+	InputClasses     []string
+	DiscloseFilename bool
+	Filename         string
 }
 
 type Estimate struct {
@@ -304,19 +306,32 @@ func NewService(config ServiceConfig) (*Service, error) {
 }
 
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
-	_, version, profile, err := service.resolve(ctx, selector)
+	node, version, profile, err := service.resolve(ctx, selector)
 	if err != nil {
 		return Plan{}, err
 	}
+	return service.planForSource(selector, node, version, profile)
+}
+
+func (service *Service) planForSource(selector Selector, node store.Node,
+	version store.ContentVersion, profile configuredProfile,
+) (Plan, error) {
 	plan := Plan{VaultUID: service.catalog.VaultID(), Selector: selector,
 		ProfileFingerprint: profile.record.Fingerprint, ConsentRequired: true,
 		Estimate:          Estimate{SourceBytes: version.Size, VectorSpaces: len(profile.portable.Embeddings)},
 		BackupConsequence: "retained derivatives are included in catalog-authorized backups"}
 	if profile.portable.Rendition != nil {
-		plan.Flow = append(plan.Flow, FlowHop{Capability: "rendition",
-			ProviderID:    profile.portable.Rendition.Descriptor.ID,
-			TrustBoundary: profile.portable.Rendition.TrustBoundary,
-			InputClasses:  []string{string(document.RenditionInputOriginalFile)}})
+		hop := FlowHop{Capability: "rendition",
+			ProviderID:       profile.portable.Rendition.Descriptor.ID,
+			TrustBoundary:    profile.portable.Rendition.TrustBoundary,
+			InputClasses:     []string{string(document.RenditionInputOriginalFile)},
+			DiscloseFilename: profile.portable.Rendition.DiscloseFilename}
+		if hop.DiscloseFilename {
+			hop.Filename = syntheticFilename(node.Name, version.MimeType, true)
+			hop.InputClasses = append(hop.InputClasses, "filename")
+			plan.DisclosedClasses = append(plan.DisclosedClasses, "filename")
+		}
+		plan.Flow = append(plan.Flow, hop)
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(document.RenditionInputOriginalFile))
 		plan.Estimate.ProviderCalls++
 	}
@@ -346,12 +361,18 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	}
 	plan.DisclosedClasses = sortedUnique(plan.DisclosedClasses)
 	plan.RetainedClasses = sortedUnique(plan.RetainedClasses)
+	var err error
 	plan.Fingerprint, err = planFingerprint(plan)
 	return plan, err
 }
 
 func (service *Service) Start(ctx context.Context, request StartRequest) (Job, error) {
-	plan, err := service.Plan(ctx, request.Selector)
+	node, version, profile, err := service.resolve(ctx, request.Selector)
+	if err != nil {
+		return Job{}, err
+	}
+	// Preview validation and execution must use the same source snapshot.
+	plan, err := service.planForSource(request.Selector, node, version, profile)
 	if err != nil {
 		return Job{}, err
 	}
@@ -360,10 +381,6 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 	}
 	if plan.ConsentRequired && !request.Consent {
 		return Job{}, ErrConsentRequired
-	}
-	node, version, profile, err := service.resolve(ctx, request.Selector)
-	if err != nil {
-		return Job{}, err
 	}
 	principal, scope := "embedded:operator", "document-processing"
 	for _, binding := range profile.portable.Embeddings {

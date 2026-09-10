@@ -894,15 +894,15 @@ func (worker *RenditionWorker) classifyAuthorityError(
 	if errors.Is(err, store.ErrRenditionJobWaiterReselected) {
 		return nil
 	}
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrNotFound) {
+		return worker.markFailed(
+			ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
+	}
 	if errors.Is(err, store.ErrProcessingConsentRequired) ||
 		errors.Is(err, store.ErrProcessingConsentExpired) ||
 		errors.Is(err, store.ErrProcessingConsentRevoked) {
 		return worker.markFailed(
 			ctx, claim, store.RenditionFailureConsent, worker.clock().UTC())
-	}
-	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrNotFound) {
-		return worker.markFailed(
-			ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
 	}
 	return err
 }

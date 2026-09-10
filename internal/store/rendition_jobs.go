@@ -197,13 +197,19 @@ func (s *Store) EnqueueRenditionJob(
 	var job RenditionJob
 	var waiter RenditionJobWaiter
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var sourceSHA256 string
+		var sourceSHA256, filename string
+		var currentSource bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT blob_hash FROM content_versions WHERE version_id=?`, request.ContentVersionID,
-		).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
+			`SELECT v.blob_hash,n.name,n.current_version_id=v.version_id AND n.trashed_at IS NULL
+			 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=?`, request.ContentVersionID,
+		).Scan(&sourceSHA256, &filename, &currentSource); errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("content version: %w", ErrNotFound)
 		} else if err != nil {
 			return fmt.Errorf("reading content version: %w", err)
+		}
+		if !currentSource || request.ExecutionIdentity.Authorization.DiscloseFilename &&
+			request.ExecutionIdentity.Upload.Filename != filename {
+			return ErrRenditionJobStaleAuthority
 		}
 		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
 			return err
@@ -612,6 +618,15 @@ func (s *Store) RenditionJobWorkByClaim(
 				return fmt.Errorf("reading rendition execution snapshot: %w", err)
 			}
 			executionSnapshot = &parsed
+		}
+		if waiterID.Valid {
+			_, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID.String)
+			if errors.Is(err, ErrRenditionJobStaleAuthority) {
+				// Equivalent work can still serve another current source.
+				waiterID.Valid = false
+			} else if err != nil {
+				return err
+			}
 		}
 		if !waiterID.Valid {
 			candidateID, candidateAuthorization, selectErr := selectRenditionJobWaiterTx(
@@ -1571,28 +1586,36 @@ func renditionWaiterAuthorizationTx(
 ) (ProviderOperationAuthorizationRequest, error) {
 	var request ProviderOperationAuthorizationRequest
 	var inputJSON, retainedJSON, sourceSHA256, renditionFingerprint, evidenceFingerprint string
-	var policyJSON string
+	var policyJSON, executionJSON, filename string
+	var currentSource bool
 	err := tx.QueryRowContext(ctx, `
 		SELECT w.principal,w.scope,w.profile_fingerprint,w.disclosure_fingerprint,
 		       w.input_classes_json,w.retained_classes_json,v.blob_hash,
 		       p.rendition_request_fingerprint,p.evidence_lexical_fingerprint,
-		       j.captured_artifact_policy_json
+		       j.captured_artifact_policy_json,j.execution_identity_json,n.name,
+		       n.current_version_id=v.version_id AND n.trashed_at IS NULL
 		FROM rendition_job_waiters w
 		JOIN rendition_jobs j ON j.job_id=w.job_id
 		JOIN content_versions v ON v.version_id=w.content_version_id
+		JOIN nodes n ON n.id=v.node_id
 		JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
 		WHERE w.waiter_id=? AND w.job_id=? AND w.state='waiting'`,
 		waiterID, job.ID).Scan(&request.Principal, &request.Scope,
 		&request.ProfileFingerprint, &request.DisclosureFingerprint,
 		&inputJSON, &retainedJSON, &sourceSHA256, &renditionFingerprint, &evidenceFingerprint,
-		&policyJSON)
+		&policyJSON, &executionJSON, &filename, &currentSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProviderOperationAuthorizationRequest{}, ErrNotFound
 	}
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition waiter authority: %w", err)
 	}
-	if sourceSHA256 != job.SourceSHA256 || renditionFingerprint != job.RenditionRequestFingerprint ||
+	execution, err := document.ParseRenditionExecutionIdentityV1([]byte(executionJSON))
+	if err != nil {
+		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition execution authority: %w", err)
+	}
+	if !currentSource || execution.Authorization.DiscloseFilename && execution.Upload.Filename != filename ||
+		sourceSHA256 != job.SourceSHA256 || renditionFingerprint != job.RenditionRequestFingerprint ||
 		evidenceFingerprint != job.EvidenceLexicalFingerprint {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf(
 			"rendition job source or profile authority drifted: %w",

@@ -130,7 +130,8 @@ func fromProcessingPlan(plan internalprocessing.Plan) ProcessingPlan {
 	for index, hop := range plan.Flow {
 		result.Flow[index] = ProcessingFlowHop{Capability: hop.Capability,
 			ProviderID: hop.ProviderID, TrustBoundary: hop.TrustBoundary,
-			InputClasses: hop.InputClasses}
+			InputClasses: hop.InputClasses, DiscloseFilename: hop.DiscloseFilename,
+			Filename: hop.Filename}
 	}
 	return result
 }

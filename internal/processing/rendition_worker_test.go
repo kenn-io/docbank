@@ -1711,3 +1711,155 @@ func TestRenditionProviderRetryDelayEscalatesAndCaps(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, renditionProviderRetryDelay(11))
 	assert.Equal(t, 10*time.Minute, renditionProviderRetryDelay(100))
 }
+
+func TestRenditionWorkerRejectsChangedSourcesBeforeEgress(t *testing.T) {
+	for _, mutation := range []string{"unchanged", "replace", "trash", "revoke"} {
+		t.Run(mutation, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			provider := newWorkerProvider(t)
+			descriptor := provider.descriptor
+			descriptor.Fingerprint = ""
+			descriptor.TrustBoundary = document.RenditionTrustHostedProvider
+			var err error
+			provider.descriptor, err = document.NewRenditionDescriptor(descriptor)
+			require.NoError(t, err)
+			profile := workerProcessingProfile(t, provider.Descriptor())
+			fixture.profile = profile
+			request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+			grantWorkerConsent(t, fixture.catalog, request)
+			job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			version, err := fixture.catalog.ContentVersionByID(t.Context(), fixture.versionID)
+			require.NoError(t, err)
+			catalog := &transientRenditionCatalog{Store: fixture.catalog}
+			catalog.beforeBegin = func(ctx context.Context) error {
+				switch mutation {
+				case "replace":
+					replacement, err := fixture.blobs.WriteDetailedContext(ctx, bytes.NewReader([]byte("synthetic replacement")))
+					if err != nil {
+						return err
+					}
+					_, _, err = fixture.catalog.ReplaceContent(ctx, version.NodeID, store.UnconditionalRev, replacement.Hash, replacement.Size, "application/pdf", processingBlobPhysical(t, replacement))
+					return err
+				case "trash":
+					_, _, err := fixture.catalog.Trash(ctx, version.NodeID, store.UnconditionalRev)
+					return err
+				case "revoke":
+					_, err := fixture.catalog.RevokeConsent(ctx, store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
+					return err
+				}
+				return nil
+			}
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(), Owner: "consent-probe", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+			require.NoError(t, err)
+			processed, runErr := worker.RunOne(t.Context())
+			current, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
+			require.NoError(t, err)
+			state, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.NoError(t, runErr)
+			require.True(t, processed)
+			if mutation == "unchanged" {
+				require.Equal(t, 1, provider.calls)
+				require.Equal(t, store.RenditionJobCompleted, state.State)
+			} else {
+				require.Zero(t, provider.calls)
+				require.Equal(t, store.RenditionJobFailed, state.State)
+				if mutation != "revoke" {
+					require.Equal(t, store.RenditionFailureStaleAuthority, state.FailureCode)
+				}
+			}
+			if mutation == "replace" {
+				require.NotEqual(t, version.ID, current.CurrentVersionID)
+			}
+			if mutation == "trash" {
+				require.NotNil(t, current.TrashedAt)
+			}
+		})
+	}
+}
+
+func TestRenditionWorkerRejectsResumeAfterSourceChanges(t *testing.T) {
+	for _, scenario := range []struct {
+		mutation string
+		shared   bool
+	}{
+		{"replace", false}, {"trash", false}, {"replace", true}, {"trash", true},
+	} {
+		name := scenario.mutation
+		if scenario.shared {
+			name += "/shared"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			base := newWorkerProvider(t)
+			descriptor := base.descriptor
+			descriptor.Fingerprint = ""
+			descriptor.TrustBoundary = document.RenditionTrustHostedProvider
+			var err error
+			base.descriptor, err = document.NewRenditionDescriptor(descriptor)
+			require.NoError(t, err)
+			provider := &resumableWorkerProvider{workerProvider: base}
+			profile := workerProcessingProfile(t, provider.Descriptor())
+			fixture.profile = profile
+			request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+			grantWorkerConsent(t, fixture.catalog, request)
+			job, waiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			version, err := fixture.catalog.ContentVersionByID(t.Context(), fixture.versionID)
+			require.NoError(t, err)
+			var survivor store.RenditionJobWaiter
+			if scenario.shared {
+				second, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "shared-source.pdf", version.BlobHash, version.Size, version.MimeType)
+				require.NoError(t, err)
+				secondRequest := request
+				secondRequest.ContentVersionID = second.CurrentVersionID
+				_, secondWaiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), secondRequest)
+				require.NoError(t, err)
+				survivor = secondWaiter
+				if secondWaiter.ID < waiter.ID {
+					survivor, waiter = waiter, secondWaiter
+					version, err = fixture.catalog.ContentVersionByID(t.Context(), second.CurrentVersionID)
+					require.NoError(t, err)
+				}
+			}
+			now := time.Now().UTC()
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: &failOnceRenditionBlobWriter{delegate: fixture.blobs}, Runtime: resumableWorkerRuntime{provider: provider}, Gate: api.NewOperationGate(), Owner: "consent-resume-probe", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return now }})
+			require.NoError(t, err)
+			_, err = worker.RunOne(t.Context())
+			require.NoError(t, err)
+			current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, store.RenditionJobRetryWait, current.State)
+			if scenario.mutation == "trash" {
+				_, _, err = fixture.catalog.Trash(t.Context(), version.NodeID, store.UnconditionalRev)
+				require.NoError(t, err)
+			} else {
+				replacement, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader([]byte("synthetic resume replacement")))
+				require.NoError(t, err)
+				_, _, err = fixture.catalog.ReplaceContent(t.Context(), version.NodeID, store.UnconditionalRev, replacement.Hash, replacement.Size, "application/pdf", processingBlobPhysical(t, replacement))
+				require.NoError(t, err)
+			}
+			now = now.Add(20 * time.Minute)
+			_, runErr := worker.RunOne(t.Context())
+			current, err = fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.NoError(t, runErr)
+			require.Equal(t, 1, provider.sourceUploads)
+			if scenario.shared {
+				require.Equal(t, []string{"remote-job-1"}, provider.resumes)
+				require.Equal(t, store.RenditionJobCompleted, current.State)
+				published, err := fixture.catalog.RenditionJobWaiterByID(t.Context(), survivor.ID)
+				require.NoError(t, err)
+				require.Equal(t, "published", published.State)
+			} else {
+				require.Empty(t, provider.resumes)
+				require.Equal(t, store.RenditionJobFailed, current.State)
+				require.Equal(t, store.RenditionFailureStaleAuthority, current.FailureCode)
+			}
+			rejected, err := fixture.catalog.RenditionJobWaiterByID(t.Context(), waiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, "rejected", rejected.State)
+		})
+	}
+}
