@@ -1,6 +1,6 @@
 ---
 title: Document Understanding in Go
-description: Normalize and prepare documents for search, use bounded Mistral OCR, and embed images and video through Voyage without opening a Docbank vault.
+description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
 
 # Document Understanding in Go
@@ -10,22 +10,86 @@ embeddings in your own application. OCR extracts text from document images.
 Embeddings represent text or media as numeric vectors for similarity search.
 Importing these packages does not start a daemon or open a vault.
 
+Start with the provider-neutral contracts in `document`. Choose a provider
+only after deciding what bytes your application may send and what results it
+may retain. A rendition is a derived, readable representation of a document;
+canonical evidence is the validated text and source locations behind it.
+
 | Your application needs to… | Package under `go.kenn.io/docbank/` |
 |----------------------------|-------------------------------------|
-| Normalize extracted text and prepare text chunks | `document` |
+| Validate evidence, build renditions, and prepare embedding inputs | `document` |
 | Identify provider destinations and define retrieval policy | `document/embedding` |
 | Compare retrieval approaches | `document/embedding/eval` |
-| Extract text with Mistral OCR | `document/mistral` |
+| Use a provider-neutral OCR interface or local GLM-OCR | `document/ocr`, `document/glmocr` |
 | Detect media formats and enforce input limits | `document/media` |
-| Embed images and video with Voyage AI | `document/voyage` |
+| Stage exact bytes for an authorized provider upload | `document/upload` |
+| Bind outbound connections to a declared destination | `document/providerhttp` |
+| Convert CSV locally for PDF OCR | `document/csvpdf` |
 
-The examples below describe reusable package contracts. For daemon-owned jobs,
-see [embedding worker configuration](configuration.md#embedding-workers-and-credentials).
+These are reusable Go contracts. Vault-owned publication, consent, backup, and
+search are described in [Document processing](architecture/document-processing.md).
+The [daemon configuration](configuration.md#embedding-workers-and-credentials)
+reference separately lists its executable embedding adapters.
+
+## Choose a rendition provider
+
+Each adapter implements a bounded extraction contract. “Operator-hosted” means
+you run the service and declare its destination; “hosted” means the adapter
+calls an external provider. The exact format list and limits belong to the
+provider descriptor and profile, not to a filename extension.
+
+| Provider package | Where it runs | Contract and scope |
+|------------------|---------------|--------------------|
+| [`document/plaintext`](https://github.com/kenn-io/docbank/tree/main/document/plaintext) | In process | UTF-8 text, including declared source, structured-text, CSV, and mail formats; one generic unit with degraded provenance |
+| [`document/pymupdf`](https://github.com/kenn-io/docbank/tree/main/document/pymupdf) | Local process | PDF text through a pinned, digest-verified executable |
+| [`document/trafilatura`](https://github.com/kenn-io/docbank/tree/main/document/trafilatura) | Local process | Supplied HTML through a pinned isolated runner; the native runner requires Linux namespace and Landlock support |
+| [`document/docling`](https://github.com/kenn-io/docbank/tree/main/document/docling) | Operator-hosted | Uploaded files through Docling Serve; structured output and Markdown |
+| [`document/marker`](https://github.com/kenn-io/docbank/tree/main/document/marker) | Operator-hosted | PDF, common images, DOCX, XLSX, PPTX, EPUB, and HTML through the fixed Marker contract |
+| [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
+| [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
+| [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF OCR, including the rendition-provider adapter |
+| [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
+| [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
+| [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
+
+Unstructured and Tika supply compatibility profiles for an operator's bridge;
+they do not install those services. Local-process providers also require the
+operator to supply the pinned runtime. Trafilatura on macOS or Windows requires
+an explicitly supplied, audited `IsolatedRunner`.
+
+The rendition contract accepts an `AuthorizedUpload` bound to one inspected
+source. Providers cannot substitute a source URL for those bytes. Their
+receipts record the exact source, policy, provider identity, and bounded usage.
+See the [provider contract](https://github.com/kenn-io/docbank/blob/main/document/provider.go)
+and [rendition bridge schema](https://github.com/kenn-io/docbank/blob/main/document/bridge/openapi.yaml)
+for the normative types and wire format.
+
+## Build canonical evidence and a rendition
+
+Use `NormalizeEvidenceV1` when an extractor can report source locations and
+structure. It validates `SourceEvidenceV1` and produces
+`NormalizedEvidenceV1` with stable identities for ordered units, regions,
+artifacts, and omissions. Locators distinguish pages, slides, sheets, records,
+messages, lines, and other document units. Completeness explicitly reports
+`complete`, `partial`, or `degraded_provenance`; readable text alone does not
+prove complete source coverage.
+
+`BuildRenditionV1` derives sanitized Markdown, normalized units, and lexical
+segments from that evidence. Lexical segments are model-independent text spans
+for keyword search. Embedding chunks are built separately with the selected
+model's tokenizer. `MarshalNormalizedEvidenceV1` produces the canonical
+retained evidence bytes and checksum.
+
+The owning contracts are [evidence](https://github.com/kenn-io/docbank/blob/main/document/evidence.go),
+[evidence validation and normalization](https://github.com/kenn-io/docbank/blob/main/document/evidence_codec.go),
+and [renditions](https://github.com/kenn-io/docbank/blob/main/document/rendition.go).
 
 ## Normalize provider output
 
-`document.NormalizeDocument` turns ordered source units, such as pages, into
-consistent text. The result includes heading paths, chunks, checksums, and
+`document.NormalizeDocument` is the simpler text-normalization contract for
+ordered source units, such as pages. It turns those units into consistent text.
+The result includes heading paths, chunks, checksums, and
 source spans that locate each result in the original input. The same input and
 policy produce the same result.
 
@@ -124,6 +188,11 @@ options from the policy and authorization, bounds the response, and converts
 validated provider output into `document.SourceDocument`. Call `Release` on
 every success or failure path.
 
+The rendition adapter also counts source units locally before submission. For
+PDFs it compares the returned page count with that inspected count and rejects
+a mismatch. See [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
+for the exact source and result checks.
+
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,
 persistence, and search serving. Those application decisions are intentionally
@@ -210,6 +279,49 @@ latency. Repeated trials retain individual observations and report empirical
 minimum, mean, and maximum values instead of hiding hosted-provider variance.
 Applications should keep raw as the default unless measured results justify a
 different recipe.
+
+## Choose an embedding provider
+
+The adapters below implement `document.EmbeddingProvider`. Their descriptors
+pin the model-input contract, input kind, vector dimensions, and compatibility
+identity. A provider package is not a daemon configuration option. Applications
+must supply matching profiles, authorization, and named credential resolution.
+
+| Provider package | Contract and scope |
+|------------------|--------------------|
+| [`document/openaicompat`](https://github.com/kenn-io/docbank/tree/main/document/openaicompat) | Explicit operator-hosted OpenAI-compatible text embeddings; deployment identity is required |
+| [`document/openai`](https://github.com/kenn-io/docbank/tree/main/document/openai) | Fixed hosted `text-embedding-3-large` contract; separate from the operator-hosted adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/blob/main/document/mistral/embedding.go) | Hosted `mistral-embed` text embeddings |
+| [`document/voyage`](https://github.com/kenn-io/docbank/blob/main/document/voyage/embedding.go) | Hosted `voyage-4`, `voyage-context-4`, and capability-authorized direct-file embeddings |
+| [`document/cohere`](https://github.com/kenn-io/docbank/tree/main/document/cohere) | Hosted `embed-v4.0` text and inspected-image inputs; distinct document and query roles |
+| [`document/gemini`](https://github.com/kenn-io/docbank/tree/main/document/gemini) | Hosted `gemini-embedding-2` text and authorized image, audio, video, and PDF files |
+| [`document/zeroentropy`](https://github.com/kenn-io/docbank/tree/main/document/zeroentropy) | Hosted `zembed-1` text with explicit output encoding, latency policy, and dimensions |
+| [`document/embeddingbridge`](https://github.com/kenn-io/docbank/tree/main/document/embeddingbridge) | Synchronous `docbank-embedding/v1` transport for text or authorized original files |
+
+`openaicompat.BGEM3Profile` and `openaicompat.Qwen3Profile` build reviewed
+self-hosted profiles. BGE-M3 uses one dense 1,024-dimensional vector. Qwen3
+supports its 0.6B, 4B, and 8B models at their native dimensions and requires a
+query instruction. Both pin weights and tokenizer revisions, pooling, and
+sequence limits. These profiles exclude sparse and multi-vector outputs.
+See the [deployment contracts](https://github.com/kenn-io/docbank/blob/main/document/openaicompat/profiles.go).
+
+Voyage contextual requests contain one document's ordered chunks. The shared
+Voyage and Mistral adapters mark their mutable hosted aliases as export-only
+and do not advertise a serving-time text query encoder. Do not infer query
+compatibility from an equal vector dimension.
+
+Gemini's profile selects inline bytes or the Files API. Direct-file requests
+need matching inspected capability and disclosure fingerprints. The Files API
+path includes bounded polling and cleanup; its policy identity records the
+provider retention ceiling. The direct-file adapter accepts PNG/JPEG images,
+WAV/MP3 audio up to three minutes, MP4/QuickTime video up to two minutes, and
+PDFs up to six pages, subject to matching inspection bounds. The [Gemini contract](https://github.com/kenn-io/docbank/blob/main/document/gemini/profile.go)
+separates that provider retention from Docbank's local derivative retention.
+
+The standard embedding bridge sends a canonical manifest before any file
+parts and validates the synchronous response against exact input identities.
+Its [OpenAPI contract](https://github.com/kenn-io/docbank/blob/main/document/embeddingbridge/openapi.yaml)
+and JSON schemas own the wire limits.
 
 ## Detect and bound visual attachments
 
