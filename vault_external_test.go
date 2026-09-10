@@ -74,6 +74,60 @@ func TestRootPackageRecoversInterruptedProcessingUploads(t *testing.T) {
 	}
 }
 
+func TestRootPackageOwnsProcessingSpoolUntilClose(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		name := "default"
+		if custom {
+			name = "custom"
+		}
+		t.Run(name, func(t *testing.T) {
+			config := docbank.Config{Root: t.TempDir()}
+			spool := filepath.Join(config.Root, "blobs", "tmp")
+			if custom {
+				spool = t.TempDir()
+				config.Processing.SpoolDirectory = spool
+			}
+			first, err := docbank.New(t.Context(), config)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, first.Close()) })
+			active := filepath.Join(spool, ".docbank-upload-active")
+			require.NoError(t, os.Mkdir(active, 0o700))
+			source := filepath.Join(active, "source")
+			require.NoError(t, os.WriteFile(source, []byte("active upload"), 0o600))
+
+			otherConfig := docbank.Config{Root: t.TempDir(),
+				Processing: docbank.ProcessingOptions{SpoolDirectory: spool}}
+			other, err := docbank.New(t.Context(), otherConfig)
+			if other != nil {
+				t.Cleanup(func() { require.NoError(t, other.Close()) })
+			}
+			require.ErrorIs(t, err, docbank.ErrProcessingSpoolLocked)
+			content, err := os.ReadFile(source)
+			require.NoError(t, err)
+			require.Equal(t, "active upload", string(content))
+
+			require.NoError(t, first.Close())
+			other, err = docbank.New(t.Context(), otherConfig)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, other.Close()) })
+			_, err = os.Stat(active)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
+}
+
+func TestRootPackageReleasesProcessingSpoolAfterOpenFailure(t *testing.T) {
+	config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+		SpoolDirectory: t.TempDir(), Profiles: map[string]docbank.ProcessingProfileConfig{"invalid": {}},
+	}}
+	_, err := docbank.New(t.Context(), config)
+	require.Error(t, err)
+	config.Processing.Profiles = nil
+	vault, err := docbank.New(t.Context(), config)
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+}
+
 func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)

@@ -15,7 +15,7 @@ import (
 // processes: the daemon holds it exclusively for its entire lifetime.
 func (l Layout) LockPath() string { return filepath.Join(l.Root, "vault.lock") }
 
-// Lock is a held advisory lock on the vault.
+// Lock holds advisory ownership until Release.
 type Lock struct {
 	files []*os.File
 }
@@ -40,6 +40,44 @@ var errLockWouldBlock = errors.New("file lock would block")
 // ErrVaultLocked is returned by TryLockExclusive when another process
 // already holds the vault lock.
 var ErrVaultLocked = errors.New("vault is locked by another process")
+
+// ErrProcessingSpoolLocked means another vault owns the upload directory.
+var ErrProcessingSpoolLocked = errors.New("processing upload directory is already in use")
+
+// TryLockProcessingSpool owns an existing upload directory until Release.
+// The registry uses filesystem identity so aliases share ownership, and keeps
+// lock files outside the directory that startup recovery cleans.
+func TryLockProcessingSpool(directory string) (*Lock, error) {
+	if !filepath.IsAbs(directory) {
+		return nil, errors.New("processing upload directory must be absolute")
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("processing upload path is not a directory")
+	}
+	identity, err := directoryIdentity(info, directory)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := targetLockRegistryDir()
+	if err != nil {
+		return nil, err
+	}
+	file, err := openRegistryLock(registry, "processing-spool-"+identity+".lock")
+	if err != nil {
+		return nil, err
+	}
+	if err := lockFile(file, true); err != nil {
+		if errors.Is(err, errLockWouldBlock) {
+			err = ErrProcessingSpoolLocked
+		}
+		return nil, errors.Join(err, file.Close())
+	}
+	return &Lock{files: []*os.File{file}}, nil
+}
 
 // TryLockExclusive takes the vault lock without blocking. The daemon is the
 // single lock holder for the vault's lifetime; a second daemon (or a stale

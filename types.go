@@ -27,7 +27,10 @@ const (
 // implementations. Secrets remain inside the provider values; profiles and
 // plans contain only immutable non-secret identity.
 type ProcessingOptions struct {
-	Profiles       map[string]ProcessingProfileConfig
+	Profiles map[string]ProcessingProfileConfig
+	// SpoolDirectory selects an existing absolute directory for private upload
+	// copies. The default is the vault's blob temporary directory. One open Vault
+	// owns the directory until Close; another owner returns ErrProcessingSpoolLocked.
 	SpoolDirectory string
 }
 
