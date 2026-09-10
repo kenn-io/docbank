@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
@@ -39,6 +41,19 @@ func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	changed, err := planFingerprint(plan)
 	require.NoError(t, err)
 	require.NotEqual(t, first, changed)
+}
+
+func TestAggregateStatusNeverReportsUnfinishedEmbeddingsAsCompleted(t *testing.T) {
+	embeddings := []store.EmbeddingJobStatus{{ID: "a", State: "completed"}, {ID: "b", State: "abandoned"}}
+	status := aggregateStatus("a", nil, embeddings)
+	require.Equal(t, "abandoned", status.State)
+	require.Equal(t, 1, status.CompletedBindings)
+
+	embeddings[1].State = "completed"
+	require.Equal(t, "completed", aggregateStatus("a", nil, embeddings).State)
+
+	embeddings[1].State = "unexpected"
+	require.Equal(t, "unexpected", aggregateStatus("a", nil, embeddings).State)
 }
 
 func BenchmarkProcessingServiceSourceFence4096(b *testing.B) {

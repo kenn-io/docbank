@@ -13,6 +13,7 @@ import (
 	"math"
 	"mime"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -30,9 +31,11 @@ import (
 )
 
 const (
-	MaxSourceFenceIDs = 4096
-	maxRenditionBytes = int64(64 << 20)
-	timestampForm     = "2006-01-02T15:04:05.000000000Z"
+	MaxSourceFenceIDs  = 4096
+	MaxRenditionBytes  = int64(64 << 20)
+	DefaultSearchLimit = 20
+	MaxSearchLimit     = 100
+	timestampForm      = "2006-01-02T15:04:05.000000000Z"
 )
 
 var (
@@ -194,8 +197,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 		profiles:       make(map[string]configuredProfile, len(config.Profiles)),
 		spoolDirectory: config.SpoolDirectory, clock: config.Clock,
 		renditions: NewRenditionRuntimeRegistry(), embeddings: NewEmbeddingRuntimeRegistry()}
-	registeredRenditions := make(map[string]struct{})
-	registeredEmbeddings := make(map[string]struct{})
+	registeredRenditions := make(map[string]document.RenditionProvider)
+	registeredEmbeddings := make(map[string]document.EmbeddingProvider)
 	for name, supplied := range config.Profiles {
 		if err := validateProfileName(name); err != nil {
 			return nil, err
@@ -230,11 +233,14 @@ func NewService(config ServiceConfig) (*Service, error) {
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
 				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
-			if _, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
+			if existing, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
 				if err := service.renditions.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
 				}
-				registeredRenditions[descriptor.Fingerprint] = struct{}{}
+				registeredRenditions[descriptor.Fingerprint] = supplied.RenditionProvider
+			} else if !sameProvider(existing, supplied.RenditionProvider) {
+				return nil, fmt.Errorf("processing profile %q rendition provider %q conflicts with "+
+					"another profile's provider for the same descriptor", name, descriptor.ID)
 			}
 		}
 		for _, binding := range profile.Embeddings {
@@ -255,11 +261,14 @@ func NewService(config ServiceConfig) (*Service, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, exists := registeredEmbeddings[descriptor.Fingerprint]; !exists {
+			if existing, exists := registeredEmbeddings[descriptor.Fingerprint]; !exists {
 				if err := service.embeddings.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q embedding %q: %w", name, binding.Name, err)
 				}
-				registeredEmbeddings[descriptor.Fingerprint] = struct{}{}
+				registeredEmbeddings[descriptor.Fingerprint] = provider
+			} else if !sameProvider(existing, provider) {
+				return nil, fmt.Errorf("processing profile %q embedding %q conflicts with "+
+					"another profile's provider for the same descriptor", name, binding.Name)
 			}
 			configured.embedders[binding.Name] = provider
 			if binding.InputKind == document.EmbeddingInputRenditionChunk {
@@ -280,7 +289,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 }
 
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
-	node, version, profile, err := service.resolve(ctx, selector)
+	_, version, profile, err := service.resolve(ctx, selector)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -323,7 +332,6 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	plan.DisclosedClasses = sortedUnique(plan.DisclosedClasses)
 	plan.RetainedClasses = sortedUnique(plan.RetainedClasses)
 	plan.Fingerprint, err = planFingerprint(plan)
-	_ = node
 	return plan, err
 }
 
@@ -539,13 +547,20 @@ func aggregateStatus(jobID string, rendition *store.RenditionJob,
 	if rendition != nil && rendition.State != store.RenditionJobCompleted {
 		return status
 	}
-	for _, wanted := range []string{"failed", "retry_wait", "running", "queued"} {
+	for _, wanted := range []string{"failed", "abandoned", "retry_wait", "running", "queued"} {
 		for _, embedding := range embeddings {
 			if embedding.State == wanted {
 				status.State, status.Phase = embedding.State, "embedding"
 				status.FailureCode = string(embedding.FailureCode)
 				return status
 			}
+		}
+	}
+	for _, embedding := range embeddings {
+		if embedding.State != "completed" {
+			status.State, status.Phase = embedding.State, "embedding"
+			status.FailureCode = string(embedding.FailureCode)
+			return status
 		}
 	}
 	if len(embeddings) != 0 {
@@ -564,9 +579,9 @@ func (service *Service) Rendition(ctx context.Context, selector Selector, limit 
 		return Rendition{}, err
 	}
 	if limit == 0 {
-		limit = maxRenditionBytes
+		limit = MaxRenditionBytes
 	}
-	if limit < 1 || limit > maxRenditionBytes {
+	if limit < 1 || limit > MaxRenditionBytes {
 		return Rendition{}, errors.New("rendition byte limit is invalid")
 	}
 	var artifact store.RenditionArtifactRecord
@@ -681,9 +696,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	limit := request.Limit
 	if limit == 0 {
-		limit = 20
+		limit = DefaultSearchLimit
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 || limit > MaxSearchLimit {
 		return retrieval.Report{}, errors.New("document search limit is invalid")
 	}
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
@@ -1211,6 +1226,17 @@ func planFingerprint(plan Plan) (string, error) {
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// sameProvider reports whether two profiles supplied the identical provider
+// value. Runtimes are keyed by descriptor fingerprint, which excludes
+// endpoints and credentials, so a second distinct provider with the same
+// descriptor would silently execute through the first one.
+func sameProvider(existing, candidate any) bool {
+	if !reflect.ValueOf(existing).Comparable() || !reflect.ValueOf(candidate).Comparable() {
+		return false
+	}
+	return existing == candidate
 }
 
 func validateProfileName(name string) error {

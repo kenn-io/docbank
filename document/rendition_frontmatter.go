@@ -188,7 +188,7 @@ func marshalRenditionFrontMatterV1(value RenditionFrontMatterV1) ([]byte, error)
 	builder.WriteString("    entries:\n")
 	for _, entry := range value.Navigation.Entries {
 		builder.WriteString("      - key: ")
-		builder.WriteString(strconv.Quote(entry.Key))
+		builder.WriteString(yamlQuote(entry.Key))
 		builder.WriteByte('\n')
 		writeYAMLString(&builder, 8, "kind", string(entry.Kind))
 		if entry.Title != "" {
@@ -209,9 +209,19 @@ func writeYAMLString(builder *strings.Builder, indent int, key, value string) {
 	builder.WriteString(strings.Repeat(" ", indent))
 	builder.WriteString(key)
 	builder.WriteString(": ")
-	builder.WriteString(strconv.Quote(value))
+	builder.WriteString(yamlQuote(value))
 	builder.WriteByte('\n')
 }
+
+// yamlQuote emits a double-quoted YAML scalar whose bytes never contain HTML
+// markup. Provider-controlled headings and names may carry tags; a consumer
+// that renders the whole artifact as Markdown must never see them as HTML.
+// YAML parsers decode the \u escapes back to the exact original text.
+func yamlQuote(value string) string {
+	return yamlHTMLEscaper.Replace(strconv.Quote(value))
+}
+
+var yamlHTMLEscaper = strings.NewReplacer("<", `\u003c`, ">", `\u003e`, "&", `\u0026`)
 
 func writeYAMLBool(builder *strings.Builder, indent int, key string, value bool) {
 	builder.WriteString(strings.Repeat(" ", indent))

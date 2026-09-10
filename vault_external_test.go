@@ -270,6 +270,31 @@ func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *te
 	require.Len(t, report.Results, 1)
 }
 
+func TestEmbeddedProcessingRejectsConflictingProvidersForOneDescriptor(t *testing.T) {
+	renditionProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	first := newSyntheticEmbeddingProvider(t)
+	second := newSyntheticEmbeddingProvider(t)
+	require.Equal(t, first.descriptor.Fingerprint, second.descriptor.Fingerprint)
+	profile := embeddedProcessingProfile(t, renditionProvider.Descriptor())
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(first.descriptor)}
+	config := func(provider document.EmbeddingProvider) docbank.Config {
+		return docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+			Profiles: map[string]docbank.ProcessingProfileConfig{
+				"one": {Profile: profile, RenditionProvider: renditionProvider,
+					EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": first}},
+				"two": {Profile: profile, RenditionProvider: renditionProvider,
+					EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider}},
+			}}}
+	}
+	_, err = docbank.New(t.Context(), config(second))
+	require.ErrorContains(t, err, "conflicts with another profile's provider")
+
+	vault, err := docbank.New(t.Context(), config(first))
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+}
+
 func plaintextDescriptorForProfile(t *testing.T) document.RenditionDescriptor {
 	t.Helper()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})

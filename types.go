@@ -7,19 +7,20 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const (
 	// MaxDocumentSourceFenceIDs bounds the stable content-version authority a
 	// consumer may supply to one search or coverage request.
-	MaxDocumentSourceFenceIDs = 4096
+	MaxDocumentSourceFenceIDs = internalprocessing.MaxSourceFenceIDs
 	// DefaultDocumentSearchLimit is used when DocumentSearchRequest.Limit is zero.
-	DefaultDocumentSearchLimit = 20
+	DefaultDocumentSearchLimit = internalprocessing.DefaultSearchLimit
 	// MaxDocumentSearchLimit bounds one public document-search response.
-	MaxDocumentSearchLimit = 100
+	MaxDocumentSearchLimit = internalprocessing.MaxSearchLimit
 	// MaxRenditionBytes bounds one embedded rendition read.
-	MaxRenditionBytes = int64(64 << 20)
+	MaxRenditionBytes = internalprocessing.MaxRenditionBytes
 )
 
 // ProcessingOptions binds named portable profiles to process-local provider
