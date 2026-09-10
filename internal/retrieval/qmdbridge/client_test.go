@@ -23,6 +23,7 @@ import (
 
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/qmdexport"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -30,7 +31,7 @@ import (
 func TestSearchMapsOnlyCurrentManifestResultsThroughLiveAuthority(t *testing.T) {
 	root, source, receipt := exportFixture(t)
 	normalizedScope := store.SearchOptions{MIMEType: "application/pdf"}
-	authority := &authorityStub{normalized: &normalizedScope, live: []store.QMDExportLiveCandidate{{NodeID: 7, NodeRevision: 4,
+	authority := &authorityStub{normalized: &normalizedScope, live: []store.QMDExportLiveCandidate{{InScope: true, NodeID: 7, NodeRevision: 4,
 		ContentVersionID: source.ContentVersionID, Path: "/live/document.pdf"}}}
 	authorizer := &authorizerStub{}
 	requests := 0
@@ -51,9 +52,10 @@ func TestSearchMapsOnlyCurrentManifestResultsThroughLiveAuthority(t *testing.T) 
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server, root, authorizer, authority, 1<<20)
 
-	results, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private terms"}},
+	report, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private terms"}},
 		Intent: "find the relevant document", Limit: 5})
 	require.NoError(t, err)
+	results := report.Results
 	require.Len(t, results, 1)
 	assert.Equal(t, 1, requests)
 	assert.Equal(t, int64(7), results[0].Document.NodeID)
@@ -156,7 +158,7 @@ func TestSearchRejectsUnknownDuplicateOversizedAndStaleResults(t *testing.T) {
 	t.Run("generation changes during live fence", func(t *testing.T) {
 		root, source, receipt := exportFixture(t)
 		server := qmdServer(t, `{"results":[{"docid":"#abc","file":"`+receipt.Manifest.Entries[0].URI+`","title":"x","score":0.5,"context":null,"snippet":"x"}]}`, nil)
-		authority := &authorityStub{live: []store.QMDExportLiveCandidate{{NodeID: 7, NodeRevision: 4,
+		authority := &authorityStub{live: []store.QMDExportLiveCandidate{{InScope: true, NodeID: 7, NodeRevision: 4,
 			ContentVersionID: source.ContentVersionID, Path: "/live/document.pdf"}}, before: func() {
 			other, body := qmdSource(8, "# Different\n")
 			_, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{other}, blobReader{other.BlobSHA256: body}, qmdexport.Options{})
@@ -207,10 +209,15 @@ type authorizerStub struct {
 	err       error
 }
 
-func (stub *authorizerStub) AuthorizeQMDQuery(_ context.Context, operation Operation) error {
+func (stub *authorizerStub) AuthorizeQMDQuery(_ context.Context, operation Operation) (retrieval.ProviderEgressLease, error) {
 	stub.operation = operation
-	return stub.err
+	if stub.err != nil {
+		return nil, stub.err
+	}
+	return stub, nil
 }
+
+func (*authorizerStub) Close() {}
 
 type authorityStub struct {
 	got          []store.QMDExportSource
@@ -295,4 +302,199 @@ var _ providerhttp.Resolver = resolverStub{}
 func TestFilesystemRootIsVolumeAware(t *testing.T) {
 	volumeRoot := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
 	assert.True(t, filesystemRoot(volumeRoot))
+}
+
+func TestSearchAcceptsDistinctActiveProfiles(t *testing.T) {
+	root, source, _ := exportFixture(t)
+	alternate := source
+	alternate.ProcessingProfileFingerprint = strings.Repeat("c", 64)
+	alternate.AttachmentID += "-alternate"
+	receipt, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{source, alternate},
+		blobReader{source.BlobSHA256: []byte("# Searchable\n")}, qmdexport.Options{})
+	require.NoError(t, err)
+	items := []wireResult{
+		{DocID: "first", File: receipt.Manifest.Entries[0].URI, Score: 0.9},
+		{DocID: "second", File: receipt.Manifest.Entries[1].URI, Score: 0.8},
+	}
+	server := qmdServer(t, string(mustJSON(t, wireResponse{Results: items})), nil)
+	authority := &authorityStub{live: []store.QMDExportLiveCandidate{{InScope: true, NodeID: source.NodeID,
+		ContentVersionID: source.ContentVersionID, Path: "/live/document.pdf"}}}
+	client := newTestClient(t, server, root, &authorizerStub{}, authority, 1<<20)
+	report, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "searchable"}}, Limit: 1})
+	require.NoError(t, err, "two active profiles must not invalidate a document")
+	require.Len(t, report.Results, 1)
+	assert.Equal(t, items[0].File, report.Results[0].QMDURI)
+	assert.False(t, report.Truncated)
+	require.Len(t, authority.got, 1)
+	assert.Equal(t, receipt.Manifest.Entries[0].AttachmentID, authority.got[0].AttachmentID)
+}
+
+func TestSearchHoldsConsentThroughEgress(t *testing.T) {
+	for _, outcome := range []string{"success", "invalid response", "canceled"} {
+		t.Run(outcome, func(t *testing.T) {
+			root, _, _ := exportFixture(t)
+			catalog, err := store.Open(filepath.Join(t.TempDir(), "consent.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+			authorizer := &consentAuthorizer{catalog: catalog, request: store.ProviderOperationAuthorizationRequest{
+				Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
+				DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
+			}, authorized: make(chan struct{}), proceed: make(chan struct{})}
+			_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+				Principal: authorizer.request.Principal, Scope: authorizer.request.Scope,
+				ProfileFingerprint: authorizer.request.ProfileFingerprint, DisclosureFingerprint: authorizer.request.DisclosureFingerprint,
+				InputClasses: authorizer.request.InputClasses,
+			})
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			started, finish := make(chan struct{}), make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusOK)
+				_ = http.NewResponseController(writer).Flush()
+				close(started)
+				select {
+				case <-finish:
+					if outcome == "invalid response" {
+						_, _ = writer.Write([]byte(`invalid`))
+					} else {
+						_, _ = writer.Write([]byte(`{"results":[]}`))
+					}
+				case <-request.Context().Done():
+				}
+			}))
+			t.Cleanup(server.Close)
+			client := newTestClient(t, server, root, authorizer, &authorityStub{}, 1<<20)
+			done := make(chan error, 1)
+			query := Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5}
+			go func() { _, err := client.Search(ctx, query); done <- err }()
+			<-authorizer.authorized
+			revoked := make(chan error, 1)
+			go func() {
+				_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: "search-user", Scope: "search"})
+				revoked <- err
+			}()
+			early := false
+			select {
+			case err := <-revoked:
+				t.Errorf("revocation completed before the authorized HTTP request: %v", err)
+				early = true
+			case <-time.After(20 * time.Millisecond):
+			}
+			close(authorizer.proceed)
+			<-started
+			if !early {
+				select {
+				case err := <-revoked:
+					t.Errorf("revocation completed while reading the response: %v", err)
+					early = true
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+			if outcome == "canceled" {
+				cancel()
+			} else {
+				close(finish)
+			}
+			searchErr := <-done
+			switch outcome {
+			case "success":
+				require.NoError(t, searchErr)
+			case "invalid response":
+				require.ErrorIs(t, searchErr, ErrInvalidResponse)
+			case "canceled":
+				require.ErrorIs(t, searchErr, context.Canceled)
+			}
+			if !early {
+				select {
+				case err := <-revoked:
+					require.NoError(t, err)
+				case <-time.After(time.Second):
+					t.Fatal("search did not release its consent lease")
+				}
+			}
+			_, err = client.Search(t.Context(), query)
+			require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
+		})
+	}
+}
+
+type consentAuthorizer struct {
+	catalog             *store.Store
+	request             store.ProviderOperationAuthorizationRequest
+	authorized, proceed chan struct{}
+}
+
+func (authorizer *consentAuthorizer) AuthorizeQMDQuery(ctx context.Context, _ Operation) (retrieval.ProviderEgressLease, error) {
+	_, fence, err := authorizer.catalog.BeginProviderEgress(ctx, authorizer.request)
+	if err == nil {
+		close(authorizer.authorized)
+		select {
+		case <-authorizer.proceed:
+		case <-ctx.Done():
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return fence, nil
+}
+
+func TestSearchFiltersScopeAndReportsTruncation(t *testing.T) {
+	root, first, _ := exportFixture(t)
+	second, body := qmdSource(8, "# Another\n")
+	receipt, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{first, second},
+		blobReader{first.BlobSHA256: []byte("# Searchable\n"), second.BlobSHA256: body}, qmdexport.Options{})
+	require.NoError(t, err)
+	uris := make(map[int64]string)
+	for _, entry := range receipt.Manifest.Entries {
+		uris[entry.NodeID] = entry.URI
+	}
+	for _, test := range []struct {
+		name      string
+		cap       int
+		inScope   bool
+		truncated bool
+	}{
+		{name: "complete", cap: 3, inScope: true},
+		{name: "candidate cap", cap: 2, inScope: true, truncated: true},
+		{name: "candidate cap without scoped matches", cap: 2, truncated: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := wireResponse{Results: []wireResult{
+				{DocID: "outside", File: uris[first.NodeID], Score: 0.9},
+				{DocID: "inside", File: uris[second.NodeID], Score: 0.8},
+			}}
+			encoded := mustJSON(t, payload)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				var query wireRequest
+				if !assert.NoError(t, json.UnmarshalRead(request.Body, &query)) {
+					return
+				}
+				assert.Equal(t, test.cap, query.Limit)
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write(encoded)
+			}))
+			t.Cleanup(server.Close)
+			authority := &authorityStub{live: []store.QMDExportLiveCandidate{
+				{NodeID: first.NodeID, ContentVersionID: first.ContentVersionID},
+				{NodeID: second.NodeID, ContentVersionID: second.ContentVersionID, InScope: test.inScope},
+			}}
+			authorizer := &authorizerStub{}
+			client := newTestClient(t, server, root, authorizer, authority, 1<<20)
+			client.profile.MaxCandidates = test.cap
+			report, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "text"}},
+				Limit: 1, Scope: store.SearchOptions{MIMEType: "application/pdf"}})
+			require.NoError(t, err)
+			assert.Equal(t, test.cap, authorizer.operation.CandidateLimit)
+			assert.Equal(t, test.truncated, report.Truncated)
+			if test.inScope {
+				require.Len(t, report.Results, 1)
+				assert.Equal(t, second.NodeID, report.Results[0].Document.NodeID)
+			} else {
+				assert.Empty(t, report.Results)
+			}
+		})
+	}
 }

@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/providerhttp"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -38,8 +39,10 @@ type SecretResolver interface {
 	ResolveSecret(ctx context.Context, binding string) (string, error)
 }
 
+// Authorizer holds consent against revocation until the returned lease closes.
+// Success must return a non-nil lease; failure must release acquired resources.
 type Authorizer interface {
-	AuthorizeQMDQuery(ctx context.Context, operation Operation) error
+	AuthorizeQMDQuery(ctx context.Context, operation Operation) (retrieval.ProviderEgressLease, error)
 }
 
 type Authority interface {

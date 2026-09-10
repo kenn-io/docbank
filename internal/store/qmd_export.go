@@ -38,6 +38,7 @@ type QMDExportSource struct {
 type QMDExportLiveCandidate struct {
 	NodeID           int64
 	NodeRevision     int64
+	InScope          bool
 	ContentVersionID string
 	Path             string
 }
@@ -86,8 +87,8 @@ func (s *Store) QMDExportSources(ctx context.Context, limit int) (_ []QMDExportS
 }
 
 // RevalidateQMDExportCandidates rejects the batch unless every supplied
-// manifest identity remains exact, live, current, and inside the operator
-// scope in one storage snapshot.
+// manifest identity remains exact, live, and current. InScope reports each
+// candidate's scope membership in the same storage snapshot.
 func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []QMDExportSource,
 	opts SearchOptions,
 ) ([]QMDExportLiveCandidate, error) {
@@ -117,9 +118,9 @@ func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []
 				candidate.VaultUID, candidate.BuildID, candidate.ArtifactID,
 				candidate.BlobSHA256, candidate.BlobSize, candidate.ArtifactChecksum,
 				candidate.MarkdownChecksum}
-			args = append(args, filterArgs...)
+			args = append(append([]any(nil), filterArgs...), args...)
 			var live QMDExportLiveCandidate
-			err := tx.QueryRowContext(ctx, `SELECT n.id,n.revision,cv.version_id
+			err := tx.QueryRowContext(ctx, `SELECT n.id,n.revision,cv.version_id,CASE WHEN 1=1 `+filterSQL+` THEN 1 ELSE 0 END
 				FROM nodes n
 				JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
 				JOIN rendition_heads h ON h.content_version_id=cv.version_id
@@ -131,8 +132,8 @@ func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []
 					AND a.vault_uid=? AND a.build_id=? AND artifact.artifact_id=?
 					AND artifact.role='sanitized_markdown'
 					AND artifact.blob_hash=? AND artifact.size=? AND artifact.checksum=?
-					AND b.markdown_checksum=? AND n.kind='file' AND n.trashed_at IS NULL `+filterSQL,
-				args...).Scan(&live.NodeID, &live.NodeRevision, &live.ContentVersionID)
+					AND b.markdown_checksum=? AND n.kind='file' AND n.trashed_at IS NULL `,
+				args...).Scan(&live.NodeID, &live.NodeRevision, &live.ContentVersionID, &live.InScope)
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrQMDExportAuthorityStale
 			}
