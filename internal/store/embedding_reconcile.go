@@ -39,6 +39,7 @@ type EmbeddingReconcileResult struct {
 	Enqueued                int
 	NextRenditionAttachment string
 	Generated               int
+	Incomplete              bool
 }
 
 // RenditionChunkGenerationRequest names the exact published attachment whose
@@ -263,7 +264,18 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if ctx.Err() != nil {
 					return EmbeddingReconcileResult{}, ctx.Err()
 				}
-				return EmbeddingReconcileResult{}, fmt.Errorf("generating rendition chunk input: %w", err)
+				if failureErr := s.RecordEmbeddingFailure(ctx, EmbeddingFailureRecord{
+					ContentVersionID:             candidate.request.ContentVersionID,
+					ProcessingProfileFingerprint: candidate.request.Profile.Fingerprint,
+					BindingID:                    candidate.binding.Name,
+					InputKind:                    candidate.binding.InputKind,
+					FailureCode:                  EmbeddingFailureProviderUnavailable,
+					FailedAt:                     request.At.UTC().Format(timestampLayout),
+				}); failureErr != nil {
+					return EmbeddingReconcileResult{}, fmt.Errorf("recording rendition chunk recovery failure: %w", failureErr)
+				}
+				result.Incomplete = true
+				continue
 			}
 			result.Generated++
 			candidate.request.InputGeneration = generated

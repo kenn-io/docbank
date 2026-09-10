@@ -1443,6 +1443,9 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		}
 		profiles = []configuredProfile{profile}
 	}
+	if len(profiles) == 0 {
+		return ResumeReport{}, nil
+	}
 
 	profileFingerprint := ""
 	if profileName != "" {
@@ -1530,7 +1533,7 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 		}
 		_, _, result.EmbeddingsAdmitted = embeddingWorker.reconcileProgress()
 		generationsDone, renditionHeadsDone := embeddingWorker.reconciliationDone()
-		if !generationsDone || !renditionHeadsDone {
+		if !generationsDone || !renditionHeadsDone || embeddingWorker.reconciliationIncomplete() {
 			result.Pending = true
 		}
 	}

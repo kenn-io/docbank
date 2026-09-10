@@ -242,6 +242,7 @@ type EmbeddingWorker struct {
 	reconcileRenditionAfter                        string
 	reconcileGenerationsDone                       bool
 	reconcileRenditionHeadsDone                    bool
+	reconcileIncomplete                            bool
 	boundedReconciliation                          bool
 	generateRenditionChunk                         func(context.Context, store.RenditionChunkGenerationRequest) (store.EmbeddingInputGenerationRecord, error)
 	lastReconcile                                  store.EmbeddingReconcileResult
@@ -444,6 +445,7 @@ func (worker *EmbeddingWorker) recordReconcile(result store.EmbeddingReconcileRe
 	defer worker.stateMu.Unlock()
 	worker.lastReconcile = result
 	worker.reconcileEnqueued += result.Enqueued
+	worker.reconcileIncomplete = worker.reconcileIncomplete || result.Incomplete
 	if advance {
 		worker.reconcileAfter = result.Next
 		worker.reconcileRenditionAfter = result.NextRenditionAttachment
@@ -458,6 +460,12 @@ func (worker *EmbeddingWorker) reconciliationDone() (bool, bool) {
 	worker.stateMu.Lock()
 	defer worker.stateMu.Unlock()
 	return worker.reconcileGenerationsDone, worker.reconcileRenditionHeadsDone
+}
+
+func (worker *EmbeddingWorker) reconciliationIncomplete() bool {
+	worker.stateMu.Lock()
+	defer worker.stateMu.Unlock()
+	return worker.reconcileIncomplete
 }
 
 func (worker *EmbeddingWorker) reconcileProgress() (string, string, int) {
