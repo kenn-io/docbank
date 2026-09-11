@@ -966,7 +966,19 @@
   }
 
   function selectNode(nodeID: number | undefined): void {
+    // Reclicking a live file keeps its resolved inspector and pending tag action.
     if (selectedID === nodeID && pendingTagHotkey) return;
+    if (selectedID === nodeID && selectedSource?.kind === "live") {
+      if (selectedTagsError) {
+        selectedTagsError = "";
+        void loadSelectedTags(selectedSource.nodeID, selectedSource.key);
+      }
+      if (auditError) {
+        auditError = "";
+        void loadAuditStatus(selectedSource.nodeID, selectedSource.key);
+      }
+      return;
+    }
     inspectorGeneration += 1;
     if (selectedID !== nodeID) {
       invalidateTagHotkeyMutation();

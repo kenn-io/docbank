@@ -248,7 +248,7 @@ export async function readVerifiedPreview(
       signal,
     });
     validatePreviewHeaders(response.headers, source, eligibility.mediaType);
-    const bytes = await readExactBody(response, source.size);
+    const bytes = await readExactBody(response, source.size, signal);
     const computedHash = bytesToHex(sha256(bytes));
     if (
       computedHash !== source.blobHash ||
@@ -361,40 +361,41 @@ function validatePreviewHeaders(
   }
 }
 
-async function readExactBody(
+// Callers validate their authority and size limit before allocating this buffer.
+export async function readExactBody(
   response: Response,
   expectedSize: number,
-): Promise<Uint8Array> {
-  if (!response.body)
-    throw new Error("The preview response did not contain document bytes.");
+  signal: AbortSignal,
+  message = "The received preview disagreed with the selected document.",
+): Promise<Uint8Array<ArrayBuffer>> {
+  if (!response.body) throw new Error(message);
   const bytes = new Uint8Array(expectedSize);
   const reader = response.body.getReader();
   let received = 0;
+  const abort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", abort, { once: true });
   try {
     while (true) {
+      signal.throwIfAborted();
       const result = await reader.read();
+      signal.throwIfAborted();
       if (result.done) break;
-      if (received + result.value.length > expectedSize) {
-        throw new Error(
-          "The received preview disagreed with the selected document.",
-        );
-      }
+      if (received + result.value.length > expectedSize) throw new Error(message);
       bytes.set(result.value, received);
       received += result.value.length;
     }
+    if (received !== expectedSize) throw new Error(message);
+    return bytes;
   } catch (cause) {
     await reader.cancel().catch(() => undefined);
     throw cause;
+  } finally {
+    signal.removeEventListener("abort", abort);
+    reader.releaseLock();
   }
-  if (received !== expectedSize) {
-    throw new Error(
-      "The received preview disagreed with the selected document.",
-    );
-  }
-  return bytes;
 }
 
-function digestHeaderMatches(headers: Headers, expectedHash: string): boolean {
+export function digestHeaderMatches(headers: Headers, expectedHash: string): boolean {
   const match = /^sha-256=:([A-Za-z0-9+/]+={0,2}):$/.exec(
     headers.get("Content-Digest") ?? "",
   );

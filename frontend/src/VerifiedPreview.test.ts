@@ -107,14 +107,21 @@ it("shows only the newly selected exact version when source and session change",
   expect(screen.queryByText("old frozen text")).toBeNull();
 });
 
-it("publishes a verified raster URL and revokes it on teardown", async () => {
+it.each([["image/jpeg", false], ["image/png", false], ["image/png", true]] as const)(
+  "previews %s without page frames (runtime %s) and revokes its URL", async (mimeType, runtime) => {
   const bytes = new Uint8Array([137, 80, 78, 71]);
   const selected = source(
     bytes,
     "33333333-3333-4333-8333-333333333333",
-    "image/png",
+    mimeType,
   );
-  vi.spyOn(globalThis, "fetch")
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  if (mimeType === "image/png") fetcher.mockResolvedValueOnce(new Response(JSON.stringify({
+    runtime_available: runtime,
+    inventory: { source: { version_id: selected.versionID, sha256: selected.blobHash, size: selected.size },
+      page_count: 0, frames: [], recipes: [], images: [] },
+  })));
+  fetcher
     .mockResolvedValueOnce(ready(selected, "image"))
     .mockResolvedValueOnce(body(selected, bytes));
   const createObjectURL = vi.fn(() => "blob:verified-image");
@@ -190,6 +197,8 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
+    if (path.endsWith("/api/v1/pages/inventory")) return new Response(JSON.stringify({ runtime_available: false,
+      inventory: { source: { version_id: selected.versionID, sha256: selected.blobHash, size: selected.size }, page_count: 0, frames: [], recipes: [], images: [] } }));
     if (path.endsWith("/api/v1/renditions/text")) return new Response(JSON.stringify({
       state: "ready",
       source: { node_id: selected.nodeID, revision: 8, version_id: selected.versionID,
@@ -219,16 +228,17 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
     queryTerms: ["alpha"], onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
-  expect(fetchMock).not.toHaveBeenCalled();
+  await screen.findByText(/No page inventory/);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
 it.each([
@@ -256,4 +266,13 @@ it.each([
     activeTab: "text", onauthfailure: vi.fn() });
   expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
   expect(screen.getByText(message).getAttribute("role")).toBe("status");
+});
+
+it.each([0, 64 * 1024 * 1024 + 1])("offers download without requesting pages for a %i-byte PDF", async size => {
+  const selected = { ...source(new Uint8Array([1]), "33333333-3333-4333-8333-333333333333", "application/pdf"), size };
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  render(VerifiedPreview, { session: "session", source: selected, authorizationRevision: 8, onauthfailure: vi.fn() });
+  await screen.findByText(/Download the verified original/);
+  expect(screen.queryByRole("button", { name: /Refresh|Render/ })).toBeNull();
+  expect(fetcher).not.toHaveBeenCalled();
 });
