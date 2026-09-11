@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-11
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -14,6 +15,10 @@ repository, watched inboxes, and secondary-store connections. A vault with only
 a primary store needs no configuration file. Each registered secondary store
 needs a matching connection profile after restart. Backup commands need either
 a configured repository or an explicit `--repo` flag.
+
+For optional bounded PDF and density-qualified PNG rendering, see
+[Verified page images](architecture/page-images.md#configure-the-optional-runtime).
+The `[page_runtime]` section is independent of text and embedding providers.
 
 ## Vault location
 

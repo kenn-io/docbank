@@ -418,6 +418,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportProvenance(ctx, tx, write); err != nil {
 		return err
 	}
+	if layout.schemaVersion >= 11 {
+		if err := exportPageMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
@@ -996,6 +1001,11 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
 		    + (SELECT COUNT(*) FROM visual_preview_heads)
+		    + (SELECT COUNT(*) FROM page_documents)
+		    + (SELECT COUNT(*) FROM page_frames)
+		    + (SELECT COUNT(*) FROM page_recipes)
+		    + (SELECT COUNT(*) FROM page_images)
+		    + (SELECT COUNT(*) FROM page_render_jobs)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
@@ -1227,6 +1237,8 @@ func (s *Store) importMetadataRecord(
 			previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
 			v.CreatedAt)
 		return err
+	case metadataPageDocumentType, metadataPageRecipeType, metadataPageImageType, metadataPageJobType:
+		return importPageMetadata(ctx, tx, kind, raw)
 	case metadataVisualPreviewHeadType:
 		var v metadataVisualPreviewHead
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1436,6 +1448,10 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
+	metadataPageDocumentType:               {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageRecipeType:                 {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageImageType:                  {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageJobType:                    {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
@@ -1878,6 +1894,11 @@ func validateMetadataStateWithVaultIdentity(
 			return err
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 11 {
+		if err := exportPageMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 			return err
 		}
 	}

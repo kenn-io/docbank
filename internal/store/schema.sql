@@ -1,5 +1,48 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+-- Physical page frames are independent of optional renderer recipes.
+CREATE TABLE IF NOT EXISTS page_documents (
+    version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS page_frames (
+    version_id TEXT NOT NULL REFERENCES page_documents(version_id) ON DELETE CASCADE,
+    page INTEGER NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    PRIMARY KEY(version_id,page)
+);
+CREATE TABLE IF NOT EXISTS page_recipes (
+    checksum TEXT PRIMARY KEY,
+    canonical_json BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS page_images (
+    version_id TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    recipe_sha256 TEXT NOT NULL REFERENCES page_recipes(checksum),
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    PRIMARY KEY(version_id,recipe_sha256,page),
+    FOREIGN KEY(version_id,page) REFERENCES page_frames(version_id,page) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS page_render_jobs (
+    id TEXT PRIMARY KEY,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    request_sha256 TEXT NOT NULL UNIQUE,
+    request_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    results_json BLOB NOT NULL,
+    failure_code TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS page_render_jobs_pending ON page_render_jobs(state,created_at,id);
+
 -- One stable logical identity follows the vault through JSONL backup and
 -- restore. Filesystem location is deliberately not identity.
 CREATE TABLE IF NOT EXISTS vault_metadata (

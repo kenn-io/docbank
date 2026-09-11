@@ -72,6 +72,7 @@ var (
 )
 
 var currentSchemaTables = [...]string{
+	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "collection_labels", "batch_tag_receipts",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
@@ -240,6 +241,7 @@ func validateCurrentSchemaColumns(
 	for _, table := range []string{
 		"blob_stores", "blob_locations", "blob_pack_entries",
 		"saved_queries", "saved_query_runs", "collection_labels", "batch_tag_receipts",
+		"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 		"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 		"vector_index_reader_leases", "vector_index_unavailable_coverage",
 	} {

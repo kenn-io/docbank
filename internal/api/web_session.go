@@ -242,6 +242,13 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if path == "/api/v1/renditions/text" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if path == "/api/v1/pages/inventory" || path == "/api/v1/pages/jobs" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
+	if after, ok := strings.CutPrefix(path, "/api/v1/pages/jobs/"); ok {
+		parts := strings.Split(after, "/")
+		return method == http.MethodPost && r.URL.RawQuery == "" && (len(parts) == 1 || len(parts) == 2 && parts[1] == "cancel") && validPageJobPathID(parts[0])
+	}
 	if path == "/api/v1/batch/tags" || path == "/api/v1/batch/tags/preview" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
@@ -345,6 +352,18 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			}
 		}
 		return len(values) >= 9 && len(values) <= 10
+	}
+	if path == "/api/v1/pages/image" {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(values) != 9 {
+			return false
+		}
+		for _, key := range []string{"node_id", "revision", "version_id", "source_sha256", "source_size", "page", "recipe_sha256", "frame_sha256", "image_sha256"} {
+			if len(values[key]) != 1 || values.Get(key) == "" {
+				return false
+			}
+		}
+		return true
 	}
 	if path == "/api/v1/collections" {
 		return true

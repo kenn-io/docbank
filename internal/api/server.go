@@ -17,6 +17,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -48,15 +49,16 @@ type Deps struct {
 	Cfg           config.Config
 	Logger        *slog.Logger // nil → slog.Default()
 	StartedAt     time.Time
-	ShutdownToken string           // "" disables the shutdown route
-	Shutdown      func()           // called (async) by the shutdown route
-	Tracker       *ActivityTracker // nil → no idle tracking
-	Jobs          *jobs.Supervisor // nil → no registered background jobs
-	Gate          *OperationGate   // nil → a server-private gate
-	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
-	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
-	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
-	BlobRegistry  *blob.Registry   // nil keeps storage-registry routes read-only to the primary
+	ShutdownToken string              // "" disables the shutdown route
+	Shutdown      func()              // called (async) by the shutdown route
+	Tracker       *ActivityTracker    // nil → no idle tracking
+	Jobs          *jobs.Supervisor    // nil → no registered background jobs
+	Gate          *OperationGate      // nil → a server-private gate
+	VerifyPage    VerifyPageFunc      // nil → shared bounded maintenance service
+	RepackPage    RepackPageFunc      // nil → shared bounded maintenance service
+	WebURL        string              // fresh per-daemon loopback origin; empty disables browser sessions
+	BlobRegistry  *blob.Registry      // nil keeps storage-registry routes read-only to the primary
+	PageRuntime   *pagerender.Runtime // nil reports optional page rendering unavailable
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -163,6 +165,7 @@ func NewServer(d Deps) *Server {
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
 	registerRenditionTextRoutes(humaAPI, d)
+	registerPageRoutes(humaAPI, d, g)
 	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	clearLongRunningBodyReadDeadlines(humaAPI)
