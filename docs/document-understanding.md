@@ -156,8 +156,9 @@ An application that wants the same transcript to travel through the rendition
 contract, sealed upload, authorization, receipt, and retained artifact can
 construct a `document/suppliedtranscript` provider whose `Source` uses the
 sealed audio digest as its key. The provider identity includes the caller's
-source binding, so deployments with different transcript sources receive
-different descriptors.
+source binding. Use a different binding for each transcript source to give it
+a distinct descriptor. Docbank cannot verify that the binding identifies the
+`Source` implementation or the transcripts it returns.
 
 ## Run Mistral OCR safely
 

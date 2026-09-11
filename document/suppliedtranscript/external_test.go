@@ -35,7 +35,7 @@ func TestSuppliedAudioTranscriptRendersThroughAuthorizedUpload(t *testing.T) {
 			source := &testSource{transcript: transcript}
 			provider, err := suppliedtranscript.New(suppliedtranscript.Profile{
 				Source: source, SourceBinding: strings.Repeat("a", 64),
-				MaxAudioBytes: suppliedtranscript.MaxAudioBytes, MaxDocumentChars: 100,
+				MaxDocumentChars: 100,
 			})
 			require.NoError(t, err)
 			policy := inspectionPolicy(testCase.data, testCase.filename, testCase.media)
@@ -66,7 +66,7 @@ func TestSuppliedAudioTranscriptRendersThroughAuthorizedUpload(t *testing.T) {
 		source := &testSource{transcript: transcript}
 		provider, err := suppliedtranscript.New(suppliedtranscript.Profile{
 			Source: source, SourceBinding: strings.Repeat("a", 64),
-			MaxAudioBytes: suppliedtranscript.MaxAudioBytes, MaxDocumentChars: 100,
+			MaxDocumentChars: 100,
 		})
 		require.NoError(t, err)
 		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, filename, mediaType))

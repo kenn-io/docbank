@@ -80,7 +80,8 @@ func TestBuildTranscriptSourceEvidenceV1RejectsInvalidInput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, sourceArtifact, sourceErr := document.BuildTranscriptSourceEvidenceV1(transcript, policy)
 			_, wrapperArtifact, wrapperErr := document.BuildTranscriptEvidenceV1(transcript, policy)
-			assert.Equal(t, wrapperErr != nil, sourceErr != nil)
+			require.Error(t, sourceErr)
+			require.Error(t, wrapperErr)
 			assert.Empty(t, sourceArtifact)
 			assert.Empty(t, wrapperArtifact)
 		})

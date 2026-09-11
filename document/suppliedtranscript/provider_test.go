@@ -27,7 +27,7 @@ func TestProviderRendersSuppliedTranscriptAsAudioEvidence(t *testing.T) {
 	}}
 	provider, err := New(Profile{
 		Source: source, SourceBinding: strings.Repeat("a", 64),
-		MaxAudioBytes: MaxAudioBytes, MaxDocumentChars: 100,
+		MaxDocumentChars: 100,
 	})
 	require.NoError(t, err)
 	upload := newTestUpload(data)
@@ -51,7 +51,7 @@ func TestProviderRendersSuppliedTranscriptAsAudioEvidence(t *testing.T) {
 func TestProviderBindsSourceIntoDescriptorIdentity(t *testing.T) {
 	profile := Profile{
 		Source:        &stubSource{transcript: document.SuppliedTranscript{Provider: "beeper", Text: "words"}},
-		SourceBinding: strings.Repeat("a", 64), MaxAudioBytes: 1024, MaxDocumentChars: 100,
+		SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100,
 	}
 	first, err := New(profile)
 	require.NoError(t, err)
@@ -65,30 +65,6 @@ func TestProviderBindsSourceIntoDescriptorIdentity(t *testing.T) {
 	assert.Equal(t, first.Descriptor(), repeat.Descriptor())
 	assert.NotEqual(t, first.Descriptor().PolicyFingerprint, second.Descriptor().PolicyFingerprint)
 	assert.NotEqual(t, first.Descriptor().Fingerprint, second.Descriptor().Fingerprint)
-}
-
-func TestProviderRejectsUploadOverByteBoundBeforeLookup(t *testing.T) {
-	data := mediatest.WAV()
-	source := &stubSource{transcript: document.SuppliedTranscript{Provider: "beeper", Text: "words"}}
-	provider, err := New(Profile{
-		Source: source, SourceBinding: strings.Repeat("a", 64),
-		MaxAudioBytes: int64(len(data) - 1), MaxDocumentChars: 100,
-	})
-	require.NoError(t, err)
-	upload := newTestUpload(data)
-	_, err = provider.Render(t.Context(), upload, testAuthorization(provider.Descriptor(), upload.Metadata()))
-	assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
-	assert.Empty(t, source.calls)
-
-	provider, err = New(Profile{
-		Source: source, SourceBinding: strings.Repeat("a", 64),
-		MaxAudioBytes: int64(len(data)), MaxDocumentChars: 100,
-	})
-	require.NoError(t, err)
-	upload = newTestUpload(data)
-	_, err = provider.Render(t.Context(), upload, testAuthorization(provider.Descriptor(), upload.Metadata()))
-	require.NoError(t, err)
-	assert.Len(t, source.calls, 1)
 }
 
 func TestProviderRejectsAuthorizationWithoutTranscriptRole(t *testing.T) {
@@ -108,7 +84,7 @@ func TestProviderRejectsAuthorizationWithoutTranscriptRole(t *testing.T) {
 			source := &stubSource{transcript: document.SuppliedTranscript{Provider: "beeper", Text: "words"}}
 			provider, err := New(Profile{
 				Source: source, SourceBinding: strings.Repeat("a", 64),
-				MaxAudioBytes: MaxAudioBytes, MaxDocumentChars: 100,
+				MaxDocumentChars: 100,
 			})
 			require.NoError(t, err)
 			upload := newTestUpload(data)
@@ -172,20 +148,34 @@ func TestProviderClassifiesUnknownSourceFailuresAsTransient(t *testing.T) {
 	assertProviderCode(t, err, document.RenditionErrorCanceled)
 }
 
+func TestProviderPreservesClassifiedSourceFailures(t *testing.T) {
+	permanent, err := document.NewRenditionProviderError(document.RenditionErrorAuthentication, 0, fs.ErrPermission)
+	require.NoError(t, err)
+	for name, sourceErr := range map[string]error{
+		"direct":  permanent,
+		"wrapped": fmt.Errorf("resolve transcript: %w", permanent),
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := newProvider(t, &stubSource{err: sourceErr})
+			upload := newTestUpload(mediatest.WAV())
+			_, err := provider.Render(t.Context(), upload, testAuthorization(provider.Descriptor(), upload.Metadata()))
+			require.Same(t, permanent, err)
+			assert.False(t, document.IsRenditionProviderErrorRetryable(err))
+		})
+	}
+}
+
 func TestProviderRejectsInvalidProfiles(t *testing.T) {
 	validSource := &stubSource{}
 	base := Profile{
 		Source: validSource, SourceBinding: strings.Repeat("a", 64),
-		MaxAudioBytes: 1024, MaxDocumentChars: 100,
+		MaxDocumentChars: 100,
 	}
 	for name, profile := range map[string]Profile{
-		"nil source":               {SourceBinding: base.SourceBinding, MaxAudioBytes: 1024, MaxDocumentChars: 100},
+		"nil source":               {SourceBinding: base.SourceBinding, MaxDocumentChars: 100},
 		"short source binding":     withProfile(base, func(p *Profile) { p.SourceBinding = "a" }),
 		"uppercase source binding": withProfile(base, func(p *Profile) { p.SourceBinding = strings.Repeat("A", 64) }),
 		"nonhex source binding":    withProfile(base, func(p *Profile) { p.SourceBinding = strings.Repeat("g", 64) }),
-		"zero audio bound":         withProfile(base, func(p *Profile) { p.MaxAudioBytes = 0 }),
-		"negative audio bound":     withProfile(base, func(p *Profile) { p.MaxAudioBytes = -1 }),
-		"audio bound over maximum": withProfile(base, func(p *Profile) { p.MaxAudioBytes = MaxAudioBytes + 1 }),
 		"zero character bound":     withProfile(base, func(p *Profile) { p.MaxDocumentChars = 0 }),
 		"negative character bound": withProfile(base, func(p *Profile) { p.MaxDocumentChars = -1 }),
 	} {
@@ -237,7 +227,7 @@ func newProvider(t *testing.T, source Source) *Provider {
 	t.Helper()
 	provider, err := New(Profile{
 		Source: source, SourceBinding: strings.Repeat("a", 64),
-		MaxAudioBytes: MaxAudioBytes, MaxDocumentChars: 100,
+		MaxDocumentChars: 100,
 	})
 	require.NoError(t, err)
 	return provider

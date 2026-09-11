@@ -19,24 +19,22 @@ const (
 	providerID     = "supplied-transcript.in-process-v1"
 	profileVersion = "docbank-supplied-transcript-profile/v1"
 	provider       = providerutil.Provider("supplied-transcript")
-
-	// MaxAudioBytes is the released bound on exact supplied audio.
-	MaxAudioBytes = int64(256 << 20)
 )
 
 // Source resolves one caller-held transcript by the sealed audio digest. A
 // digest with no transcript returns the zero SuppliedTranscript and a nil
-// error. That is an ordinary outcome, rather than a failure.
+// error. That is an ordinary outcome, rather than a failure. Return a
+// *document.RenditionProviderError to classify a failure; other errors are
+// treated as transient.
 type Source interface {
 	Transcript(ctx context.Context, sealedAudioSHA256 string) (document.SuppliedTranscript, error)
 }
 
-// Profile fixes the source identity, input bound, and evidence policy for one
+// Profile fixes the source identity and evidence policy for one
 // provider instance.
 type Profile struct {
 	Source           Source
 	SourceBinding    string
-	MaxAudioBytes    int64
 	MaxDocumentChars int
 }
 
@@ -45,12 +43,10 @@ type Provider struct {
 	descriptor     document.RenditionDescriptor
 	source         Source
 	evidencePolicy document.EvidencePolicy
-	maxAudioBytes  int64
 }
 
 type profileIdentity struct {
 	SourceBinding  string                          `json:"source_binding"`
-	MaxAudioBytes  int64                           `json:"max_audio_bytes"`
 	EvidencePolicy document.EvidencePolicyIdentity `json:"evidence_policy"`
 }
 
@@ -62,16 +58,12 @@ func New(profile Profile) (*Provider, error) {
 	if !canonical.IsSHA256Hex(profile.SourceBinding) {
 		return nil, errors.New("supplied transcript: source binding must be a lowercase SHA-256")
 	}
-	if profile.MaxAudioBytes <= 0 || profile.MaxAudioBytes > MaxAudioBytes {
-		return nil, fmt.Errorf("supplied transcript: max audio bytes must be between 1 and %d", MaxAudioBytes)
-	}
 	evidencePolicy, err := document.NewEvidencePolicy(profile.MaxDocumentChars)
 	if err != nil {
 		return nil, fmt.Errorf("supplied transcript: evidence policy: %w", err)
 	}
 	identity, err := canonical.Marshal(profileIdentity{
 		SourceBinding:  profile.SourceBinding,
-		MaxAudioBytes:  profile.MaxAudioBytes,
 		EvidencePolicy: evidencePolicy.Identity(),
 	})
 	if err != nil {
@@ -98,7 +90,6 @@ func New(profile Profile) (*Provider, error) {
 		descriptor:     providerutil.CloneDescriptor(descriptor),
 		source:         profile.Source,
 		evidencePolicy: evidencePolicy,
-		maxAudioBytes:  profile.MaxAudioBytes,
 	}, nil
 }
 
@@ -120,10 +111,6 @@ func (p *Provider) Render(
 		return document.RenditionResult{}, errors.New("supplied transcript: provider is required")
 	}
 	metadata := upload.Metadata()
-	if metadata.ByteLength > p.maxAudioBytes {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
-			"input exceeds the supplied-audio byte limit", nil)
-	}
 	if !providerutil.AllowsArtifact(authorization, document.EvidenceArtifactTranscript) {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"authorization does not allow retaining the provider transcript", nil)
@@ -136,6 +123,9 @@ func (p *Provider) Render(
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return document.RenditionResult{}, provider.Canceled(contextErr)
+		}
+		if providerErr, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+			return document.RenditionResult{}, providerErr
 		}
 		return document.RenditionResult{}, provider.Classified(
 			document.RenditionErrorTransient, "supplied transcript could not be resolved", err)
