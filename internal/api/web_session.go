@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -33,18 +34,25 @@ type webSessionRegistry struct {
 	uploads     map[*websocket.Conn]struct{}
 	uploadGroup sync.WaitGroup
 	closing     bool
+	onRevoke    func(string)
 }
 
 type webSessionState struct {
 	uploadSecret [sha256.Size]byte
 	upload       *websocket.Conn
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
-func newWebSessionRegistry() *webSessionRegistry {
-	return &webSessionRegistry{
+func newWebSessionRegistry(onRevoke ...func(string)) *webSessionRegistry {
+	r := &webSessionRegistry{
 		tokens:  make(map[[sha256.Size]byte]webSessionState),
 		uploads: make(map[*websocket.Conn]struct{}),
 	}
+	if len(onRevoke) != 0 {
+		r.onRevoke = onRevoke[0]
+	}
+	return r
 }
 
 func (r *webSessionRegistry) issue() (string, string, error) {
@@ -57,24 +65,34 @@ func (r *webSessionRegistry) issue() (string, string, error) {
 		return "", "", fmt.Errorf("generating browser upload secret: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
+	digest := sha256.Sum256([]byte(token))
+	sessionCtx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	if r.closing {
 		r.mu.Unlock()
+		cancel()
 		return "", "", errors.New("browser sessions are shutting down")
 	}
-	r.tokens[sha256.Sum256([]byte(token))] = webSessionState{uploadSecret: uploadSecret}
+	r.tokens[digest] = webSessionState{uploadSecret: uploadSecret, ctx: sessionCtx, cancel: cancel}
 	r.mu.Unlock()
 	return token, base64.RawURLEncoding.EncodeToString(uploadSecret[:]), nil
 }
 
-func (r *webSessionRegistry) valid(token string) bool {
-	if token == "" {
-		return false
+func (r *webSessionRegistry) authenticate(token string) (string, context.Context, bool) {
+	if r == nil || token == "" {
+		return "", nil, false
 	}
+	digest := sha256.Sum256([]byte(token))
 	r.mu.Lock()
-	_, ok := r.tokens[sha256.Sum256([]byte(token))]
+	state, ok := r.tokens[digest]
+	if r.closing {
+		ok = false
+	}
 	r.mu.Unlock()
-	return ok
+	if !ok {
+		return "", nil, false
+	}
+	return hex.EncodeToString(digest[:]), state.ctx, true
 }
 
 func (r *webSessionRegistry) uploadSecret(token string) ([sha256.Size]byte, bool) {
@@ -136,9 +154,16 @@ func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
 func (r *webSessionRegistry) revoke(token string) {
 	digest := sha256.Sum256([]byte(token))
 	r.mu.Lock()
-	state := r.tokens[digest]
+	state, ok := r.tokens[digest]
 	delete(r.tokens, digest)
 	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	state.cancel()
+	if r.onRevoke != nil {
+		r.onRevoke(hex.EncodeToString(digest[:]))
+	}
 	if state.upload != nil {
 		_ = state.upload.CloseNow()
 	}
@@ -147,12 +172,22 @@ func (r *webSessionRegistry) revoke(token string) {
 func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 	r.mu.Lock()
 	r.closing = true
+	states := make(map[string]webSessionState, len(r.tokens))
+	for digest, state := range r.tokens {
+		state.cancel()
+		states[hex.EncodeToString(digest[:])] = state
+	}
 	clear(r.tokens)
 	conns := make([]*websocket.Conn, 0, len(r.uploads))
 	for conn := range r.uploads {
 		conns = append(conns, conn)
 	}
 	r.mu.Unlock()
+	if r.onRevoke != nil {
+		for owner := range states {
+			r.onRevoke(owner)
+		}
+	}
 	for _, conn := range conns {
 		_ = conn.CloseNow()
 	}
@@ -172,6 +207,16 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
+	if method == http.MethodPost && r.URL.RawQuery == "" &&
+		(path == "/api/v1/workspace/queries" || isWorkspaceQueryPagePath(path) || isSavedQueryRunPath(path)) {
+		return true
+	}
+	if path == "/api/v1/queries/parse" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
+	if path == "/api/v1/batch/tags" || path == "/api/v1/batch/tags/preview" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")
@@ -252,7 +297,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if collectionID, resource, ok := collectionResourcePath(path); ok && collectionID != "" {
-		return resource == "" || resource == "members" || resource == "label"
+		return resource == "" || resource == "members" || resource == "label" || resource == "quality"
 	}
 	if path == "/api/v1/trash" {
 		// The master API retains the released unbounded form, but a browser
@@ -290,6 +335,26 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	return len(parts) == 1 || parts[1] == "children" ||
 		parts[1] == "versions" || parts[1] == "provenance" ||
 		parts[1] == "tags"
+}
+
+func isWorkspaceQueryPagePath(path string) bool {
+	const prefix = "/api/v1/workspace/queries/"
+	after, ok := strings.CutPrefix(path, prefix)
+	if !ok {
+		return false
+	}
+	parts := strings.Split(after, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] == "pages"
+}
+
+func isSavedQueryRunPath(path string) bool {
+	const prefix = "/api/v1/saved-queries/"
+	after, ok := strings.CutPrefix(path, prefix)
+	if !ok {
+		return false
+	}
+	parts := strings.Split(after, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] == "runs"
 }
 
 func collectionResourcePath(path string) (collectionID, resource string, ok bool) {
