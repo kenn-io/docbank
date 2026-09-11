@@ -37,6 +37,16 @@ code {
   min-height: 100vh;
 }
 
+.query-draft-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .brand {
   display: flex;
   align-items: center;

@@ -133,6 +133,9 @@ Save a named search definition when several clients need to reuse it. The
 HTTP API stores the definition with the vault's metadata. It does not run the
 search. Saved definitions survive backup and restore.
 
+The [web management screen](web.md#saved-queries-and-highlights) also manages
+saved definitions.
+
 A query payload uses `QueryV1`: a JSON object with version `v: 1`, search text,
 filters, and optional syntax, mode, and sort choices. A saved mode such as
 `hybrid` describes intent; it does not enable that mode in `docbank search`.
@@ -202,8 +205,8 @@ revision rules as a query.
 
 ### What are the saved-definition limits?
 
-The CLI, web application, and TUI have no saved-definition management screen
-or command. The HTTP endpoints do not execute saved queries, render
+The CLI and TUI have no saved-definition management command or screen.
+The HTTP endpoints do not execute saved queries, render
 highlights, or return result counts.
 
 Once permanent audit history is enabled anywhere in the vault, create, update,
