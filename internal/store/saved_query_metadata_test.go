@@ -304,26 +304,28 @@ func TestSavedQueryOldestReleasedSchemaUpgradeCreatesEmptyAuthority(t *testing.T
 
 func TestSavedQueryCurrentSchemaRejectsMissingAuthorityTable(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
-		t.Run(test.name, func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE saved_queries`)
-			require.NoError(t, err)
-			require.NoError(t, s.Close())
+		for _, table := range []string{"saved_queries", "saved_query_runs"} {
+			t.Run(test.name+"/"+table, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`DROP TABLE ` + table)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
 
-			reopened, err := Open(dbPath, test.driver)
-			if reopened != nil {
-				require.NoError(t, reopened.Close())
-			}
-			require.ErrorContains(t, err, "saved_queries")
-		})
+				reopened, err := Open(dbPath, test.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, table)
+			})
+		}
 	}
 }
 
 func TestSavedQuerySchemaRejectsPriorUnreleasedLayout(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
-		for _, version := range []int{6, 7} {
+		for _, version := range []int{6, 7, 8, 9} {
 			t.Run(fmt.Sprintf("%s/v%d", test.name, version), func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
 				s, err := Open(dbPath, test.driver)

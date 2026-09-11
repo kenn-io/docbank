@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-11
 title: Document Understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
@@ -25,6 +26,7 @@ canonical evidence is the validated text and source locations behind it.
 | Stage exact bytes for an authorized provider upload | `document/upload` |
 | Bind outbound connections to a declared destination | `document/providerhttp` |
 | Convert CSV locally for PDF OCR | `document/csvpdf` |
+| Inspect exact physical page frames and render verified PNGs locally | `document/pagerender` |
 
 These are reusable Go contracts. Vault-owned publication, consent, backup, and
 search are described in [Document processing](architecture/document-processing.md).
@@ -32,6 +34,9 @@ The [daemon configuration](configuration.md#embedding-workers-and-credentials)
 reference separately lists its executable embedding adapters.
 
 ## Choose a rendition provider
+
+[Verified page images](architecture/page-images.md) documents the optional pinned
+local page runtime. Page geometry and images are separate from text renditions.
 
 Each adapter implements a bounded extraction contract. “Operator-hosted” means
 you run the service and declare its destination; “hosted” means the adapter

@@ -80,6 +80,28 @@ func TestDuplicatesFindsOnlyLiveCurrentContent(t *testing.T) {
 	assert.Contains(t, duplicateReferenceNodeIDs(refs), first.ID)
 }
 
+func TestDuplicateGroupByHashUsesExactLiveCurrentRelation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("1234")
+	first, err := s.CreateFile(ctx, s.RootID(), "exact-a.txt", hash, 12, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "exact-b.txt", hash, 12, "text/plain")
+	require.NoError(t, err)
+
+	group, err := s.DuplicateGroupByHash(ctx, hash, 12)
+	require.NoError(t, err)
+	require.Equal(t, 2, group.ReferenceCount)
+	refs := make([]ContentReference, 0, len(group.References))
+	for _, reference := range group.References {
+		refs = append(refs, reference.Reference)
+	}
+	require.Equal(t, []int64{first.ID, second.ID}, duplicateReferenceNodeIDs(refs))
+
+	_, err = s.DuplicateGroupByHash(ctx, fakeHash("5678"), 12)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestDuplicateReferencesExposeActiveOperationalCollections(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

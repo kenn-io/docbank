@@ -50,6 +50,7 @@ nav = [
     {"Document Processing" = "architecture/document-processing.md"},
     {"Source Metadata" = "architecture/source-metadata.md"},
     {"Visual Previews" = "architecture/visual-previews.md"},
+    {"Verified Page Images" = "architecture/page-images.md"},
     {"Storage" = "architecture/storage.md"},
     {"Loose & Packed Content" = "architecture/packed-storage.md"},
     {"Editing & Versions" = "architecture/editing-and-versions.md"},

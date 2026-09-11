@@ -59,7 +59,7 @@ func (optionalSavedQueryPayload) Schema(r huma.Registry) *huma.Schema {
 	return SavedQueryPayload{}.Schema(r)
 }
 
-func registerSavedQueryRoutes(api huma.API, d Deps, g *gate) {
+func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.QuerySnapshotService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listSavedQueries", Method: http.MethodGet, Path: "/api/v1/saved-queries",
 		Summary: "List saved query and highlight definitions by name",
@@ -185,6 +185,58 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate) {
 			return nil
 		})
 		return out, err
+	})
+
+	registerSavedQueryRunRoute(api, d, g, snapshots)
+}
+
+func registerSavedQueryRunRoute(
+	api huma.API, d Deps, g *gate, snapshots *store.QuerySnapshotService,
+) {
+	huma.Register(api, huma.Operation{
+		OperationID: "runSavedQuery", Method: http.MethodPost,
+		Path:         "/api/v1/saved-queries/{saved_query_id}/runs",
+		Summary:      "Run one revision-fenced saved query and retain its receipt",
+		MaxBodyBytes: 32 << 10,
+	}, func(ctx context.Context, in *struct {
+		SavedQueryID string `path:"saved_query_id"`
+		IfMatch      string `header:"If-Match"`
+		Body         SavedQueryRunRequest
+	}) (*struct{ Body SavedQueryRunResult }, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		owner, ok := workspaceSnapshotOwner(ctx)
+		if !ok {
+			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
+		}
+		selection, err := selectCollectionProfile(d.Cfg, in.Body.Profile)
+		if err != nil {
+			return nil, err
+		}
+		if snapshots == nil {
+			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
+		}
+		var result SavedQueryRunResult
+		err = g.mutate(func() error {
+			run, page, runErr := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, store.SnapshotRequest{
+				Coverage: selection.Coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			})
+			if runErr != nil {
+				return workspaceQueryError(runErr)
+			}
+			response, encodeErr := fromStoreWorkspacePage(page)
+			if encodeErr != nil {
+				return NewError(http.StatusInternalServerError, "internal", "could not encode saved query run")
+			}
+			result = SavedQueryRunResult{Run: fromStoreSavedQueryRun(run), Snapshot: response}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &struct{ Body SavedQueryRunResult }{Body: result}, nil
 	})
 }
 

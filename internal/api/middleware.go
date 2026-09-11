@@ -18,6 +18,12 @@ import (
 const requestTimeout = 60 * time.Second
 
 type authenticationContextKey struct{}
+type workspaceSnapshotOwnerContextKey struct{}
+
+func workspaceSnapshotOwner(ctx context.Context) (string, bool) {
+	owner, ok := ctx.Value(workspaceSnapshotOwnerContextKey{}).(string)
+	return owner, ok && owner != ""
+}
 
 func browserSessionRequest(ctx context.Context) bool {
 	authentication, _ := ctx.Value(authenticationContextKey{}).(string)
@@ -89,7 +95,7 @@ func writeError(w http.ResponseWriter, e *Error) {
 // keyless bypass: NewServer refuses to build a server with an empty key
 // (the offline OpenAPI-document path is the only caller that doesn't serve
 // requests, and it supplies a placeholder key), so key is always set here.
-func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry) http.Handler {
+func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -100,17 +106,24 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry)
 			got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
+			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		webToken := r.Header.Get(WebSessionHeader)
-		if sessions != nil && sessions.valid(webToken) {
+		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
 			if !webSessionRequestAllowed(r) {
 				writeError(w, NewError(http.StatusForbidden, "web_session_read_only",
 					"browser sessions cannot use this endpoint"))
 				return
 			}
-			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "browser")
+			ctx, cancel := context.WithCancel(r.Context())
+			stop := context.AfterFunc(sessionCtx, cancel)
+			defer stop()
+			defer cancel()
+			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
+			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

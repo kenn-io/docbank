@@ -342,7 +342,7 @@ func TestCollectionRoutesHaveExactBrowserSessionAllowList(t *testing.T) {
 	base := "/api/v1/collections/" + report.IngestID
 	for _, path := range []string{
 		"/api/v1/collections?limit=100&offset=0", base, base + "/members?limit=100&offset=0",
-		base + "/label",
+		base + "/label", base + "/quality",
 	} {
 		resp := request(http.MethodGet, path)
 		assert.Equal(t, http.StatusOK, resp.StatusCode, path)
@@ -363,6 +363,8 @@ func TestCollectionRoutesHaveExactBrowserSessionAllowList(t *testing.T) {
 
 	for _, denied := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/collections"},
+		{http.MethodPost, base + "/quality"},
+		{http.MethodGet, base + "/quality/extra"},
 		{http.MethodDelete, base + "/label"},
 		{http.MethodPatch, base + "/label"},
 		{http.MethodPut, base + "/label?force=true"},

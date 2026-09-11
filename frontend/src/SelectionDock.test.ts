@@ -63,3 +63,41 @@ it("uses the dock close control to clear selection", async () => {
   );
   expect(onclear).toHaveBeenCalledOnce();
 });
+
+it("offers the bounded tag action when supplied", async () => {
+  const ontags = vi.fn();
+  render(SelectionDock, {
+    selectedCount: 2,
+    visibleDocumentCount: 3,
+    truncated: false,
+    onclear: vi.fn(),
+    onselectvisible: vi.fn(),
+    ontags,
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
+  expect(ontags).toHaveBeenCalledOnce();
+});
+
+it("names snapshot-page tagging separately from the whole frozen query", async () => {
+  const ontags = vi.fn();
+  const onwholequerytags = vi.fn();
+  render(SelectionDock, { props: {
+    selectedCount: 1,
+    visibleDocumentCount: 2,
+    truncated: true,
+    context: "snapshot",
+    wholeQueryCount: 101,
+    onclear: vi.fn(),
+    onselectvisible: vi.fn(),
+    ontags,
+    onwholequerytags,
+  } });
+
+  expect(screen.getByText("1 selected on this frozen page")).toBeTruthy();
+  expect(screen.getByText("Visible selection only · whole query has 101 documents")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Tag visible selection" }));
+  expect(ontags).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole("button", { name: "Tag whole query" }));
+  expect(onwholequerytags).toHaveBeenCalledOnce();
+});

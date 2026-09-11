@@ -91,6 +91,7 @@ func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
+	t.Cleanup(srv.Close)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return client.New(ts.URL, clientKey), s
