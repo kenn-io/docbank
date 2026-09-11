@@ -3,6 +3,7 @@ package emailmime
 import (
 	"errors"
 	"io"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -203,7 +204,7 @@ func decodeRawMIMEParameterValue(value string) (string, bool) {
 		}
 		return inner, true
 	}
-	decoded := boundedStringWriter{limit: int64(len(inner))}
+	var decoded strings.Builder
 	for index := 1; index < len(value)-1; index++ {
 		if value[index] == '\r' || value[index] == '\n' || value[index] == '"' {
 			return "", false
@@ -214,9 +215,7 @@ func decodeRawMIMEParameterValue(value string) (string, bool) {
 				return "", false
 			}
 		}
-		if err := decoded.WriteByte(value[index]); err != nil {
-			return "", false
-		}
+		decoded.WriteByte(value[index])
 	}
 	return decoded.String(), true
 }
@@ -313,106 +312,50 @@ func decodeFilenameParameter(params []rawMIMEParameter, base string, limit int64
 			return "", true, document.EmailInterpretationInvalid
 		}
 	}
-	segments := make([]rfc2231Segment, 0, len(extended))
-	for index := 0; ; index++ {
+	var input strings.Builder
+	for index := range len(extended) {
 		param, exists := extended[index]
 		if !exists {
-			if index == len(extended) {
-				break
-			}
 			return "", true, document.EmailInterpretationInvalid
 		}
 		value := param.value
 		if index == 0 {
 			value = firstValue
 		}
-		encoded := strings.HasSuffix(param.name, "*")
-		if encoded {
-			if !validPercentEncoding(value) {
+		if strings.HasSuffix(param.name, "*") {
+			decoded, err := url.PathUnescape(value)
+			if err != nil {
 				return "", true, document.EmailInterpretationInvalid
 			}
+			value = decoded
 		}
-		segments = append(segments, rfc2231Segment{value: value, encoded: encoded})
+		input.WriteString(value)
 	}
-	input := &rfc2231Reader{segments: segments}
-	var out boundedStringWriter
-	out.limit = limit
-	if charsetName == "" {
-		if err := copyBounded(&out, input); err != nil {
-			if errors.Is(err, errDisplayBudget) {
-				return "", true, filenameDisplayLimitState
-			}
-			return "", true, document.EmailInterpretationInvalid
+	var reader io.Reader = strings.NewReader(input.String())
+	if charsetName != "" {
+		converted, err := charset.NewReaderLabel(charsetName, reader)
+		if err != nil {
+			return "", true, document.EmailInterpretationUnsupported
 		}
-		if !utf8.ValidString(out.String()) {
-			return "", true, document.EmailInterpretationInvalid
-		}
-		return out.String(), true, document.EmailInterpretationDecoded
+		reader = converted
 	}
-	reader, err := charset.NewReaderLabel(charsetName, input)
+	// Raw parameters fit in the bounded header; only charset expansion needs
+	// a separate retained-output limit.
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
-		return "", true, document.EmailInterpretationUnsupported
-	}
-	if err = copyBounded(&out, reader); err != nil {
-		if errors.Is(err, errDisplayBudget) {
-			return "", true, filenameDisplayLimitState
-		}
 		return "", true, document.EmailInterpretationInvalid
 	}
-	if !utf8.ValidString(out.String()) {
+	if int64(len(data)) > limit {
+		return "", true, filenameDisplayLimitState
+	}
+	decoded, err := boundedUTF8(string(data), limit)
+	if errors.Is(err, errDisplayBudget) {
+		return "", true, filenameDisplayLimitState
+	}
+	if err != nil {
 		return "", true, document.EmailInterpretationInvalid
 	}
-	return out.String(), true, document.EmailInterpretationDecoded
-}
-
-type rfc2231Segment struct {
-	value   string
-	encoded bool
-}
-
-type rfc2231Reader struct {
-	segments []rfc2231Segment
-	segment  int
-	offset   int
-}
-
-func (r *rfc2231Reader) Read(p []byte) (int, error) {
-	written := 0
-	for written < len(p) && r.segment < len(r.segments) {
-		current := r.segments[r.segment]
-		if r.offset == len(current.value) {
-			r.segment++
-			r.offset = 0
-			continue
-		}
-		value := current.value[r.offset]
-		r.offset++
-		if current.encoded && value == '%' {
-			high, _ := hexValue(current.value[r.offset])
-			low, _ := hexValue(current.value[r.offset+1])
-			value = high<<4 | low
-			r.offset += 2
-		}
-		p[written] = value
-		written++
-	}
-	if written == 0 && r.segment == len(r.segments) {
-		return 0, io.EOF
-	}
-	return written, nil
-}
-
-func validPercentEncoding(value string) bool {
-	for index := 0; index < len(value); index++ {
-		if value[index] != '%' {
-			continue
-		}
-		if index+2 >= len(value) || !validHexPair(value[index+1], value[index+2]) {
-			return false
-		}
-		index += 2
-	}
-	return true
+	return decoded, true, document.EmailInterpretationDecoded
 }
 
 func (d *decoder) interpretContentID(path string, block parsedHeaderBlock) (document.EmailContentIDV1, []document.EmailDiagnosticV1) {

@@ -15,7 +15,7 @@ import (
 )
 
 func testEmailRecipe() EmailRecipeV1 {
-	return EmailRecipeV1{ContractVersion: EmailRecipeContractV1, ImplementationRevision: 1, MultipartSourceSHA256: "1a5aa86641f98021fd6f37466c07e62f2662f4f55d88b9d09ebf032988e5d110", CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: canonicalEmailLimits()}
+	return EmailRecipeV1{ContractVersion: EmailRecipeContractV1, ImplementationRevision: 1, GoVersion: "go1.27.0", CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: canonicalEmailLimits()}
 }
 
 func unavailableEmail() EmailV1 {
@@ -28,7 +28,7 @@ func TestMarshalEmailV1HasIndependentCanonicalBytes(t *testing.T) {
 	value := unavailableEmail()
 	encoded, checksum, err := MarshalEmailV1(value)
 	require.NoError(t, err)
-	expected := `{"contract_version":"docbank-email/v1","failure":{"code":"source_size_limit","detail":"source too large","limit":134217728,"observed":134217729,"operation":"source","path":null},"inventory":null,"outcome":"unavailable","recipe":{"body_profile":"docbank-email-body-selection/v1","charset_profile":"docbank-email-charset/v1","contract_version":"docbank-email-decoder/v1","filename_profile":"docbank-email-filename/v1","header_profile":"docbank-email-header/v1","implementation_revision":1,"limits":{"aggregate_body_utf8_bytes":268435456,"aggregate_header_bytes":8388608,"aggregate_header_fields":16384,"body_utf8_bytes":16777216,"decoded_bytes":268435456,"depth":16,"diagnostic_detail_bytes":1024,"diagnostics":4096,"header_bytes":1048576,"header_display_bytes":1048576,"header_fields":4096,"html_display_bytes":16777216,"inventory_bytes":8388608,"part_bytes":134217728,"parts":1000,"source_bytes":134217728},"multipart_source_sha256":"1a5aa86641f98021fd6f37466c07e62f2662f4f55d88b9d09ebf032988e5d110"},"source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":134217729,"verification":"catalog_only"}}`
+	expected := `{"contract_version":"docbank-email/v1","failure":{"code":"source_size_limit","detail":"source too large","limit":134217728,"observed":134217729,"operation":"source","path":null},"inventory":null,"outcome":"unavailable","recipe":{"body_profile":"docbank-email-body-selection/v1","charset_profile":"docbank-email-charset/v1","contract_version":"docbank-email-decoder/v1","filename_profile":"docbank-email-filename/v1","go_version":"go1.27.0","header_profile":"docbank-email-header/v1","implementation_revision":1,"limits":{"aggregate_body_utf8_bytes":268435456,"aggregate_header_bytes":8388608,"aggregate_header_fields":16384,"body_utf8_bytes":16777216,"decoded_bytes":268435456,"depth":16,"diagnostic_detail_bytes":1024,"diagnostics":4096,"header_bytes":1048576,"header_display_bytes":1048576,"header_fields":4096,"html_display_bytes":16777216,"inventory_bytes":8388608,"part_bytes":134217728,"parts":1000,"source_bytes":134217728}},"source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":134217729,"verification":"catalog_only"}}`
 	assert.Equal(t, expected, string(encoded))
 	sum := sha256.Sum256([]byte(expected))
 	assert.Equal(t, hex.EncodeToString(sum[:]), checksum)
@@ -91,7 +91,7 @@ func TestEmailBodyProfileIsCanonicalAndRecipeBound(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, fingerprints.Profile)
 	changed := testEmailRecipe()
-	changed.MultipartSourceSHA256 = strings.Repeat("b", 64)
+	changed.GoVersion = "go1.27.1"
 	other, err := EmailBodyProfileV1(changed)
 	require.NoError(t, err)
 	_, otherFingerprints, err := CanonicalProfile(other)

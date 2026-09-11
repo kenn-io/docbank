@@ -411,6 +411,12 @@ diagnostics, and exact SHA-256/size receipts for retained artifacts. It does not
 normalize the source, deduplicate messages by Message-ID, or turn attachments
 into child documents.
 
+Encoded headers, addresses, and multipart structure use the Go standard library. The recipe
+records the Go version and fixed resource limits. A structure rejected by the
+parser remains a partial inventory with a diagnostic; this includes malformed
+part headers and multipart delimiter or preamble lines longer than 4 KiB.
+Original bytes and already inventoried parts remain readable.
+
 `GET /versions/{version_id}/email` returns the selected generation for that
 exact version. An eligible version still waiting for the daemon worker returns
 `202` with its populated version and `state: "pending"`. An undeclared source

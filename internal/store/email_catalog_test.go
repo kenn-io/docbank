@@ -184,7 +184,7 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	changed := first.Evidence
-	changed.Recipe.MultipartSourceSHA256 = fakeHash("a9")
+	changed.Recipe.GoVersion = "go1.27.1"
 	p := f.publication
 	p.CanonicalJSON, _, err = document.MarshalEmailV1(changed)
 	require.NoError(t, err)

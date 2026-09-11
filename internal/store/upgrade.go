@@ -239,6 +239,7 @@ func validateCurrentSchemaColumns(
 		)
 	}
 	for _, table := range []string{
+		"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 		"blob_stores", "blob_locations", "blob_pack_entries",
 		"saved_queries", "collection_labels",
 		"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",

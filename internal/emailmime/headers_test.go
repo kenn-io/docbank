@@ -68,3 +68,64 @@ func TestReadHeaderBlockDoesNotFoldMalformedContinuation(t *testing.T) {
 	assert.Equal(t, "one", block.fields[0].value)
 	assert.False(t, block.fields[1].valid)
 }
+
+func TestHeaderReservationsMatchMalformedEntries(t *testing.T) {
+	for name, raw := range map[string]string{
+		"CR prefix":                "A: one\r\n\rbad\r\n\r\n",
+		"embedded CR continuation": "A: one\r\n bad\rending\r\n\r\n",
+		"unfinished continuation":  "A: one\r\n bad",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var bytesUsed int64
+			fieldsUsed := 0
+			_, err := readHeaderBlock(t.Context(), bufio.NewReader(strings.NewReader(raw)), 100, 1, &bytesUsed, 100, &fieldsUsed, 1)
+			var policy *policyLimitError
+			require.ErrorAs(t, err, &policy)
+			assert.Equal(t, document.EmailDiagnosticHeaderFieldsLimit, policy.code)
+			assert.Equal(t, int64(2), policy.observed)
+		})
+	}
+}
+
+func TestMalformedHeaderFieldLimitMatrix(t *testing.T) {
+	const limit = 3
+	forms := map[string]func(int) string{
+		"CR prefixed": func(fields int) string { return strings.Repeat("\rbad\r\n", fields) + "\r\n" },
+		"embedded CR continuation": func(fields int) string {
+			return "A: one\r\n" + strings.Repeat(" bad\rending\r\n", fields-1) + "\r\n"
+		},
+		"unfinished continuation": func(fields int) string {
+			return strings.Repeat("A: one\r\n", fields-1) + " bad"
+		},
+	}
+	for form, build := range forms {
+		for _, aggregate := range []bool{false, true} {
+			for _, delta := range []int{-1, 0, 1} {
+				name := form + "/" + map[bool]string{false: "entity", true: "aggregate"}[aggregate] + "/" + map[int]string{-1: "below", 0: "at", 1: "above"}[delta]
+				t.Run(name, func(t *testing.T) {
+					perLimit, aggregateLimit := limit, 20
+					if aggregate {
+						perLimit, aggregateLimit = 20, limit
+					}
+					var bytesUsed int64
+					fieldsUsed := 0
+					block, err := readHeaderBlock(t.Context(), bufio.NewReader(strings.NewReader(build(limit+delta))), 1000, perLimit, &bytesUsed, 1000, &fieldsUsed, aggregateLimit)
+					if delta <= 0 {
+						require.NoError(t, err)
+						assert.Len(t, block.fields, limit+delta)
+						assert.Equal(t, limit+delta, fieldsUsed)
+						return
+					}
+					var policy *policyLimitError
+					require.ErrorAs(t, err, &policy)
+					assert.Equal(t, int64(limit+1), policy.observed)
+					if aggregate {
+						assert.Equal(t, document.EmailDiagnosticHeaderTotalFieldsLimit, policy.code)
+					} else {
+						assert.Equal(t, document.EmailDiagnosticHeaderFieldsLimit, policy.code)
+					}
+				})
+			}
+		}
+	}
+}

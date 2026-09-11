@@ -155,7 +155,7 @@ type EmailSourceV1 struct {
 type EmailRecipeV1 struct {
 	ContractVersion        string        `json:"contract_version"`
 	ImplementationRevision int           `json:"implementation_revision"`
-	MultipartSourceSHA256  string        `json:"multipart_source_sha256"`
+	GoVersion              string        `json:"go_version"`
 	CharsetProfile         string        `json:"charset_profile"`
 	HeaderProfile          string        `json:"header_profile"`
 	FilenameProfile        string        `json:"filename_profile"`

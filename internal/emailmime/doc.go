@@ -1,2 +1,2 @@
-// Package emailmime provides Docbank's private bounded MIME decoder.
+// Package emailmime derives verified email metadata using the Go MIME parsers.
 package emailmime

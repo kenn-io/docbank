@@ -118,3 +118,10 @@ func TestEssentialDiagnosticEvictsAlternativeBeforeDegradingDate(t *testing.T) {
 	require.Len(t, d.messages[0].Date.Diagnostics, 1)
 	assert.Empty(t, d.messages[0].Alternatives[0].Diagnostics)
 }
+
+func TestDecodeRejectsEmbeddedSignNumericTimezone(t *testing.T) {
+	result := decodeFixture(t, "Date: 09 Sep 2026 12:34:56 +-100\r\n\r\nbody")
+	date := result.Evidence.Inventory.Messages[0].Date
+	assert.Equal(t, document.EmailDateInvalid, date.State)
+	assert.Nil(t, date.UTC)
+}

@@ -419,7 +419,7 @@ func TestEmailPipelinePreservesLegacyAndUnrelatedHeads(t *testing.T) {
 	old, err := f.catalog.EmailMetadata(t.Context(), target.Version.ID)
 	require.NoError(t, err)
 	evidence := old.Evidence
-	evidence.Recipe.MultipartSourceSHA256 = processingHash("synthetic next parser source")
+	evidence.Recipe.GoVersion = "go1.27.1"
 	evidence.Outcome = "unavailable"
 	evidence.Inventory = nil
 	evidence.Failure = &document.EmailFailureV1{Code: "source_unsupported", Operation: "source", Detail: "Synthetic next decoder refusal."}

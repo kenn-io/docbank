@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -612,6 +615,95 @@ func TestCanonicalSourceMetadataResultPublishesWarningForInvalidExtraction(t *te
 	assert.NotEmpty(t, canonical)
 }
 
+func TestExtractSourceMetadataUsesSharedEmailInterpretation(t *testing.T) {
+	for _, zone := range []string{"XYZ", "-0700", "GMT", ""} {
+		t.Run(zone, func(t *testing.T) {
+			date := strings.TrimSpace("Tue, 2 Jan 2024 03:04:05 " + zone)
+			payload := []byte("From: =?UTF-8?Q?Ad=C3=A1?= <ada@example.test>\r\n" +
+				"Subject: =?UTF-8?Q?Synthetic_caf=C3=A9?=\r\nDate: " + date + "\r\n" +
+				"Received: from sender.example.test\r\n\tby receiver.example.test\r\n\r\nbody")
+			digest := sha256.Sum256(payload)
+			decoded, err := emailmime.Decode(t.Context(), hex.EncodeToString(digest[:]),
+				int64(len(payload)), bytes.NewReader(payload), t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, decoded.Close()) })
+			message := decoded.Evidence.Inventory.Messages[0]
+			metadata := ExtractSourceMetadata(payload)
+			from, found := sourceMetadataString(metadata, "email.from")
+			require.True(t, found)
+			assert.Equal(t, *message.Fields.From[0].Text, from)
+			subject, found := sourceMetadataString(metadata, "email.subject")
+			require.True(t, found)
+			assert.Equal(t, *message.Fields.Subject[0].Text, subject)
+			received, found := sourceMetadataStrings(metadata, "email.received")
+			require.True(t, found)
+			assert.Equal(t, []string{"from sender.example.test by receiver.example.test"}, received)
+			sent, found := sourceMetadataTimestamp(metadata, "email.sent")
+			switch message.Date.TimezoneState {
+			case document.EmailTimezoneUnknownNamed:
+				assert.False(t, found)
+				raw, found := sourceMetadataString(metadata, "email.sent.raw")
+				require.True(t, found)
+				assert.Equal(t, date, raw)
+				assert.Contains(t, sourceMetadataWarningCodes(metadata), "unsupported_timezone")
+			case document.EmailTimezoneMissing:
+				require.True(t, found)
+				assert.Equal(t, *message.Date.Civil, sent.Normalized)
+				assert.Equal(t, document.SourceMetadataTimezoneOmitted, sent.Timezone)
+			default:
+				require.True(t, found)
+				parsed, err := time.Parse(time.RFC3339, sent.Normalized)
+				require.NoError(t, err)
+				assert.Equal(t, *message.Date.UTC, parsed.UTC().Format(time.RFC3339))
+				assert.Equal(t, date, sent.Raw)
+			}
+		})
+	}
+}
+
+func TestExtractSourceMetadataWarnsForUndecodableEmailFields(t *testing.T) {
+	for _, header := range []string{"From", "To", "Cc", "Bcc", "Subject"} {
+		metadata := ExtractSourceMetadata([]byte(header + ": \xff\r\n\r\nbody"))
+		assert.Empty(t, metadata.Fields)
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata", header)
+	}
+	metadata := ExtractSourceMetadata([]byte("From: invalid-address\r\n\r\nbody"))
+	from, found := sourceMetadataString(metadata, "email.from")
+	require.True(t, found)
+	assert.Equal(t, "invalid-address", from)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+}
+
+func TestExtractSourceMetadataRequiresEmailHeaders(t *testing.T) {
+	for _, payload := range []string{"", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n"} {
+		metadata := ExtractSourceMetadata([]byte(payload))
+		assert.Empty(t, metadata.Fields)
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "unsupported_format")
+	}
+}
+
+func TestExtractSourceMetadataOwnsEmailSpool(t *testing.T) {
+	temporary := t.TempDir()
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, temporary)
+	}
+	payload := []byte("Subject: Synthetic message\r\n\r\nbody")
+	metadata := ExtractSourceMetadata(payload)
+	subject, found := sourceMetadataString(metadata, "email.subject")
+	require.True(t, found)
+	assert.Equal(t, "Synthetic message", subject)
+	entries, err := os.ReadDir(temporary)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, filepath.Join(temporary, "missing"))
+	}
+	metadata = ExtractSourceMetadata(payload)
+	assert.Empty(t, metadata.Fields)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+}
+
 func TestExtractSourceMetadataParsesMultipartAttachmentHeaders(t *testing.T) {
 	payload := strings.Join([]string{
 		"From: Ada <ada@example.test>",
@@ -638,6 +730,11 @@ func TestExtractSourceMetadataParsesMultipartAttachmentHeaders(t *testing.T) {
 	count, found := sourceMetadataInteger(metadata, "attachment_count")
 	require.True(t, found)
 	assert.Equal(t, int64(2), count)
+
+	metadata = ExtractSourceMetadata([]byte(strings.ReplaceAll(payload, "--synthetic-boundary--\r\n", "")))
+	_, found = sourceMetadataInteger(metadata, "attachment_count")
+	assert.False(t, found)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_attachments")
 }
 
 func sourceMetadataInteger(metadata document.SourceMetadataV1, key string) (int64, bool) {

@@ -316,6 +316,7 @@ func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
 	}{
 		{name: "blobs", expected: "has an unexpected layout"},
 		{name: "blob_locations", expected: "has an unexpected blob_locations layout"},
+		{name: "email_generations", expected: "has an unexpected email_generations layout"},
 	} {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {

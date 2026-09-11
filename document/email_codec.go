@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,8 +88,7 @@ func EmailBodyRecipeFingerprint(recipe EmailRecipeV1) (string, error) {
 }
 
 func EmailGenerationID(value EmailV1, checksum string) (string, error) {
-	encoded, actual, err := MarshalEmailV1(value)
-	_ = encoded
+	_, actual, err := MarshalEmailV1(value)
 	if err != nil {
 		return "", err
 	}
@@ -150,8 +149,8 @@ func validateEmailRecipe(recipe EmailRecipeV1) error {
 	if recipe.ImplementationRevision != 1 {
 		return errors.New("email recipe implementation revision must be 1")
 	}
-	if !canonical.IsSHA256Hex(recipe.MultipartSourceSHA256) {
-		return errors.New("email recipe multipart source SHA-256 is invalid")
+	if recipe.GoVersion == "" || len(recipe.GoVersion) > 128 || !utf8.ValidString(recipe.GoVersion) {
+		return errors.New("email recipe Go version is invalid")
 	}
 	if recipe.CharsetProfile != "docbank-email-charset/v1" || recipe.HeaderProfile != "docbank-email-header/v1" ||
 		recipe.FilenameProfile != "docbank-email-filename/v1" || recipe.BodyProfile != "docbank-email-body-selection/v1" {
@@ -264,7 +263,6 @@ func validateEmailInventory(inventory *EmailInventoryV1, limits EmailLimitsV1) e
 		if err := validateEmailPart(part, inventory, parts, nextSibling, limits); err != nil {
 			return fmt.Errorf("email part %d: %w", index, err)
 		}
-		parts[part.Path] = part
 		nextSibling[parentKey(part.ParentPath)] = part.SiblingOrder + 1
 		if part.HeaderBlock != nil {
 			headerBytes += part.HeaderBlock.Size
@@ -468,7 +466,7 @@ func validateEmailPart(part EmailPartV1, inventory *EmailInventoryV1, prior map[
 	if err := validateContentID(part.ContentID, len(part.Headers)); err != nil {
 		return err
 	}
-	if !equalInts(part.ContentID.Fields, emailHeaderIndexesByName(part.Headers, "content-id")) {
+	if !slices.Equal(part.ContentID.Fields, emailHeaderIndexesByName(part.Headers, "content-id")) {
 		return errors.New("email content ID interpretations do not match headers")
 	}
 	switch part.DecodeState {
@@ -511,24 +509,18 @@ func validateEmailPart(part EmailPartV1, inventory *EmailInventoryV1, prior map[
 	if part.Protection != wantProtection {
 		return errors.New("email protection does not match declared media")
 	}
+	prior[part.Path] = part
 	for _, diagnostic := range part.Diagnostics {
-		if err := validateEmailDiagnostic(diagnostic, priorWith(part, prior), limits); err != nil {
+		if err := validateEmailDiagnostic(diagnostic, prior, limits); err != nil {
 			return err
 		}
 	}
 	for _, diagnostic := range part.Media.Diagnostics {
-		if err := validateEmailDiagnostic(diagnostic, priorWith(part, prior), limits); err != nil {
+		if err := validateEmailDiagnostic(diagnostic, prior, limits); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func priorWith(part EmailPartV1, prior map[string]EmailPartV1) map[string]EmailPartV1 {
-	out := make(map[string]EmailPartV1, len(prior)+1)
-	maps.Copy(out, prior)
-	out[part.Path] = part
-	return out
 }
 
 func validateArtifact(ref EmailArtifactRefV1, role EmailArtifactRole, limit int64) error {
@@ -640,7 +632,7 @@ func validateEmailMessage(message EmailMessageV1, parts map[string]EmailPartV1, 
 			}
 		}
 	}
-	if !equalInts(message.Date.Fields, emailHeaderIndexesByName(part.Headers, "date")) {
+	if !slices.Equal(message.Date.Fields, emailHeaderIndexesByName(part.Headers, "date")) {
 		return errors.New("email date interpretations do not match headers")
 	}
 	if err := validateEmailDate(message.Date, len(part.Headers), parts, limits); err != nil {
@@ -743,18 +735,6 @@ func emailHeaderIndexesByName(headers []EmailHeaderV1, name string) []int {
 		}
 	}
 	return indexes
-}
-
-func equalInts(left, right []int) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }
 
 func emailBodyEligible(part EmailPartV1, parts map[string]EmailPartV1) bool {
@@ -876,7 +856,7 @@ func validateEmailRelatedGroups(message EmailMessageV1, parts map[string]EmailPa
 		}
 		for resourceIndex := range expected.Resources {
 			actualResource, expectedResource := got.Resources[resourceIndex], expected.Resources[resourceIndex]
-			if actualResource.Candidates == nil || actualResource.State != expectedResource.State || !equalOptionalString(actualResource.CID, expectedResource.CID) || !equalStrings(actualResource.Candidates, expectedResource.Candidates) {
+			if actualResource.Candidates == nil || actualResource.State != expectedResource.State || !equalOptionalString(actualResource.CID, expectedResource.CID) || !slices.Equal(actualResource.Candidates, expectedResource.Candidates) {
 				return errors.New("email related resource inventory is invalid")
 			}
 		}
@@ -918,18 +898,6 @@ func boolInt(value bool) int {
 
 func equalOptionalString(left, right *string) bool {
 	return left == nil && right == nil || left != nil && right != nil && *left == *right
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }
 
 func validateDecodedField(field EmailDecodedFieldV1, headers int) error {
@@ -1252,19 +1220,20 @@ func validateEmailDiagnostic(d EmailDiagnosticV1, parts map[string]EmailPartV1, 
 	return nil
 }
 
+var emailDiagnosticPairs = map[EmailOperation]map[EmailDiagnosticCode]bool{
+	EmailOperationSource:        {EmailDiagnosticSourceSizeLimit: true, EmailDiagnosticSourceUnsupported: true},
+	EmailOperationHeaders:       {EmailDiagnosticHeaderBytesLimit: true, EmailDiagnosticHeaderTotalBytesLimit: true, EmailDiagnosticHeaderFieldsLimit: true, EmailDiagnosticHeaderTotalFieldsLimit: true, EmailDiagnosticMalformedHeader: true, EmailDiagnosticMissingHeader: true, EmailDiagnosticInvalidHeader: true, EmailDiagnosticDuplicateHeader: true},
+	EmailOperationStructure:     {EmailDiagnosticBoundaryMissing: true, EmailDiagnosticBoundaryInvalid: true, EmailDiagnosticBoundaryUnclosed: true, EmailDiagnosticPartCountLimit: true, EmailDiagnosticDepthLimit: true, EmailDiagnosticSignatureUnverified: true, EmailDiagnosticEncryptedUnavailable: true},
+	EmailOperationTransfer:      {EmailDiagnosticTransferUnsupported: true, EmailDiagnosticTransferInvalid: true, EmailDiagnosticPartBytesLimit: true, EmailDiagnosticDecodedBytesLimit: true},
+	EmailOperationCharset:       {EmailDiagnosticCharsetMissing: true, EmailDiagnosticCharsetUnsupported: true, EmailDiagnosticCharsetInvalid: true, EmailDiagnosticCharsetReplacement: true, EmailDiagnosticBodyUTF8Limit: true, EmailDiagnosticBodyUTF8TotalLimit: true},
+	EmailOperationHeaderDisplay: {EmailDiagnosticHeaderDisplayLimit: true, EmailDiagnosticEncodedWordInvalid: true},
+	EmailOperationFilename:      {EmailDiagnosticFilenameInvalid: true, EmailDiagnosticFilenameUnsupported: true, EmailDiagnosticHeaderDisplayLimit: true},
+	EmailOperationDate:          {EmailDiagnosticDateMissing: true, EmailDiagnosticDateInvalid: true, EmailDiagnosticDateAmbiguous: true, EmailDiagnosticTimezoneUnknown: true, EmailDiagnosticTimezoneOriginUnknown: true, EmailDiagnosticLeapSecondInstantUnavailable: true},
+	EmailOperationBodySelection: {EmailDiagnosticBodyUnavailable: true, EmailDiagnosticHTMLDisplayLimit: true},
+	EmailOperationCID:           {EmailDiagnosticContentIDInvalid: true, EmailDiagnosticContentIDAmbiguous: true, EmailDiagnosticCIDMissing: true, EmailDiagnosticCIDAmbiguous: true, EmailDiagnosticHeaderDisplayLimit: true},
+	EmailOperationInventory:     {EmailDiagnosticInventoryMetadataLimit: true, EmailDiagnosticLimit: true},
+}
+
 func validDiagnosticPair(operation EmailOperation, code EmailDiagnosticCode) bool {
-	allowed := map[EmailOperation]map[EmailDiagnosticCode]bool{
-		EmailOperationSource:        {EmailDiagnosticSourceSizeLimit: true, EmailDiagnosticSourceUnsupported: true},
-		EmailOperationHeaders:       {EmailDiagnosticHeaderBytesLimit: true, EmailDiagnosticHeaderTotalBytesLimit: true, EmailDiagnosticHeaderFieldsLimit: true, EmailDiagnosticHeaderTotalFieldsLimit: true, EmailDiagnosticMalformedHeader: true, EmailDiagnosticMissingHeader: true, EmailDiagnosticInvalidHeader: true, EmailDiagnosticDuplicateHeader: true},
-		EmailOperationStructure:     {EmailDiagnosticBoundaryMissing: true, EmailDiagnosticBoundaryInvalid: true, EmailDiagnosticBoundaryUnclosed: true, EmailDiagnosticPartCountLimit: true, EmailDiagnosticDepthLimit: true, EmailDiagnosticSignatureUnverified: true, EmailDiagnosticEncryptedUnavailable: true},
-		EmailOperationTransfer:      {EmailDiagnosticTransferUnsupported: true, EmailDiagnosticTransferInvalid: true, EmailDiagnosticPartBytesLimit: true, EmailDiagnosticDecodedBytesLimit: true},
-		EmailOperationCharset:       {EmailDiagnosticCharsetMissing: true, EmailDiagnosticCharsetUnsupported: true, EmailDiagnosticCharsetInvalid: true, EmailDiagnosticCharsetReplacement: true, EmailDiagnosticBodyUTF8Limit: true, EmailDiagnosticBodyUTF8TotalLimit: true},
-		EmailOperationHeaderDisplay: {EmailDiagnosticHeaderDisplayLimit: true, EmailDiagnosticEncodedWordInvalid: true},
-		EmailOperationFilename:      {EmailDiagnosticFilenameInvalid: true, EmailDiagnosticFilenameUnsupported: true, EmailDiagnosticHeaderDisplayLimit: true},
-		EmailOperationDate:          {EmailDiagnosticDateMissing: true, EmailDiagnosticDateInvalid: true, EmailDiagnosticDateAmbiguous: true, EmailDiagnosticTimezoneUnknown: true, EmailDiagnosticTimezoneOriginUnknown: true, EmailDiagnosticLeapSecondInstantUnavailable: true},
-		EmailOperationBodySelection: {EmailDiagnosticBodyUnavailable: true, EmailDiagnosticHTMLDisplayLimit: true},
-		EmailOperationCID:           {EmailDiagnosticContentIDInvalid: true, EmailDiagnosticContentIDAmbiguous: true, EmailDiagnosticCIDMissing: true, EmailDiagnosticCIDAmbiguous: true, EmailDiagnosticHeaderDisplayLimit: true},
-		EmailOperationInventory:     {EmailDiagnosticInventoryMetadataLimit: true, EmailDiagnosticLimit: true},
-	}
-	return allowed[operation][code]
+	return emailDiagnosticPairs[operation][code]
 }

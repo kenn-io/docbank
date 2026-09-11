@@ -211,3 +211,13 @@ func emailHeaders(block parsedHeaderBlock) []document.EmailHeaderV1 {
 	}
 	return out
 }
+
+// HeaderValue unfolds a valid field from its canonical raw header block.
+func HeaderValue(raw []byte, header document.EmailHeaderV1) (string, error) {
+	if header.State != document.EmailHeaderValid || header.Offset < 0 || header.Length <= 0 ||
+		header.Offset > int64(len(raw)) || header.Length > int64(len(raw))-header.Offset {
+		return "", errors.New("email header span is invalid")
+	}
+	span := raw[header.Offset : header.Offset+header.Length]
+	return unfoldHeaderValue(span), nil
+}

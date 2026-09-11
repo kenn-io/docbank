@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,7 +57,7 @@ func Recipe() document.EmailRecipeV1 {
 }
 
 func recipeWithLimits(limits document.EmailLimitsV1) document.EmailRecipeV1 {
-	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 1, MultipartSourceSHA256: "1a5aa86641f98021fd6f37466c07e62f2662f4f55d88b9d09ebf032988e5d110", CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
+	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 1, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
 }
 
 func Decode(ctx context.Context, sourceSHA256 string, sourceSize int64, source io.Reader, spoolParent string) (*Result, error) {
@@ -450,45 +452,45 @@ func (d *decoder) parseMultipart(parentPath string, depth int, messagePath, payl
 			resultErr = errors.Join(resultErr, &spoolIOError{err: closeErr})
 		}
 	}()
-	next := 1
-	var currentPath string
-	reader := newMultipartReader(file, boundary, func(buffered *bufio.Reader) (parsedHeaderBlock, error) {
-		block, headerErr := readHeaderBlock(d.ctx, buffered, d.limits.HeaderBytes, d.limits.HeaderFields, &d.headerBytes, d.limits.AggregateHeaderBytes, &d.headerFields, d.limits.AggregateHeaderFields)
-		if policy := asPolicyLimit(headerErr, currentPath); policy != nil {
-			policy.path = currentPath
-			return parsedHeaderBlock{}, policy
-		}
-		return block, headerErr
-	})
-	for {
-		currentPath = parentPath + "." + strconv.Itoa(next)
-		part, nextErr := reader.NextPart()
-		if errors.Is(nextErr, io.EOF) {
-			return nil
-		}
-		if errors.Is(nextErr, errBoundaryUnclosed) {
-			d.stop(document.EmailDiagnosticBoundaryUnclosed, document.EmailOperationStructure, currentPath, 0, 0)
+	input := &multipartInput{ctx: d.ctx, reader: bufio.NewReader(io.LimitReader(infrastructureMarkingReader{reader: file}, d.limits.PartBytes+1)), boundary: "--" + boundary, lineStart: true}
+	reader := multipart.NewReader(input, boundary)
+	var lastBodyStart int64
+	for next := 1; ; next++ {
+		currentPath := parentPath + "." + strconv.Itoa(next)
+		part, nextErr := reader.NextRawPart()
+		// The standard parser also returns EOF from an unfinished header.
+		// A new opening delimiter distinguishes that refusal from the final boundary.
+		if nextErr == io.EOF && input.headerStart <= lastBodyStart {
 			return nil
 		}
 		if nextErr != nil {
-			if policy := asPolicyLimit(nextErr, currentPath); policy != nil {
-				d.stop(policy.code, policy.operation, currentPath, policy.limit, policy.observed)
-				return nil
+			if hasOperationalFailure(nextErr) {
+				return fmt.Errorf("read email MIME part: %w", nextErr)
 			}
-			if errors.Is(nextErr, errMultipartMalformed) {
-				d.stop(document.EmailDiagnosticBoundaryInvalid, document.EmailOperationStructure, currentPath, 0, 0)
-				return nil
+			code := document.EmailDiagnosticBoundaryInvalid
+			if errors.Is(nextErr, io.EOF) || errors.Is(nextErr, io.ErrUnexpectedEOF) {
+				code = document.EmailDiagnosticBoundaryUnclosed
 			}
-			return nextErr
+			d.stop(code, document.EmailOperationStructure, currentPath, 0, 0)
+			return nil
 		}
-		parent := parentPath
-		if err = d.parseEntity(currentPath, &parent, next, depth+1, messagePath, part, &part.headers); err != nil {
+		// NextRawPart has consumed exactly the header block: multipartInput
+		// ends every read at a line boundary so it cannot read ahead into the body.
+		lastBodyStart = input.offset
+		headers := bufio.NewReader(io.NewSectionReader(file, input.headerStart, input.offset-input.headerStart))
+		block, headerErr := readHeaderBlock(d.ctx, headers, d.limits.HeaderBytes, d.limits.HeaderFields, &d.headerBytes, d.limits.AggregateHeaderBytes, &d.headerFields, d.limits.AggregateHeaderFields)
+		if policy := asPolicyLimit(headerErr, currentPath); policy != nil {
+			return d.stopPolicy(policy, currentPath)
+		}
+		if headerErr != nil {
+			return headerErr
+		}
+		if err = d.parseEntity(currentPath, &parentPath, next, depth+1, messagePath, multipartPayload{part}, &block); err != nil {
 			return err
 		}
 		if d.termination != nil {
 			return nil
 		}
-		next++
 	}
 }
 
