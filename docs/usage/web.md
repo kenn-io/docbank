@@ -335,12 +335,30 @@ CLI or authenticated API workflows.
 
 ## Download verified content
 
-The selected document card previews eligible UTF-8 text and bounded static PNG
-or JPEG images. Text is rendered as inert text, never as document HTML. Docbank
+The selected document card previews PDF and PNG pages, eligible UTF-8 text,
+and bounded static JPEG images. Text is rendered as inert text, never as
+document HTML. Docbank
 verifies the selected version UUID, size, media type, and SHA-256 after receiving
 the complete body and before publishing text or an image URL. Unsupported files
 and text larger than 16 MiB remain available through **Download verified
 original** without being decoded in the page.
+
+For PDF and PNG files, **Preview** reads retained page geometry and images.
+Choose **Render page** when an image is missing. This requests only that page;
+opening the inspector or moving between pages never starts bulk rendering.
+Rendering needs the [optional local page runtime](../architecture/page-images.md).
+PDF pages render at 144 DPI; PNGs retain their native physical density.
+Unsupported geometry or PNG density, unavailable runtime, partial images,
+render failure, and a changed source are shown separately. Retained images
+remain readable when the runtime is unavailable.
+
+**Previous page**, **Next page**, and the page selector navigate within the
+document. **Fit width** and numeric zoom change only its display size. Each
+page uses its own rotated crop dimensions. The browser checks the actual frame,
+recipe, image digest, byte length, and decoded dimensions before displaying it.
+Changing the source, page, session, or tab clears the old image and releases its
+resources. **Cancel render** is available for the active request created here;
+a matching request created elsewhere offers a refresh without taking ownership.
 
 Choose **Text** to read the verified text rendition for the exact selected
 version and processing profile. The browser binds the source, profile,
@@ -654,6 +672,7 @@ accepts that credential for the following operations:
 | List trash | Returns a bounded list of restorable roots. |
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
 | Read verified text and exact-content duplicate context | Revalidates the selected source and rendition identities; duplicate context is bounded to 16 live-current references. |
+| Read page geometry and images, request or cancel page rendering | Binds the exact source revision, version, page, frame, and renderer recipe; the inspector requests one page at a time. |
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
@@ -718,10 +737,9 @@ general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 exact documents; use an authenticated API client
 for larger or different bulk workflows.
 Original-file previews support UTF-8 or ASCII text up to 16 MiB and bounded
-static PNG or JPEG images up to 32 MiB. Other document, image, audio, video, and
-archive formats use verified download; rendered document pages and extracted
-text navigation are separate workflows.
-Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
+static JPEG images up to 32 MiB. PDF and PNG page rendering accepts sources up
+to 64 MiB within the [page runtime limits](../architecture/page-images.md).
+Other document, image, audio, video, and archive formats use verified download.
 
 If a page reports that its browser session or upload channel expired, ended,
 or was rejected, run `docbank web` again. Neither credential nor the upload

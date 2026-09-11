@@ -112,7 +112,7 @@ it("publishes a verified raster URL and revokes it on teardown", async () => {
   const selected = source(
     bytes,
     "33333333-3333-4333-8333-333333333333",
-    "image/png",
+    "image/jpeg",
   );
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(ready(selected, "image"))
@@ -180,6 +180,8 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
+    if (path.endsWith("/api/v1/pages/inventory")) return new Response(JSON.stringify({ runtime_available: false,
+      inventory: { source: { version_id: selected.versionID, sha256: selected.blobHash, size: selected.size }, page_count: 0, frames: [], recipes: [], images: [] } }));
     if (path.endsWith("/api/v1/renditions/text")) return new Response(JSON.stringify({
       state: "ready",
       source: { node_id: selected.nodeID, revision: 8, version_id: selected.versionID,
@@ -209,14 +211,15 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
     queryTerms: ["alpha"], onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
-  expect(fetchMock).not.toHaveBeenCalled();
+  await screen.findByText(/No page inventory/);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 });

@@ -659,6 +659,9 @@
   }
 
   function selectNode(nodeID: number | undefined): void {
+    // Reclicking a live file does not change its source; keep the authority
+    // that the source effect already resolved for its inspector.
+    if (selectedID === nodeID && selectedSource?.kind === "live") return;
     if (selectedID !== nodeID) {
       historyOpen = false;
       versionsOpen = false;

@@ -3,6 +3,7 @@
   import DownloadButton from "./DownloadButton.svelte";
 	import DuplicatesTab from "./DuplicatesTab.svelte";
   import OriginalPreview from "./OriginalPreview.svelte";
+  import PageViewer from "./PageViewer.svelte";
   import type { HighlightTerm } from "./query.js";
   import type { RenditionObservation } from "./renditionText.js";
 	import { closeDuplicateSource, inspectorSource, openDuplicateSource,
@@ -70,7 +71,11 @@
 			onclick={() => (activeTab = "duplicates")}>Duplicates</button>
   </div>
   {#if activeTab === "preview"}
+		{#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
+			<PageViewer {session} source={displayedSource} authorizationRevision={displayedRevision} {onauthfailure} />
+		{:else}
 		<OriginalPreview {session} source={displayedSource} authorizationRevision={displayedRevision} {onauthfailure} />
+		{/if}
   {:else}
 		{#if activeTab === "text"}
 			<VerifiedText {session} source={displayedSource} authorizationRevision={displayedRevision} {profileName}
