@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -126,6 +127,36 @@ change assignment rules.
 The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
 for exhaustive definition management and bulk assignment.
+
+## Saved queries and highlights
+
+Open the bookmark button in the top bar to manage saved queries and highlight
+sets. A new query starts with the current search text, selected tag and display
+sort. The complete query editor preserves the expression, filters, mode and sort
+together. Choose **Save as new** to name a definition, or **Edit** and **Save
+changes** to update one. The catalog is paginated in groups of 100.
+
+**Keep query draft** retains the complete query in the tab and URL fragment.
+The fragment contains query text and filters, so treat copied URLs as private.
+It does not contain browser-session credentials. Reloading restores the draft,
+but does not renew the browser session; authentication still requires
+`docbank web`. **Discard query draft** removes it from the URL.
+
+Saved queries are definitions, not frozen result sets. Saved-query execution is
+unavailable because the live-search adapter cannot honor the complete query
+contract. Keeping or saving a draft does not run it or change the current live
+results. Unknown fields are rejected, not silently dropped.
+
+Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
+with lowercase `#rrggbb` colors. They cannot run as queries, and the document
+viewer does not apply them yet. Neither result rows nor document bodies are
+stored in browser preferences.
+
+Edits and deletions use the definition's inspected revision. A stale response
+remains visible without automatically retrying against newer state. Reload the
+definitions and reopen the item before deciding again. Deletion requires a
+separate confirmation naming the definition, ID and revision; it never deletes
+documents. An already loaded draft remains until explicitly discarded.
 
 ## Move a node to recoverable trash
 
@@ -424,6 +455,28 @@ still readable. Run `docbank backup verify` to independently prove repository
 integrity, and periodically restore into a separate vault to rehearse the
 complete recovery path.
 
+## Browse import collections
+
+Choose **Import collections** in the top bar to browse the vault's import groups.
+Each card shows its label or source description, ingest time, current live
+file count, and logical bytes. Select a collection to browse its current
+live members and inspect a document by its stable node identity. Counts are
+current membership, not a historical import total. The browser refresh time
+is separate from the ingest time.
+
+Labels belong to the import group, not its documents. Rename or clear a label
+under its inspected revision; if another client changes it first, the drawer
+keeps your draft and reports the conflict. Reload the label before deciding
+whether to save again. Label changes are unavailable once permanent audit
+authority has been enabled.
+
+Collection and member lists show at most 100 entries each. Empty groups,
+failed reads, and truncated lists are reported separately; use the paginated
+HTTP API to browse beyond that limit. This is direct member browsing, not
+a collection-filtered text search. Processing quality and coverage are
+unavailable here; the drawer does not treat missing coverage as zero failures
+or complete processing.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -458,6 +511,8 @@ accepts that credential for the following operations:
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
+| Read collections and their members | Returns bounded lists of live import membership. |
+| Set or clear a collection label | Requires the inspected collection-label revision. |
 
 The API permits saved-definition management with a browser session, but the
 current application has no controls for it. See

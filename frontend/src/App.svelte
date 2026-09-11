@@ -5,11 +5,13 @@
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
+  import FoldersIcon from "@lucide/svelte/icons/folders";
   import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import BookmarkIcon from "@lucide/svelte/icons/bookmark";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import TagIcon from "@lucide/svelte/icons/tag";
   import TagsIcon from "@lucide/svelte/icons/tags";
@@ -36,12 +38,16 @@
   import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
+  import CollectionsDrawer from "./CollectionsDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
+  import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
+  import { parseQuery, type Query } from "./query.js";
+  import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
   import TagCatalogModal, {
     type TagDefinitionChange,
   } from "./TagCatalogModal.svelte";
@@ -138,6 +144,11 @@
   let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let savedQueriesOpen = $state(false);
+  let savedQueryDraft = $state<Query | null>(null);
+  let queryEditorInitial = $state<Query>(parseQuery("{}"));
+  let queryURLError = $state("");
+  let collectionsOpen = $state(false);
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
   let tagCatalogOpen = $state(false);
@@ -172,9 +183,13 @@
   );
 
   onMount(() => {
+    try { savedQueryDraft = queryFromFragment(location.hash); }
+    catch (cause) { queryURLError = cause instanceof Error ? cause.message : String(cause); }
     const session = takeFragmentSession();
+    if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
     if (session) {
       webSession = session.token;
+      if (savedQueryDraft) openSavedQueries();
       void loadRoot();
       void loadTagCatalog();
       const channel = new VerifiedUploadChannel(session, undefined, () => {
@@ -229,6 +244,9 @@
 
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
+      savedQueriesOpen = false;
+      savedQueryDraft = null;
+      replaceQueryURL(null);
       uploadChannel?.close();
       webSession = "";
       uploadChannel = null;
@@ -239,6 +257,7 @@
       auditEvidenceOpen = false;
       storageOpen = false;
       backupsOpen = false;
+      collectionsOpen = false;
       trashOpen = false;
       tagCatalogOpen = false;
       uploadTarget = null;
@@ -278,6 +297,7 @@
     remember: boolean,
     preferredSelectedID?: number,
     preserveSort = false,
+    preferredRow?: Row,
   ): Promise<void> {
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
@@ -310,21 +330,31 @@
       directory = page.directory;
       const path = page.directory.path;
       if (!path) throw new Error("The selected directory is no longer live.");
-      replaceRows(page.items.map((item) => ({
+      const nextRows = page.items.map((item) => ({
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
-      })), refreshing);
+      }));
+      if (
+        preferredRow &&
+        preferredRow.node.id === preferredSelectedID &&
+        !nextRows.some((row) => row.node.id === preferredRow.node.id)
+      ) {
+        nextRows.push(preferredRow);
+      }
+      replaceRows(nextRows, refreshing);
       selectNode(
         rows.some((row) => row.node.id === preferredSelectedID)
           ? preferredSelectedID
-          : rows[0]?.node.id,
+          : preferredSelectedID === undefined
+            ? rows[0]?.node.id
+            : undefined,
       );
       activeQuery = "";
       activeTagID = "";
       taggedInspected = 0;
       taggedTotal = 0;
       taggedTrashed = 0;
-      truncated = page.total > page.items.length;
+      truncated = page.total > rows.length;
       if (!preserveSort) {
         sortField = "name";
         sortDirection = "asc";
@@ -624,6 +654,34 @@
     else void loadRoot();
   }
 
+  async function openCollectionMember(
+    member: Node,
+    current: () => boolean,
+  ): Promise<void> {
+    const path = member.path;
+    if (!path || !path.startsWith("/") || path === "/") {
+      throw new Error("This collection member no longer has a live document path.");
+    }
+    const session = webSession;
+    const exact = await statPath(session, path);
+    if (session !== webSession || !current()) return;
+    if (exact.id !== member.id || exact.kind !== "file") {
+      throw new Error(
+        "This collection member moved or its old path now belongs to another document. Reload the collection before opening it.",
+      );
+    }
+    const split = path.lastIndexOf("/");
+    const parentPath = split === 0 ? "/" : path.slice(0, split);
+    const parent = await statPath(session, parentPath);
+    if (session !== webSession || !current()) return;
+    if (parent.kind !== "dir") {
+      throw new Error("The collection member's parent is no longer a live directory.");
+    }
+    if (!current()) return;
+    collectionsOpen = false;
+    await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
+  }
+
   function handleTrashed(_receipt: Node): void {
     trashTarget = null;
     selectNode(undefined);
@@ -811,6 +869,9 @@
   }
 
   async function lock(): Promise<void> {
+    savedQueriesOpen = false;
+    savedQueryDraft = null;
+    replaceQueryURL(null);
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
@@ -842,6 +903,7 @@
     auditEvidenceOpen = false;
     storageOpen = false;
     backupsOpen = false;
+    collectionsOpen = false;
     trashOpen = false;
     manageTagsTarget = null;
     tagCatalogOpen = false;
@@ -861,6 +923,31 @@
     } catch {
       // The local UI is locked even if the daemon disappeared first. Its
       // in-memory session disappears with it.
+    }
+  }
+
+  function currentQueryDraft(): Query {
+    if (savedQueryDraft) return savedQueryDraft;
+    return parseQuery(JSON.stringify({
+      text: searchQuery,
+      filters: tagFilterID ? { tag_ids: [tagFilterID] } : {},
+      sort: { field: sortField === "modified" ? "modified_at" : sortField === "name" && activeQuery ? "path" : sortField, direction: sortDirection },
+    }));
+  }
+
+  function keepQueryDraft(query: Query): void {
+    replaceQueryURL(query);
+    savedQueryDraft = query;
+    queryURLError = "";
+  }
+
+  function openSavedQueries(): void {
+    try {
+      queryEditorInitial = currentQueryDraft();
+      queryURLError = "";
+      savedQueriesOpen = true;
+    } catch (cause) {
+      queryURLError = cause instanceof Error ? cause.message : String(cause);
     }
   }
 </script>
@@ -907,6 +994,28 @@
         </form>
       {/snippet}
       {#snippet right()}
+        <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
+          <BookmarkIcon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          ariaLabel="Import collections"
+          onclick={() => {
+            historyOpen = false;
+            versionsOpen = false;
+            provenanceOpen = false;
+            jobsOpen = false;
+            auditEvidenceOpen = false;
+            storageOpen = false;
+            backupsOpen = false;
+            trashOpen = false;
+            uploadTarget = null;
+            trashTarget = null;
+            collectionsOpen = true;
+          }}
+        >
+          <FoldersIcon size="14" aria-hidden="true" />
+        </IconButton>
         <IconButton
           size="sm"
           ariaLabel="Recoverable trash"
@@ -1000,6 +1109,15 @@
         </IconButton>
       {/snippet}
     </TopBar>
+
+    {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
+    {#if savedQueryDraft}
+      <div class="query-draft-notice">
+        <span>Query draft retained · not applied to live results</span>
+        <Button size="sm" onclick={openSavedQueries}>Edit query draft</Button>
+        <Button size="sm" onclick={() => { savedQueryDraft = null; replaceQueryURL(null); }}>Discard query draft</Button>
+      </div>
+    {/if}
 
     <main class="workspace">
       <Card class="browser" level="raised" padding="none" ariaLabel="Vault browser">
@@ -1518,10 +1636,27 @@
         onauthfailure={handleFailure}
       />
     {/if}
+    {#if collectionsOpen}
+      <CollectionsDrawer
+        session={webSession}
+        onclose={() => (collectionsOpen = false)}
+        onauthfailure={handleFailure}
+        onopenmember={openCollectionMember}
+      />
+    {/if}
     {#if auditEvidenceOpen}
       <AuditEvidenceDrawer
         session={webSession}
         onclose={() => (auditEvidenceOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if savedQueriesOpen}
+      <SavedQueriesDrawer
+        session={webSession}
+        initialQuery={queryEditorInitial}
+        onload={keepQueryDraft}
+        onclose={() => (savedQueriesOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}
