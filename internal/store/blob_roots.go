@@ -38,6 +38,7 @@ var blobRootReferences = []blobReference{
 	{table: "embedding_input_generations", column: "evidence_fingerprint", condition: "r.generation_blob_hash IS NOT NULL"},
 	{table: "embedding_vector_sets", column: "payload_blob_hash"},
 	{table: "visual_preview_generations", column: "output_blob_hash"},
+	{table: "page_images", column: columnBlobHash},
 }
 
 // blobGCHolds keep a blob out of ordinary garbage collection without making

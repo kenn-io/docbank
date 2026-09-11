@@ -9,6 +9,7 @@ import {
   createTag,
   deleteTag,
   listJobs,
+  liveNodeTags,
   liveTaggedNodes,
   nodeTags,
   requestJSON,
@@ -92,6 +93,28 @@ describe("browser authentication", () => {
     await expect(requestJSON("/api/v1/path", "bad")).rejects.toEqual(
       new APIError("missing or invalid API key", 401, "unauthorized"),
     );
+  });
+
+  it("preserves an untrusted problem position for the query editor", async () => {
+    const position = { offset: 5, end: 8 };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 422,
+          code: "invalid_query",
+          detail: "expected an expression",
+          position,
+        }),
+        { status: 422, headers: { "Content-Type": "application/problem+json" } },
+      ),
+    );
+
+    await expect(requestJSON("/api/v1/queries/parse", "session")).rejects.toMatchObject({
+      message: "expected an expression",
+      status: 422,
+      code: "invalid_query",
+      position,
+    });
   });
 
   it("addresses audit status and cursor-stable history by node ID", async () => {
@@ -184,6 +207,74 @@ describe("browser authentication", () => {
       "/api/v1/search?q=quarterly+report&limit=1000&tag_id=11111111-1111-4111-8111-111111111111",
     ]);
   });
+
+  it("loads every live node tag under one before-and-after revision fence", async () => {
+    const live = {
+      id: 42, parent_id: 1, name: "report.txt", kind: "file" as const,
+      current_version_id: "11111111-1111-4111-8111-111111111111",
+      blob_hash: "a".repeat(64), size: 5, mime_type: "text/plain", revision: 8,
+      path: "/report.txt", created_at: "2026-09-11T12:00:00Z", modified_at: "2026-09-11T12:00:00Z",
+    };
+    const makeTag = (index: number) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `tag-${index}`, revision: 1, assignment_count: 1,
+    });
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      requests.push(path);
+      if (path === "/api/v1/nodes/42") {
+        return new Response(JSON.stringify(live), { headers: { "Content-Type": "application/json" } });
+      }
+      const offset = path.endsWith("offset=1000") ? 1000 : 0;
+      const items = Array.from({ length: offset ? 1 : 1000 }, (_, index) => makeTag(offset + index));
+      return new Response(JSON.stringify({ items, total: 1001, limit: 1000, offset }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const result = await liveNodeTags("session", 42);
+
+    expect(result.node.revision).toBe(8);
+    expect(result.items).toHaveLength(1001);
+    expect(new Set(result.items.map((tag) => tag.id)).size).toBe(1001);
+    expect(requests).toEqual([
+      "/api/v1/nodes/42",
+      "/api/v1/nodes/42/tags?limit=1000&offset=0",
+      "/api/v1/nodes/42/tags?limit=1000&offset=1000",
+      "/api/v1/nodes/42",
+    ]);
+  });
+
+  it.each(["revision", "duplicate", "count"])(
+    "rejects a live tag listing with inconsistent %s evidence",
+    async (problem) => {
+      const nodeResponse = (revision: number) => new Response(JSON.stringify({
+        id: 42, parent_id: 1, name: "report.txt", kind: "file",
+        current_version_id: "11111111-1111-4111-8111-111111111111",
+        blob_hash: "a".repeat(64), size: 5, mime_type: "text/plain", revision,
+        path: "/report.txt", created_at: "2026-09-11T12:00:00Z", modified_at: "2026-09-11T12:00:00Z",
+      }), { headers: { "Content-Type": "application/json" } });
+      let call = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        call += 1;
+        if (call === 1) return nodeResponse(8);
+        if (call === 2) return new Response(JSON.stringify({
+          items: [{ id: "00000000-0000-4000-8000-000000000001", name: "one", revision: 1, assignment_count: 1 }],
+          total: problem === "count" ? 2 : (problem === "duplicate" ? 2 : 1), limit: 1000, offset: 0,
+        }), { headers: { "Content-Type": "application/json" } });
+        if (problem === "duplicate" && call === 3) return new Response(JSON.stringify({
+          items: [{ id: "00000000-0000-4000-8000-000000000001", name: "one", revision: 1, assignment_count: 1 }],
+          total: 2, limit: 1000, offset: 1,
+        }), { headers: { "Content-Type": "application/json" } });
+        return nodeResponse(problem === "revision" ? 9 : 8);
+      });
+
+      await expect(liveNodeTags("session", 42)).rejects.toThrow(
+        problem === "revision" ? "changed while tags were loading" : "incomplete or inconsistent",
+      );
+    },
+  );
 
   it("manages tag definitions under stable revision authority", async () => {
     const tagID = "11111111-1111-4111-8111-111111111111";
