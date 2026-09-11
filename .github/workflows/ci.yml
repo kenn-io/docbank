@@ -111,7 +111,7 @@ jobs:
           docker run --rm -d --name "$name" \
             -p 127.0.0.1::9000 \
             -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
             server /data >/dev/null
           port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
           endpoint="http://127.0.0.1:${port}"
