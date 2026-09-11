@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/home"
 )
 
 const spoolPrefix = "docbank-email-"
@@ -44,12 +43,22 @@ func openStableSpoolRoot(path string) (*os.Root, error) {
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("email spool parent must be absolute")
 	}
-	canonical, err := home.CanonicalRoot(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve email spool parent: %w", err)
+	if filepath.Clean(path) != path {
+		return nil, errors.New("email spool parent must be clean")
 	}
-	if canonical != filepath.Clean(path) {
-		return nil, errors.New("email spool parent contains a symlink or non-canonical component")
+	// Inspect components directly: Windows case and short-name aliases can
+	// differ from EvalSymlinks without traversing any symlink.
+	for ancestor := filepath.Dir(path); ; ancestor = filepath.Dir(ancestor) {
+		info, err := os.Lstat(ancestor)
+		if err != nil {
+			return nil, fmt.Errorf("inspect email spool ancestor: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("email spool parent contains a symlink or non-directory component")
+		}
+		if filepath.Dir(ancestor) == ancestor {
+			break
+		}
 	}
 	before, err := os.Lstat(path)
 	if err != nil {
