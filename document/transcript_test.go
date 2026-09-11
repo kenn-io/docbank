@@ -44,6 +44,59 @@ func TestBuildTranscriptEvidenceV1(t *testing.T) {
 	assert.Equal(t, "The shipment arrives at dock seven.", payload.Text)
 }
 
+func TestBuildTranscriptSourceEvidenceV1(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(100)
+	require.NoError(t, err)
+	transcript := document.SuppliedTranscript{Provider: "beeper", Text: "The shipment arrives at dock seven."}
+
+	source, artifact, err := document.BuildTranscriptSourceEvidenceV1(transcript, policy)
+	require.NoError(t, err)
+	assert.Equal(t, "audio", source.Family)
+	assert.Equal(t, document.EvidenceUnitGeneric, source.UnitKind)
+	assert.Equal(t, document.EvidenceDegradedProvenance, source.Completeness)
+	require.Len(t, source.Omissions, 1)
+	assert.Equal(t, "natural_provenance", source.Omissions[0].Field)
+	require.Len(t, source.Artifacts, 1)
+	assert.Equal(t, "transcript.json", source.Artifacts[0].Pointer)
+	assert.Equal(t, document.EvidenceArtifactTranscript, source.Artifacts[0].Role)
+	assert.Equal(t, artifact.SHA256, source.Artifacts[0].SHA256)
+
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	expected, expectedArtifact, err := document.BuildTranscriptEvidenceV1(transcript, policy)
+	require.NoError(t, err)
+	assert.Equal(t, expected, normalized)
+	assert.Equal(t, expectedArtifact, artifact)
+}
+
+func TestBuildTranscriptSourceEvidenceV1RejectsInvalidInput(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(4)
+	require.NoError(t, err)
+	for name, transcript := range map[string]document.SuppliedTranscript{
+		"astral rune over budget": {Provider: "beeper", Text: "😀😀😀😀😀"},
+		"one rune over budget":    {Provider: "beeper", Text: "12345"},
+		"invalid UTF-8":           {Provider: "beeper", Text: string([]byte{0xff})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, sourceArtifact, sourceErr := document.BuildTranscriptSourceEvidenceV1(transcript, policy)
+			_, wrapperArtifact, wrapperErr := document.BuildTranscriptEvidenceV1(transcript, policy)
+			require.Error(t, sourceErr)
+			require.Error(t, wrapperErr)
+			assert.Empty(t, sourceArtifact)
+			assert.Empty(t, wrapperArtifact)
+		})
+	}
+
+	validPolicy, err := document.NewEvidencePolicy(100)
+	require.NoError(t, err)
+	transcript := document.SuppliedTranscript{Provider: "beeper", Text: "Cafe\u0301\r\narrival"}
+	source, _, err := document.BuildTranscriptSourceEvidenceV1(transcript, validPolicy)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(source, validPolicy)
+	require.NoError(t, err)
+	assert.Equal(t, "Café\narrival", normalized.Units[0].Text)
+}
+
 func TestBuildTranscriptEvidenceV1UsesCanonicalPolicyBoundary(t *testing.T) {
 	policy, err := document.NewEvidencePolicy(4)
 	require.NoError(t, err)
