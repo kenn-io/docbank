@@ -91,3 +91,11 @@ it.each([
   expect((screen.getByRole("button", { name: "Remove from all" }) as HTMLButtonElement).disabled).toBe(refresh);
   expect(screen.queryByRole("button", { name: "Retry same operation" })).toBeNull();
 });
+
+it("identifies a frozen visible selection without promising a snapshot refresh", () => {
+  render(BatchTagsModal, { props: { session: "session", targets, catalog: [tag], catalogTotal: 1,
+    disabled: false, context: "snapshot", onclose: vi.fn(), onchanged: vi.fn(), onauthfailure: vi.fn() } });
+
+  expect(screen.getByText(/visible frozen selection/)).toBeTruthy();
+  expect(screen.getByText(/Frozen membership, count, and order stay unchanged/)).toBeTruthy();
+});
