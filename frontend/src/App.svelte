@@ -42,6 +42,8 @@
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
+  import BatchTagsModal from "./BatchTagsModal.svelte";
+  import type { BatchTagReceipt, BatchTagTarget } from "./batch-tags.js";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
@@ -83,6 +85,7 @@
     clearSelection,
     reconcileSelection,
     selectVisibleDocuments,
+    selectedTargets,
     toggleDocumentSelection,
     type SelectionState,
   } from "./selection.js";
@@ -153,6 +156,7 @@
   let collectionsOpen = $state(false);
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
+  let batchTagsTargets = $state<BatchTagTarget[] | null>(null);
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
@@ -180,6 +184,7 @@
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
   const selectedCount = $derived(bulkSelection.selectedIDs.size);
+  const bulkTargets = $derived(selectedTargets(sortedRows, bulkSelection.selectedIDs));
   const allVisibleDocumentsSelected = $derived(
     visibleDocumentCount > 0 && selectedCount === visibleDocumentCount,
   );
@@ -684,6 +689,18 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
+  function openBatchTags(targets: readonly BatchTagTarget[]): void {
+    if (loading || targets.length === 0 || targets.length > 1000) return;
+    batchTagsTargets = targets.map((target) => ({ ...target }));
+  }
+
+  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
+    // A replay describes a historical success. Reload current observations
+    // instead of overwriting newer rows with the receipt's old revisions.
+    refreshCurrentView();
+    if (selectedID !== undefined) void loadSelectedTags(selectedID);
+  }
+
   function handleTrashed(_receipt: Node): void {
     trashTarget = null;
     selectNode(undefined);
@@ -908,6 +925,7 @@
     collectionsOpen = false;
     trashOpen = false;
     manageTagsTarget = null;
+    batchTagsTargets = null;
     tagCatalogOpen = false;
     uploadTarget = null;
     trashTarget = null;
@@ -1622,6 +1640,7 @@
         {truncated}
         onclear={clearBulkSelection}
         onselectvisible={() => selectAllVisibleDocuments()}
+        ontags={() => openBatchTags(bulkTargets)}
       />
     {/if}
     {#if historyOpen && selected && membership?.protected}
@@ -1721,6 +1740,18 @@
         disabled={loading}
         onclose={() => (manageTagsTarget = null)}
         onchanged={handleTagChanged}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if batchTagsTargets}
+      <BatchTagsModal
+        session={webSession}
+        targets={batchTagsTargets}
+        catalog={tagCatalog}
+        catalogTotal={tagCatalogTotal}
+        disabled={loading}
+        onclose={() => (batchTagsTargets = null)}
+        onchanged={handleBatchTagsChanged}
         onauthfailure={handleFailure}
       />
     {/if}

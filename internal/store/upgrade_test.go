@@ -210,6 +210,27 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsUnreleasedSchemaEightWithoutCutover(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`DROP TABLE batch_tag_receipts`)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=8 WHERE singleton=1`)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			reopened, err := Open(dbPath, test.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "schema version 8 has no supported JSONL cutover")
+		})
+	}
+}
+
 func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })

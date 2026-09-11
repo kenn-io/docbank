@@ -334,6 +334,10 @@ func (layout metadataSourceLayout) hasCollectionLabels() bool {
 	return layout.schemaVersion >= 8
 }
 
+func (layout metadataSourceLayout) hasBatchTagReceipts() bool {
+	return layout.schemaVersion >= 9
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -423,6 +427,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasBatchTagReceipts() {
+		if err := exportBatchTagReceipts(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if err := exportExtractedText(ctx, tx, write, backupScoped); err != nil {
 		return err
@@ -981,6 +990,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
+		    + (SELECT COUNT(*) FROM batch_tag_receipts)
 		    + (SELECT COUNT(*) FROM extracted_text)
 		    + (SELECT COUNT(*) FROM text_extraction_queue)
 		    + (SELECT COUNT(*) FROM text_searchable_versions)
@@ -1322,6 +1332,12 @@ func (s *Store) importMetadataRecord(
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, v.NodeID, v.TagID)
 		return err
+	case metadataBatchTagReceiptType:
+		var v metadataBatchTagReceipt
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importBatchTagReceipt(ctx, tx, v)
 	case "extracted_text":
 		var v metadataExtractedText
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1418,6 +1434,7 @@ var metadataRequiredFields = map[string][]string{
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
 	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", "revision", metadataCreatedAtField, "updated_at"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
+	metadataBatchTagReceiptType:            {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
 	"extracted_text":                       {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 	metadataAuditAuthorityType:             {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
 	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
@@ -1818,6 +1835,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.hasCollectionLabels() {
 		if err := validateCollectionLabelMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.hasBatchTagReceipts() {
+		if err := validateBatchTagReceiptMetadataState(ctx, tx); err != nil {
 			return err
 		}
 	}

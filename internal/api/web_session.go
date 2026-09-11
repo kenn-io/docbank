@@ -175,6 +175,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if path == "/api/v1/queries/parse" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if path == "/api/v1/batch/tags" || path == "/api/v1/batch/tags/preview" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")
