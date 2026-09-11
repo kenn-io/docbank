@@ -645,7 +645,12 @@ func embeddingBindingFromProfile(profile ProcessingProfileRecord, name string) (
 
 func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding document.EmbeddingBindingV1, generation EmbeddingInputGenerationRecord) error {
 	var sourceHash string
-	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, generation.SourceVersionID).Scan(&sourceHash); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT v.blob_hash FROM content_versions v
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
+		WHERE v.version_id=?`, generation.SourceVersionID).Scan(&sourceHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEmbeddingJobFenced
+		}
 		return err
 	}
 	if binding.InputKind == document.EmbeddingInputOriginalFile {

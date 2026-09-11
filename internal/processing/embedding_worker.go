@@ -373,7 +373,8 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 }
 
 // RunJob processes one exact ready embedding job without consuming unrelated
-// provider work from the vault queue.
+// provider work from the vault queue. Fenced attempts are abandoned and return
+// ErrEmbeddingWorkFenced so the caller cannot mistake them for completed work.
 func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, error) {
 	if worker == nil {
 		return false, errors.New("embedding worker is nil")
@@ -408,6 +409,7 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 			if err != nil {
 				return processed, fmt.Errorf("abandoning embedding work: %w", ErrEmbeddingPersistence)
 			}
+			return processed, ErrEmbeddingWorkFenced
 		}
 	}
 	return processed, err

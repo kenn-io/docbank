@@ -651,6 +651,79 @@ func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
 	require.Equal(t, "completed", status.State)
 }
 
+func TestEmbeddedProcessingRejectsSourceChangesDuringEmbedding(t *testing.T) {
+	for _, chunks := range []bool{false, true} {
+		for _, mutation := range []string{"unchanged", "replace", "trash"} {
+			t.Run(fmt.Sprintf("chunks=%t/%s", chunks, mutation), func(t *testing.T) {
+				provider := newSyntheticEmbeddingProvider(t)
+				provider.started, provider.release = make(chan struct{}), make(chan struct{})
+				release := sync.OnceFunc(func() { close(provider.release) })
+				profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+				profile.Rendition = nil
+				profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+				binding := syntheticEmbeddingBinding(provider.descriptor)
+				config := docbank.ProcessingProfileConfig{Profile: profile}
+				if chunks {
+					plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+					require.NoError(t, err)
+					config.Profile = embeddedProcessingProfile(t, plain.Descriptor())
+					config.RenditionProvider = plain
+					binding = syntheticChunkEmbeddingBinding(provider.descriptor)
+					config.Tokenizers = map[string]document.Tokenizer{binding.Name: syntheticRuneTokenizer{}}
+				}
+				config.Profile.Embeddings = []document.EmbeddingBindingV1{binding}
+				config.EmbeddingProviders = map[string]document.EmbeddingProvider{binding.Name: provider}
+				root := t.TempDir()
+				vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic source needle"), docbank.PutOptions{MediaType: "text/plain"})
+				require.NoError(t, err)
+				request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+				plan, err := vault.PlanProcessing(t.Context(), request)
+				require.NoError(t, err)
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+				done := make(chan struct{})
+				var job docbank.ProcessingJob
+				var runErr error
+				go func() {
+					defer close(done)
+					job, runErr = vault.StartProcessing(ctx, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+				}()
+				t.Cleanup(func() { release(); cancel(); <-done })
+				select {
+				case <-provider.started:
+				case <-done:
+					t.Fatalf("processing returned before embedding: %v", runErr)
+				}
+				switch mutation {
+				case "replace":
+					_, err = vault.Put(ctx, "/source.txt", strings.NewReader("synthetic replacement"), docbank.PutOptions{MediaType: "text/plain"})
+				case "trash":
+					_, err = vault.TrashPath(ctx, "/source.txt", docbank.RevisionOptions{})
+				}
+				require.NoError(t, err)
+				release()
+				<-done
+				db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, db.Close()) }()
+				var state string
+				require.NoError(t, db.QueryRowContext(ctx, "SELECT state FROM embedding_jobs WHERE content_version_id=?", receipt.Version.ID).Scan(&state))
+				if mutation == "unchanged" {
+					require.NoError(t, runErr)
+					require.NotEmpty(t, job.ID)
+					require.Equal(t, "completed", state)
+				} else {
+					require.Equal(t, "abandoned", state)
+					require.ErrorIs(t, runErr, docbank.ErrProcessingPlanChanged)
+					require.Empty(t, job.ID)
+				}
+			})
+		}
+	}
+}
+
 func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
 	provider := newSyntheticEmbeddingProvider(t)
 	provider.failure = errors.New("synthetic provider failure")

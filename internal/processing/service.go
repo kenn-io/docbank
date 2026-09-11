@@ -836,6 +836,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			Authorization: authorization,
 		})
 		if enqueueErr != nil {
+			if errors.Is(enqueueErr, store.ErrEmbeddingJobFenced) {
+				return nil, ErrPlanChanged
+			}
 			return nil, enqueueErr
 		}
 		jobIDs = append(jobIDs, job.ID)
@@ -858,16 +861,19 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		for {
 			processed, runErr := worker.RunJob(ctx, jobID)
 			if runErr != nil {
+				if isEmbeddingWorkFence(runErr) {
+					return nil, ErrPlanChanged
+				}
 				return nil, runErr
-			}
-			if processed {
-				break
 			}
 			status, statusErr := service.catalog.EmbeddingJobByID(ctx, jobID)
 			if statusErr != nil {
 				return nil, statusErr
 			}
-			if status.State == "completed" || status.State == "failed" || status.State == "abandoned" {
+			if status.State == "abandoned" {
+				return nil, ErrPlanChanged
+			}
+			if processed || status.State == "completed" || status.State == "failed" {
 				break
 			}
 			if status.State != "running" && status.State != "retry_wait" {
