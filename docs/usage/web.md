@@ -117,6 +117,12 @@ document and byte totals, 100 rows at a time, previous and next page controls,
 and the node, content version, hash, size, revision, and tags observed when the
 snapshot was created. Later vault changes do not replace those rows.
 
+Select a frozen row to inspect those original facts and the exact selected
+version. The same card loads current path, revision, tags, provenance, and audit
+status separately as live observations. A later rename, retag, or content
+replacement therefore does not rewrite the snapshot facts or substitute the
+new head for preview and download.
+
 Use **Refine snapshot** to inspect collection, tag, media-family, extension,
 modified-time, size, text-coverage, and duplicate facets. Choosing a supported
 facet or changing the query creates a new snapshot; it never splices live
@@ -327,19 +333,33 @@ CLI or authenticated API workflows.
 
 ## Download verified content
 
-Choose **Download** on a file to retrieve its current version. Docbank first
+The selected document card previews eligible UTF-8 text and bounded static PNG
+or JPEG images. Text is rendered as inert text, never as document HTML. Docbank
+verifies the selected version UUID, size, media type, and SHA-256 after receiving
+the complete body and before publishing text or an image URL. Unsupported files
+and text larger than 16 MiB remain available through **Download verified
+original** without being decoded in the page.
+
+Choose **Download verified original** on a file to retrieve its selected
+version. A live row selects its current head; a frozen query row keeps the
+version captured by that snapshot even when the live head has since changed.
+Docbank first
 copies the object from loose or packed storage into owner-private daemon
 staging while the browser shows verified byte progress. The selected node
 revision, version UUID, SHA-256 identity, and exact size must still agree before
-that work starts. A concurrent replacement, move, or trash operation therefore
-asks you to refresh instead of silently downloading a different document.
+that work starts. The current node revision authorizes access to a retained
+historical version but never changes which bytes were selected. A concurrent
+replacement, move, or trash operation therefore asks you to refresh instead of
+silently downloading a different document.
 
 After the complete content passes verification, Docbank issues a one-use
 download ticket. The browser starts its save only after that check succeeds.
-Cancellation or a verification failure removes the private staging file and
-publishes nothing to the browser. The ticket identifies only that prepared file, expires
-after two minutes, and cannot call any other Docbank route. It is not the vault
-API key or the browser session.
+Cancellation or a verification failure removes a pending private staging file
+and publishes nothing to the browser. Changing the selected source or locking
+the session also cancels pending previews and revokes published image URLs. A
+ticket identifies only its prepared file, expires after two minutes, and cannot
+call any other Docbank route. It is not the vault API key or the browser
+session.
 
 Preparation streams on the daemon and does not buffer the object in browser
 memory. It temporarily needs local free space equal to the document's logical
@@ -611,7 +631,7 @@ accepts that credential for the following operations:
 | Read background jobs and physical storage status | Cannot start or change maintenance. |
 | List backup snapshots | Uses only the repository already configured for this daemon. |
 | List trash | Returns a bounded list of restorable roots. |
-| Prepare a download | Writes only a private temporary file and issues one expiring ticket for that file. |
+| Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
@@ -675,6 +695,10 @@ enroll audit scopes, or run maintenance, backup creation, backup verification,
 general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 exact documents; use an authenticated API client
 for larger or different bulk workflows.
+Original-file previews support UTF-8 or ASCII text up to 16 MiB and bounded
+static PNG or JPEG images up to 32 MiB. Other document, image, audio, video, and
+archive formats use verified download; rendered document pages and extracted
+text navigation are separate workflows.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 
 If a page reports that its browser session or upload channel expired, ended,

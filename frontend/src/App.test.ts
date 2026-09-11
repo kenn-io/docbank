@@ -567,6 +567,7 @@ it.each(["browse", "search"] as const)(
         targetAuditReads += 1;
         return json({ enabled: false, scopes: [] });
       }
+      if (url === "/api/v1/nodes/3") return json(report);
       if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
         const items = [
           ...(assigned ? [tax] : []),
@@ -864,6 +865,7 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
     if (url === "/api/v1/audit/status?node_id=3") {
       return json({ enabled: false, scopes: [] });
     }
+    if (url === "/api/v1/nodes/3") return json(quarterlyReport);
     if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }

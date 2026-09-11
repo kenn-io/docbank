@@ -40,7 +40,7 @@ function snapshot(query: Query, rows: SnapshotRow[], cursors: { previous_cursor?
   };
 }
 
-it("keeps rapid runs bound to the accepted frozen snapshot without live node refreshes", async () => {
+it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {
   history.replaceState(null, "", `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0, created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
@@ -69,6 +69,28 @@ it("keeps rapid runs bound to the accepted frozen snapshot without live node ref
       if (creates === 1) return oldRun;
       return json(snapshot(query, [row(1, "new-result.pdf")], {}, 1));
     }
+    if (url === "/api/v1/nodes/1") {
+      return json({
+        id: 1,
+        parent_id: 1000,
+        name: "new-result.pdf",
+        kind: "file",
+        current_version_id: "99999999-9999-4999-8999-999999999999",
+        blob_hash: "d".repeat(64),
+        size: 2000,
+        mime_type: "application/pdf",
+        revision: 9,
+        created_at: "2026-09-11T12:00:00Z",
+        modified_at: "2026-09-11T12:40:00Z",
+        path: "/records/new-result.pdf",
+      });
+    }
+    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/audit/status?node_id=1") {
+      return json({ enabled: false, scopes: [] });
+    }
     throw new Error(`unexpected request: ${url}`);
   });
 
@@ -93,7 +115,11 @@ it("keeps rapid runs bound to the accepted frozen snapshot without live node ref
   ] });
 
   expect(creates).toBe(2);
-  expect(requests.some((url) => url.includes("/nodes/1/tags") || url.includes("audit/status?node_id=1"))).toBe(false);
+  await fireEvent.click(screen.getByRole("cell", { name: "/records/new-result.pdf" }));
+  await waitFor(() => expect(requests.some((url) => url.includes("/nodes/1/tags"))).toBe(true));
+  expect(requests.some((url) => url.includes("/nodes/1/tags"))).toBe(true);
+  expect(requests.some((url) => url.includes("audit/status?node_id=1"))).toBe(true);
+  expect(requests.some((url) => url === "/api/daemon/web-download")).toBe(false);
   expect(screen.getByText("a".repeat(64))).toBeTruthy();
 });
 

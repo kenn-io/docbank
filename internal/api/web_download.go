@@ -11,12 +11,17 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"image"
+	// Register only the static raster decoders allowed by browser previews.
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,9 +29,13 @@ import (
 )
 
 const (
-	webDownloadPreparePath = "/api/daemon/web-download"
-	webDownloadFilePath    = "/api/daemon/web-download/file"
-	webDownloadTicketTTL   = 2 * time.Minute
+	webDownloadPreparePath  = "/api/daemon/web-download"
+	webDownloadFilePath     = "/api/daemon/web-download/file"
+	webDownloadTicketTTL    = 2 * time.Minute
+	webPreviewTextMaxBytes  = 16 << 20
+	webPreviewImageMaxBytes = 32 << 20
+	webPreviewMaxDimension  = 16_384
+	webPreviewMaxPixels     = 40_000_000
 )
 
 type webDownloadRegistry struct {
@@ -44,6 +53,7 @@ type webDownloadTicket struct {
 	versionID string
 	blobHash  string
 	size      int64
+	owner     string
 	expiresAt time.Time
 	timer     *time.Timer
 }
@@ -54,6 +64,7 @@ type webDownloadRequest struct {
 	VersionID string `json:"version_id"`
 	BlobHash  string `json:"blob_hash"`
 	Size      int64  `json:"size"`
+	Purpose   string `json:"purpose,omitzero"`
 }
 
 type webDownloadEvent struct {
@@ -138,6 +149,40 @@ func (r *webDownloadRegistry) consume(token string) (webDownloadTicket, bool) {
 	return ticket, true
 }
 
+func (r *webDownloadRegistry) cancel(owner, token string) bool {
+	key := sha256.Sum256([]byte(token))
+	r.mu.Lock()
+	ticket, ok := r.tickets[key]
+	if ok && ticket.owner == owner {
+		delete(r.tickets, key)
+	} else {
+		ok = false
+	}
+	r.mu.Unlock()
+	if !ok {
+		return false
+	}
+	ticket.timer.Stop()
+	_ = os.Remove(ticket.path)
+	return true
+}
+
+func (r *webDownloadRegistry) revokeOwner(owner string) {
+	r.mu.Lock()
+	owned := make([]webDownloadTicket, 0)
+	for key, ticket := range r.tickets {
+		if ticket.owner == owner {
+			delete(r.tickets, key)
+			owned = append(owned, ticket)
+		}
+	}
+	r.mu.Unlock()
+	for _, ticket := range owned {
+		ticket.timer.Stop()
+		_ = os.Remove(ticket.path)
+	}
+}
+
 func (r *webDownloadRegistry) expire(key [sha256.Size]byte) {
 	r.mu.Lock()
 	ticket, ok := r.tickets[key]
@@ -155,6 +200,7 @@ func registerWebDownload(
 	enabled bool,
 	d Deps,
 	downloads *webDownloadRegistry,
+	sessions *webSessionRegistry,
 ) {
 	mux.HandleFunc("POST "+webDownloadPreparePath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || d.WebURL == "" {
@@ -191,6 +237,16 @@ func registerWebDownload(
 			version.Size != request.Size {
 			writeError(w, NewError(http.StatusConflict, "download_selection_stale",
 				"the selected document or version changed; refresh it before downloading"))
+			return
+		}
+		if problem := validateWebPreview(request.Purpose, version.MimeType, version.Size); problem != nil {
+			writeError(w, problem)
+			return
+		}
+		owner, ok := workspaceSnapshotOwner(r.Context())
+		if !ok {
+			writeError(w, NewError(http.StatusUnauthorized, "unauthorized",
+				"the download request has no authenticated owner"))
 			return
 		}
 
@@ -256,12 +312,34 @@ func registerWebDownload(
 			})
 			return
 		}
+		if request.Purpose == "preview" {
+			if err := validateStagedWebPreview(stagedPath, version.MimeType); err != nil {
+				_ = report(webDownloadEvent{
+					Phase: "error", Total: version.Size,
+					Detail: err.Error(),
+				})
+				return
+			}
+		}
 
 		ticket := webDownloadTicket{
 			path: stagedPath, name: node.Name, mediaType: version.MimeType,
-			versionID: version.ID, blobHash: version.BlobHash, size: version.Size,
+			versionID: version.ID, blobHash: version.BlobHash, size: version.Size, owner: owner,
 		}
-		token, err := downloads.issue(ticket)
+		var token string
+		if browserSessionRequest(r.Context()) {
+			active, issueErr := sessions.withActiveOwner(owner, func() error {
+				var err error
+				token, err = downloads.issue(ticket)
+				return err
+			})
+			if !active && issueErr == nil {
+				issueErr = errors.New("browser session was revoked before publication")
+			}
+			err = issueErr
+		} else {
+			token, err = downloads.issue(ticket)
+		}
 		if err != nil {
 			_ = report(webDownloadEvent{
 				Phase: "error", Total: version.Size,
@@ -270,11 +348,28 @@ func registerWebDownload(
 			return
 		}
 		keepStaged = true
-		_ = report(webDownloadEvent{
+		if err := report(webDownloadEvent{
 			Phase: "ready", Received: version.Size, Total: version.Size,
 			URL:  webDownloadFilePath + "?ticket=" + token,
 			Name: node.Name, VersionID: version.ID, BlobHash: version.BlobHash,
-		})
+		}); err != nil {
+			downloads.cancel(owner, token)
+		}
+	})
+
+	mux.HandleFunc("DELETE "+webDownloadPreparePath, func(w http.ResponseWriter, r *http.Request) {
+		if !enabled || d.WebURL == "" {
+			writeError(w, NewError(http.StatusServiceUnavailable, "web_unavailable",
+				"this daemon is not serving the compiled web application"))
+			return
+		}
+		owner, ok := workspaceSnapshotOwner(r.Context())
+		if !ok || !downloads.cancel(owner, r.URL.Query().Get("ticket")) {
+			writeError(w, NewError(http.StatusNotFound, "download_not_found",
+				"the browser download is missing, expired, already used, or belongs to another session"))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET "+webDownloadFilePath, func(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +432,75 @@ func decodeWebDownloadRequest(w http.ResponseWriter, r *http.Request) (webDownlo
 		return webDownloadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"download request has invalid document authority")
 	}
+	if request.Purpose != "" && request.Purpose != "preview" {
+		return webDownloadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
+			"download request has an invalid purpose")
+	}
 	return request, nil
+}
+
+func validateWebPreview(purpose, rawMediaType string, size int64) *Error {
+	if purpose == "" {
+		return nil
+	}
+	mediaType, params, err := mime.ParseMediaType(rawMediaType)
+	if err != nil {
+		return NewError(http.StatusUnprocessableEntity, "preview_unsupported",
+			"the selected version has an invalid media type and cannot be previewed")
+	}
+	charset := strings.ToLower(params["charset"])
+	for name := range params {
+		if name != "charset" {
+			return NewError(http.StatusUnprocessableEntity, "preview_unsupported",
+				"the selected version has unsupported media parameters")
+		}
+	}
+	text := (strings.HasPrefix(mediaType, "text/") && mediaType != "text/html") ||
+		mediaType == "application/json" || mediaType == "application/x-ndjson"
+	if text {
+		if charset != "" && charset != "utf-8" && charset != "us-ascii" {
+			return NewError(http.StatusUnprocessableEntity, "preview_unsupported",
+				"the selected text version uses an unsupported character set")
+		}
+		if size > webPreviewTextMaxBytes {
+			return NewError(http.StatusRequestEntityTooLarge, "preview_too_large",
+				"text previews are limited to 16 MiB")
+		}
+		return nil
+	}
+	if charset == "" && (mediaType == "image/png" || mediaType == "image/jpeg") {
+		if size > webPreviewImageMaxBytes {
+			return NewError(http.StatusRequestEntityTooLarge, "preview_too_large",
+				"image previews are limited to 32 MiB")
+		}
+		return nil
+	}
+	return NewError(http.StatusUnprocessableEntity, "preview_unsupported",
+		"the selected version is not an eligible text or raster image preview")
+}
+
+func validateStagedWebPreview(path, rawMediaType string) error {
+	mediaType, _, err := mime.ParseMediaType(rawMediaType)
+	if err != nil {
+		return fmt.Errorf("parse verified preview media type: %w", err)
+	}
+	if mediaType != "image/png" && mediaType != "image/jpeg" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return errors.New("docbank could not inspect the verified image preview")
+	}
+	config, _, decodeErr := image.DecodeConfig(file)
+	closeErr := file.Close()
+	if decodeErr != nil || closeErr != nil || config.Width < 1 || config.Height < 1 {
+		return errors.New("the verified image does not have a valid static PNG or JPEG frame")
+	}
+	if config.Width > webPreviewMaxDimension || config.Height > webPreviewMaxDimension ||
+		int64(config.Width)*int64(config.Height) > webPreviewMaxPixels {
+		return errors.New("the verified image dimensions exceed the safe preview limit")
+	}
+	return nil
 }
 
 type webDownloadProgressWriter struct {

@@ -410,6 +410,10 @@ export async function statPath(session: string, path: string): Promise<Node> {
   return requestJSON<Node>(`/api/v1/path?path=${encodeURIComponent(path)}`, session);
 }
 
+export async function nodeByID(session: string, nodeID: number): Promise<Node> {
+  return requestJSON<Node>(`/api/v1/nodes/${nodeID}`, session);
+}
+
 export async function children(session: string, nodeID: number): Promise<NodePage> {
   return requestJSON<NodePage>(
     `/api/v1/nodes/${nodeID}/children?limit=1000&offset=0`,
@@ -550,6 +554,49 @@ export async function nodeTags(session: string, nodeID: number): Promise<TagPage
     `/api/v1/nodes/${nodeID}/tags?limit=1000&offset=0`,
     session,
   );
+}
+
+export async function liveNodeTags(
+  session: string,
+  nodeID: number,
+): Promise<{ node: Node; items: Tag[]; total: number }> {
+  const before = await nodeByID(session, nodeID);
+  if (before.id !== nodeID || before.revision < 1 || before.trashed_at) {
+    throw new Error("The daemon returned invalid live node authority for tag inspection.");
+  }
+  const items: Tag[] = [];
+  const identities = new Set<string>();
+  let total: number | undefined;
+  while (total === undefined || items.length < total) {
+    const page = await requestJSON<TagPage>(
+      `/api/v1/nodes/${nodeID}/tags?limit=1000&offset=${items.length}`,
+      session,
+    );
+    if (
+      !Number.isSafeInteger(page.total) || page.total < 0 ||
+      page.limit !== 1000 || page.offset !== items.length ||
+      (total !== undefined && page.total !== total) ||
+      page.items.length !== Math.min(1000, page.total - items.length)
+    ) {
+      throw new Error("The live tag listing was incomplete or inconsistent.");
+    }
+    total = page.total;
+    for (const tag of page.items) {
+      if (!tag.id || identities.has(tag.id)) {
+        throw new Error("The live tag listing was incomplete or inconsistent.");
+      }
+      identities.add(tag.id);
+      items.push(tag);
+    }
+  }
+  const after = await nodeByID(session, nodeID);
+  if (after.id !== before.id || after.revision !== before.revision || after.trashed_at) {
+    throw new Error("The selected node changed while tags were loading; refresh and try again.");
+  }
+  if (items.length !== total || identities.size !== total) {
+    throw new Error("The live tag listing was incomplete or inconsistent.");
+  }
+  return { node: after, items, total };
 }
 
 export async function changeNodeTag(

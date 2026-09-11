@@ -40,7 +40,6 @@
   import ActionRecoveryModal from "./ActionRecoveryModal.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
   import CollectionsDrawer from "./CollectionsDrawer.svelte";
-  import DownloadButton from "./DownloadButton.svelte";
   import FacetSidebar from "./FacetSidebar.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
@@ -63,13 +62,14 @@
   import TrashDrawer from "./TrashDrawer.svelte";
   import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
+  import VerifiedPreview from "./VerifiedPreview.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import {
     APIError,
     auditStatusForNode,
     children,
     liveTaggedNodes,
-    nodeTags,
+    liveNodeTags,
     revokeSession,
     search,
     statPath,
@@ -90,6 +90,7 @@
   import { readActionVaultID } from "./actionRunner.js";
   import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
   import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
+  import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
   import {
     clearSelection,
     reconcileSelection,
@@ -141,6 +142,8 @@
   let selectedTagsTotal = $state(0);
   let selectedTagsLoading = $state(false);
   let selectedTagsError = $state("");
+  let selectedLiveNode = $state<Node | null>(null);
+  let selectedLiveSourceKey = $state("");
   let loading = $state(false);
   let searchPending = $state(false);
   let error = $state("");
@@ -193,6 +196,21 @@
   const snapshotPage = $derived(snapshotState.page);
   const snapshotQuery = $derived(snapshotState.query);
   const selectedSnapshot = $derived(snapshotPage?.rows.find((row) => row.node_id === selectedSnapshotID));
+  const selectedSource = $derived(
+    selectedSnapshot
+      ? selectedSourceFromSnapshot(selectedSnapshot, snapshotPage?.observed_at ?? "")
+      : selected?.node.kind === "file"
+        ? selectedSourceFromNode(selected.node, selected.path)
+        : undefined,
+  );
+  const currentInspectorNode = $derived(
+    selectedSource
+      ? selectedLiveSourceKey === selectedSource.key ? selectedLiveNode : undefined
+      : !snapshotActive ? selected?.node : undefined,
+  );
+  const currentInspectorPath = $derived(
+    currentInspectorNode?.path ?? (!snapshotActive ? selected?.path : undefined) ?? "",
+  );
   const selectedSnapshotOverlay = $derived(selectedSnapshot ? snapshotOverlay(selectedSnapshot) : undefined);
   const selectedSnapshotRows = $derived(snapshotPage?.rows.filter((row) => snapshotSelection.has(row.node_id)) ?? []);
   const snapshotTargets = $derived(selectedSnapshotRows.map((row) => ({
@@ -223,6 +241,20 @@
   const allVisibleDocumentsSelected = $derived(
     visibleDocumentCount > 0 && selectedCount === visibleDocumentCount,
   );
+
+  $effect(() => {
+    const source = selectedSource;
+    const session = webSession;
+    if (!source || !session) return;
+    selectedLiveNode = source.kind === "live" ? selected?.node ?? null : null;
+    selectedLiveSourceKey = source.kind === "live" ? source.key : "";
+    selectedAudit = null;
+    selectedTags = [];
+    selectedTagsTotal = 0;
+    selectedTagsError = "";
+    void loadSelectedTags(source.nodeID, source.key);
+    void loadAuditStatus(source.nodeID, source.key);
+  });
 
   onMount(() => {
     try { savedQueryDraft = queryFromFragment(location.hash); }
@@ -577,6 +609,8 @@
       provenanceOpen = false;
     }
     selectedID = nodeID;
+    selectedLiveNode = null;
+    selectedLiveSourceKey = "";
     selectedAudit = null;
     selectedTags = [];
     selectedTagsTotal = 0;
@@ -584,8 +618,11 @@
     auditError = "";
     auditGeneration += 1;
     tagGeneration += 1;
-    if (nodeID !== undefined && webSession) void loadAuditStatus(nodeID);
-    if (nodeID !== undefined && webSession) void loadSelectedTags(nodeID);
+    const row = rows.find((candidate) => candidate.node.id === nodeID);
+    if (nodeID !== undefined && webSession && row?.node.kind === "dir") {
+      void loadAuditStatus(nodeID);
+      void loadSelectedTags(nodeID);
+    }
   }
 
   async function loadTagCatalog(): Promise<void> {
@@ -646,17 +683,31 @@
     }
   }
 
-  async function loadSelectedTags(nodeID: number): Promise<void> {
+  function inspectorRequestCurrent(
+    request: number,
+    generationValue: number,
+    session: string,
+    nodeID: number,
+    sourceKey?: string,
+  ): boolean {
+    if (request !== generationValue || session !== webSession) return false;
+    if (sourceKey) return selectedSource?.key === sourceKey && selectedSource.nodeID === nodeID;
+    return selectedID === nodeID && !selectedSnapshot;
+  }
+
+  async function loadSelectedTags(nodeID: number, sourceKey?: string): Promise<void> {
     const request = ++tagGeneration;
     const session = webSession;
     selectedTagsLoading = true;
     try {
-      const page = await nodeTags(session, nodeID);
-      if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
-      selectedTags = sortTags(page.items);
-      selectedTagsTotal = page.total;
+      const listing = await liveNodeTags(session, nodeID);
+      if (!inspectorRequestCurrent(request, tagGeneration, session, nodeID, sourceKey)) return;
+      selectedLiveNode = listing.node;
+      selectedLiveSourceKey = sourceKey ?? "";
+      selectedTags = sortTags(listing.items);
+      selectedTagsTotal = listing.total;
     } catch (cause) {
-      if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
+      if (!inspectorRequestCurrent(request, tagGeneration, session, nodeID, sourceKey)) return;
       if (cause instanceof APIError && cause.status === 401) {
         handleFailure(cause);
         return;
@@ -667,16 +718,16 @@
     }
   }
 
-  async function loadAuditStatus(nodeID: number): Promise<void> {
+  async function loadAuditStatus(nodeID: number, sourceKey?: string): Promise<void> {
     const request = ++auditGeneration;
     const session = webSession;
     auditLoading = true;
     try {
       const status = await auditStatusForNode(session, nodeID);
-      if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
+      if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
       selectedAudit = status;
     } catch (cause) {
-      if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
+      if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
       if (cause instanceof APIError && cause.status === 401) {
         handleFailure(cause);
         return;
@@ -1698,7 +1749,7 @@
           <Card level="raised" padding="sm" ariaLabel={`Frozen snapshot authority for ${selectedSnapshot.name}`}>
             <div class="authority-content">
               <header class="authority-header">
-                <div><span>Frozen snapshot authority</span><Chip size="xs" tone="muted" uppercase={false}>id:{selectedSnapshot.node_id}</Chip></div>
+                <div><span>Original snapshot facts</span><Chip size="xs" tone="muted" uppercase={false}>id:{selectedSnapshot.node_id}</Chip></div>
                 <h2>{selectedSnapshot.name}</h2>
               </header>
               <dl>
@@ -1713,6 +1764,11 @@
                 <div class="identity"><dt>Version</dt><dd><code>{selectedSnapshot.content_version_id}</code><CopyButton text={selectedSnapshot.content_version_id} ariaLabel="Copy snapshot version ID" /></dd></div>
                 <div class="identity"><dt>SHA-256</dt><dd><code>{selectedSnapshot.blob_hash}</code><CopyButton text={selectedSnapshot.blob_hash} ariaLabel="Copy snapshot SHA-256" /></dd></div>
                 <div class="identity"><dt>Snapshot</dt><dd><code>{snapshotState.page?.snapshot_id}</code></dd></div>
+                <div class="wide-fact">
+                  <dt>Collection at observation</dt>
+                  <dd>{selectedSnapshot.display_collection_label ?? selectedSnapshot.display_collection_id ?? "No document-bearing import collection"}</dd>
+                </div>
+                <div><dt>Collection memberships</dt><dd>{selectedSnapshot.collection_ids.length}</dd></div>
               </dl>
               <div class="node-tags">
                 <div class="node-tags-heading"><span><TagIcon size="13" aria-hidden="true" /> Tags at observation</span><span>{selectedSnapshot.tags.length} assigned</span></div>
@@ -1731,6 +1787,47 @@
                   </div>
                 </div>
               {/if}
+              <div class="node-tags live-observations">
+                <div class="node-tags-heading">
+                  <span><ActivityIcon size="13" aria-hidden="true" /> Current live observations</span>
+                  {#if currentInspectorNode}<span>Revision {currentInspectorNode.revision}</span>{/if}
+                </div>
+                {#if selectedTagsLoading}
+                  <div class="loading"><Spinner size={13} /> Loading complete live metadata…</div>
+                {:else if selectedTagsError}
+                  <p>{selectedTagsError}</p>
+                {:else if currentInspectorNode}
+                  <dl>
+                    <div class="wide-fact"><dt>Current path</dt><dd>{currentInspectorNode.path ?? "Unavailable"}</dd></div>
+                    <div><dt>Current name</dt><dd>{currentInspectorNode.name}</dd></div>
+                    <div><dt>Current tags</dt><dd>{selectedTagsTotal}</dd></div>
+                    <div><dt>Current audit</dt><dd>{membership?.protected ? "Protected" : selectedAudit?.enabled ? "Not audited" : "Dormant"}</dd></div>
+                  </dl>
+                  {#if selectedTags.length > 0}
+                    <ChipStack items={selectedTags} key={(tag) => tag.id} maxVisible={6} size="sm" ariaLabel="Current live tags">
+                      {#snippet chip(tag)}<TagLabel {tag} size="sm" />{/snippet}
+                    </ChipStack>
+                  {:else}<p>No tags are currently assigned to this node.</p>{/if}
+                  <div class="document-actions">
+                    <Button size="sm" surface="soft" onclick={() => (provenanceOpen = true)}>
+                      <MapPinIcon size="14" aria-hidden="true" /> Current provenance
+                    </Button>
+                    {#if membership?.protected}
+                      <Button size="sm" surface="soft" onclick={() => (historyOpen = true)}>
+                        <HistoryIcon size="14" aria-hidden="true" /> Current audit history
+                      </Button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+              {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
+                <VerifiedPreview
+                  session={webSession}
+                  source={selectedSource}
+                  authorizationRevision={currentInspectorNode.revision}
+                  onauthfailure={handleFailure}
+                />
+              {/if}
             </div>
           </Card>
         {:else if selected}
@@ -1742,7 +1839,7 @@
             <div class="authority-content">
               <header class="authority-header">
                 <div>
-                  <span>{selected.node.kind === "dir" ? "Folder" : "Document authority"}</span>
+                  <span>{selected.node.kind === "dir" ? "Folder" : "Current live authority"}</span>
                   <Chip size="xs" tone="muted" uppercase={false}>id:{selected.node.id}</Chip>
                 </div>
                 <h2>{basename(selected.path)}</h2>
@@ -1776,7 +1873,7 @@
               </dl>
               <div class="node-tags">
                 <div class="node-tags-heading">
-                  <span><TagIcon size="13" aria-hidden="true" /> Tags</span>
+                  <span><TagIcon size="13" aria-hidden="true" /> Current live tags</span>
                   <div class="node-tags-controls">
                     {#if selectedTagsLoading}
                       <Spinner size={13} />
@@ -1823,20 +1920,10 @@
                       />
                     {/snippet}
                   </ChipStack>
-                  {#if selectedTags.length < selectedTagsTotal}
-                    <p>Showing the first {selectedTags.length} assigned tags.</p>
-                  {/if}
                 {/if}
               </div>
               {#if selected.node.kind === "file"}
                 <div class="document-actions">
-                  {#key selected.node.id}
-                    <DownloadButton
-                      session={webSession}
-                      node={selected.node}
-                      onauthfailure={handleFailure}
-                    />
-                  {/key}
                   <Button
                     size="sm"
                     tone="info"
@@ -1895,6 +1982,14 @@
                     Move to trash
                   </Button>
                 </div>
+                {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
+                  <VerifiedPreview
+                    session={webSession}
+                    source={selectedSource}
+                    authorizationRevision={currentInspectorNode.revision}
+                    onauthfailure={handleFailure}
+                  />
+                {/if}
               {/if}
               <div class="audit-protection">
                 <div class="audit-protection-heading">
@@ -2011,11 +2106,11 @@
         ontags={() => openBatchTags(bulkTargets)}
       />
     {/if}
-    {#if !snapshotActive && historyOpen && selected && membership?.protected}
+    {#if historyOpen && currentInspectorNode && membership?.protected}
       <AuditHistoryDrawer
         session={webSession}
-        node={selected.node}
-        path={selected.path}
+        node={currentInspectorNode}
+        path={currentInspectorPath}
         onclose={() => (historyOpen = false)}
         onauthfailure={handleFailure}
       />
@@ -2029,11 +2124,11 @@
         onauthfailure={handleFailure}
       />
     {/if}
-    {#if !snapshotActive && provenanceOpen && selected?.node.kind === "file"}
+    {#if provenanceOpen && currentInspectorNode?.kind === "file"}
       <ProvenanceDrawer
         session={webSession}
-        node={selected.node}
-        path={selected.path}
+        node={currentInspectorNode}
+        path={currentInspectorPath}
         onclose={() => (provenanceOpen = false)}
         onauthfailure={handleFailure}
       />

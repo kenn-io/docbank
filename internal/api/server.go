@@ -134,6 +134,7 @@ func NewServer(d Deps) *Server {
 		if s.snapshots != nil {
 			s.snapshots.Revoke(owner)
 		}
+		s.webDownloads.revokeOwner(owner)
 	})
 	g := d.Gate
 	if g == nil {
@@ -174,7 +175,7 @@ func NewServer(d Deps) *Server {
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
-	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
+	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions)
 
 	h := http.Handler(mux)
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
