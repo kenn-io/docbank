@@ -7,6 +7,11 @@ export type SelectionState = {
   anchorID: number | undefined;
 };
 
+export type SelectionTarget = {
+  node_id: number;
+  revision: number;
+};
+
 function eligibleIDs(rows: readonly SelectableRow[]): number[] {
   return rows.filter((row) => row.node.kind === "file").map((row) => row.node.id);
 }
@@ -63,4 +68,12 @@ export function reconcileSelection(
         ? state.anchorID
         : undefined,
   };
+}
+export function selectedTargets(
+  rows: readonly SelectableRow[],
+  selectedIDs: ReadonlySet<number>,
+): SelectionTarget[] {
+  return rows
+    .filter((row) => row.node.kind === "file" && selectedIDs.has(row.node.id))
+    .map((row) => ({ node_id: row.node.id, revision: row.node.revision }));
 }
