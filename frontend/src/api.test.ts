@@ -94,6 +94,28 @@ describe("browser authentication", () => {
     );
   });
 
+  it("preserves an untrusted problem position for the query editor", async () => {
+    const position = { offset: 5, end: 8 };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 422,
+          code: "invalid_query",
+          detail: "expected an expression",
+          position,
+        }),
+        { status: 422, headers: { "Content-Type": "application/problem+json" } },
+      ),
+    );
+
+    await expect(requestJSON("/api/v1/queries/parse", "session")).rejects.toMatchObject({
+      message: "expected an expression",
+      status: 422,
+      code: "invalid_query",
+      position,
+    });
+  });
+
   it("addresses audit status and cursor-stable history by node ID", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ enabled: true, scopes: [], items: [] }), {

@@ -46,6 +46,7 @@
   import SelectionDock from "./SelectionDock.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
+  import QueryBar from "./QueryBar.svelte";
   import { parseQuery, type Query } from "./query.js";
   import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
   import TagCatalogModal, {
@@ -145,6 +146,7 @@
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let savedQueriesOpen = $state(false);
+  let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
   let queryEditorInitial = $state<Query>(parseQuery("{}"));
   let queryURLError = $state("");
@@ -189,7 +191,7 @@
     if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
     if (session) {
       webSession = session.token;
-      if (savedQueryDraft) openSavedQueries();
+      if (savedQueryDraft) queryBarOpen = true;
       void loadRoot();
       void loadTagCatalog();
       const channel = new VerifiedUploadChannel(session, undefined, () => {
@@ -950,6 +952,21 @@
       queryURLError = cause instanceof Error ? cause.message : String(cause);
     }
   }
+
+  function openQueryEditor(value?: Query): void {
+    try {
+      keepQueryDraft(value ?? currentQueryDraft());
+      queryBarOpen = true;
+    } catch (cause) {
+      queryURLError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  function discardQueryDraft(): void {
+    queryBarOpen = false;
+    savedQueryDraft = null;
+    replaceQueryURL(null);
+  }
 </script>
 
 {#if !webSession}
@@ -994,6 +1011,7 @@
         </form>
       {/snippet}
       {#snippet right()}
+        <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
         <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
           <BookmarkIcon size="14" aria-hidden="true" />
         </IconButton>
@@ -1114,9 +1132,13 @@
     {#if savedQueryDraft}
       <div class="query-draft-notice">
         <span>Query draft retained · not applied to live results</span>
-        <Button size="sm" onclick={openSavedQueries}>Edit query draft</Button>
-        <Button size="sm" onclick={() => { savedQueryDraft = null; replaceQueryURL(null); }}>Discard query draft</Button>
+        <Button size="sm" onclick={discardQueryDraft}>Discard query draft</Button>
       </div>
+    {/if}
+
+    {#if queryBarOpen && savedQueryDraft}
+      <QueryBar session={webSession} query={savedQueryDraft} onchange={keepQueryDraft}
+        onsave={openSavedQueries} onclose={() => (queryBarOpen = false)} onauthfailure={handleFailure} />
     {/if}
 
     <main class="workspace">
@@ -1642,6 +1664,10 @@
         onclose={() => (collectionsOpen = false)}
         onauthfailure={handleFailure}
         onopenmember={openCollectionMember}
+        onnewquery={(id) => {
+          openQueryEditor(parseQuery(JSON.stringify({filters:{collection_ids:[id]}})));
+          collectionsOpen = false;
+        }}
       />
     {/if}
     {#if auditEvidenceOpen}
@@ -1656,6 +1682,7 @@
         session={webSession}
         initialQuery={queryEditorInitial}
         onload={keepQueryDraft}
+        onopenquery={(query) => { openQueryEditor(query); savedQueriesOpen = false; }}
         onclose={() => (savedQueriesOpen = false)}
         onauthfailure={handleFailure}
       />

@@ -85,6 +85,29 @@ ending the browser session also clear the selection.
 
 ![Two documents selected on the current page while the authority card shows one document's details.](https://docbank.ai/assets/generated/web-page-selection.png)
 
+## Edit a complete query
+
+Choose **Edit query** to write a complete expression, select simple or advanced
+syntax, and edit its mode, sort, and structured facets. Facets stay separate
+from field operands in the expression. Their summaries show the constraints
+you entered; validation does not move operands into hidden filters.
+
+The daemon validates each edited draft after a short pause. It resolves saved,
+tag, and collection references and reports their observed revisions. Errors
+remain visible; **Focus query error** selects the reported part of the
+expression. A newer edit cancels and supersedes an older validation request.
+
+**Save query draft** opens the saved-definition editor with the entire draft.
+**Open query** beside a saved query opens it here. From an import collection,
+**New query for this collection** starts a new draft scoped to that collection's
+stable identity. Closing the query editor keeps the draft in the tab and URL;
+**Discard query draft** removes it.
+
+Validation does not execute a search. **Run query** remains unavailable because
+the live-search endpoint cannot honor the complete expression, facets, and
+ordering contract. Ordinary name/content search remains separate and does not
+inherit draft constraints. See [field-aware query syntax](searching.md#preview-a-field-aware-query).
+
 ## Assign and remove tags
 
 1. Select a file or folder.
@@ -514,8 +537,8 @@ accepts that credential for the following operations:
 | Read collections and their members | Returns bounded lists of live import membership. |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
 
-The API permits saved-definition management with a browser session, but the
-current application has no controls for it. See
+The browser manages saved definitions and validates complete query drafts
+through its scoped session. Validation does not execute a query. See
 [Saved queries and highlight sets](searching.md#save-complete-query-intent-over-http).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
