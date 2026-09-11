@@ -210,3 +210,34 @@ func TestMissingSourceMetadataTargetsCanAdvancePastAFailingHash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []SourceMetadataTarget{{SourceSHA256: fakeHash("b2"), Size: 4}}, second)
 }
+
+func TestSourceMetadataV4RetainsV3Generation(t *testing.T) {
+	const v3 = "6c0016d2df0ab83d532d070e2dec6b1cefb77a558dc29d177afa2ec7520a1007"
+	const v4 = "a17825870bd580fb0fb802f50c22612b095ba76b2bc47565f6b40af76ff53058"
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.eml", fakeHash("a1"), 4, "message/rfc822")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	old, err := s.PublishSourceMetadata(t.Context(), node.BlobHash, v3, canonical)
+	require.NoError(t, err)
+	targets, err := s.MissingSourceMetadataTargets(t.Context(), v4, 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	current, err := s.PublishSourceMetadata(t.Context(), node.BlobHash, v4, canonical)
+	require.NoError(t, err)
+	assert.NotEqual(t, old.GenerationID, current.GenerationID)
+	assert.Equal(t, old.Checksum, current.Checksum)
+	repeated, err := s.PublishSourceMetadata(t.Context(), node.BlobHash, v4, canonical)
+	require.NoError(t, err)
+	assert.Equal(t, current.GenerationID, repeated.GenerationID)
+	var retained []byte
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT canonical_json FROM source_metadata_generations WHERE generation_id=?`, old.GenerationID).Scan(&retained))
+	assert.Equal(t, canonical, retained)
+	targets, err = s.MissingSourceMetadataTargets(t.Context(), v4, 10)
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+	active, _, err := s.ActiveSourceMetadata(t.Context(), node.BlobHash)
+	require.NoError(t, err)
+	assert.Equal(t, current.GenerationID, active.GenerationID)
+}

@@ -215,7 +215,6 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
-	var embeddingWorker *processing.EmbeddingWorker
 	profileFingerprints := processingService.ProfileFingerprints()
 	if len(profileFingerprints) != 0 {
 		if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
@@ -236,7 +235,6 @@ func runServe(ctx context.Context) (retErr error) {
 				if workerErr != nil {
 					return nil, fmt.Errorf("configuring embedding worker: %w", workerErr)
 				}
-				embeddingWorker = worker
 				return worker, nil
 			}); err != nil {
 			return err
@@ -246,14 +244,9 @@ func runServe(ctx context.Context) (retErr error) {
 	// has one, leave restored jobs untouched instead of repeatedly claiming and
 	// delaying work that this process cannot execute.
 	if runtimeRegistry.Ready() && len(profileFingerprints) != 0 {
-		var continuation func(context.Context, []store.RenditionPublicationTarget) error
-		if embeddingWorker != nil {
-			continuation = embeddingWorker.ContinueRenditionTargets
-		}
 		renditionWorker, workerErr := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
 			Catalog: s, Blobs: blobs, Runtime: runtimeRegistry, Gate: operationGate,
-			Continuation: continuation,
-			Owner:        "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
+			Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
 			IdleDelay:           time.Second,
 			ProfileFingerprints: profileFingerprints,
 		})

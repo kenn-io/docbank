@@ -23,6 +23,7 @@ import (
 	"golang.org/x/net/html"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/isolate"
 )
 
 const (
@@ -40,68 +41,33 @@ const (
 	// MaxTimeout is the largest local child deadline accepted by a profile.
 	MaxTimeout = 30 * time.Minute
 	// MaxExecutableBytes bounds executable identity verification.
-	MaxExecutableBytes = int64(256 << 20)
+	MaxExecutableBytes = isolate.MaxExecutableBytes
 )
 
 var (
-	errInputIdentity              = errors.New("authorized input identity changed")
-	errNativeCanceledBeforeLaunch = errors.New("native isolated runner canceled before launch")
+	errInputIdentity = errors.New("authorized input identity changed")
 	// ErrIsolationUnavailable means the runner could not enforce the requested isolation policy.
-	ErrIsolationUnavailable = errors.New("isolated runner policy unavailable")
+	ErrIsolationUnavailable = isolate.ErrIsolationUnavailable
 	// ErrChildOutputTooLarge means the isolated child exceeded its stdout allowance.
-	ErrChildOutputTooLarge = errors.New("isolated child output exceeds limit")
+	ErrChildOutputTooLarge = isolate.ErrChildOutputTooLarge
 	// ErrChildFailed means the isolated child exited without a valid response.
-	ErrChildFailed = errors.New("isolated child failed")
+	ErrChildFailed = isolate.ErrChildFailed
 )
 
-// IsolationRequirements are mandatory runner controls. A runner must fail
-// closed rather than execute when any requested control is unavailable.
-type IsolationRequirements struct {
-	NetworkDisabled        bool
-	KillProcessTree        bool
-	VerifyExecutableSHA256 bool
-}
+// IsolationRequirements preserves the shared isolation contract.
+type IsolationRequirements = isolate.IsolationRequirements
 
-// IsolatedRunRequest is the complete, fixed child execution authority.
-type IsolatedRunRequest struct {
-	Executable        string
-	ExecutableSHA256  string
-	Arguments         []string
-	Environment       []string
-	Directory         string
-	Stdin             []byte
-	StdinSHA256       string
-	MaxStdoutBytes    int64
-	PolicyFingerprint string
-	Requirements      IsolationRequirements
-}
+// IsolatedRunRequest preserves the shared isolation contract.
+type IsolatedRunRequest = isolate.IsolatedRunRequest
 
-// IsolationAttestation reports the exact controls applied to a completed run.
-type IsolationAttestation struct {
-	RunnerIdentity       string
-	PolicyFingerprint    string
-	ExecutableSHA256     string
-	StdinSHA256          string
-	NetworkDisabled      bool
-	ProcessTreeContained bool
-	DigestVerifiedLaunch bool
-}
+// IsolationAttestation preserves the shared isolation contract.
+type IsolationAttestation = isolate.IsolationAttestation
 
-// IsolatedRunResult is bounded stdout plus its isolation attestation.
-type IsolatedRunResult struct {
-	Stdout      []byte
-	Attestation IsolationAttestation
-}
+// IsolatedRunResult preserves the shared isolation contract.
+type IsolatedRunResult = isolate.IsolatedRunResult
 
-// IsolatedRunner is the trusted cross-platform process isolation boundary.
-// Run must launch the digest-verified executable without a path re-open race,
-// deny all network access, contain the process tree, and reap that tree on
-// cancellation. It must return ErrIsolationUnavailable rather than weaken a
-// requested control.
-type IsolatedRunner interface {
-	Identity() string
-	Run(ctx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error)
-}
+// IsolatedRunner preserves the shared isolation contract.
+type IsolatedRunner = isolate.IsolatedRunner
 
 // Profile fixes one executable, immutable runtime identity, and all local bounds.
 type Profile struct {
@@ -151,7 +117,7 @@ func New(profile Profile) (*Provider, error) {
 	if err := validateSHA256(profile.ExecutableSHA256, "executable SHA-256"); err != nil {
 		return nil, err
 	}
-	executableDigest, err := hashExecutable(profile.Executable)
+	executableDigest, err := isolate.HashExecutable(context.Background(), profile.Executable)
 	if err != nil || executableDigest != profile.ExecutableSHA256 {
 		return nil, errors.New("trafilatura: executable SHA-256 does not match configured content")
 	}
@@ -160,7 +126,7 @@ func New(profile Profile) (*Provider, error) {
 	}
 	runner := profile.Runner
 	if runner == nil {
-		runner, err = newNativeRunner()
+		runner, err = isolate.NewNativeRunner()
 		if err != nil {
 			return nil, fmt.Errorf("trafilatura: native isolated runner: %w", err)
 		}
@@ -299,7 +265,7 @@ func (provider *Provider) Render(
 	request := provider.isolatedRequest(runnerInput, stdoutLimit)
 	runResult, runErr := provider.runner.Run(operationCtx, request)
 	defer func() { clear(runResult.Stdout) }()
-	if errors.Is(runErr, errNativeCanceledBeforeLaunch) && operationCtx.Err() != nil {
+	if errors.Is(runErr, isolate.ErrCanceledBeforeLaunch) && operationCtx.Err() != nil {
 		return document.RenditionResult{}, provider.contextError(ctx, expiryDeadline, operationCtx.Err())
 	}
 	if errors.Is(runErr, ErrIsolationUnavailable) {
@@ -413,26 +379,15 @@ func (provider *Provider) isolatedRequest(stdin []byte, maxStdoutBytes int64) Is
 		Stdin: stdin, StdinSHA256: stdinSHA256, MaxStdoutBytes: maxStdoutBytes,
 		Requirements: requirements,
 	}
-	request.PolicyFingerprint = isolationRequestPolicyFingerprint(provider.runnerIdentity, request)
+	request.PolicyFingerprint = isolate.RequestPolicyFingerprint(provider.runnerIdentity, request)
 	return request
-}
-
-func isolationRequestPolicyFingerprint(runnerIdentity string, request IsolatedRunRequest) string {
-	identity := strings.Join([]string{
-		"docbank-isolated-run/v1", runnerIdentity, request.Executable,
-		request.ExecutableSHA256, strings.Join(request.Arguments, "\x1f"), strings.Join(request.Environment, "\x1f"),
-		request.Directory, request.StdinSHA256, strconv.FormatInt(request.MaxStdoutBytes, 10),
-		"network-disabled", "kill-process-tree", "digest-verified-launch",
-	}, "\x00")
-	digest := sha256.Sum256([]byte(identity))
-	return hex.EncodeToString(digest[:])
 }
 
 func (provider *Provider) reverifyExecutionBoundary(ctx context.Context) error {
 	if provider.runner == nil || provider.runner.Identity() != provider.runnerIdentity {
 		return errors.New("isolated runner identity changed")
 	}
-	digest, err := hashExecutableContext(ctx, provider.executable)
+	digest, err := isolate.HashExecutable(ctx, provider.executable)
 	if err != nil || digest != provider.executableSHA256 {
 		return errors.New("executable content changed")
 	}
@@ -866,36 +821,6 @@ func validateSHA256(value, subject string) error {
 		return fmt.Errorf("trafilatura: %s must be a lowercase SHA-256 digest", subject)
 	}
 	return nil
-}
-
-func hashExecutable(path string) (string, error) {
-	return hashExecutableContext(context.Background(), path)
-}
-
-func hashExecutableContext(ctx context.Context, path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = file.Close() }()
-	hash := sha256.New()
-	written, err := io.Copy(hash, io.LimitReader(contextReader{ctx: ctx, reader: file}, MaxExecutableBytes+1))
-	if err != nil || written <= 0 || written > MaxExecutableBytes {
-		return "", errors.New("executable content could not be bounded and hashed")
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (reader contextReader) Read(value []byte) (int, error) {
-	if err := reader.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return reader.reader.Read(value)
 }
 
 func validOutputText(value string) bool {

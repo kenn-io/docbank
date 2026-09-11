@@ -200,13 +200,14 @@ func TestEmbeddedSuppliedAudioRetryWaitContinuesChunkEmbeddingsAfterResume(t *te
 	embeddingProvider := newSyntheticEmbeddingProvider(t)
 	profile := suppliedAudioProfileForProvider(t, provider)
 	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.descriptor)}
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+	config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
 		Profiles: map[string]docbank.ProcessingProfileConfig{"audio": {
 			Profile: profile, RenditionProvider: provider,
 			EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider},
 			Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}},
 		}},
-	}})
+	}}
+	vault, err := docbank.New(t.Context(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
 	receipt, err := vault.Put(t.Context(), "/voice.wav", bytes.NewReader(mediatest.WAV()), docbank.PutOptions{MediaType: "audio/wav"})
@@ -222,7 +223,34 @@ func TestEmbeddedSuppliedAudioRetryWaitContinuesChunkEmbeddingsAfterResume(t *te
 	assert.Equal(t, 1, status.PendingBindings)
 	assert.Empty(t, job.EmbeddingJobIDs)
 
+	var publication docbank.ProcessingResumeReport
 	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		publication, err = vault.ResumeProcessing(t.Context(), docbank.ResumeProcessingRequest{Profile: "audio", MaxJobs: 1})
+		require.NoError(t, err)
+		if publication.RenditionsProcessed == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Equal(t, 1, publication.RenditionsProcessed)
+	assert.True(t, publication.Pending)
+	assert.Zero(t, publication.EmbeddingsAdmitted)
+	assert.Zero(t, publication.EmbeddingsProcessed)
+	status, err = vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+	require.NoError(t, err)
+	assert.Empty(t, status.EmbeddingJobIDs)
+	assert.Equal(t, 1, status.PendingBindings)
+	require.NoError(t, vault.Close())
+	vault, err = docbank.New(t.Context(), config)
+	require.NoError(t, err)
+	embedded, err := vault.ResumeProcessing(t.Context(), docbank.ResumeProcessingRequest{Profile: "audio", MaxJobs: 1})
+	require.NoError(t, err)
+	assert.Equal(t, 1, embedded.EmbeddingsAdmitted)
+	assert.Equal(t, 1, embedded.EmbeddingsProcessed)
+	assert.Zero(t, embedded.IndexesRebuilt)
+	assert.True(t, embedded.Pending)
+	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		_, err := vault.ResumeProcessing(t.Context(), docbank.ResumeProcessingRequest{Profile: "audio", MaxJobs: 16})
 		require.NoError(t, err)
@@ -234,7 +262,14 @@ func TestEmbeddedSuppliedAudioRetryWaitContinuesChunkEmbeddingsAfterResume(t *te
 		time.Sleep(50 * time.Millisecond)
 	}
 	require.Equal(t, "completed", status.State)
-	require.NotEmpty(t, status.EmbeddingJobIDs)
+	require.Len(t, status.EmbeddingJobIDs, 1)
+	recoveredIDs := append([]string(nil), status.EmbeddingJobIDs...)
+	repeated, err := vault.ResumeProcessing(t.Context(), docbank.ResumeProcessingRequest{Profile: "audio", MaxJobs: 16})
+	require.NoError(t, err)
+	assert.Zero(t, repeated.EmbeddingsAdmitted)
+	status, err = vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+	require.NoError(t, err)
+	assert.Equal(t, recoveredIDs, status.EmbeddingJobIDs)
 
 	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
 	search, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{

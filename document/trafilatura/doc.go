@@ -1,16 +1,19 @@
-// Package trafilatura renders supplied HTML bytes through an operator-pinned
-// local Trafilatura bridge.
+// Package trafilatura renders supplied HTML bytes through an operator-pinned local bridge.
 //
-// A nil Profile.Runner selects the production Linux runner. It executes a
-// digest-verified sealed copy of the bridge inside new user, network, and PID
-// namespaces, bounds stdout, and kills the PID-namespace init on cancellation
-// or overflow so the kernel reaps every descendant. It fails closed when the
-// host disables the required namespace controls. The native runner is not
-// available on macOS or Windows; callers there must inject a separately audited
-// IsolatedRunner or construction fails before any child can launch.
+// Profile.ExecutableSHA256 pins the complete executable with a lowercase SHA-256
+// digest. Construction and every render verify it. Profile.Runner defaults to
+// document/isolate's native Linux runner, which verifies the executable actually
+// launched and admits only the provider's fixed --protocol docbank-trafilatura/v2
+// arguments and environment. HTML validation and response parsing stay here.
 //
-// An injected runner is an explicit trusted deployment boundary. Its immutable
-// identity and exact per-run attestation are checked, but a dishonest runner can
-// still lie. Deployments using one must audit and pin its platform-specific
-// isolation implementation.
+// IsolatedRunner, IsolatedRunRequest, IsolatedRunResult, IsolationRequirements and
+// IsolationAttestation alias document/isolate's types. Existing error sentinels
+// share their values with that package. The shared native identity v3 changes
+// native-backed provider policy and rendition descriptor fingerprints.
+//
+// Unsupported hosts, including Windows and macOS, require an explicitly trusted
+// runner. Linux also refuses execution when required controls are unavailable.
+// Injected runners retain their own pinned identities; deployments must audit
+// their implementations independently of their returned attestations.
+// Native controls impose no CPU or memory quotas or general host filesystem confinement.
 package trafilatura

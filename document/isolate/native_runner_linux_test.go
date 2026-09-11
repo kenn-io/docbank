@@ -1,6 +1,6 @@
 //go:build linux
 
-package trafilatura
+package isolate
 
 import (
 	"context"
@@ -30,29 +30,51 @@ type nativeRunOutcome struct {
 
 func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	executable := buildIsolatedHelper(t, "echo", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	stdin := []byte("exact supplied bytes\x00remain data, never arguments")
-	request := nativeTestRequest(t, runner, executable, stdin, 1<<20)
+	for _, protocol := range []string{"docbank-trafilatura/v2", "docbank-pymupdf/v1"} {
+		t.Run(protocol, func(t *testing.T) {
+			stdin := []byte("exact supplied bytes\x00remain data, never arguments")
+			request := nativeTestRequest(t, runner, executable, stdin, 1<<20)
 
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableNativeIsolation(t, err)
-	require.NoError(t, err)
+			request.Arguments[1] = protocol
+			request.PolicyFingerprint = RequestPolicyFingerprint(runner.Identity(), request)
+			result, err := runner.Run(t.Context(), request)
+			skipUnavailableNativeIsolation(t, err)
+			require.NoError(t, err)
 
-	var response struct {
-		Arguments   []string `json:"arguments"`
-		Environment []string `json:"environment"`
-		StdinSHA256 string   `json:"stdin_sha256"`
+			var response struct {
+				Executable   string            `json:"executable"`
+				PID          int               `json:"pid"`
+				Status       string            `json:"status"`
+				ProcReadOnly bool              `json:"proc_read_only"`
+				Namespaces   map[string]string `json:"namespaces"`
+				Arguments    []string          `json:"arguments"`
+				Environment  []string          `json:"environment"`
+				StdinSHA256  string            `json:"stdin_sha256"`
+			}
+			require.NoError(t, json.Unmarshal(result.Stdout, &response))
+			digest := sha256.Sum256(stdin)
+			assert.Equal(t, hex.EncodeToString(digest[:]), response.StdinSHA256)
+			assert.Equal(t, []string{"--protocol", protocol}, response.Arguments)
+			assert.Equal(t, nativeEnvironment(), response.Environment)
+			assert.Equal(t, nativeRunnerIdentity, result.Attestation.RunnerIdentity)
+			assert.True(t, result.Attestation.NetworkDisabled)
+			assert.True(t, result.Attestation.ProcessTreeContained)
+			assert.True(t, result.Attestation.DigestVerifiedLaunch)
+			assert.Equal(t, executable, response.Executable)
+			assert.Equal(t, 1, response.PID)
+			assert.Contains(t, response.Status, "NoNewPrivs:\t1")
+			assert.Contains(t, response.Status, "Seccomp:\t2")
+			assert.True(t, response.ProcReadOnly)
+			for _, name := range []string{"user", "net", "pid", "mnt"} {
+				parent, err := os.Readlink("/proc/self/ns/" + name)
+				require.NoError(t, err)
+				require.NotEmpty(t, response.Namespaces[name])
+				assert.NotEqual(t, parent, response.Namespaces[name])
+			}
+		})
 	}
-	require.NoError(t, json.Unmarshal(result.Stdout, &response))
-	digest := sha256.Sum256(stdin)
-	assert.Equal(t, hex.EncodeToString(digest[:]), response.StdinSHA256)
-	assert.Equal(t, []string{"--protocol", protocolVersion}, response.Arguments)
-	assert.Equal(t, cleanEnvironment(), response.Environment)
-	assert.Equal(t, nativeRunnerIdentity, result.Attestation.RunnerIdentity)
-	assert.True(t, result.Attestation.NetworkDisabled)
-	assert.True(t, result.Attestation.ProcessTreeContained)
-	assert.True(t, result.Attestation.DigestVerifiedLaunch)
 }
 
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
@@ -60,7 +82,7 @@ func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
 	executable := buildIsolatedHelper(t, "network", listener.Addr().String())
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("network probe"), 1<<20)
 
@@ -76,7 +98,7 @@ func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
 	executable := buildIsolatedHelper(t, "unix-network", socketPath)
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("unix network probe"), 1<<20)
 
@@ -144,15 +166,18 @@ func TestNativeSeccompFilterDeniesX32ABI(t *testing.T) {
 }
 
 func TestNativeLauncherRequiresSealedMatchingInheritedControl(t *testing.T) {
-	control, token, err := openNativeLaunchControl()
+	request := IsolatedRunRequest{Executable: "/opt/synthetic-bridge", Arguments: []string{"--protocol", "docbank-pymupdf/v1"}, Environment: nativeEnvironment()}
+	control, token, err := openNativeLaunchControl(request)
 	require.NoError(t, err)
 	defer func() { _ = control.Close() }()
-	arguments := []string{"/proc/self/exe", nativeLauncherMarker, token, "/opt/trafilatura-bridge"}
-
-	executable, authenticated := authenticatedNativeLaunch(arguments, int(control.Fd()))
-	assert.True(t, authenticated)
-	assert.Equal(t, "/opt/trafilatura-bridge", executable)
-
+	arguments := []string{"/proc/self/exe", nativeLauncherMarker, token}
+	record, authenticated := authenticatedNativeLaunch(arguments, int(control.Fd()))
+	require.True(t, authenticated)
+	assert.Equal(t, request.Executable, record.Executable)
+	assert.Equal(t, request.Arguments, record.Arguments)
+	assert.Equal(t, request.Environment, record.Environment)
+	_, authenticated = authenticatedNativeLaunch(append(arguments, "/opt/substitution"), int(control.Fd()))
+	assert.False(t, authenticated)
 	_, authenticated = authenticatedNativeLaunch(arguments, -1)
 	assert.False(t, authenticated)
 	arguments[2] = strings.Repeat("0", nativeLauncherTokenBytes*2)
@@ -164,7 +189,7 @@ func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "descendant.lock")
 	require.NoError(t, os.WriteFile(lockPath, nil, 0o600))
 	executable := buildIsolatedHelper(t, "descendant", lockPath)
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("descendant probe"), 1<<20)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -188,7 +213,7 @@ func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
 
 func TestNativeRunnerTerminatesPromptlyOnStdoutOverflow(t *testing.T) {
 	executable := buildIsolatedHelper(t, "overflow", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("overflow probe"), 1024)
 	started := time.Now()
@@ -202,7 +227,7 @@ func TestNativeRunnerTerminatesPromptlyOnStdoutOverflow(t *testing.T) {
 
 func TestNativeRunnerDoesNotMisclassifyBridgeExit125AsLauncherFailure(t *testing.T) {
 	executable := buildIsolatedHelper(t, "exit-125", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("exit probe"), 1<<20)
 
@@ -221,7 +246,7 @@ func TestNativeRunErrorClassificationUsesOutOfBandLauncherStatus(t *testing.T) {
 
 func TestNativeRunnerHonorsCancellationBeforeExecutablePreparation(t *testing.T) {
 	executable := buildIsolatedHelper(t, "echo", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("canceled probe"), 1<<20)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -234,7 +259,7 @@ func TestNativeRunnerHonorsCancellationBeforeExecutablePreparation(t *testing.T)
 func TestNativeRunnerNeverLaunchesExecutableContentOutsidePinnedDigest(t *testing.T) {
 	executable := buildIsolatedHelper(t, "echo", "")
 	replacement := buildIsolatedHelper(t, "replacement", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("identity probe"), 1<<20)
 	require.NoError(t, os.Rename(replacement, executable))
@@ -246,7 +271,7 @@ func TestNativeRunnerNeverLaunchesExecutableContentOutsidePinnedDigest(t *testin
 func TestVerifiedExecutableContentCannotChangeAfterDigestVerification(t *testing.T) {
 	executable := buildIsolatedHelper(t, "echo", "")
 	replacement := buildIsolatedHelper(t, "replacement", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	request := nativeTestRequest(t, runner, executable, []byte("identity probe"), 1<<20)
 	want, err := os.ReadFile(executable)
@@ -265,15 +290,6 @@ func TestVerifiedExecutableContentCannotChangeAfterDigestVerification(t *testing
 	assert.Equal(t, wantDigest, gotDigest)
 }
 
-func TestNewUsesNativeRunnerWhenNoneIsInjected(t *testing.T) {
-	profile := testProfile(t, helperExecutable(t, "complete"), time.Second, 1<<20)
-	profile.Runner = nil
-
-	provider, err := New(profile)
-	require.NoError(t, err)
-	assert.Equal(t, nativeRunnerIdentity, provider.runnerIdentity)
-}
-
 func nativeTestRequest(
 	t *testing.T, runner IsolatedRunner, executable string, stdin []byte, maxStdout int64,
 ) IsolatedRunRequest {
@@ -281,11 +297,13 @@ func nativeTestRequest(
 	data, err := os.ReadFile(executable)
 	require.NoError(t, err)
 	digest := sha256.Sum256(data)
-	provider := &Provider{
-		executable: executable, executableSHA256: hex.EncodeToString(digest[:]),
-		runnerIdentity: runner.Identity(), environment: cleanEnvironment(),
-	}
-	return provider.isolatedRequest(stdin, maxStdout)
+	stdinDigest := sha256.Sum256(stdin)
+	request := IsolatedRunRequest{Executable: executable, ExecutableSHA256: hex.EncodeToString(digest[:]),
+		Arguments: []string{"--protocol", "docbank-trafilatura/v2"}, Environment: nativeEnvironment(), Directory: filepath.Dir(executable),
+		Stdin: stdin, StdinSHA256: hex.EncodeToString(stdinDigest[:]), MaxStdoutBytes: maxStdout,
+		Requirements: IsolationRequirements{NetworkDisabled: true, KillProcessTree: true, VerifyExecutableSHA256: true}}
+	request.PolicyFingerprint = RequestPolicyFingerprint(runner.Identity(), request)
+	return request
 }
 
 func buildIsolatedHelper(t *testing.T, mode, networkAddress string) string {
@@ -295,7 +313,7 @@ func buildIsolatedHelper(t *testing.T, mode, networkAddress string) string {
 		"-X=main.mode=" + mode,
 		"-X=main.networkAddress=" + networkAddress,
 	}, " ")
-	command := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags,
+	command := exec.Command("go", "build", "-tags", "fts5", "-trimpath", "-ldflags", ldflags,
 		"-o", target, "./testdata/isolatedhelper")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
@@ -386,4 +404,84 @@ func evaluateNativeSeccomp(
 	}
 	require.FailNow(t, "seccomp filter did not return")
 	return 0
+}
+
+func TestNativeLauncherRejectsMalformedControl(t *testing.T) {
+	record := nativeLaunchRecord{Token: strings.Repeat("a", 64), Executable: "/opt/synthetic-bridge", Arguments: []string{"--protocol", "docbank-pymupdf/v1"}, Environment: nativeEnvironment(), ExecutableFD: 3, ControlFD: 4, StatusFD: 5}
+	for _, test := range []struct {
+		name     string
+		mutate   func(*nativeLaunchRecord)
+		suffix   string
+		truncate bool
+		unsealed bool
+	}{
+		{name: "unsealed", unsealed: true},
+		{name: "truncated", truncate: true},
+		{name: "trailing data", suffix: "{}"},
+		{name: "forged token", mutate: func(r *nativeLaunchRecord) { r.Token = strings.Repeat("b", 64) }},
+		{name: "wrong descriptor", mutate: func(r *nativeLaunchRecord) { r.ExecutableFD = 6 }},
+		{name: "wrong control descriptor", mutate: func(r *nativeLaunchRecord) { r.ControlFD = 6 }},
+		{name: "wrong status descriptor", mutate: func(r *nativeLaunchRecord) { r.StatusFD = 6 }},
+		{name: "unknown protocol", mutate: func(r *nativeLaunchRecord) { r.Arguments = []string{"--protocol", "unknown"} }},
+		{name: "extra argument", mutate: func(r *nativeLaunchRecord) { r.Arguments = []string{"--protocol", "docbank-pymupdf/v1", "extra"} }},
+		{name: "changed environment", mutate: func(r *nativeLaunchRecord) { r.Environment = []string{"TZ=elsewhere"} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := record
+			if test.mutate != nil {
+				test.mutate(&value)
+			}
+			encoded, err := json.Marshal(value)
+			require.NoError(t, err)
+			if test.truncate {
+				encoded = encoded[:len(encoded)/2]
+			}
+			encoded = append(encoded, test.suffix...)
+			fd, err := unix.MemfdCreate("synthetic-control", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+			require.NoError(t, err)
+			defer func() { _ = unix.Close(fd) }()
+			_, err = unix.Write(fd, encoded)
+			require.NoError(t, err)
+			if !test.unsealed {
+				_, err = unix.FcntlInt(uintptr(fd), unix.F_ADD_SEALS, unix.F_SEAL_WRITE|unix.F_SEAL_GROW|unix.F_SEAL_SHRINK|unix.F_SEAL_SEAL)
+				require.NoError(t, err)
+			}
+			_, authenticated := authenticatedNativeLaunch([]string{"/proc/self/exe", nativeLauncherMarker, record.Token}, fd)
+			assert.False(t, authenticated)
+		})
+	}
+}
+
+func TestNativeRunnerParentDeathReapsDescendants(t *testing.T) {
+	const childEnv = "DOCBANK_TEST_ISOLATE_PARENT"
+	if executable := os.Getenv(childEnv); executable != "" {
+		runner, err := NewNativeRunner()
+		require.NoError(t, err)
+		_, err = runner.Run(t.Context(), nativeTestRequest(t, runner, executable, []byte("parent death probe"), 1024))
+		if errors.Is(err, ErrIsolationUnavailable) {
+			os.Exit(77)
+		}
+		require.NoError(t, err)
+		return
+	}
+	lockPath := filepath.Join(t.TempDir(), "descendant.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o600))
+	executable := buildIsolatedHelper(t, "descendant", lockPath)
+	parent := exec.Command(os.Args[0], "-test.run=^TestNativeRunnerParentDeathReapsDescendants$") //nolint:gosec // The current test executable owns the synthetic native runner.
+	parent.Env = append(os.Environ(), childEnv+"="+executable)
+	require.NoError(t, parent.Start())
+	finished := make(chan nativeRunOutcome, 1)
+	go func() {
+		err := parent.Wait()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 77 {
+			err = ErrIsolationUnavailable
+		}
+		finished <- nativeRunOutcome{err: err}
+	}()
+	defer func() { _ = parent.Process.Kill() }()
+	observeDescendantLockHeld(t, lockPath, finished)
+	require.NoError(t, parent.Process.Kill())
+	<-finished
+	require.Eventually(t, func() bool { return exclusiveLockAvailable(t, lockPath) }, 2*time.Second, 10*time.Millisecond)
 }

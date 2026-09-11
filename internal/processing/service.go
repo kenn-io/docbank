@@ -1560,9 +1560,6 @@ func (service *Service) Resume(ctx context.Context, profileName string, maxJobs 
 	if err != nil {
 		return ResumeReport{}, err
 	}
-	if embeddingWorker != nil {
-		renditionWorker.continuation = embeddingWorker.ContinueRenditionTargets
-	}
 	result := ResumeReport{}
 	for result.RenditionsProcessed < maxJobs {
 		processed, runErr := renditionWorker.RunOne(ctx)

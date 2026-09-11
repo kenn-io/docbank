@@ -30,7 +30,7 @@ var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle. Any semantic parser change must change the descriptor.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		"docbank-source-metadata:pdf-info+xmp,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v3")
+		"docbank-source-metadata:pdf-info+xmp,ooxml-core+custom,rfc5322,ical,jpeg-exif,media-id3:v4")
 )
 
 func fingerprintSourceMetadataExtractor(descriptor string) string {
@@ -177,6 +177,10 @@ func (c *metadataCollector) strings(key, namespace, source string, values []stri
 		if value = strings.TrimSpace(value); value != "" {
 			if !utf8.ValidString(value) {
 				c.warn("invalid_utf8", namespace, source, "embedded list value was omitted")
+				continue
+			}
+			if len(value) > document.MaxSourceMetadataValueBytes {
+				c.warn("value_too_large", namespace, source, "embedded value was omitted")
 				continue
 			}
 			filtered = append(filtered, value)

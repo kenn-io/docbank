@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -26,7 +25,6 @@ type EmbeddingReconcileRequest struct {
 	HydrateGeneration        func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
 	GenerateOriginalFile     func(context.Context, OriginalFileGenerationRequest) (EmbeddingInputGenerationRecord, error)
 	AfterRenditionAttachment string
-	RenditionAttachments     []string
 	SkipGenerations          bool
 	SkipRenditionHeads       bool
 	GenerateRenditionChunk   func(context.Context, RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error)
@@ -348,8 +346,7 @@ func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request Embedd
 			JOIN content_versions v ON v.version_id=rh.content_version_id
 			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
 				AND n.kind='file' AND n.trashed_at IS NULL`
-		args := make([]any, 0, len(request.RenditionAttachments)+2)
-		paged := len(request.RenditionAttachments) == 0
+		args := make([]any, 0, len(request.ProfileFingerprints)+3)
 		hasProfileFilter := request.ProfileFingerprint != "" || len(request.ProfileFingerprints) != 0
 		where := " WHERE "
 		if request.ProfileFingerprint != "" {
@@ -361,27 +358,12 @@ func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request Embedd
 				args = append(args, fingerprint)
 			}
 		}
-		if paged {
-			if hasProfileFilter {
-				where += " AND "
-			}
-			where += "rh.attachment_id>?"
-			args = append(args, request.AfterRenditionAttachment, request.Limit+1)
-		} else {
-			placeholders := make([]string, len(request.RenditionAttachments))
-			for index, attachmentID := range request.RenditionAttachments {
-				placeholders[index] = "?"
-				args = append(args, attachmentID)
-			}
-			if hasProfileFilter {
-				where += " AND "
-			}
-			where += `rh.attachment_id IN (` + strings.Join(placeholders, ",") + `)`
+		if hasProfileFilter {
+			where += " AND "
 		}
-		query += where + ` ORDER BY rh.attachment_id`
-		if paged {
-			query += ` LIMIT ?`
-		}
+		where += "rh.attachment_id>?"
+		args = append(args, request.AfterRenditionAttachment, request.Limit+1)
+		query += where + ` ORDER BY rh.attachment_id LIMIT ?`
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
@@ -395,12 +377,10 @@ func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request Embedd
 				return err
 			}
 			rowCount++
-			if paged && rowCount > request.Limit {
+			if rowCount > request.Limit {
 				continue
 			}
-			if paged {
-				lastPageAttachment = attachmentID
-			}
+			lastPageAttachment = attachmentID
 			profile, err := loadProcessingProfile(ctx, tx, profileFingerprint)
 			if errors.Is(err, ErrNotFound) {
 				continue
@@ -496,7 +476,7 @@ func (s *Store) renditionEmbeddingCandidates(ctx context.Context, request Embedd
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		if paged && rowCount > request.Limit {
+		if rowCount > request.Limit {
 			next = lastPageAttachment
 		}
 		return nil

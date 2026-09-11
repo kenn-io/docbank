@@ -1502,3 +1502,157 @@ func cloneEmbeddingSetRecord(value EmbeddingSetRecord) EmbeddingSetRecord {
 func embeddingCorpusManifestChecksumForTest(setIDs []string) string {
 	return testSHA256([]byte(strings.Join(setIDs, "\n") + "\n"))
 }
+
+func newSingleChunkRecoveryFixture(t *testing.T) (*Store, string, ProcessingProfileRecord, string, EmbeddingSetRecord) {
+	t.Helper()
+	s, versions := newRenditionCatalogFixture(t)
+	profile := embeddingCatalogProfile(t)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
+	for _, binding := range portable.Embeddings {
+		if binding.Name == "chunk" {
+			portable.Embeddings = []document.EmbeddingBindingV1{binding}
+			break
+		}
+	}
+	canonical, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	profile.Fingerprint, profile.CanonicalProfile = fingerprints.Profile, canonical
+	profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
+	profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
+	profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
+	build := catalogRenditionBuild(s, profile)
+	build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+	require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
+	require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}))
+	record, err := normalizeEmbeddingSetRecord(embeddingSetFixture(s, versions[0], profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment.ID))
+	require.NoError(t, err)
+	binding := portable.Embeddings[0]
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: "operator:synthetic-recovery", Scope: "embedding:chunk", ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}})
+	require.NoError(t, err)
+	return s, versions[0], profile, attachment.ID, record
+}
+
+func TestRenditionHeadReconciliationAfterReopen(t *testing.T) {
+	s, versionID, profile, attachmentID, record := newSingleChunkRecoveryFixture(t)
+	var count int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs`).Scan(&count))
+	require.Zero(t, count)
+	path := s.path
+	require.NoError(t, s.Close())
+	reopened, err := Open(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reopened.Close()) }()
+	request := EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, ProfileFingerprint: profile.Fingerprint, DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint}, VectorSpaces: map[string]EmbeddingVectorSpaceRecord{record.VectorSpace.ID: record.VectorSpace},
+		GenerateRenditionChunk: func(_ context.Context, request RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error) {
+			assert.Equal(t, versionID, request.ContentVersionID)
+			assert.Equal(t, attachmentID, request.AttachmentID)
+			assert.Equal(t, "chunk", request.BindingID)
+			return record.InputGeneration, nil
+		},
+		HydrateGeneration: func(_ context.Context, generation EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error) {
+			return HydrateEmbeddingInputGeneration(generation, record.InputGeneration.GenerationJSON)
+		},
+	}
+	result, err := reopened.ReconcileEmbeddingJobs(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enqueued)
+	assert.False(t, result.Incomplete)
+	jobs, err := reopened.EmbeddingJobsForVersionProfile(t.Context(), versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	again, err := reopened.ReconcileEmbeddingJobs(t.Context(), request)
+	require.NoError(t, err)
+	assert.Zero(t, again.Enqueued)
+	repeated, err := reopened.EmbeddingJobsForVersionProfile(t.Context(), versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, jobs, repeated)
+}
+
+func TestRenditionHeadReconciliationPagesAndProfileFilters(t *testing.T) {
+	s, versionID, profile, _, record := newSingleChunkRecoveryFixture(t)
+	version, err := s.ContentVersionByID(t.Context(), versionID)
+	require.NoError(t, err)
+	last := ""
+	for index := range 100 {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("synthetic-%03d.pdf", index), version.BlobHash, version.Size, version.MimeType)
+		require.NoError(t, err)
+		last = fmt.Sprintf("%064x", index+256)
+		attachment := RenditionAttachmentRecord{ID: last, VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: catalogBuildID, Profile: profile, AttachedAt: embeddingCatalogTime}
+		require.NoError(t, s.AttachRenditionBuild(t.Context(), attachment))
+		require.NoError(t, s.PublishRenditionHead(t.Context(), RenditionHeadRecord{ContentVersionID: node.CurrentVersionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: last, PublishedAt: embeddingCatalogTime}))
+	}
+	for _, multiple := range []bool{false, true} {
+		request := EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, ProfileFingerprint: profile.Fingerprint, VectorSpaces: map[string]EmbeddingVectorSpaceRecord{record.VectorSpace.ID: record.VectorSpace}, GenerateRenditionChunk: func(context.Context, RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error) {
+			panic("candidate discovery must not generate")
+		}}
+		if multiple {
+			request.ProfileFingerprint = ""
+			request.ProfileFingerprints = []string{fakeHash("ff"), profile.Fingerprint}
+		}
+		executable := map[string]struct{}{record.VectorSpace.Descriptor.Fingerprint: {}}
+		first, cursor, incomplete, err := s.renditionEmbeddingCandidates(t.Context(), request, executable)
+		require.NoError(t, err)
+		require.Len(t, first, 100)
+		require.NotEmpty(t, cursor)
+		assert.False(t, incomplete)
+		request.AfterRenditionAttachment = cursor
+		final, cursor, incomplete, err := s.renditionEmbeddingCandidates(t.Context(), request, executable)
+		require.NoError(t, err)
+		require.Len(t, final, 1)
+		assert.Equal(t, last, final[0].attachmentID)
+		assert.Empty(t, cursor)
+		assert.False(t, incomplete)
+		request.AfterRenditionAttachment = last
+		final, cursor, _, err = s.renditionEmbeddingCandidates(t.Context(), request, executable)
+		require.NoError(t, err)
+		assert.Empty(t, final)
+		assert.Empty(t, cursor)
+		request.AfterRenditionAttachment = ""
+		request.ProfileFingerprint, request.ProfileFingerprints = fakeHash("ff"), nil
+		final, cursor, _, err = s.renditionEmbeddingCandidates(t.Context(), request, executable)
+		require.NoError(t, err)
+		assert.Empty(t, final)
+		assert.Empty(t, cursor)
+	}
+}
+
+func TestRenditionHeadRecoveryExclusionsAndPending(t *testing.T) {
+	for _, name := range []string{"unavailable runtime", "revoked consent", "historical version", "trashed node"} {
+		t.Run(name, func(t *testing.T) {
+			s, versionID, profile, _, record := newSingleChunkRecoveryFixture(t)
+			version, err := s.ContentVersionByID(t.Context(), versionID)
+			require.NoError(t, err)
+			node, err := s.NodeByID(t.Context(), version.NodeID)
+			require.NoError(t, err)
+			request := EmbeddingReconcileRequest{At: time.Now().UTC(), Limit: 100, ProfileFingerprint: profile.Fingerprint, DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint}, VectorSpaces: map[string]EmbeddingVectorSpaceRecord{record.VectorSpace.ID: record.VectorSpace}, GenerateRenditionChunk: func(context.Context, RenditionChunkGenerationRequest) (EmbeddingInputGenerationRecord, error) {
+				t.Error("excluded head reached generation")
+				return record.InputGeneration, nil
+			}}
+			switch name {
+			case "unavailable runtime":
+				request.DescriptorFingerprints = []string{fakeHash("ff")}
+			case "revoked consent":
+				_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{Principal: "operator:synthetic-recovery", Scope: "embedding:chunk"})
+				require.NoError(t, err)
+			case "historical version":
+				_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("ff"), 4, "application/pdf")
+				require.NoError(t, err)
+			case "trashed node":
+				_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+				require.NoError(t, err)
+			}
+			result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
+			require.NoError(t, err)
+			assert.Zero(t, result.Enqueued)
+			if name == "revoked consent" {
+				assert.True(t, result.Incomplete)
+			}
+			jobs, err := s.EmbeddingJobsForVersionProfile(t.Context(), versionID, profile.Fingerprint)
+			require.NoError(t, err)
+			assert.Empty(t, jobs)
+		})
+	}
+}

@@ -1,25 +1,29 @@
 //go:build linux
 
-package trafilatura
+package isolate
 
 import (
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
 const (
-	nativeLauncherMarker          = "--docbank-internal-trafilatura-launch-v2"
+	nativeLauncherMarker          = "--docbank-internal-isolate-launch-v3"
 	nativeLauncherExecutableFD    = 3
 	nativeLauncherControlFD       = 4
 	nativeLauncherStatusFD        = 5
 	nativeLauncherTokenBytes      = 32
+	nativeLauncherMaxControlBytes = 64 << 10
 	nativeLauncherFailureExitCode = 125
 	nativeLauncherReadyStatus     = byte(1)
 	nativeLauncherFailureStatus   = byte(2)
@@ -27,11 +31,11 @@ const (
 )
 
 func init() {
-	executable, authenticated := authenticatedNativeLaunch(os.Args, nativeLauncherControlFD)
+	record, authenticated := authenticatedNativeLaunch(os.Args, nativeLauncherControlFD)
 	if !authenticated {
 		return
 	}
-	if runNativeLauncher(executable, nativeLauncherStatusFD) != nil {
+	if runNativeLauncher(record, nativeLauncherStatusFD) != nil {
 		_ = writeNativeLauncherStatus(nativeLauncherStatusFD, nativeLauncherFailureStatus)
 		os.Exit(nativeLauncherFailureExitCode)
 	}
@@ -39,34 +43,53 @@ func init() {
 	os.Exit(nativeLauncherFailureExitCode)
 }
 
-func authenticatedNativeLaunch(arguments []string, controlFD int) (string, bool) {
-	if len(arguments) != 4 || arguments[1] != nativeLauncherMarker ||
-		!filepath.IsAbs(arguments[3]) || filepath.Clean(arguments[3]) != arguments[3] {
-		return "", false
+type nativeLaunchRecord struct {
+	Token        string   `json:"token"`
+	Executable   string   `json:"executable"`
+	Arguments    []string `json:"arguments"`
+	Environment  []string `json:"environment"`
+	ExecutableFD int      `json:"executable_fd"`
+	ControlFD    int      `json:"control_fd"`
+	StatusFD     int      `json:"status_fd"`
+}
+
+func authenticatedNativeLaunch(arguments []string, controlFD int) (nativeLaunchRecord, bool) {
+	if len(arguments) != 3 || arguments[1] != nativeLauncherMarker {
+		return nativeLaunchRecord{}, false
 	}
 	want, err := hex.DecodeString(arguments[2])
 	if err != nil || len(want) != nativeLauncherTokenBytes {
-		return "", false
+		return nativeLaunchRecord{}, false
 	}
 	var stat unix.Stat_t
-	if err := unix.Fstat(controlFD, &stat); err != nil ||
-		stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Size != nativeLauncherTokenBytes {
-		return "", false
+	if err := unix.Fstat(controlFD, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Size <= 0 || stat.Size > nativeLauncherMaxControlBytes {
+		return nativeLaunchRecord{}, false
 	}
 	seals := unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
 	applied, err := unix.FcntlInt(uintptr(controlFD), unix.F_GET_SEALS, 0)
 	if err != nil || applied&seals != seals {
-		return "", false
+		return nativeLaunchRecord{}, false
 	}
-	got := make([]byte, nativeLauncherTokenBytes)
-	read, err := unix.Pread(controlFD, got, 0)
-	if err != nil || read != len(got) || subtle.ConstantTimeCompare(got, want) != 1 {
-		return "", false
+	encoded := make([]byte, int(stat.Size))
+	read, err := unix.Pread(controlFD, encoded, 0)
+	if err != nil || read != len(encoded) {
+		return nativeLaunchRecord{}, false
 	}
-	return arguments[3], true
+	var record nativeLaunchRecord
+	if err := json.Unmarshal(encoded, &record, json.RejectUnknownMembers(true)); err != nil {
+		return nativeLaunchRecord{}, false
+	}
+	got, err := hex.DecodeString(record.Token)
+	if err != nil || subtle.ConstantTimeCompare(got, want) != 1 ||
+		record.ExecutableFD != nativeLauncherExecutableFD || record.ControlFD != nativeLauncherControlFD || record.StatusFD != nativeLauncherStatusFD ||
+		!filepath.IsAbs(record.Executable) || filepath.Clean(record.Executable) != record.Executable || strings.ContainsRune(record.Executable, '\x00') ||
+		!validNativeArguments(record.Arguments) || !slices.Equal(record.Environment, nativeEnvironment()) {
+		return nativeLaunchRecord{}, false
+	}
+	return record, true
 }
 
-func runNativeLauncher(executable string, statusFD int) error {
+func runNativeLauncher(record nativeLaunchRecord, statusFD int) error {
 	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mount propagation private: %w", err)
 	}
@@ -88,7 +111,7 @@ func runNativeLauncher(executable string, statusFD int) error {
 		return err
 	}
 	unix.CloseOnExec(statusFD)
-	if err := unix.Exec("/proc/self/fd/3", []string{executable, "--protocol", protocolVersion}, cleanEnvironment()); err != nil {
+	if err := unix.Exec("/proc/self/fd/3", append([]string{record.Executable}, record.Arguments...), record.Environment); err != nil {
 		return fmt.Errorf("execute sealed bridge: %w", err)
 	}
 	return nil

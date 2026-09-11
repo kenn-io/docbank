@@ -367,7 +367,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				if err != nil {
 					return ErrEmbeddingPersistence
 				}
-				worker.recordReconcile(result, true)
+				worker.recordReconcile(result)
 				reconciled = true
 			}
 			if worker.maxJobs > 0 && processed >= worker.maxJobs {
@@ -444,19 +444,17 @@ func (worker *EmbeddingWorker) reconciliationScanState() (string, string, bool, 
 		worker.reconcileGenerationsDone, worker.reconcileRenditionHeadsDone
 }
 
-func (worker *EmbeddingWorker) recordReconcile(result store.EmbeddingReconcileResult, advance bool) {
+func (worker *EmbeddingWorker) recordReconcile(result store.EmbeddingReconcileResult) {
 	worker.stateMu.Lock()
 	defer worker.stateMu.Unlock()
 	worker.lastReconcile = result
 	worker.reconcileEnqueued += result.Enqueued
 	worker.reconcileIncomplete = worker.reconcileIncomplete || result.Incomplete
-	if advance {
-		worker.reconcileAfter = result.Next
-		worker.reconcileRenditionAfter = result.NextRenditionAttachment
-		if worker.boundedReconciliation {
-			worker.reconcileGenerationsDone = result.Next == ""
-			worker.reconcileRenditionHeadsDone = result.NextRenditionAttachment == ""
-		}
+	worker.reconcileAfter = result.Next
+	worker.reconcileRenditionAfter = result.NextRenditionAttachment
+	if worker.boundedReconciliation {
+		worker.reconcileGenerationsDone = result.Next == ""
+		worker.reconcileRenditionHeadsDone = result.NextRenditionAttachment == ""
 	}
 }
 
@@ -486,44 +484,6 @@ func validateWorkerFingerprint(value string) error {
 		return errors.New("embedding worker profile fingerprint is invalid")
 	}
 	return nil
-}
-
-func (worker *EmbeddingWorker) ContinueRenditionTargets(ctx context.Context,
-	targets []store.RenditionPublicationTarget,
-) error {
-	if worker == nil {
-		return errors.New("embedding worker is nil")
-	}
-	if len(targets) == 0 {
-		return nil
-	}
-	attachments := make([]string, 0, len(targets))
-	for _, target := range targets {
-		attachments = append(attachments, target.AttachmentID)
-	}
-	return worker.gate.MutateContext(ctx, func() error {
-		result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-			After: "", Limit: 1000, At: worker.clock().UTC(),
-			ProfileFingerprint:     worker.profileFingerprint,
-			ProfileFingerprints:    worker.profileFingerprints,
-			DescriptorFingerprints: worker.descriptorFingerprints,
-			VectorSpaces:           worker.vectorSpaces,
-			RenditionAttachments:   attachments,
-			GenerateOriginalFile:   worker.generateOriginalFile,
-			GenerateRenditionChunk: worker.generateRenditionChunk,
-			HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
-				return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
-			},
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return ErrEmbeddingPersistence
-		}
-		worker.recordReconcile(result, false)
-		return nil
-	})
 }
 
 // RunJob processes one exact ready embedding job without consuming unrelated

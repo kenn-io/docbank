@@ -5,6 +5,7 @@ import (
 	"crypto/md5" //nolint:gosec // Test coverage for explicitly auxiliary interoperability metadata.
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
@@ -21,8 +22,96 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
+
+func TestBrowserSourceMetadataOmission(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var issued struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &issued))
+	require.NotEmpty(t, issued.Token)
+	for _, name := range []string{"bcc", "bcc-warning", "gps", "ordinary", "warning"} {
+		t.Run(name, func(t *testing.T) {
+			payload := "From: synthetic@example.test\r\nSubject: ordinary title\r\n\r\nbody"
+			if name == "bcc" {
+				payload = "Bcc: private-marker@example.test\r\nSubject: " + strings.Repeat("x", document.MaxSourceMetadataValueBytes+1) + "\r\n\r\nbody"
+			}
+			if name == "bcc-warning" {
+				payload = "Bcc: " + strings.Repeat("x", document.MaxSourceMetadataValueBytes+1) + "\r\n\r\nbody"
+			}
+			if name == "gps" {
+				payload = string(browserMetadataJPEG())
+			}
+			if name == "warning" {
+				payload = "unsupported synthetic bytes"
+			}
+			receipt, err := s.Blobs.WriteDetailedContext(t.Context(), strings.NewReader(payload))
+			require.NoError(t, err)
+			encoding, err := receipt.EncodingName()
+			require.NoError(t, err)
+			ingest, err := s.BeginIngest(t.Context(), "cli", "/synthetic/private-attachment-marker")
+			require.NoError(t, err)
+			node, _, err := s.IngestFile(t.Context(), ingest, s.RootID(), name+".eml", receipt.Hash, receipt.Size, "application/octet-stream", "/synthetic/private-attachment-marker/"+name, "2024-01-02T03:04:05Z", store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible, Created: receipt.Created, MD5: receipt.MD5})
+			require.NoError(t, err)
+			metadata := processing.ExtractSourceMetadata([]byte(payload))
+			canonical, _, err := document.MarshalSourceMetadataV1(metadata)
+			require.NoError(t, err)
+			_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, processing.SourceMetadataExtractorFingerprint, canonical)
+			require.NoError(t, err)
+			for _, route := range []string{fmt.Sprintf("/api/v1/nodes/%d", node.ID), "/api/v1/path?path=%2F" + name + ".eml"} {
+				master, masterBody := get(t, ts, route, nil)
+				require.Equal(t, http.StatusOK, master.StatusCode)
+				require.Contains(t, masterBody, `"source_metadata"`)
+				browser, browserBody := get(t, ts, route, map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token})
+				require.Equal(t, http.StatusOK, browser.StatusCode)
+				assert.NotContains(t, browserBody, `"source_metadata"`)
+				assert.NotContains(t, browserBody, "private-marker")
+				assert.NotContains(t, browserBody, "private-attachment-marker")
+				assert.NotContains(t, browserBody, "51.5000000")
+				assert.NotContains(t, browserBody, "-0.1000000")
+				assert.NotContains(t, browserBody, "image.exif.gps")
+				assert.NotContains(t, browserBody, "embedded value was omitted")
+				assert.Equal(t, master.Header.Get("ETag"), browser.Header.Get("ETag"))
+				var masterNode, browserNode api.Node
+				require.NoError(t, json.Unmarshal([]byte(masterBody), &masterNode))
+				require.NoError(t, json.Unmarshal([]byte(browserBody), &browserNode))
+				require.NotNil(t, masterNode.SourceMetadata)
+				assert.ElementsMatch(t, metadata.Fields, masterNode.SourceMetadata.Fields)
+				assert.ElementsMatch(t, metadata.Warnings, masterNode.SourceMetadata.Warnings)
+				assert.Contains(t, masterNode.SourceMetadata.Attachment.SourcePath, "private-attachment-marker")
+				masterNode.SourceMetadata = nil
+				assert.Equal(t, masterNode, browserNode)
+			}
+			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
+			resp, body := get(t, ts, "/api/v1/versions/"+node.CurrentVersionID, headers)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+			resp, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/versions", node.ID), headers)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+			assert.NotContains(t, body, "source_metadata")
+			resp, body = get(t, ts, "/api/v1/versions/"+node.CurrentVersionID, nil)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			assert.Contains(t, body, "source_metadata")
+			db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			_, err = db.ExecContext(t.Context(), `DROP TRIGGER IF EXISTS source_metadata_generations_immutable_update`)
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `UPDATE source_metadata_generations SET checksum=? WHERE source_sha256=?`, strings.Repeat("0", 64), node.BlobHash)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			for _, principal := range []map[string]string{nil, headers} {
+				resp, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d", node.ID), principal)
+				assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+			}
+		})
+	}
+}
 
 func TestStatByIDAndPath(t *testing.T) {
 	ts, s := newTestServer(t, nil)
@@ -454,4 +543,53 @@ func TestSearch(t *testing.T) {
 		"/api/v1/search?q=lighthouse&limit=10&mime_type=text%2Fplain%3B%20charset%3Dutf-8", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"validation"`)
+}
+
+func browserMetadataJPEG() []byte {
+	const (
+		rootOffset        = 8
+		descriptionOffset = 38
+		gpsOffset         = 54
+		latitudeOffset    = 108
+		longitudeOffset   = 132
+	)
+	tiff := make([]byte, 156)
+	copy(tiff, "II")
+	binary.LittleEndian.PutUint16(tiff[2:], 42)
+	binary.LittleEndian.PutUint32(tiff[4:], rootOffset)
+	binary.LittleEndian.PutUint16(tiff[rootOffset:], 2)
+	putEXIFEntry(tiff[rootOffset+2:], 0x010e, 2, 16, descriptionOffset)
+	putEXIFEntry(tiff[rootOffset+14:], 0x8825, 4, 1, gpsOffset)
+	copy(tiff[descriptionOffset:], "Synthetic image\x00")
+	binary.LittleEndian.PutUint16(tiff[gpsOffset:], 4)
+	putEXIFInlineASCII(tiff[gpsOffset+2:], 1, "N")
+	putEXIFEntry(tiff[gpsOffset+14:], 2, 5, 3, latitudeOffset)
+	putEXIFInlineASCII(tiff[gpsOffset+26:], 3, "W")
+	putEXIFEntry(tiff[gpsOffset+38:], 4, 5, 3, longitudeOffset)
+	putEXIFRationals(tiff[latitudeOffset:], [3]uint32{51, 30, 0})
+	putEXIFRationals(tiff[longitudeOffset:], [3]uint32{0, 6, 0})
+	segment := append([]byte("Exif\x00\x00"), tiff...)
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe1, 0, 0}
+	binary.BigEndian.PutUint16(jpeg[4:], uint16(len(segment)+2))
+	jpeg = append(jpeg, segment...)
+	return append(jpeg, 0xff, 0xd9)
+}
+
+func putEXIFEntry(target []byte, tag, kind uint16, count, value uint32) {
+	binary.LittleEndian.PutUint16(target, tag)
+	binary.LittleEndian.PutUint16(target[2:], kind)
+	binary.LittleEndian.PutUint32(target[4:], count)
+	binary.LittleEndian.PutUint32(target[8:], value)
+}
+
+func putEXIFInlineASCII(target []byte, tag uint16, value string) {
+	putEXIFEntry(target, tag, 2, 2, 0)
+	copy(target[8:12], value+"\x00")
+}
+
+func putEXIFRationals(target []byte, values [3]uint32) {
+	for index, value := range values {
+		binary.LittleEndian.PutUint32(target[index*8:], value)
+		binary.LittleEndian.PutUint32(target[index*8+4:], 1)
+	}
 }

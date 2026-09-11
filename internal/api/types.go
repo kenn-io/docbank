@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -1203,7 +1205,10 @@ func fromStoreContentVersion(v store.ContentVersion) ContentVersion {
 	}
 }
 
-func fromStoreSourceMetadata(view store.SourceMetadataView) *SourceMetadata {
+func fromStoreSourceMetadata(ctx context.Context, view store.SourceMetadataView) *SourceMetadata {
+	if browserSessionRequest(ctx) {
+		return nil
+	}
 	return &SourceMetadata{ContractVersion: view.Metadata.ContractVersion,
 		ExtractorFingerprint: view.Generation.ExtractorFingerprint,
 		Checksum:             view.Generation.Checksum, Fields: view.Metadata.Fields,

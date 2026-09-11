@@ -7,11 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/document/isolate"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,34 +24,10 @@ import (
 
 const testRuntimeIdentity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-var testHelperBinary string
-
-func TestMain(m *testing.M) {
-	directory, err := os.MkdirTemp("", "docbank-pymupdf-test-")
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	extension := ""
-	if runtime.GOOS == "windows" {
-		extension = ".exe"
-	}
-	testHelperBinary = filepath.Join(directory, "renderer-base"+extension)
-	command := exec.Command("go", "build", "-o", testHelperBinary, "./testdata/helper")
-	if output, buildErr := command.CombinedOutput(); buildErr != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "build PyMuPDF test helper: %v\n%s", buildErr, output)
-		_ = os.RemoveAll(directory)
-		os.Exit(1)
-	}
-	code := m.Run()
-	_ = os.RemoveAll(directory)
-	os.Exit(code)
-}
-
 func TestProviderRendersExactPDFPagesThroughFixedProtocol(t *testing.T) {
 	t.Setenv("DOCBANK_PYMUPDF_AMBIENT_SECRET", "must-not-reach-child")
 	executable := helperExecutable(t, "success")
-	provider, err := New(Profile{
+	provider, err := newProfileForTest(t, Profile{
 		Executable: executable, RuntimeIdentity: testRuntimeIdentity,
 		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20,
 		MaxPages: 10, Timeout: time.Second,
@@ -81,12 +56,12 @@ func TestProviderRendersExactPDFPagesThroughFixedProtocol(t *testing.T) {
 }
 
 func TestNewPinsExecutableAndRuntimeIdentityInDescriptor(t *testing.T) {
-	first, err := New(Profile{
+	first, err := newProfileForTest(t, Profile{
 		Executable: helperExecutable(t, "success"), RuntimeIdentity: testRuntimeIdentity,
 		MaxDocumentBytes: 1024, MaxResponseBytes: 1024, MaxPages: 2, Timeout: time.Second,
 	})
 	require.NoError(t, err)
-	second, err := New(Profile{
+	second, err := newProfileForTest(t, Profile{
 		Executable: helperExecutable(t, "success-copy"), RuntimeIdentity: testRuntimeIdentity + ".revision",
 		MaxDocumentBytes: 1024, MaxResponseBytes: 1024, MaxPages: 2, Timeout: time.Second,
 	})
@@ -150,7 +125,7 @@ func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 	})
 }
 
-func TestProviderTerminatesChildThatNeverStopsOversizedOutput(t *testing.T) {
+func TestProviderClassifiesRunnerOutputOverflow(t *testing.T) {
 	provider := newTestProvider(t, helperExecutable(t, "unbounded-output"), 2*time.Second, 1024)
 	upload := newTestUpload(testPDF(2))
 	started := time.Now()
@@ -193,10 +168,10 @@ func TestProviderEnforcesTimeoutAndCancellation(t *testing.T) {
 	})
 }
 
-func TestProviderRejectsCancellationObservedAfterLargeChildResponse(t *testing.T) {
+func TestProviderRejectsCancellationBeforeLargePDFRendering(t *testing.T) {
 	const pages = 20_000
 	executable := helperExecutable(t, "many-pages")
-	provider, err := New(Profile{
+	provider, err := newProfileForTest(t, Profile{
 		Executable: executable, RuntimeIdentity: testRuntimeIdentity,
 		MaxDocumentBytes: 8 << 20, MaxResponseBytes: 8 << 20,
 		MaxPages: pages, Timeout: 30 * time.Second,
@@ -232,16 +207,13 @@ func TestProviderRejectsUnverifiedOrSubstitutedInputBeforeExecution(t *testing.T
 func TestNewRejectsInterpreterAndInvalidBounds(t *testing.T) {
 	python := filepath.Join(t.TempDir(), "python3")
 	require.NoError(t, os.WriteFile(python, []byte("synthetic"), 0o700))
-	_, err := New(Profile{
+	_, err := newProfileForTest(t, Profile{
 		Executable: python, RuntimeIdentity: testRuntimeIdentity,
 		MaxDocumentBytes: 1, MaxResponseBytes: 1, MaxPages: 1, Timeout: time.Second,
 	})
 	require.ErrorContains(t, err, "must not be a Python interpreter")
 
-	valid := Profile{
-		Executable: helperExecutable(t, "success"), RuntimeIdentity: testRuntimeIdentity,
-		MaxDocumentBytes: 1024, MaxResponseBytes: 1024, MaxPages: 2, Timeout: time.Second,
-	}
+	valid := testProfile(t, helperExecutable(t, "success"), time.Second, 1024)
 	for _, mutate := range []func(*Profile){
 		func(profile *Profile) { profile.Executable = "renderer" },
 		func(profile *Profile) { profile.RuntimeIdentity = "" },
@@ -260,7 +232,7 @@ func TestNewRejectsInterpreterAndInvalidBounds(t *testing.T) {
 
 func newTestProvider(t *testing.T, executable string, timeout time.Duration, maxResponse int64) *Provider {
 	t.Helper()
-	provider, err := New(Profile{
+	provider, err := newProfileForTest(t, Profile{
 		Executable: executable, RuntimeIdentity: testRuntimeIdentity,
 		MaxDocumentBytes: 1 << 20, MaxResponseBytes: maxResponse,
 		MaxPages: 10, Timeout: timeout,
@@ -301,11 +273,8 @@ func (ctx *cancelWhenCheckedContext) cancel() {
 
 func helperExecutable(t *testing.T, mode string) string {
 	t.Helper()
-	extension := filepath.Ext(testHelperBinary)
-	target := filepath.Join(filepath.Dir(testHelperBinary), "renderer-"+mode+extension)
-	data, err := os.ReadFile(testHelperBinary)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(target, data, 0o700))
+	target := filepath.Join(t.TempDir(), "renderer-"+mode)
+	require.NoError(t, os.WriteFile(target, []byte("synthetic executable fixture"), 0o700))
 	return target
 }
 
@@ -385,3 +354,19 @@ func pdfPageReferences(pageCount int) string {
 
 var _ document.AuthorizedUpload = (*testUpload)(nil)
 var _ io.ReadCloser = (*testUpload)(nil)
+
+func newProfileForTest(t *testing.T, profile Profile) (*Provider, error) {
+	t.Helper()
+	digest, err := isolate.HashExecutable(t.Context(), profile.Executable)
+	require.NoError(t, err)
+	profile.ExecutableSHA256 = digest
+	profile.Runner = &recordingRunner{identity: testRunnerIdentity}
+	return New(profile)
+}
+
+func testProfile(t *testing.T, executable string, timeout time.Duration, maxResponse int64) Profile {
+	t.Helper()
+	digest, err := isolate.HashExecutable(t.Context(), executable)
+	require.NoError(t, err)
+	return Profile{Executable: executable, ExecutableSHA256: digest, Runner: &recordingRunner{identity: testRunnerIdentity}, RuntimeIdentity: testRuntimeIdentity, MaxDocumentBytes: 1 << 20, MaxResponseBytes: maxResponse, MaxPages: 10, Timeout: timeout}
+}

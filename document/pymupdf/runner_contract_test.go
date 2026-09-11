@@ -1,12 +1,12 @@
-package trafilatura
+package pymupdf
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"go.kenn.io/docbank/document/isolate"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,7 +30,7 @@ func TestNewRequiresPinnedIsolatedRunnerAndExecutableDigest(t *testing.T) {
 	profile := Profile{
 		Executable: executable, ExecutableSHA256: hex.EncodeToString(digest[:]),
 		RuntimeIdentity: testRuntimeIdentity, Runner: &recordingRunner{identity: testRunnerIdentity},
-		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxUnits: 10, Timeout: time.Second,
+		MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20, MaxPages: 10, Timeout: time.Second,
 	}
 
 	_, err = New(profile)
@@ -42,7 +42,7 @@ func TestNewRequiresPinnedIsolatedRunnerAndExecutableDigest(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, provider.runner)
 	} else {
-		require.ErrorIs(t, err, ErrIsolationUnavailable)
+		require.ErrorIs(t, err, isolate.ErrIsolationUnavailable)
 	}
 
 	profile.Runner = &recordingRunner{identity: "mutable-latest"}
@@ -55,21 +55,21 @@ func TestNewRequiresPinnedIsolatedRunnerAndExecutableDigest(t *testing.T) {
 	require.ErrorContains(t, err, "executable SHA-256")
 
 	profile.ExecutableSHA256 = hex.EncodeToString(digest[:])
-	profile.RuntimeIdentity = "mutable-latest"
+	profile.RuntimeIdentity = ""
 	_, err = New(profile)
 	require.ErrorContains(t, err, "runtime identity")
 }
 
 func TestProviderDelegatesOnlyAnExactFailClosedIsolationRequest(t *testing.T) {
-	t.Setenv("DOCBANK_TRAFILATURA_AMBIENT_SECRET", "must-not-reach-runner")
+	t.Setenv("DOCBANK_PYMUPDF_AMBIENT_SECRET", "must-not-reach-runner")
 	executable := helperExecutable(t, "complete")
 	runner := &recordingRunner{identity: testRunnerIdentity}
 	profile := testProfile(t, executable, time.Second, 1<<20)
 	profile.Runner = runner
 	provider, err := New(profile)
 	require.NoError(t, err)
-	source := []byte(`<!doctype html><html><body><h1>Local title</h1><p>Local body</p><a href="https://private.example/a">link</a></body></html>`)
-	upload := newTestUpload(source, "article.html", "text/html")
+	source := testPDF(2)
+	upload := newTestUpload(source)
 
 	_, err = document.RenderRendition(t.Context(), provider, upload,
 		testAuthorization(provider.Descriptor(), upload.Metadata()))
@@ -82,11 +82,6 @@ func TestProviderDelegatesOnlyAnExactFailClosedIsolationRequest(t *testing.T) {
 		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC", "PYTHONHASHSEED=0",
 		"PYTHONNOUSERSITE=1", "PYTHONDONTWRITEBYTECODE=1",
 	}
-	if runtime.GOOS == "windows" {
-		if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
-			expectedEnvironment = append(expectedEnvironment, "SystemRoot="+systemRoot)
-		}
-	}
 	assert.Equal(t, expectedEnvironment, runner.request.Environment)
 	assert.NotContains(t, strings.Join(runner.request.Environment, "\n"), "must-not-reach-runner")
 	assert.Equal(t, filepath.Dir(executable), runner.request.Directory)
@@ -94,7 +89,7 @@ func TestProviderDelegatesOnlyAnExactFailClosedIsolationRequest(t *testing.T) {
 	stdinDigest := sha256.Sum256(source)
 	assert.Equal(t, hex.EncodeToString(stdinDigest[:]), runner.request.StdinSHA256)
 	assert.Equal(t, int64(1<<20), runner.request.MaxStdoutBytes)
-	assert.Equal(t, IsolationRequirements{
+	assert.Equal(t, isolate.IsolationRequirements{
 		NetworkDisabled: true, KillProcessTree: true, VerifyExecutableSHA256: true,
 	}, runner.request.Requirements)
 	require.Len(t, runner.request.PolicyFingerprint, 64)
@@ -103,20 +98,20 @@ func TestProviderDelegatesOnlyAnExactFailClosedIsolationRequest(t *testing.T) {
 func TestProviderRejectsIncompleteOrMismatchedIsolationAttestation(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
-		mutate func(*IsolationAttestation)
+		mutate func(*isolate.IsolationAttestation)
 	}{
-		{name: "runner identity", mutate: func(value *IsolationAttestation) { value.RunnerIdentity = testRuntimeIdentity }},
-		{name: "policy", mutate: func(value *IsolationAttestation) { value.PolicyFingerprint = strings.Repeat("0", 64) }},
-		{name: "executable", mutate: func(value *IsolationAttestation) { value.ExecutableSHA256 = strings.Repeat("0", 64) }},
-		{name: "stdin", mutate: func(value *IsolationAttestation) { value.StdinSHA256 = strings.Repeat("0", 64) }},
-		{name: "network", mutate: func(value *IsolationAttestation) { value.NetworkDisabled = false }},
-		{name: "process tree", mutate: func(value *IsolationAttestation) { value.ProcessTreeContained = false }},
-		{name: "digest launch", mutate: func(value *IsolationAttestation) { value.DigestVerifiedLaunch = false }},
+		{name: "runner identity", mutate: func(value *isolate.IsolationAttestation) { value.RunnerIdentity = testRuntimeIdentity }},
+		{name: "policy", mutate: func(value *isolate.IsolationAttestation) { value.PolicyFingerprint = strings.Repeat("0", 64) }},
+		{name: "executable", mutate: func(value *isolate.IsolationAttestation) { value.ExecutableSHA256 = strings.Repeat("0", 64) }},
+		{name: "stdin", mutate: func(value *isolate.IsolationAttestation) { value.StdinSHA256 = strings.Repeat("0", 64) }},
+		{name: "network", mutate: func(value *isolate.IsolationAttestation) { value.NetworkDisabled = false }},
+		{name: "process tree", mutate: func(value *isolate.IsolationAttestation) { value.ProcessTreeContained = false }},
+		{name: "digest launch", mutate: func(value *isolate.IsolationAttestation) { value.DigestVerifiedLaunch = false }},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			executable := helperExecutable(t, "complete")
 			runner := &recordingRunner{identity: testRunnerIdentity}
-			runner.run = func(ctx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error) {
+			runner.run = func(ctx context.Context, request isolate.IsolatedRunRequest) (isolate.IsolatedRunResult, error) {
 				result, err := defaultRun(ctx, runner.identity, request)
 				testCase.mutate(&result.Attestation)
 				return result, err
@@ -125,7 +120,7 @@ func TestProviderRejectsIncompleteOrMismatchedIsolationAttestation(t *testing.T)
 			profile.Runner = runner
 			provider, err := New(profile)
 			require.NoError(t, err)
-			upload := newTestUpload(testHTML, "article.html", "text/html")
+			upload := newTestUpload(testPDF(2))
 
 			_, err = provider.Render(t.Context(), upload,
 				testAuthorization(provider.Descriptor(), upload.Metadata()))
@@ -155,7 +150,7 @@ func TestProviderReverifiesExecutableAndRunnerIdentityBeforeEveryRun(t *testing.
 			provider, err := New(profile)
 			require.NoError(t, err)
 			testCase.mutate(t, executable, runner)
-			upload := newTestUpload(testHTML, "article.html", "text/html")
+			upload := newTestUpload(testPDF(2))
 
 			_, err = provider.Render(t.Context(), upload,
 				testAuthorization(provider.Descriptor(), upload.Metadata()))
@@ -168,15 +163,15 @@ func TestProviderReverifiesExecutableAndRunnerIdentityBeforeEveryRun(t *testing.
 func TestProviderFailsClosedWhenRunnerCannotEnforceIsolation(t *testing.T) {
 	executable := helperExecutable(t, "complete")
 	runner := &recordingRunner{identity: testRunnerIdentity, run: func(
-		context.Context, IsolatedRunRequest,
-	) (IsolatedRunResult, error) {
-		return IsolatedRunResult{}, errors.Join(ErrIsolationUnavailable, errors.New("private-runner-detail"))
+		context.Context, isolate.IsolatedRunRequest,
+	) (isolate.IsolatedRunResult, error) {
+		return isolate.IsolatedRunResult{}, errors.Join(isolate.ErrIsolationUnavailable, errors.New("private-runner-detail"))
 	}}
 	profile := testProfile(t, executable, time.Second, 1<<20)
 	profile.Runner = runner
 	provider, err := New(profile)
 	require.NoError(t, err)
-	upload := newTestUpload(testHTML, "article.html", "text/html")
+	upload := newTestUpload(testPDF(2))
 
 	_, err = provider.Render(t.Context(), upload,
 		testAuthorization(provider.Descriptor(), upload.Metadata()))
@@ -189,7 +184,7 @@ func TestProviderRequiresProcessTreeCleanupAttestationAfterRunnerCancellation(t 
 	renderCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runner := &recordingRunner{identity: testRunnerIdentity}
-	runner.run = func(ctx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error) {
+	runner.run = func(ctx context.Context, request isolate.IsolatedRunRequest) (isolate.IsolatedRunResult, error) {
 		cancel()
 		<-ctx.Done()
 		result := isolatedResult(runner.identity, request, nil)
@@ -200,7 +195,7 @@ func TestProviderRequiresProcessTreeCleanupAttestationAfterRunnerCancellation(t 
 	profile.Runner = runner
 	provider, err := New(profile)
 	require.NoError(t, err)
-	upload := newTestUpload(testHTML, "article.html", "text/html")
+	upload := newTestUpload(testPDF(2))
 
 	_, err = provider.Render(renderCtx, upload,
 		testAuthorization(provider.Descriptor(), upload.Metadata()))
@@ -211,15 +206,15 @@ func TestProviderRequiresProcessTreeCleanupAttestationAfterRunnerCancellation(t 
 func TestProviderConstrainsRunnerStdoutToAuthorizedTotalResultBytes(t *testing.T) {
 	executable := helperExecutable(t, "complete")
 	runner := &recordingRunner{identity: testRunnerIdentity, run: func(
-		context.Context, IsolatedRunRequest,
-	) (IsolatedRunResult, error) {
-		return IsolatedRunResult{}, ErrIsolationUnavailable
+		context.Context, isolate.IsolatedRunRequest,
+	) (isolate.IsolatedRunResult, error) {
+		return isolate.IsolatedRunResult{}, isolate.ErrIsolationUnavailable
 	}}
 	profile := testProfile(t, executable, time.Second, 1<<20)
 	profile.Runner = runner
 	provider, err := New(profile)
 	require.NoError(t, err)
-	upload := newTestUpload(testHTML, "article.html", "text/html")
+	upload := newTestUpload(testPDF(2))
 	authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
 	authorization.MaxTotalResultBytes = 128
 
@@ -231,13 +226,13 @@ func TestProviderConstrainsRunnerStdoutToAuthorizedTotalResultBytes(t *testing.T
 
 type recordingRunner struct {
 	identity string
-	request  *IsolatedRunRequest
-	run      func(context.Context, IsolatedRunRequest) (IsolatedRunResult, error)
+	request  *isolate.IsolatedRunRequest
+	run      func(context.Context, isolate.IsolatedRunRequest) (isolate.IsolatedRunResult, error)
 }
 
 func (runner *recordingRunner) Identity() string { return runner.identity }
 
-func (runner *recordingRunner) Run(ctx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error) {
+func (runner *recordingRunner) Run(ctx context.Context, request isolate.IsolatedRunRequest) (isolate.IsolatedRunResult, error) {
 	copied := request
 	copied.Arguments = append([]string(nil), request.Arguments...)
 	copied.Environment = append([]string(nil), request.Environment...)
@@ -249,91 +244,88 @@ func (runner *recordingRunner) Run(ctx context.Context, request IsolatedRunReque
 	return defaultRun(ctx, runner.identity, request)
 }
 
-func defaultRun(ctx context.Context, runnerIdentity string, request IsolatedRunRequest) (IsolatedRunResult, error) {
-	mode := strings.TrimSuffix(filepath.Base(request.Executable), filepath.Ext(request.Executable))
-	mode = strings.TrimPrefix(mode, "renderer-")
+func defaultRun(ctx context.Context, runnerIdentity string, request isolate.IsolatedRunRequest) (isolate.IsolatedRunResult, error) {
+	mode := strings.TrimPrefix(filepath.Base(request.Executable), "renderer-")
 	switch mode {
 	case "failure":
-		return isolatedResult(runnerIdentity, request, nil),
-			errors.Join(ErrChildFailed, errors.New("private-stderr-token"))
+		return isolatedResult(runnerIdentity, request, nil), errors.Join(isolate.ErrChildFailed, errors.New("private-stderr-token"))
 	case "wait":
 		<-ctx.Done()
 		return isolatedResult(runnerIdentity, request, nil), ctx.Err()
-	case "slow-complete":
-		select {
-		case <-ctx.Done():
-			return isolatedResult(runnerIdentity, request, nil), ctx.Err()
-		case <-time.After(40 * time.Millisecond):
-		}
 	case "unbounded-output":
-		return isolatedResult(runnerIdentity, request, nil), ErrChildOutputTooLarge
+		return isolatedResult(runnerIdentity, request, nil), isolate.ErrChildOutputTooLarge
+	case "oversized":
+		return isolatedResult(runnerIdentity, request, []byte(strings.Repeat("x", 2048))), nil
 	case "malformed":
 		return isolatedResult(runnerIdentity, request, []byte("{")), nil
 	}
 	digest := sha256.Sum256(request.Stdin)
-	value := response{ContractVersion: protocolVersion, RuntimeIdentity: testRuntimeIdentity,
-		SourceSHA256: hex.EncodeToString(digest[:]), SourceBytes: int64(len(request.Stdin)),
-		ExtractionComplete: true, ProvenanceComplete: new(false),
-		Units: []responseUnit{{Text: "Local title Local body"}},
+	type outputPage struct {
+		Number      int    `json:"number"`
+		Text        string `json:"text"`
+		EmptyReason string `json:"empty_reason,omitempty"`
 	}
-	if strings.Contains(string(request.Stdin), "link") {
-		value.Units[0].Text += " link"
+	response := struct {
+		ContractVersion string       `json:"contract_version"`
+		RuntimeIdentity string       `json:"runtime_identity"`
+		SourceSHA256    string       `json:"source_sha256"`
+		SourceBytes     int64        `json:"source_bytes"`
+		Complete        bool         `json:"complete"`
+		PageCount       int          `json:"page_count"`
+		Pages           []outputPage `json:"pages"`
+	}{
+		ContractVersion: protocolVersion, RuntimeIdentity: testRuntimeIdentity,
+		SourceSHA256: hex.EncodeToString(digest[:]), SourceBytes: int64(len(request.Stdin)),
+		Complete: true, PageCount: 2,
+	}
+	response.Pages = append(response.Pages,
+		outputPage{Number: 1, Text: "first page"},
+		outputPage{Number: 2, Text: "second page"},
+	)
+	if mode == "many-pages" {
+		const pages = 20_000
+		response.PageCount = pages
+		response.Pages = make([]outputPage, pages)
+		for index := range pages {
+			response.Pages[index] = outputPage{Number: index + 1, Text: "synthetic page text"}
+		}
 	}
 	switch mode {
-	case "degraded":
-		value.Units[0].Text = "Local title\n\nLocal body"
-	case "fetched":
-		value.Units[0].Text += " REMOTE_FETCH_TOKEN"
 	case "version-drift":
-		value.ContractVersion += ".next"
+		response.ContractVersion = "docbank-pymupdf/v2"
 	case "runtime-drift":
-		value.RuntimeIdentity = "sha256:" + strings.Repeat("c", 64)
+		response.RuntimeIdentity = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	case "source-hash-drift":
-		value.SourceSHA256 = strings.Repeat("c", 64)
+		response.SourceSHA256 = strings.Repeat("b", 64)
 	case "source-size-drift":
-		value.SourceBytes++
+		response.SourceBytes++
 	case "partial":
-		value.Units = append(value.Units, responseUnit{})
-	case "empty":
-		value.Units = nil
-	case "bad-heading":
-		value.Units[0].Heading = "Fetched heading"
-	case "complete-inexact":
-		value.Units[0].Text = "Local title"
-	case "extraction-incomplete":
-		value.ExtractionComplete = false
-	case "truncated-degraded":
-		value.Units[0].Text = "Local title"
-	case "structured":
-		value.ProvenanceComplete = new(true)
-		value.Units[0].SourcePath = "/html[1]/body[1]/section[1]"
-		value.Units[0].Heading = "Local title"
-	case "structured-path-drift":
-		value.ProvenanceComplete = new(true)
-		value.Units[0].SourcePath = "/html[1]/body[1]/section[2]"
-		value.Units[0].Heading = "Local title"
-	case "structured-boundary-drift":
-		value.ProvenanceComplete = new(true)
-		value.Units[0].SourcePath = "/html[1]/body[1]/section[1]"
-		value.Units[0].Heading = "Local title"
-		value.Units[0].Text = "Local title"
+		response.Complete = false
+	case "page-count-drift":
+		response.PageCount++
+	case "gap":
+		response.Pages[1].Number = 3
+	case "duplicate":
+		response.Pages[1].Number = 1
+	case "empty-unexplained":
+		response.Pages[0].Text = ""
+	case "empty-explained":
+		response.Pages[0].Text = ""
+		response.Pages[0].EmptyReason = "blank page"
 	}
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(response)
 	if err != nil {
-		return IsolatedRunResult{}, err
+		return isolate.IsolatedRunResult{}, err
 	}
 	if mode == "unknown-field" {
 		encoded = append(encoded[:len(encoded)-1], []byte(`,"unexpected":true}`)...)
 	}
-	if mode == "missing-provenance-complete" {
-		encoded = bytes.Replace(encoded, []byte(`,"provenance_complete":false`), nil, 1)
-	}
 	return isolatedResult(runnerIdentity, request, encoded), nil
 }
 
-func isolatedResult(runnerIdentity string, request IsolatedRunRequest, stdout []byte) IsolatedRunResult {
+func isolatedResult(runnerIdentity string, request isolate.IsolatedRunRequest, stdout []byte) isolate.IsolatedRunResult {
 	stdinDigest := sha256.Sum256(request.Stdin)
-	return IsolatedRunResult{Stdout: stdout, Attestation: IsolationAttestation{
+	return isolate.IsolatedRunResult{Stdout: stdout, Attestation: isolate.IsolationAttestation{
 		RunnerIdentity: runnerIdentity, PolicyFingerprint: request.PolicyFingerprint,
 		ExecutableSHA256: request.ExecutableSHA256, StdinSHA256: hex.EncodeToString(stdinDigest[:]),
 		NetworkDisabled: true, ProcessTreeContained: true, DigestVerifiedLaunch: true,
@@ -362,4 +354,28 @@ func TestNativeIdentityRotationChangesProviderDescriptor(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, old.Descriptor().PolicyFingerprint, current.Descriptor().PolicyFingerprint)
 	assert.NotEqual(t, old.Descriptor().Fingerprint, current.Descriptor().Fingerprint)
+}
+
+func TestProfileV2BindsImmutableExecutionAuthority(t *testing.T) {
+	profile := testProfile(t, helperExecutable(t, "success"), time.Second, 1024)
+	provider, err := New(profile)
+	require.NoError(t, err)
+	assert.Equal(t, "docbank-pymupdf-profile/v2", profileVersion)
+	for _, change := range []func(*Profile){
+		func(p *Profile) { p.Runner = &recordingRunner{identity: testRuntimeIdentity} },
+		func(p *Profile) { p.RuntimeIdentity += ".revision" },
+		func(p *Profile) { p.Executable = helperExecutable(t, "other") },
+	} {
+		changed := profile
+		change(&changed)
+		other, err := New(changed)
+		require.NoError(t, err)
+		assert.NotEqual(t, provider.Descriptor().PolicyFingerprint, other.Descriptor().PolicyFingerprint)
+	}
+	require.NoError(t, os.WriteFile(profile.Executable, []byte("synthetic replacement"), 0o700))
+	profile.ExecutableSHA256, err = isolate.HashExecutable(t.Context(), profile.Executable)
+	require.NoError(t, err)
+	other, err := New(profile)
+	require.NoError(t, err)
+	assert.NotEqual(t, provider.Descriptor().PolicyFingerprint, other.Descriptor().PolicyFingerprint)
 }

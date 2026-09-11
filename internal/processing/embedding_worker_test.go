@@ -639,6 +639,8 @@ type embeddingWorkerFakeCatalog struct {
 	failFinish                      error
 	failFailure                     error
 	events                          []string
+	reconcileRequests               []store.EmbeddingReconcileRequest
+	reconcileResults                []store.EmbeddingReconcileResult
 }
 
 func newEmbeddingWorkerFakeCatalog() *embeddingWorkerFakeCatalog {
@@ -650,10 +652,16 @@ func (c *embeddingWorkerFakeCatalog) enqueue(work ...EmbeddingWork) {
 	defer c.mu.Unlock()
 	c.queue = append(c.queue, work...)
 }
-func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(context.Context, store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(_ context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.events = append(c.events, "reconcile")
+	c.reconcileRequests = append(c.reconcileRequests, request)
+	if len(c.reconcileResults) != 0 {
+		result := c.reconcileResults[0]
+		c.reconcileResults = c.reconcileResults[1:]
+		return result, nil
+	}
 	return store.EmbeddingReconcileResult{}, nil
 }
 func (c *embeddingWorkerFakeCatalog) ClaimNextEmbeddingWork(_ context.Context, owner string, now time.Time, lease time.Duration) (EmbeddingWorkClaim, EmbeddingWork, bool, error) {
@@ -1059,4 +1067,27 @@ func receiptText(receipts []EmbeddingAttemptReceipt) string {
 		buffer.WriteString(receipt.FailureCode)
 	}
 	return buffer.String()
+}
+
+func TestEmbeddingWorkerBoundedScanPreservesIndependentCursors(t *testing.T) {
+	fixture := newEmbeddingWorkerFixture(t)
+	fixture.catalog.reconcileResults = []store.EmbeddingReconcileResult{{NextRenditionAttachment: "head-100", Incomplete: true}, {}, {}}
+	worker := fixture.worker(t)
+	worker.boundedReconciliation = true
+	for range 3 {
+		processed, err := worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		assert.Zero(t, processed)
+	}
+	requests := fixture.catalog.reconcileRequests
+	require.Len(t, requests, 3)
+	assert.Empty(t, requests[0].AfterRenditionAttachment)
+	assert.False(t, requests[0].SkipGenerations)
+	assert.False(t, requests[0].SkipRenditionHeads)
+	assert.Equal(t, "head-100", requests[1].AfterRenditionAttachment)
+	assert.True(t, requests[1].SkipGenerations)
+	assert.False(t, requests[1].SkipRenditionHeads)
+	assert.True(t, requests[2].SkipGenerations)
+	assert.True(t, requests[2].SkipRenditionHeads)
+	assert.True(t, worker.reconciliationIncomplete())
 }

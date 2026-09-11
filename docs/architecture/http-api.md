@@ -77,6 +77,8 @@ challenge proof over the upload secret before sending bytes, binds the socket
 to one session, and never reconnects it. An ordinary browser token is
 explicitly forbidden from `POST /api/v1/uploads`.
 
+Browser-session reads of nodes and paths omit the optional `source_metadata` object, including its fields, warnings and attachment provenance. Master-key reads retain the complete object. Browser sessions can list versions but cannot read version detail. This projection preserves paths, revisions, ETags and Store errors.
+
 `GET /nodes/{id}/children` binds the live directory projection—including its
 current canonical path—and the requested child page to one read transaction.
 Refresh clients therefore do not combine an earlier directory name with a

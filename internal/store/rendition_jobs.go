@@ -1013,21 +1013,12 @@ func (s *Store) finishRenditionJobClaim(
 	})
 }
 
-// RenditionPublicationTarget names one authorized version/profile attachment
-// that this publication made current.
-type RenditionPublicationTarget struct {
-	ContentVersionID   string
-	ProfileFingerprint string
-	AttachmentID       string
-}
-
 // RenditionJobPublication contains aggregate activation evidence only.
 type RenditionJobPublication struct {
 	JobID                string
 	LexicalGenerationID  string
 	PublishedWaiterCount int
 	RejectedWaiterCount  int
-	PublishedTargets     []RenditionPublicationTarget
 }
 
 // StageRenditionJobBuild atomically stages the immutable build, installs its
@@ -1225,7 +1216,6 @@ func (s *Store) PublishRenditionJob(
 		}
 		pairs := make([]renditionPublicationPair, 0, len(authorized))
 		publishedAt := at.UTC().Format(timestampLayout)
-		publishedTargets := make([]RenditionPublicationTarget, 0, len(authorized))
 		for _, authority := range authorized {
 			attachedAt := publishedAt
 			err := tx.QueryRowContext(ctx, `SELECT attached_at FROM rendition_attachments
@@ -1255,11 +1245,6 @@ func (s *Store) PublishRenditionJob(
 				publishedAt, authority.waiter.ID); err != nil {
 				return fmt.Errorf("publishing rendition waiter: %w", err)
 			}
-			publishedTargets = append(publishedTargets, RenditionPublicationTarget{
-				ContentVersionID:   authority.waiter.ContentVersionID,
-				ProfileFingerprint: authority.waiter.ProfileFingerprint,
-				AttachmentID:       authority.waiter.AttachmentID,
-			})
 		}
 		for _, waiter := range rejected {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
@@ -1283,7 +1268,6 @@ func (s *Store) PublishRenditionJob(
 		publication.LexicalGenerationID = generationID
 		publication.PublishedWaiterCount = len(authorized)
 		publication.RejectedWaiterCount = len(rejected)
-		publication.PublishedTargets = publishedTargets
 		return nil
 	})
 	if err != nil {

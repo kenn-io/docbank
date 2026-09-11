@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -21,14 +20,14 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/formatdetect"
+	"go.kenn.io/docbank/document/isolate"
 )
 
 const (
-	providerID       = "pymupdf.local-v1"
-	protocolVersion  = "docbank-pymupdf/v1"
-	profileVersion   = "docbank-pymupdf-profile/v1"
-	timestampForm    = "2006-01-02T15:04:05.000000000Z"
-	childDrainWindow = 250 * time.Millisecond
+	providerID      = "pymupdf.local-v1"
+	protocolVersion = "docbank-pymupdf/v1"
+	profileVersion  = "docbank-pymupdf-profile/v2"
+	timestampForm   = "2006-01-02T15:04:05.000000000Z"
 
 	// MaxDocumentBytes is the largest PDF accepted by a local provider profile.
 	MaxDocumentBytes = formatdetect.MaxDocumentBytes
@@ -41,13 +40,14 @@ const (
 )
 
 var (
-	errInputIdentity  = errors.New("authorized input identity changed")
-	errOutputTooLarge = errors.New("child output exceeds limit")
+	errInputIdentity = errors.New("authorized input identity changed")
 )
 
 // Profile fixes one executable, immutable runtime identity, and all local bounds.
 type Profile struct {
 	Executable       string
+	ExecutableSHA256 string
+	Runner           isolate.IsolatedRunner
 	RuntimeIdentity  string
 	MaxDocumentBytes int64
 	MaxResponseBytes int64
@@ -55,10 +55,14 @@ type Profile struct {
 	Timeout          time.Duration
 }
 
-// Provider renders authorized PDF bytes through one directly configured executable.
+// Provider renders authorized PDF bytes through one isolated local bridge.
 type Provider struct {
 	descriptor       document.RenditionDescriptor
 	executable       string
+	executableSHA256 string
+	runnerIdentity   string
+	runner           isolate.IsolatedRunner
+	environment      []string
 	runtimeIdentity  string
 	maxDocumentBytes int64
 	maxResponseBytes int64
@@ -81,7 +85,28 @@ func New(profile Profile) (*Provider, error) {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("pymupdf: executable must be a regular non-symlink file")
 	}
+	if info.Size() <= 0 || info.Size() > isolate.MaxExecutableBytes {
+		return nil, errors.New("pymupdf: executable size is outside the supported bound")
+	}
+	if err := validateSHA256(profile.ExecutableSHA256, "executable SHA-256"); err != nil {
+		return nil, err
+	}
+	executableDigest, err := isolate.HashExecutable(context.Background(), profile.Executable)
+	if err != nil || executableDigest != profile.ExecutableSHA256 {
+		return nil, errors.New("pymupdf: executable SHA-256 does not match configured content")
+	}
 	if err := validateRuntimeIdentity(profile.RuntimeIdentity); err != nil {
+		return nil, err
+	}
+	runner := profile.Runner
+	if runner == nil {
+		runner, err = isolate.NewNativeRunner()
+		if err != nil {
+			return nil, fmt.Errorf("pymupdf: native isolated runner: %w", err)
+		}
+	}
+	runnerIdentity := runner.Identity()
+	if err := validateImmutableIdentity(runnerIdentity, "runner identity"); err != nil {
 		return nil, err
 	}
 	if profile.MaxDocumentBytes <= 0 || profile.MaxDocumentBytes > MaxDocumentBytes {
@@ -96,8 +121,10 @@ func New(profile Profile) (*Provider, error) {
 	if profile.Timeout <= 0 || profile.Timeout > MaxTimeout {
 		return nil, fmt.Errorf("pymupdf: timeout must be between 1ns and %s", MaxTimeout)
 	}
+	environment := cleanEnvironment()
 	identity := strings.Join([]string{
-		profileVersion, protocolVersion, profile.Executable, profile.RuntimeIdentity,
+		profileVersion, protocolVersion, profile.Executable, profile.ExecutableSHA256,
+		profile.RuntimeIdentity, runnerIdentity, strings.Join(environment, "\x1f"),
 		strconv.FormatInt(profile.MaxDocumentBytes, 10), strconv.FormatInt(profile.MaxResponseBytes, 10),
 		strconv.Itoa(profile.MaxPages), strconv.FormatInt(int64(profile.Timeout), 10),
 	}, "\x00")
@@ -116,6 +143,7 @@ func New(profile Profile) (*Provider, error) {
 	}
 	return &Provider{
 		descriptor: cloneDescriptor(descriptor), executable: profile.Executable,
+		executableSHA256: profile.ExecutableSHA256, runnerIdentity: runnerIdentity, runner: runner, environment: slices.Clone(environment),
 		runtimeIdentity: profile.RuntimeIdentity, maxDocumentBytes: profile.MaxDocumentBytes,
 		maxResponseBytes: profile.MaxResponseBytes, maxPages: profile.MaxPages, timeout: profile.Timeout,
 	}, nil
@@ -197,26 +225,35 @@ func (provider *Provider) Render(
 			"PyMuPDF PDF exceeds the configured page limit", nil)
 	}
 
-	stdout := &boundedBuffer{limit: provider.maxResponseBytes}
-	command := exec.CommandContext( //nolint:gosec // the operator pins one direct executable; source bytes never select it
-		operationCtx, provider.executable, "--protocol", protocolVersion,
-	)
-	stdout.overflow = func() {
-		if command.Process != nil {
-			_ = command.Process.Kill()
+	if err := provider.reverifyExecutionBoundary(operationCtx); err != nil {
+		if operationCtx.Err() != nil {
+			return document.RenditionResult{}, provider.contextError(ctx, expiryDeadline, operationCtx.Err())
 		}
+		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected,
+			"PyMuPDF isolated runtime identity changed", err)
 	}
-	command.Dir = filepath.Dir(provider.executable)
-	command.Env = cleanEnvironment()
-	command.Stdin = bytes.NewReader(source)
-	command.Stdout = stdout
-	command.Stderr = io.Discard
-	command.WaitDelay = childDrainWindow
-	runErr := command.Run()
+	runnerInput := slices.Clone(source)
+	defer clear(runnerInput)
+	stdoutLimit := min(provider.maxResponseBytes, int64(authorization.MaxTotalResultBytes))
+	request := provider.isolatedRequest(runnerInput, stdoutLimit)
+	runResult, runErr := provider.runner.Run(operationCtx, request)
+	defer func() { clear(runResult.Stdout) }()
+	if errors.Is(runErr, isolate.ErrCanceledBeforeLaunch) && operationCtx.Err() != nil {
+		return document.RenditionResult{}, provider.contextError(ctx, expiryDeadline, operationCtx.Err())
+	}
+	if errors.Is(runErr, isolate.ErrIsolationUnavailable) {
+		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected,
+			"PyMuPDF isolation policy could not be enforced", runErr)
+	}
+	if err := provider.validateAttestation(request, runResult.Attestation); err != nil {
+		clear(runResult.Stdout)
+		return document.RenditionResult{}, providerError(document.RenditionErrorPolicyRejected,
+			"PyMuPDF isolation attestation is invalid", err)
+	}
 	if operationCtx.Err() != nil {
 		return document.RenditionResult{}, provider.contextError(ctx, expiryDeadline, operationCtx.Err())
 	}
-	if stdout.exceeded {
+	if errors.Is(runErr, isolate.ErrChildOutputTooLarge) {
 		return document.RenditionResult{}, providerError(document.RenditionErrorMalformedEvidence,
 			"PyMuPDF output exceeds the configured byte limit", nil)
 	}
@@ -224,8 +261,16 @@ func (provider *Provider) Render(
 		return document.RenditionResult{}, providerError(document.RenditionErrorTransient,
 			"PyMuPDF executable failed", runErr)
 	}
+	if int64(len(runResult.Stdout)) > request.MaxStdoutBytes {
+		return document.RenditionResult{}, providerError(document.RenditionErrorMalformedEvidence,
+			"PyMuPDF output exceeds the configured byte limit", nil)
+	}
+	raw := runResult.Stdout
+	if err := provider.postProcessError(ctx, operationCtx, deadline, expiryDeadline); err != nil {
+		return document.RenditionResult{}, err
+	}
 
-	wire, err := parseResponse(stdout.Bytes(), provider.runtimeIdentity, metadata, int(localPages), provider.maxPages)
+	wire, err := parseResponse(raw, provider.runtimeIdentity, metadata, int(localPages), provider.maxPages)
 	if err != nil {
 		return document.RenditionResult{}, providerError(document.RenditionErrorMalformedEvidence,
 			"PyMuPDF output is malformed", err)
@@ -269,7 +314,7 @@ func (provider *Provider) Render(
 			OperationID: "pymupdf-" + authorization.RenditionRequestFingerprint[:24],
 			StartedAt:   startedAt.Format(timestampForm), CompletedAt: completedAt.Format(timestampForm),
 			Usage: document.RenditionUsage{
-				Requests: 1, InputBytes: metadata.ByteLength, OutputBytes: int64(stdout.Len()), Units: localPages,
+				Requests: 1, InputBytes: metadata.ByteLength, OutputBytes: int64(len(raw)), Units: localPages,
 			},
 		},
 	}
@@ -364,42 +409,6 @@ func readExact(ctx context.Context, reader io.Reader, expected, maximum int64) (
 		case read == 0:
 			return nil, io.ErrNoProgress
 		}
-	}
-}
-
-type boundedBuffer struct {
-	data     bytes.Buffer
-	limit    int64
-	exceeded bool
-	overflow func()
-}
-
-func (buffer *boundedBuffer) Write(data []byte) (int, error) {
-	remaining := buffer.limit - int64(buffer.data.Len())
-	if remaining <= 0 {
-		buffer.failOverflow()
-		return 0, errOutputTooLarge
-	}
-	if int64(len(data)) > remaining {
-		written, _ := buffer.data.Write(data[:remaining])
-		buffer.failOverflow()
-		return written, errOutputTooLarge
-	}
-	written, _ := buffer.data.Write(data)
-	return written, nil
-}
-
-func (buffer *boundedBuffer) Bytes() []byte { return buffer.data.Bytes() }
-
-func (buffer *boundedBuffer) Len() int { return buffer.data.Len() }
-
-func (buffer *boundedBuffer) failOverflow() {
-	if buffer.exceeded {
-		return
-	}
-	buffer.exceeded = true
-	if buffer.overflow != nil {
-		buffer.overflow()
 	}
 }
 
@@ -498,3 +507,64 @@ func cloneDescriptor(value document.RenditionDescriptor) document.RenditionDescr
 }
 
 var _ document.RenditionProvider = (*Provider)(nil)
+
+func (provider *Provider) isolatedRequest(stdin []byte, maxStdoutBytes int64) isolate.IsolatedRunRequest {
+	arguments := []string{"--protocol", protocolVersion}
+	environment := slices.Clone(provider.environment)
+	requirements := isolate.IsolationRequirements{
+		NetworkDisabled: true, KillProcessTree: true, VerifyExecutableSHA256: true,
+	}
+	stdinDigest := sha256.Sum256(stdin)
+	stdinSHA256 := hex.EncodeToString(stdinDigest[:])
+	request := isolate.IsolatedRunRequest{
+		Executable: provider.executable, ExecutableSHA256: provider.executableSHA256,
+		Arguments: arguments, Environment: environment, Directory: filepath.Dir(provider.executable),
+		Stdin: stdin, StdinSHA256: stdinSHA256, MaxStdoutBytes: maxStdoutBytes,
+		Requirements: requirements,
+	}
+	request.PolicyFingerprint = isolate.RequestPolicyFingerprint(provider.runnerIdentity, request)
+	return request
+}
+
+func (provider *Provider) reverifyExecutionBoundary(ctx context.Context) error {
+	if provider.runner == nil || provider.runner.Identity() != provider.runnerIdentity {
+		return errors.New("isolated runner identity changed")
+	}
+	digest, err := isolate.HashExecutable(ctx, provider.executable)
+	if err != nil || digest != provider.executableSHA256 {
+		return errors.New("executable content changed")
+	}
+	return nil
+}
+
+func (provider *Provider) validateAttestation(
+	request isolate.IsolatedRunRequest, attestation isolate.IsolationAttestation,
+) error {
+	stdinDigest := sha256.Sum256(request.Stdin)
+	if attestation.RunnerIdentity != provider.runnerIdentity ||
+		attestation.PolicyFingerprint != request.PolicyFingerprint ||
+		attestation.ExecutableSHA256 != provider.executableSHA256 ||
+		request.StdinSHA256 != hex.EncodeToString(stdinDigest[:]) || attestation.StdinSHA256 != request.StdinSHA256 ||
+		!attestation.NetworkDisabled || !attestation.ProcessTreeContained || !attestation.DigestVerifiedLaunch {
+		return errors.New("isolated runner did not attest the exact required policy")
+	}
+	return nil
+}
+
+func validateImmutableIdentity(value, subject string) error {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+sha256.Size*2 {
+		return fmt.Errorf("pymupdf: %s must be an immutable sha256 identity", subject)
+	}
+	return validateSHA256(strings.TrimPrefix(value, "sha256:"), subject)
+}
+
+func validateSHA256(value, subject string) error {
+	if len(value) != sha256.Size*2 {
+		return fmt.Errorf("pymupdf: %s must be a lowercase SHA-256 digest", subject)
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || hex.EncodeToString(decoded) != value {
+		return fmt.Errorf("pymupdf: %s must be a lowercase SHA-256 digest", subject)
+	}
+	return nil
+}

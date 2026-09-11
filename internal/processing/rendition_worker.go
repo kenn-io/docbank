@@ -218,7 +218,6 @@ type RenditionWorkerConfig struct {
 	Blobs               renditionBlobWriter
 	Runtime             RenditionRuntime
 	Gate                RenditionMutationGate
-	Continuation        func(context.Context, []store.RenditionPublicationTarget) error
 	ProfileFingerprint  string
 	ProfileFingerprints []string
 	Owner               string
@@ -234,9 +233,6 @@ type RenditionWorker struct {
 	blobs               renditionBlobWriter
 	runtime             RenditionRuntime
 	gate                RenditionMutationGate
-	continuation        func(context.Context, []store.RenditionPublicationTarget) error
-	continuationMu      sync.Mutex
-	continuationTargets []store.RenditionPublicationTarget
 	profileFingerprint  string
 	profileFingerprints []string
 	owner               string
@@ -314,7 +310,7 @@ func NewRenditionWorker(config RenditionWorkerConfig) (*RenditionWorker, error) 
 	}
 	return &RenditionWorker{
 		catalog: config.Catalog, blobs: config.Blobs, runtime: config.Runtime,
-		gate: config.Gate, continuation: config.Continuation,
+		gate:                config.Gate,
 		profileFingerprint:  config.ProfileFingerprint,
 		profileFingerprints: slices.Clone(config.ProfileFingerprints),
 		owner:               config.Owner, leaseDuration: config.LeaseDuration,
@@ -373,11 +369,6 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
 		err = renditionWorkerFatal(err)
 	}
-	if err == nil {
-		if continuationErr := worker.runContinuation(ctx); continuationErr != nil {
-			err = continuationErr
-		}
-	}
 	return processed, err
 }
 
@@ -407,32 +398,7 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
 		err = renditionWorkerFatal(err)
 	}
-	if err == nil {
-		if continuationErr := worker.runContinuation(ctx); continuationErr != nil {
-			err = continuationErr
-		}
-	}
 	return processed, err
-}
-
-func (worker *RenditionWorker) recordContinuationTargets(targets []store.RenditionPublicationTarget) {
-	worker.continuationMu.Lock()
-	defer worker.continuationMu.Unlock()
-	worker.continuationTargets = append(worker.continuationTargets, targets...)
-}
-
-func (worker *RenditionWorker) runContinuation(ctx context.Context) error {
-	worker.continuationMu.Lock()
-	targets := slices.Clone(worker.continuationTargets)
-	worker.continuationTargets = nil
-	worker.continuationMu.Unlock()
-	if worker.continuation == nil || len(targets) == 0 {
-		return nil
-	}
-	if err := worker.continuation(ctx, targets); err != nil {
-		return &renditionWorkerRetryableError{cause: err}
-	}
-	return nil
 }
 
 // runOneUnderGate keeps the operation order gate -> blob coordinator ->
@@ -781,17 +747,13 @@ func (worker *RenditionWorker) stageGenerationAndPublish(
 	}); err != nil {
 		return err
 	}
-	var publication store.RenditionJobPublication
 	err := worker.retryCatalog(ctx, func() error {
 		var publishErr error
-		publication, publishErr = worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
+		_, publishErr = worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
 		return publishErr
 	})
 	if err := worker.classifyPublicationError(ctx, claim, err); err != nil {
 		return err
-	}
-	if len(publication.PublishedTargets) != 0 {
-		worker.recordContinuationTargets(publication.PublishedTargets)
 	}
 	return nil
 }

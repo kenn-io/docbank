@@ -51,6 +51,8 @@ Auth-exempt health, ping, docs, and OpenAPI routes establish discovery and
 contract access only. Every data route and the hidden shutdown route requires
 the effective key; shutdown additionally requires its token.
 
+Browser-session node and path responses omit the entire optional `source_metadata` object, including ordinary fields, sensitive claims, warnings, checksums and attachment provenance. The mapper uses authentication middleware context after the Store lookup, so Store validation errors retain their existing response. Master-key and direct Store reads retain complete validated metadata. Browser version detail remains forbidden; version listing remains allowed and metadata-free. Other node fields, paths and ETags keep their existing meaning.
+
 ## Node identity, paths, and revisions
 
 Node IDs are stable. Paths are mutable names that can be reused. Single-node

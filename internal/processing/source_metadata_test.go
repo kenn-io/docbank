@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +18,33 @@ import (
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
+
+func TestSourceMetadataReceivedOversizePublication(t *testing.T) {
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "metadata.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	payload := []byte("From: synthetic@example.test\r\nReceived: " + strings.Repeat("x", document.MaxSourceMetadataValueBytes+1) + "\r\nReceived: valid sibling\r\n\r\nbody")
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic.eml", processingHash("a1"), int64(len(payload)), "message/rfc822")
+	require.NoError(t, err)
+	reader := &sourceMetadataReaderStub{payload: payload}
+	completed, err := BackfillSourceMetadata(t.Context(), catalog, reader, 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	view, err := catalog.ContentVersionSourceMetadata(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	for _, field := range view.Metadata.Fields {
+		if field.Key == "email.received" {
+			assert.Equal(t, []string{"valid sibling"}, field.Value.Strings)
+		}
+	}
+	assert.Contains(t, view.Metadata.Warnings, sourceWarning("value_too_large", "email", "Received", "embedded value was omitted"))
+	targets, err := catalog.MissingSourceMetadataTargets(t.Context(), SourceMetadataExtractorFingerprint, 10)
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+	completed, err = BackfillSourceMetadata(t.Context(), catalog, reader, 10)
+	require.NoError(t, err)
+	assert.Zero(t, completed)
+}
 
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 	ooxml := syntheticOOXML(t)
@@ -317,3 +345,58 @@ func (r *verifiedSourceMetadataReader) Verified() bool { return r.closeErr == ni
 func (r *verifiedSourceMetadataReader) Verify() error  { return r.closeErr }
 
 var _ packstore.VerifiedReadCloser = (*verifiedSourceMetadataReader)(nil)
+
+func TestSourceMetadataListValueBounds(t *testing.T) {
+	maximum := strings.Repeat("x", document.MaxSourceMetadataValueBytes)
+	oversized := maximum + "x"
+	many := make([]string, 258)
+	for index := range many {
+		many[index] = "valid"
+	}
+	for index := range 4 {
+		many[index] = oversized
+	}
+	for _, test := range []struct {
+		name    string
+		values  []string
+		want    int
+		warning string
+	}{
+		{"exact byte bound", []string{maximum}, 1, ""},
+		{"oversized sibling", []string{oversized, "valid"}, 1, "value_too_large"},
+		{"UTF8 exact bytes", []string{strings.Repeat("\u00e9", document.MaxSourceMetadataValueBytes/2)}, 1, ""},
+		{"UTF8 oversized bytes", []string{strings.Repeat("\u00e9", document.MaxSourceMetadataValueBytes/2) + "x", "valid"}, 1, "value_too_large"},
+		{"trim before bounds", []string{" " + maximum + " "}, 1, ""},
+		{"invalid UTF8", []string{"\xff", "valid"}, 1, "invalid_utf8"},
+		{"all invalid", []string{"\xff", oversized, " "}, 0, "value_too_large"},
+		{"survivors before count", many, 254, "value_too_large"},
+		{"too many valid entries", append(many[4:], "valid", "valid", "valid"), 0, "value_too_large"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := emptySourceMetadata()
+			collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
+			collector.strings("email.received", "email", "Received", test.values)
+			if test.want == 0 {
+				assert.Empty(t, metadata.Fields)
+			} else {
+				require.Len(t, metadata.Fields, 1)
+				assert.Len(t, metadata.Fields[0].Value.Strings, test.want)
+			}
+			if test.warning != "" {
+				assert.Contains(t, sourceMetadataWarningCodes(metadata), test.warning)
+			} else {
+				assert.Empty(t, metadata.Warnings)
+			}
+			_, _, err := document.MarshalSourceMetadataV1(metadata)
+			require.NoError(t, err)
+		})
+	}
+	scalar, list := emptySourceMetadata(), emptySourceMetadata()
+	(&metadataCollector{record: &scalar, seen: map[string]bool{}}).string("title", "email", "Received", oversized, false)
+	(&metadataCollector{record: &list, seen: map[string]bool{}}).strings("title", "email", "Received", []string{oversized})
+	assert.Equal(t, scalar.Warnings, list.Warnings)
+	require.Equal(t, "a17825870bd580fb0fb802f50c22612b095ba76b2bc47565f6b40af76ff53058", SourceMetadataExtractorFingerprint)
+	direct := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "email.received", Namespace: "email", SourceField: "Received", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{oversized, "valid"}}}}}
+	_, _, err := document.MarshalSourceMetadataV1(direct)
+	require.ErrorContains(t, err, "value is too large")
+}

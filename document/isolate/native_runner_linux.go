@@ -1,6 +1,6 @@
 //go:build linux
 
-package trafilatura
+package isolate
 
 import (
 	"bytes"
@@ -8,12 +8,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"sync"
 	"syscall"
@@ -23,13 +23,13 @@ import (
 )
 
 const (
-	nativeRunnerIdentity   = "sha256:4fb9848ec9197e12848559df3002bd39ceaa0377ae994bc8fbe9c8f082288d9e"
 	nativeChildDrainWindow = 250 * time.Millisecond
 )
 
 type nativeRunner struct{}
 
-func newNativeRunner() (IsolatedRunner, error) {
+// NewNativeRunner selects native isolation or refuses an unsupported host.
+func NewNativeRunner() (IsolatedRunner, error) {
 	return nativeRunner{}, nil
 }
 
@@ -44,17 +44,17 @@ func (runner nativeRunner) Run(
 		return IsolatedRunResult{}, ErrIsolationUnavailable
 	}
 	if err := ctx.Err(); err != nil {
-		return IsolatedRunResult{}, errors.Join(errNativeCanceledBeforeLaunch, err)
+		return IsolatedRunResult{}, errors.Join(ErrCanceledBeforeLaunch, err)
 	}
 	executable, err := openVerifiedExecutable(ctx, request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return IsolatedRunResult{}, errors.Join(errNativeCanceledBeforeLaunch, ctx.Err())
+			return IsolatedRunResult{}, errors.Join(ErrCanceledBeforeLaunch, ctx.Err())
 		}
 		return IsolatedRunResult{}, ErrIsolationUnavailable
 	}
 	defer func() { _ = executable.Close() }()
-	control, launchToken, err := openNativeLaunchControl()
+	control, launchToken, err := openNativeLaunchControl(request)
 	if err != nil {
 		return IsolatedRunResult{}, ErrIsolationUnavailable
 	}
@@ -66,12 +66,12 @@ func (runner nativeRunner) Run(
 	defer func() { _ = statusReader.Close() }()
 	defer func() { _ = statusWriter.Close() }()
 	if err := ctx.Err(); err != nil {
-		return IsolatedRunResult{}, errors.Join(errNativeCanceledBeforeLaunch, err)
+		return IsolatedRunResult{}, errors.Join(ErrCanceledBeforeLaunch, err)
 	}
 
 	output := &nativeBoundedOutput{limit: request.MaxStdoutBytes}
 	command := exec.Command( //nolint:gosec // request validation fixes the executable fd and complete argument vector
-		"/proc/self/exe", nativeLauncherMarker, launchToken, request.Executable,
+		"/proc/self/exe", nativeLauncherMarker, launchToken,
 	)
 	command.Dir = request.Directory
 	command.Env = slices.Clone(request.Environment)
@@ -140,23 +140,30 @@ func classifyNativeRunError(runErr error, launcherFailed bool) error {
 	return nil
 }
 
-func openNativeLaunchControl() (*os.File, string, error) {
+func openNativeLaunchControl(request IsolatedRunRequest) (*os.File, string, error) {
 	token := make([]byte, nativeLauncherTokenBytes)
 	if _, err := rand.Read(token); err != nil {
 		return nil, "", fmt.Errorf("create launcher token: %w", err)
 	}
-	fd, err := unix.MemfdCreate("docbank-trafilatura-launch", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+	fd, err := unix.MemfdCreate("docbank-isolate-launch", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
 	if err != nil {
 		return nil, "", fmt.Errorf("create launcher control: %w", err)
 	}
-	file := os.NewFile(uintptr(fd), "docbank-trafilatura-launch")
+	file := os.NewFile(uintptr(fd), "docbank-isolate-launch")
 	valid := false
 	defer func() {
 		if !valid {
 			_ = file.Close()
 		}
 	}()
-	if _, err := file.Write(token); err != nil {
+	record := nativeLaunchRecord{Token: hex.EncodeToString(token), Executable: request.Executable,
+		Arguments: slices.Clone(request.Arguments), Environment: slices.Clone(request.Environment),
+		ExecutableFD: nativeLauncherExecutableFD, ControlFD: nativeLauncherControlFD, StatusFD: nativeLauncherStatusFD}
+	encoded, err := json.Marshal(record)
+	if err != nil || len(encoded) > nativeLauncherMaxControlBytes {
+		return nil, "", errors.New("invalid launcher control")
+	}
+	if _, err := file.Write(encoded); err != nil {
 		return nil, "", err
 	}
 	seals := unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
@@ -170,25 +177,6 @@ func openNativeLaunchControl() (*os.File, string, error) {
 	return file, hex.EncodeToString(token), nil
 }
 
-func validateNativeRequest(request IsolatedRunRequest) error {
-	stdinDigest := sha256.Sum256(request.Stdin)
-	if !filepath.IsAbs(request.Executable) || filepath.Clean(request.Executable) != request.Executable ||
-		request.Directory != filepath.Dir(request.Executable) ||
-		!slices.Equal(request.Arguments, []string{"--protocol", protocolVersion}) ||
-		!slices.Equal(request.Environment, cleanEnvironment()) ||
-		request.StdinSHA256 != hex.EncodeToString(stdinDigest[:]) ||
-		request.MaxStdoutBytes <= 0 || request.MaxStdoutBytes > MaxResponseBytes ||
-		!request.Requirements.NetworkDisabled || !request.Requirements.KillProcessTree ||
-		!request.Requirements.VerifyExecutableSHA256 ||
-		request.PolicyFingerprint != isolationRequestPolicyFingerprint(nativeRunnerIdentity, request) {
-		return errors.New("native isolation request is outside the fixed policy")
-	}
-	if err := validateSHA256(request.ExecutableSHA256, "executable SHA-256"); err != nil {
-		return err
-	}
-	return nil
-}
-
 func openVerifiedExecutable(ctx context.Context, request IsolatedRunRequest) (*os.File, error) {
 	source, err := os.Open(request.Executable)
 	if err != nil {
@@ -199,11 +187,11 @@ func openVerifiedExecutable(ctx context.Context, request IsolatedRunRequest) (*o
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > MaxExecutableBytes {
 		return nil, errors.New("executable identity is outside the supported bound")
 	}
-	fd, err := unix.MemfdCreate("docbank-trafilatura", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+	fd, err := unix.MemfdCreate("docbank-isolate", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
 	if err != nil {
 		return nil, fmt.Errorf("create sealed executable: %w", err)
 	}
-	file := os.NewFile(uintptr(fd), "docbank-trafilatura")
+	file := os.NewFile(uintptr(fd), "docbank-isolate")
 	valid := false
 	defer func() {
 		if !valid {
