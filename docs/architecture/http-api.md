@@ -547,6 +547,31 @@ Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: ingest-run collections
 
+`GET /api/v1/collections/{id}/quality` returns a current aggregate receipt with
+the collection, `source_fingerprint`, dimensions, zero-byte and mismatch counts,
+duplicate-document counts, and descriptive concentrations. Optional `fields`
+accepts at most seven distinct comma-separated names: `extension`, `media_type`,
+`media_family`, `modified_month`, `size`, `text_coverage`, and `duplicates`.
+The default includes all seven. Unknown or repeated fields return 422.
+
+List, detail, members, and quality accept `profile=<configured name>` and include
+the same `coverage` object. One profile is selected automatically; no profiles
+returns `unconfigured`, and multiple without a choice returns `profile_required`.
+These unavailable states have null counts. An unknown name returns 422.
+Configured coverage includes the selected name and fingerprint, active generation,
+and complete, partial, failed, unprocessed, and none counts over current members.
+Selection identifies policy, not runtime readiness. Retained active output wins
+over a later failed attempt; source hashes alone cannot transfer profile authority.
+
+Quality uses one source snapshot, bounded to 250,000 members, 64 MiB of projected
+census data, and five seconds. Size bounds return 413 `quality_too_large`;
+interruption or timeout returns 503 `quality_unavailable`, not partial results.
+Frequency dimensions retain the top 50 values with missing and other counts.
+Duplicate membership is vault-wide current content, counted within this collection.
+Concentrations require at least ten members and 80% of the collection.
+The server caches at most 64 aggregate receipts and 8 MiB for ten seconds, checking
+a fresh source fingerprint before every hit. No document bodies enter the cache.
+
 A collection is an immutable ingest-run identity with live document
 membership. It is not a folder: moving or renaming a member leaves its run
 identity intact. Membership excludes caller-supplied `embedded:` provenance,

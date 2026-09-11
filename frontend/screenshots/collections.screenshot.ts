@@ -57,7 +57,7 @@ test("import collections, label conflicts and stable document navigation", async
     const drawer = page.getByRole("dialog", { name: "Import collections" });
     await drawer.getByRole("button", { name: "Browse collection Discovery batch", exact: true }).click();
     await expect(drawer.getByRole("button", { name: "Open document /Discovery/review-notes.txt", exact: true })).toBeVisible();
-    await expect(drawer.getByText(/Quality.*unavailable/i)).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Inspect collection quality", exact: true })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Collection label", exact: true }).fill("Proposal review");
     await drawer.getByRole("button", { name: "Save label", exact: true }).click();
     await expect(drawer.getByRole("button", { name: "Browse collection Proposal review", exact: true })).toBeVisible();
@@ -79,9 +79,24 @@ test("import collections, label conflicts and stable document navigation", async
     await expect(drawer.getByRole("button", { name: "Clear label", exact: true })).toBeEnabled();
     await drawer.getByRole("button", { name: "Clear label", exact: true }).click();
     await expect.poll(async () => (await (await api(labelRoute)).json()).label).toBeNull();
+    await drawer.getByRole("button", { name: "Inspect collection quality", exact: true }).click();
+    const quality = drawer.getByRole("region", { name: "Collection quality" });
+    await expect(quality.getByText("Processing is not configured.")).toBeVisible();
+    await expect(quality.getByText(/Zero-byte documents: 0/)).toBeVisible();
+    await quality.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(screenshots, "web-collection-quality.png"), animations: "disabled" });
+    await quality.getByRole("checkbox", { name: "Include extension txt", exact: true }).check();
+    await quality.getByRole("button", { name: "New query for selected extension", exact: true }).click();
+    const editor = page.getByRole("region", { name: "Query editor" });
+    await expect(editor).toBeVisible();
+    await expect(editor.getByRole("textbox", { name: "Query expression", exact: true })).toHaveValue('(extension:"txt")');
+    await expect(editor.getByRole("button", { name: "Run query", exact: true })).toBeDisabled();
+    await page.screenshot({ path: path.join(screenshots, "web-collection-quality-suggestion.png"), animations: "disabled" });
+    await page.getByRole("button", { name: "Import collections", exact: true }).click();
+    await drawer.getByRole("button", { name: `Browse collection Unlabeled import ${collectionID.slice(0, 8)}`, exact: true }).click();
     await drawer.getByRole("button", { name: "Open document /Discovery/review-notes.txt", exact: true }).click();
     await expect(drawer).not.toBeVisible();
-    await expect(page.getByRole("cell", { name: /review-notes\.txt/ })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "review-notes.txt", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "review-notes.txt", exact: true })).toBeVisible();
   } finally {
     await run("daemon", "stop");

@@ -1664,6 +1664,7 @@
         onclose={() => (collectionsOpen = false)}
         onauthfailure={handleFailure}
         onopenmember={openCollectionMember}
+        onqualityquery={(query) => {openQueryEditor(query);collectionsOpen=false;}}
         onnewquery={(id) => {
           openQueryEditor(parseQuery(JSON.stringify({filters:{collection_ids:[id]}})));
           collectionsOpen = false;

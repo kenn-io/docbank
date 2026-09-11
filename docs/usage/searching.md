@@ -219,6 +219,12 @@ open in the same editor; an import collection can start a new collection-scoped
 draft. Text, facets, mode, and sort remain together when saved or kept in the
 URL. Closing the editor does not discard the draft.
 
+Collection quality can also open a scoped draft from selected distribution
+values. For example, selecting `pdf` and `txt` extensions creates
+`(extension:"pdf" OR extension:"txt")` with the collection identity retained
+as a structured filter. Suggestions require an explicit action and leave live
+search unchanged.
+
 The editor validates intent only. It never sends an unsupported query through
 ordinary live search with constraints removed. **Run query** is unavailable
 until a route can honor the full query contract.

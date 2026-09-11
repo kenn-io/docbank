@@ -255,7 +255,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if collectionID, resource, ok := collectionResourcePath(path); ok && collectionID != "" {
-		return resource == "" || resource == "members" || resource == "label"
+		return resource == "" || resource == "members" || resource == "label" || resource == "quality"
 	}
 	if path == "/api/v1/trash" {
 		// The master API retains the released unbounded form, but a browser

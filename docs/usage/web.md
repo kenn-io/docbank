@@ -496,9 +496,23 @@ authority has been enabled.
 Collection and member lists show at most 100 entries each. Empty groups,
 failed reads, and truncated lists are reported separately; use the paginated
 HTTP API to browse beyond that limit. This is direct member browsing, not
-a collection-filtered text search. Processing quality and coverage are
-unavailable here; the drawer does not treat missing coverage as zero failures
-or complete processing.
+a collection-filtered text search.
+
+Choose **Inspect collection quality** for document distributions, duplicate
+content counts, zero-byte files, media/extension mismatches, and text coverage.
+With multiple processing profiles, choose one before reading coverage. Without
+a configured profile, coverage is unavailable, not zero failures or complete
+processing. A configured policy does not mean an extraction adapter is running.
+
+Coverage distinguishes complete, partial, failed, unprocessed, and activated
+output with no text. Retained searchable output takes precedence over a failed
+retry. The existing worker rejects blank provider output as a failed attempt.
+Quality reads are bounded to 250,000 members, a 64 MiB census, and five seconds;
+an exceeded limit returns an error, never a partial successful summary.
+
+Select distribution values and choose **New query** to open a collection-scoped
+draft. Multiple selected values use OR. This does not change live results or
+execute a search. Concentrations describe common values, not document defects.
 
 ## Browser authentication
 
