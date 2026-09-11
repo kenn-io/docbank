@@ -267,6 +267,97 @@ func TestEmbeddedProcessingWaitsForSharedRenditionAndHonorsCancellation(t *testi
 	require.Equal(t, "completed", status.State)
 }
 
+func TestEmbeddedProcessingRequiresOwnRenditionPublication(t *testing.T) {
+	for _, chunks := range []bool{false, true} {
+		for _, trash := range []bool{false, true} {
+			t.Run(fmt.Sprintf("chunks=%t/trash=%t", chunks, trash), func(t *testing.T) {
+				base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+				require.NoError(t, err)
+				provider := &waitingRenditionProvider{RenditionProvider: base, started: make(chan struct{}), release: make(chan struct{})}
+				release := sync.OnceFunc(func() { close(provider.release) })
+				embedding := newSyntheticEmbeddingProvider(t)
+				config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}
+				if chunks {
+					config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"chunks": embedding}
+					config.Tokenizers = map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}
+				}
+				root := t.TempDir()
+				vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				requests := make([]docbank.StartProcessingRequest, 2)
+				for i := range requests {
+					receipt, err := vault.Put(t.Context(), fmt.Sprintf("/source-%d.txt", i), strings.NewReader("synthetic shared source"), docbank.PutOptions{MediaType: "text/plain"})
+					require.NoError(t, err)
+					request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+					plan, err := vault.PlanProcessing(t.Context(), request)
+					require.NoError(t, err)
+					requests[i] = docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
+				}
+				db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, db.Close()) })
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+				jobs := make([]docbank.ProcessingJob, 2)
+				errs := make([]error, 2)
+				dones := []chan struct{}{make(chan struct{}), make(chan struct{})}
+				go func() {
+					defer close(dones[0])
+					jobs[0], errs[0] = vault.StartProcessing(ctx, requests[0])
+				}()
+				t.Cleanup(func() { release(); cancel(); <-dones[0] })
+				select {
+				case <-provider.started:
+				case <-dones[0]:
+					t.Fatalf("first returned: %v", errs[0])
+				}
+				go func() {
+					defer close(dones[1])
+					jobs[1], errs[1] = vault.StartProcessing(ctx, requests[1])
+				}()
+				t.Cleanup(func() { release(); cancel(); <-dones[1] })
+				require.Eventually(t, func() bool {
+					var n int
+					return db.QueryRowContext(ctx, "SELECT COUNT(*) FROM rendition_job_waiters WHERE state='waiting'").Scan(&n) == nil && n == 2
+				}, 10*time.Second, 10*time.Millisecond)
+				if trash {
+					_, err = vault.TrashPath(ctx, "/source-1.txt", docbank.RevisionOptions{})
+					require.NoError(t, err)
+				}
+				release()
+				<-dones[0]
+				<-dones[1]
+				require.NoError(t, errs[0])
+				var shared, waiterID, waiterState, code string
+				require.NoError(t, db.QueryRowContext(ctx, "SELECT j.state,w.waiter_id,w.state,COALESCE(w.failure_code,'') FROM rendition_job_waiters w JOIN rendition_jobs j ON w.job_id=j.job_id WHERE w.content_version_id=?", requests[1].PlanRequest.Selector.ContentVersionID).Scan(&shared, &waiterID, &waiterState, &code))
+				status, err := vault.ProcessingStatus(ctx, docbank.ProcessingStatusRequest{JobID: waiterID})
+				require.NoError(t, err)
+				var embeddingJobs int
+				require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=?", requests[1].PlanRequest.Selector.ContentVersionID).Scan(&embeddingJobs))
+				require.Equal(t, "completed", shared)
+				require.Equal(t, int32(1), provider.calls.Load(), "both requests share one provider execution")
+				if trash {
+					require.Equal(t, "rejected", waiterState)
+					require.Equal(t, "stale_authority", code)
+					require.ErrorIs(t, errs[1], docbank.ErrProcessingPlanChanged)
+					require.Empty(t, jobs[1].ID)
+					require.Zero(t, embeddingJobs, "rejected requests must not enqueue embeddings")
+				} else {
+					require.NoError(t, errs[1])
+					require.Equal(t, "published", waiterState)
+					require.Equal(t, "completed", status.State)
+					// Repeated starts also exercise the already-completed path.
+					repeated, err := vault.StartProcessing(ctx, requests[1])
+					require.NoError(t, err)
+					require.Equal(t, jobs[1], repeated)
+					require.Equal(t, int32(1), provider.calls.Load())
+				}
+			})
+		}
+	}
+}
+
 type waitingRenditionProvider struct {
 	document.RenditionProvider
 

@@ -135,6 +135,42 @@ func TestAggregateStatusUsesBindingActivation(t *testing.T) {
 	}
 }
 
+func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+	grantWorkerConsent(t, fixture.catalog, request)
+	job, published, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	request.Authorization.Principal = "operator:revoked"
+	grantWorkerConsent(t, fixture.catalog, request)
+	_, rejected, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	_, err = fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{
+		Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+	})
+	require.NoError(t, err)
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider},
+		Gate: api.NewOperationGate(), Owner: "rendition-waiter-test",
+		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+	})
+	require.NoError(t, err)
+	processed, err := worker.RunJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.True(t, processed)
+	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.RenditionJobCompleted, current.State)
+	service := &Service{catalog: fixture.catalog}
+	result, err := service.renditionResult(t.Context(), published.ID)
+	require.NoError(t, err)
+	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID}, result)
+	_, err = service.renditionResult(t.Context(), rejected.ID)
+	require.ErrorIs(t, err, ErrConsentRequired)
+}
+
 type processingServiceTestGate struct{ *api.OperationGate }
 
 func (gate processingServiceTestGate) PreserveContext(ctx context.Context, fn func() error) error {

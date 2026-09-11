@@ -484,7 +484,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	}
 	if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
 		current.State == store.RenditionJobCompleted {
-		return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
+		return service.renditionResult(ctx, waiter.ID)
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
 		Runtime: service.renditions, Gate: service.gate, Owner: "embedded-rendition-worker",
@@ -501,7 +501,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		switch current.State {
 		case store.RenditionJobQueued, store.RenditionJobRunning, store.RenditionJobRetryWait:
 		case store.RenditionJobCompleted:
-			return renditionRun{jobID: job.ID, waiterID: waiter.ID}, nil
+			return service.renditionResult(ctx, waiter.ID)
 		case store.RenditionJobFailed:
 			return renditionRun{}, fmt.Errorf("%w: %s", ErrRenditionFailed, current.FailureCode)
 		case store.RenditionJobOperatorRequired:
@@ -515,6 +515,24 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 			return renditionRun{}, err
 		}
 	}
+}
+
+func (service *Service) renditionResult(ctx context.Context, waiterID string) (renditionRun, error) {
+	waiter, err := service.catalog.RenditionJobWaiterByID(ctx, waiterID)
+	if err != nil {
+		return renditionRun{}, err
+	}
+	// Shared work can finish while rejecting this request's publication authority.
+	if waiter.State == "published" {
+		return renditionRun{jobID: waiter.JobID, waiterID: waiter.ID}, nil
+	}
+	if waiter.FailureCode == store.RenditionFailureConsent {
+		return renditionRun{}, ErrConsentRequired
+	}
+	if waiter.FailureCode == store.RenditionFailureStaleAuthority {
+		return renditionRun{}, ErrPlanChanged
+	}
+	return renditionRun{}, fmt.Errorf("%w: rendition request is %s", ErrRenditionFailed, waiter.State)
 }
 
 func (service *Service) Status(ctx context.Context, jobID string) (Status, error) {
