@@ -1718,3 +1718,89 @@ func TestRenditionJobFencesDisclosedFilenameAfterRename(t *testing.T) {
 		})
 	}
 }
+
+func TestPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T) {
+	for _, mutation := range []string{"selected-trash", "selected-consent", "selected-regrant", "all-reopened"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx := t.Context()
+			s, versions := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfile(t, false)
+			first := renditionJobTestRequest(versions[0], profile)
+			second := renditionJobTestRequest(versions[1], profile)
+			second.Authorization.Principal = "operator:secondary"
+			grantRenditionJobConsent(t, s, first)
+			grantRenditionJobConsent(t, s, second)
+			job, firstWaiter, err := s.EnqueueRenditionJob(ctx, first)
+			require.NoError(t, err)
+			_, secondWaiter, err := s.EnqueueRenditionJob(ctx, second)
+			require.NoError(t, err)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := s.ClaimRenditionJob(ctx, job.ID, "publication-test", now, time.Minute)
+			require.NoError(t, err)
+			_, err = s.BeginRenditionProvider(ctx, claim, firstWaiter.ID, now.Add(time.Second), renditionJobTestSnapshot(first))
+			require.NoError(t, err)
+			build := catalogRenditionBuild(s, profile)
+			build.ID = job.ID
+			require.NoError(t, s.StageRenditionJobBuild(ctx, claim, build, now.Add(2*time.Second)))
+			if mutation == "all-reopened" {
+				_, err = s.StageRenditionJobGeneration(ctx, claim, testSHA256([]byte("initial-generation")), now.Add(3*time.Second))
+				require.NoError(t, err)
+				_, err = s.RevokeConsent(ctx, ProcessingConsentRevocationRequest{Principal: first.Authorization.Principal, Scope: first.Authorization.Scope})
+				require.NoError(t, err)
+				_, err = s.PublishRenditionJob(ctx, claim, now.Add(4*time.Second))
+				require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+				require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureConsent, now.Add(5*time.Second)))
+				grantRenditionJobConsent(t, s, first)
+				_, _, err = s.EnqueueRenditionJob(ctx, first)
+				require.NoError(t, err)
+				now = now.Add(2 * time.Minute)
+				claim, err = s.ClaimRenditionJob(ctx, job.ID, "reopened-publication-test", now, time.Minute)
+				require.NoError(t, err)
+				_, err = s.RenditionJobWorkByClaim(ctx, claim, now)
+				require.NoError(t, err)
+			}
+			_, err = s.StageRenditionJobGeneration(ctx, claim, testSHA256([]byte("publication-generation")), now.Add(3*time.Second))
+			require.NoError(t, err)
+			wantErr, wantCode := ErrProcessingConsentRevoked, RenditionFailureConsent
+			if mutation == "selected-trash" {
+				version, err := s.ContentVersionByID(ctx, versions[0])
+				require.NoError(t, err)
+				_, _, err = s.Trash(ctx, version.NodeID, UnconditionalRev)
+				require.NoError(t, err)
+				wantErr, wantCode = ErrRenditionJobStaleAuthority, RenditionFailureStaleAuthority
+			} else {
+				_, err = s.RevokeConsent(ctx, ProcessingConsentRevocationRequest{Principal: first.Authorization.Principal, Scope: first.Authorization.Scope})
+				require.NoError(t, err)
+				if mutation == "selected-regrant" {
+					grantRenditionJobConsent(t, s, first)
+				}
+				if mutation == "all-reopened" {
+					version, err := s.ContentVersionByID(ctx, versions[1])
+					require.NoError(t, err)
+					_, _, err = s.Trash(ctx, version.NodeID, UnconditionalRev)
+					require.NoError(t, err)
+					wantErr = ErrProcessingConsentRequired
+				}
+			}
+			_, err = s.PublishRenditionJob(ctx, claim, now.Add(4*time.Second))
+			require.ErrorIs(t, err, wantErr)
+			rejected, err := s.RenditionJobWaiterByID(ctx, firstWaiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, "rejected", rejected.State)
+			require.Equal(t, wantCode, rejected.FailureCode)
+			other, err := s.RenditionJobWaiterByID(ctx, secondWaiter.ID)
+			require.NoError(t, err)
+			if mutation == "all-reopened" {
+				require.Equal(t, "rejected", other.State)
+				require.Equal(t, RenditionFailureStaleAuthority, other.FailureCode)
+			} else {
+				require.Equal(t, "waiting", other.State, "a valid request must remain available for a later authorized publication")
+			}
+			require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, wantCode, now.Add(5*time.Second)))
+			for _, version := range versions {
+				_, err = s.ActiveRendition(ctx, version, profile.Fingerprint)
+				require.ErrorIs(t, err, ErrNotFound, "failed publication must not change rendition heads")
+			}
+		})
+	}
+}

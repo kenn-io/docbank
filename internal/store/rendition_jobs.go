@@ -1271,6 +1271,7 @@ func (s *Store) PublishRenditionJob(
 	ctx context.Context, claim RenditionJobClaim, at time.Time,
 ) (RenditionJobPublication, error) {
 	publication := RenditionJobPublication{JobID: claim.JobID}
+	var publicationErr error
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		job, err := requireRenditionClaimTx(ctx, tx, claim, at)
 		if err != nil {
@@ -1298,17 +1299,20 @@ func (s *Store) PublishRenditionJob(
 			}
 			providerRequest, err := renditionWaiterAuthorizationTx(
 				ctx, tx, job, selectedWaiter.String)
-			if err != nil {
+			if err == nil {
+				providerRequest.PriorAuthorization = &ProviderOperationAuthorization{
+					GrantID: grantID.String, ProcessingIncarnationID: incarnationID.String,
+					RevocationFence: revocationFence.Int64,
+				}
+				_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, providerRequest, at.UTC())
+			}
+			if err != nil && !errors.Is(err, ErrRenditionJobStaleAuthority) &&
+				!errors.Is(err, ErrProcessingConsentRequired) &&
+				!errors.Is(err, ErrProcessingConsentExpired) &&
+				!errors.Is(err, ErrProcessingConsentRevoked) {
 				return err
 			}
-			providerRequest.PriorAuthorization = &ProviderOperationAuthorization{
-				GrantID: grantID.String, ProcessingIncarnationID: incarnationID.String,
-				RevocationFence: revocationFence.Int64,
-			}
-			if _, err := authorizeProviderOperationTx(
-				ctx, tx, s.vaultID, providerRequest, at.UTC()); err != nil {
-				return err
-			}
+			publicationErr = err
 		}
 
 		waiterIDs, err := renditionWaitingIDsTx(ctx, tx, claim.JobID)
@@ -1323,22 +1327,25 @@ func (s *Store) PublishRenditionJob(
 		rejected := make([]rejectedWaiter, 0)
 		for _, waiterID := range waiterIDs {
 			request, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
-			if err != nil {
-				if errors.Is(err, ErrRenditionJobStaleAuthority) {
-					rejected = append(rejected, rejectedWaiter{waiterID, RenditionFailureStaleAuthority})
-					continue
+			if err == nil {
+				if waiterID == selectedWaiter.String && publicationErr != nil {
+					// A fresh grant cannot replace the authority used for provider egress.
+					err = publicationErr
+				} else {
+					_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC())
 				}
-				return err
 			}
-			if _, err := authorizeProviderOperationTx(
-				ctx, tx, s.vaultID, request, at.UTC()); err != nil {
-				if errors.Is(err, ErrProcessingConsentRequired) ||
-					errors.Is(err, ErrProcessingConsentExpired) ||
-					errors.Is(err, ErrProcessingConsentRevoked) {
-					rejected = append(rejected, rejectedWaiter{waiterID, RenditionFailureConsent})
-					continue
+			if err != nil {
+				code := RenditionFailureConsent
+				if errors.Is(err, ErrRenditionJobStaleAuthority) {
+					code = RenditionFailureStaleAuthority
+				} else if !errors.Is(err, ErrProcessingConsentRequired) &&
+					!errors.Is(err, ErrProcessingConsentExpired) &&
+					!errors.Is(err, ErrProcessingConsentRevoked) {
+					return err
 				}
-				return err
+				rejected = append(rejected, rejectedWaiter{waiterID, code})
+				continue
 			}
 			waiter, err := loadRenditionJobWaiterTx(ctx, tx, waiterID)
 			if err != nil {
@@ -1352,11 +1359,23 @@ func (s *Store) PublishRenditionJob(
 				waiter: waiter, profile: profile,
 			})
 		}
+		publishedAt := at.UTC().Format(timestampLayout)
+		for _, waiter := range rejected {
+			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
+				SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+				waiter.code, publishedAt, waiter.id); err != nil {
+				return fmt.Errorf("rejecting rendition waiter: %w", err)
+			}
+		}
+		// Commit rejection records before reporting an authorization failure.
+		if publicationErr != nil {
+			return nil //nolint:nilerr // Return publicationErr after the rejection records commit.
+		}
 		if len(authorized) == 0 {
-			return ErrProcessingConsentRequired
+			publicationErr = ErrProcessingConsentRequired
+			return nil
 		}
 		pairs := make([]renditionPublicationPair, 0, len(authorized))
-		publishedAt := at.UTC().Format(timestampLayout)
 		for _, authority := range authorized {
 			attachment := RenditionAttachmentRecord{
 				ID: authority.waiter.AttachmentID, VaultID: s.vaultID,
@@ -1381,13 +1400,6 @@ func (s *Store) PublishRenditionJob(
 				return fmt.Errorf("publishing rendition waiter: %w", err)
 			}
 		}
-		for _, waiter := range rejected {
-			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
-				waiter.code, publishedAt, waiter.id); err != nil {
-				return fmt.Errorf("rejecting rendition waiter: %w", err)
-			}
-		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 			state='completed',phase='published',claim_owner=NULL,lease_expires_at=NULL,
 			selected_waiter_id=NULL,authorization_grant_id=NULL,
@@ -1409,6 +1421,9 @@ func (s *Store) PublishRenditionJob(
 	})
 	if err != nil {
 		return RenditionJobPublication{}, err
+	}
+	if publicationErr != nil {
+		return RenditionJobPublication{}, publicationErr
 	}
 	return publication, nil
 }
