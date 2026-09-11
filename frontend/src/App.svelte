@@ -19,6 +19,7 @@
   import {
     Button,
     Card,
+    Checkbox,
     Chip,
     ChipStack,
     CopyButton,
@@ -39,6 +40,7 @@
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
+  import SelectionDock from "./SelectionDock.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
   import TagCatalogModal, {
     type TagDefinitionChange,
@@ -70,6 +72,13 @@
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
+  import {
+    clearSelection,
+    reconcileSelection,
+    selectVisibleDocuments,
+    toggleDocumentSelection,
+    type SelectionState,
+  } from "./selection.js";
   import { VerifiedUploadChannel } from "./upload.js";
 
   type Row = { node: Node; path: string; match?: "name" | "content" };
@@ -96,6 +105,7 @@
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
   let selectedID = $state<number | undefined>();
+  let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
   let tagFilterID = $state("");
@@ -137,6 +147,7 @@
   let auditGeneration = 0;
   let tagGeneration = 0;
   let tagCatalogGeneration = 0;
+  let pendingSelectionRange = false;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const membership = $derived(selectedAudit?.membership);
@@ -151,6 +162,13 @@
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== "" || tagBrowse),
+  );
+  const visibleDocumentCount = $derived(
+    sortedRows.filter((row) => row.node.kind === "file").length,
+  );
+  const selectedCount = $derived(bulkSelection.selectedIDs.size);
+  const allVisibleDocumentsSelected = $derived(
+    visibleDocumentCount > 0 && selectedCount === visibleDocumentCount,
   );
 
   onMount(() => {
@@ -178,6 +196,37 @@
     }
   });
 
+  function clearBulkSelection(): void {
+    bulkSelection = clearSelection();
+    pendingSelectionRange = false;
+  }
+
+  function replaceRows(nextRows: Row[], reconcile: boolean): void {
+    rows = nextRows;
+    bulkSelection = reconcile
+      ? reconcileSelection(bulkSelection, nextRows)
+      : clearSelection();
+    pendingSelectionRange = false;
+  }
+
+  function toggleBulkSelection(row: Row, checked: boolean): void {
+    bulkSelection = toggleDocumentSelection(
+      bulkSelection,
+      sortedRows,
+      row.node.id,
+      checked,
+      pendingSelectionRange,
+    );
+    pendingSelectionRange = false;
+  }
+
+  function selectAllVisibleDocuments(checked = true): void {
+    bulkSelection = checked
+      ? selectVisibleDocuments(sortedRows)
+      : clearSelection();
+    pendingSelectionRange = false;
+  }
+
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
       uploadChannel?.close();
@@ -200,6 +249,7 @@
       selectedTags = [];
       selectedTagsTotal = 0;
       searchPending = false;
+      clearBulkSelection();
       error = "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
@@ -207,6 +257,7 @@
   }
 
   async function loadRoot(): Promise<void> {
+    clearBulkSelection();
     const request = ++generation;
     const session = webSession;
     loading = true;
@@ -228,6 +279,7 @@
     preferredSelectedID?: number,
     preserveSort = false,
   ): Promise<void> {
+    const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
     searchPending = false;
     loading = true;
@@ -258,10 +310,10 @@
       directory = page.directory;
       const path = page.directory.path;
       if (!path) throw new Error("The selected directory is no longer live.");
-      rows = page.items.map((item) => ({
+      replaceRows(page.items.map((item) => ({
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
-      }));
+      })), refreshing);
       selectNode(
         rows.some((row) => row.node.id === preferredSelectedID)
           ? preferredSelectedID
@@ -280,7 +332,7 @@
     } catch (cause) {
       if (request === generation) {
         if (cause instanceof APIError && cause.status === 404) {
-          rows = [];
+          replaceRows([], false);
           selectedID = undefined;
           error = "This directory was moved to trash or removed. Go back or reload the vault.";
         } else {
@@ -301,6 +353,7 @@
     }
     const request = ++generation;
     const requestedTagID = tagFilterID;
+    const refreshing = activeQuery === query && activeTagID === requestedTagID;
     searchPending = true;
     loading = true;
     error = "";
@@ -310,13 +363,14 @@
       if ((report.tag_id ?? "") !== requestedTagID) {
         throw new Error("Search results did not honor the selected tag filter.");
       }
-      rows = report.hits.map((hit: SearchHit) => ({
+      const nextRows = report.hits.map((hit: SearchHit) => ({
         node: hit.node,
         path: hit.path,
         match: hit.match,
       }));
+      replaceRows(nextRows, refreshing);
       const view = reconcileSearchView(
-        rows,
+        nextRows,
         query,
         requestedTagID === activeTagID ? activeQuery : "",
         sortField,
@@ -357,7 +411,7 @@
       const page = await liveTaggedNodes(webSession, tagID);
       if (request !== generation) return;
       const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
-      rows = liveRows;
+      replaceRows(liveRows, refreshing);
       activeQuery = "";
       activeTagID = tagID;
       taggedInspected = liveRows.length;
@@ -389,9 +443,10 @@
     const previous = stack.at(-1);
     if (!previous) return;
     const preferredSelectedID = previous.selectedID;
+    clearBulkSelection();
     selectNode(undefined);
     directory = previous.directory;
-    rows = [];
+    replaceRows([], false);
     stack = stack.slice(0, -1);
     activeQuery = previous.activeQuery;
     activeTagID = previous.activeTagID;
@@ -490,6 +545,7 @@
       if (selectedMissing && tagFilterID === selectedTagID) {
         const rerunSearch = Boolean(activeQuery || searchPending);
         const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
+        clearBulkSelection();
         tagFilterID = "";
         activeTagID = "";
         taggedInspected = 0;
@@ -577,7 +633,7 @@
     // stranded without a valid Back destination.
     stack = [];
     directory = null;
-    rows = [];
+    replaceRows([], false);
     searchQuery = "";
     activeQuery = "";
     tagFilterID = "";
@@ -598,7 +654,7 @@
     // receipt visible while reacquiring the live tree from root.
     stack = [];
     directory = null;
-    rows = [];
+    replaceRows([], false);
     searchQuery = "";
     activeQuery = "";
     tagFilterID = "";
@@ -630,14 +686,17 @@
       selectedTagsLoading = false;
       selectedTagsError = "";
     }
-    rows = rows.map((row) =>
-      row.node.id === receipt.node.id
-        ? {
-            ...row,
-            node: receipt.node,
-            path: receipt.node.path ?? row.path,
-          }
-        : row,
+    replaceRows(
+      rows.map((row) =>
+        row.node.id === receipt.node.id
+          ? {
+              ...row,
+              node: receipt.node,
+              path: receipt.node.path ?? row.path,
+            }
+          : row,
+      ),
+      true,
     );
     if (selectedChanged) {
       if (assigned) {
@@ -660,7 +719,7 @@
       if (assigned) {
         const target = manageTagsTarget;
         if (target && !rows.some((row) => row.node.id === receipt.node.id)) {
-          rows = [...rows, target];
+          replaceRows([...rows, target], true);
           if (!activeQuery) {
             taggedInspected = rows.length;
             if (receipt.changed) taggedTotal += 1;
@@ -670,7 +729,10 @@
           if (selectedID === undefined) selectNode(receipt.node.id);
         }
       } else {
-        rows = rows.filter((row) => row.node.id !== receipt.node.id);
+        replaceRows(
+          rows.filter((row) => row.node.id !== receipt.node.id),
+          true,
+        );
         if (!activeQuery) {
           taggedInspected = rows.length;
           taggedTotal = Math.max(rows.length, taggedTotal - 1);
@@ -733,6 +795,7 @@
 
     const preferredSelectedID = selectedID;
     if (change.kind === "deleted" && activeTagID === changedTag.id) {
+      clearBulkSelection();
       tagFilterID = "";
       activeTagID = "";
       taggedInspected = 0;
@@ -757,7 +820,7 @@
     uploadChannel = null;
     webSession = "";
     directory = null;
-    rows = [];
+    replaceRows([], false);
     stack = [];
     selectedID = undefined;
     selectedAudit = null;
@@ -1076,6 +1139,15 @@
         {:else}
           <Table ariaLabel="Documents">
             {#snippet header()}
+              <th class="selection-column" scope="col">
+                <Checkbox
+                  checked={allVisibleDocumentsSelected}
+                  disabled={visibleDocumentCount === 0}
+                  indeterminate={selectedCount > 0 && !allVisibleDocumentsSelected}
+                  ariaLabel="Select visible documents"
+                  onchange={selectAllVisibleDocuments}
+                />
+              </th>
               <TableHeaderCell
                 label="Document"
                 sortable
@@ -1110,6 +1182,23 @@
                     if (event.key === "Enter") activate(row);
                   }}
                 >
+                  <td
+                    class="selection-column"
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      pendingSelectionRange = event.shiftKey;
+                    }}
+                    ondblclick={(event) => event.stopPropagation()}
+                    onkeydown={(event) => event.stopPropagation()}
+                  >
+                    {#if row.node.kind === "file"}
+                      <Checkbox
+                        checked={bulkSelection.selectedIDs.has(row.node.id)}
+                        ariaLabel={`Select ${activeQuery || tagBrowse ? row.path : row.node.name}`}
+                        onchange={(checked) => toggleBulkSelection(row, checked)}
+                      />
+                    {/if}
+                  </td>
                   <td>
                     <span class="document-name">
                       {#if row.node.kind === "dir"}
@@ -1386,6 +1475,15 @@
         {/if}
       </aside>
     </main>
+    {#if selectedCount > 0}
+      <SelectionDock
+        {selectedCount}
+        {visibleDocumentCount}
+        {truncated}
+        onclear={clearBulkSelection}
+        onselectvisible={() => selectAllVisibleDocuments()}
+      />
+    {/if}
     {#if historyOpen && selected && membership?.protected}
       <AuditHistoryDrawer
         session={webSession}
@@ -1498,3 +1596,19 @@
     {/if}
   </div>
 {/if}
+
+<style>
+  :global(.browser th.selection-column),
+  :global(.browser td.selection-column) {
+    width: 38px;
+    min-width: 38px;
+    padding: 6px 8px;
+    text-align: center;
+    cursor: default;
+  }
+
+  :global(.browser th.selection-column) {
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--border-default);
+  }
+</style>

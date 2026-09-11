@@ -451,10 +451,10 @@ dd {
     display: none;
   }
 
-  .browser th:nth-child(2),
-  .browser td:nth-child(2),
-  .browser th:nth-child(4),
-  .browser td:nth-child(4) {
+  .browser th:nth-child(3),
+  .browser td:nth-child(3),
+  .browser th:nth-child(5),
+  .browser td:nth-child(5) {
     display: none;
   }
 

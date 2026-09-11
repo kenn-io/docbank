@@ -20,7 +20,8 @@ The daemon accepts connections only from the local machine.
 
 Choose a task:
 
-- [Browse the vault](#browse-the-vault) and inspect document details.
+- [Browse the vault](#browse-the-vault), inspect document details, or
+  [select documents on this page](#select-documents-on-this-page).
 - [Upload files](#upload-verified-documents) or [download content](#download-verified-content).
 - [Manage tags](#manage-tag-definitions) and [search text](#browse-tags-and-search-text).
 - [Move documents to trash](#move-a-node-to-recoverable-trash) or [restore them](#restore-from-recoverable-trash).
@@ -43,7 +44,7 @@ require the CLI or another API client.
 - Double-click a folder, select it and press Enter, or use **Open folder** in
   the authority card to navigate into it.
 - Use the back arrow to restore the previous folder or search view, including
-  its selection and sort order.
+  its inspected row and sort order.
 - Click **Document**, **Size**, or **Modified** to sort. Click the active
   heading again to reverse its direction. Directories remain grouped ahead of
   files in folder views.
@@ -63,6 +64,25 @@ even when the card wraps it across lines. Every selected node also shows its
 assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
+
+## Select documents on this page
+
+Check a document's checkbox to mark it without changing the document shown in
+the authority card. The bottom dock shows how many documents are checked.
+
+- Hold Shift while clicking another checkbox to select or clear a range in the
+  displayed sort order. With the keyboard, focus a checkbox and press Shift+Space.
+- Use the header checkbox or **Select visible documents** to check the files
+  currently shown. Folders remain available for navigation and are not selected.
+- Choose **Clear selection** or close the dock to clear the checked documents.
+
+Selection covers only the loaded page, even when more results exist. Changing
+the folder, query, or tag clears it when the new rows arrive. If an error leaves
+the previous results on screen, their selection stays. Refreshing the same
+view keeps only checked documents that are still visible. Back navigation and
+ending the browser session also clear the selection.
+
+![Two documents selected on the current page while the authority card shows one document's details.](https://docbank.ai/assets/generated/web-page-selection.png)
 
 ## Assign and remove tags
 

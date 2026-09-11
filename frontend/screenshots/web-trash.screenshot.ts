@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,11 +25,41 @@ const auditEvidenceScreenshotPath = screenshotPathFor("web-audit-evidence.png");
 const storageScreenshotPath = screenshotPathFor("web-multi-store-storage.png");
 const tuiStorageScreenshotPath = screenshotPathFor("tui-multi-store-storage.png");
 const vaultBrowserScreenshotPath = screenshotPathFor("web-vault-browser.png");
+const pageSelectionScreenshotPath = screenshotPathFor("web-page-selection.png");
+const pageSelectionMobileScreenshotPath = screenshotPathFor("web-page-selection-mobile.png");
 const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
 const retainedVersionScreenshotPath = screenshotPathFor(
   "web-retained-version-download.png",
 );
 const packedStorageScreenshotPath = screenshotPathFor("web-storage-status.png");
+
+async function expectDockInViewport(page: Page, dock: Locator): Promise<void> {
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  const viewport = page.viewportSize();
+  const dockBox = await dock.boundingBox();
+  const clearBox = await dock
+    .getByRole("button", { name: "Clear selection" })
+    .boundingBox();
+  if (!viewport || !dockBox || !clearBox) {
+    throw new Error("selection dock geometry is unavailable");
+  }
+  expect(dockBox.y).toBeGreaterThanOrEqual(0);
+  expect(dockBox.y + dockBox.height).toBeLessThanOrEqual(viewport.height);
+  expect(clearBox.y).toBeGreaterThanOrEqual(dockBox.y);
+  expect(clearBox.y + clearBox.height).toBeLessThanOrEqual(viewport.height);
+}
+
+async function expectFocusAboveDock(page: Page, dock: Locator): Promise<void> {
+  const focusedBox = await page.locator(":focus").boundingBox();
+  const dockBox = await dock.boundingBox();
+  if (!focusedBox || !dockBox) {
+    throw new Error(
+      "focused control or selection dock geometry is unavailable",
+    );
+  }
+  expect(focusedBox.y).toBeGreaterThanOrEqual(0);
+  expect(focusedBox.y + focusedBox.height).toBeLessThanOrEqual(dockBox.y);
+}
 
 test.describe("Docbank web screenshots", () => {
   let workspace = "";
@@ -106,6 +136,8 @@ test.describe("Docbank web screenshots", () => {
     await rm(storageScreenshotPath, { force: true });
     await rm(tuiStorageScreenshotPath, { force: true });
     await rm(vaultBrowserScreenshotPath, { force: true });
+    await rm(pageSelectionScreenshotPath, { force: true });
+    await rm(pageSelectionMobileScreenshotPath, { force: true });
     await rm(searchResultsScreenshotPath, { force: true });
     await rm(retainedVersionScreenshotPath, { force: true });
     await rm(packedStorageScreenshotPath, { force: true });
@@ -210,20 +242,6 @@ test.describe("Docbank web screenshots", () => {
       "--acknowledge-permanent-retention",
       "--json",
     ]);
-    let extractionReady = false;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const report = JSON.parse(
-        await runDocbank(["search", "Synthetic", "--json"]),
-      ) as { hits?: unknown[] };
-      if ((report.hits?.length ?? 0) > 0) {
-        extractionReady = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    if (!extractionReady) {
-      throw new Error("synthetic text extraction did not complete");
-    }
     await runDocbank(["backup", "init"]);
     await runDocbank([
       "backup",
@@ -256,6 +274,21 @@ test.describe("Docbank web screenshots", () => {
       "--jobs",
       "1",
     ]);
+    // Wait for the replacement version as well as the two unchanged text files.
+    let extractionReady = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const report = JSON.parse(
+        await runDocbank(["search", "Synthetic", "--json"]),
+      ) as { hits?: unknown[] };
+      if (report.hits?.length === 3) {
+        extractionReady = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!extractionReady) {
+      throw new Error("synthetic text extraction did not complete");
+    }
     webURL = await runDocbank(["web", "--no-browser"]);
     const browserURL = new URL(webURL);
     const port = Number(browserURL.port);
@@ -326,6 +359,30 @@ test.describe("Docbank web screenshots", () => {
       exact: true,
     });
     await expect(report).toBeVisible();
+    const filingSelection = page.getByRole("checkbox", {
+      name: "Select filing-checklist.md",
+    });
+    await filingSelection.click();
+    await expect(filingSelection).toBeFocused();
+    const reportSelection = page.getByRole("checkbox", {
+      name: "Select quarterly-tax-report.txt",
+    });
+    await reportSelection.click({ modifiers: ["Shift"] });
+    await expect(reportSelection).toBeFocused();
+    const selectionDock = page.getByRole("region", {
+      name: "Selected documents",
+    });
+    await expect(selectionDock).toContainText("2 selected on this page");
+    await expectDockInViewport(page, selectionDock);
+    await page.screenshot({
+      path: pageSelectionScreenshotPath,
+      fullPage: false,
+      animations: "disabled",
+    });
+    await selectionDock
+      .getByRole("button", { name: "Clear selection" })
+      .click();
+    await expect(selectionDock).toBeHidden();
     await report.click();
     await expect(page.getByTitle(/^tax · /)).toBeVisible();
     await expect(page.getByText("Protected", { exact: true })).toBeVisible();
@@ -361,6 +418,9 @@ test.describe("Docbank web screenshots", () => {
     await expect(
       page.getByRole("cell", { name: "content", exact: true }).first(),
     ).toBeVisible();
+    await expect(
+      page.getByRole("table", { name: "Documents" }).getByRole("row"),
+    ).toHaveCount(4);
     await page.screenshot({
       path: searchResultsScreenshotPath,
       fullPage: true,
@@ -522,6 +582,78 @@ test.describe("Docbank web screenshots", () => {
       fullPage: true,
       animations: "disabled",
     });
+  });
+
+  test("selection dock stays visible and leaves the last row reachable", async ({
+    page,
+  }) => {
+    const longReports = path.join(workspace, "synthetic", "Long Reports");
+    await mkdir(longReports, { recursive: true, mode: 0o700 });
+    await Promise.all(
+      Array.from({ length: 100 }, (_, index) =>
+        writeFile(
+          path.join(longReports, `document-${String(index).padStart(3, "0")}.txt`),
+          `Extended listing fixture document ${index}.\n`,
+          { mode: 0o600 },
+        ),
+      ),
+    );
+    await runDocbank(["add", longReports, "--dest", "/Reports", "--progress", "plain"]);
+    await page.setViewportSize({ width: 640, height: 720 });
+    await page.addInitScript(() => {
+      localStorage.setItem("docbank-theme", "dark");
+    });
+    await page.goto(webURL, { waitUntil: "domcontentloaded" });
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          animation-duration: 0.001s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+          caret-color: transparent !important;
+        }
+      `,
+    });
+
+    await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
+    await page.getByRole("cell", { name: "Long Reports", exact: true }).dblclick();
+    const first = page.getByRole("checkbox", {
+      name: "Select document-000.txt",
+    });
+    await first.click();
+    await expect(first).toBeFocused();
+    const dock = page.getByRole("region", { name: "Selected documents" });
+    await expect(dock).toContainText("1 selected on this page");
+    await expectDockInViewport(page, dock);
+
+    const third = page.getByRole("checkbox", { name: "Select document-002.txt" });
+    await third.press("Shift+Space");
+    await expect(dock).toContainText("3 selected on this page");
+    await expect(page.getByRole("checkbox", { name: "Select document-001.txt" })).toBeChecked();
+    await third.click({ modifiers: ["Shift"] });
+    await expect(dock).toBeHidden();
+    await first.click();
+
+    await page.screenshot({
+      path: pageSelectionMobileScreenshotPath,
+      animations: "disabled",
+    });
+
+    for (const index of [9, 99]) {
+      await page.getByRole("checkbox", {
+        name: `Select document-${String(index - 1).padStart(3, "0")}.txt`,
+      }).focus();
+      const checkbox = page.getByRole("checkbox", {
+        name: `Select document-${String(index).padStart(3, "0")}.txt`,
+      });
+      const row = page.getByRole("row").filter({ has: checkbox });
+      await page.keyboard.press("Tab");
+      await expect(row).toBeFocused();
+      await expectFocusAboveDock(page, dock);
+      await page.keyboard.press("Tab");
+      await expect(checkbox).toBeFocused();
+      await expectFocusAboveDock(page, dock);
+    }
   });
 
   test("TUI storage operations", async ({ page }) => {
