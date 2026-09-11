@@ -1891,3 +1891,72 @@ func TestEmbeddedProcessingWaitsForBackupFreeze(t *testing.T) {
 		})
 	}
 }
+
+func TestEmbeddedCoverageTracksCurrentSourceVersions(t *testing.T) {
+	for _, embeddings := range []bool{false, true} {
+		for _, mutation := range []string{"unchanged", "replace", "trash", "delete"} {
+			t.Run(fmt.Sprintf("embeddings=%t/%s", embeddings, mutation), func(t *testing.T) {
+				ctx := t.Context()
+				plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+				require.NoError(t, err)
+				config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, plain.Descriptor()), RenditionProvider: plain}
+				if embeddings {
+					provider := newSyntheticEmbeddingProvider(t)
+					config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"direct": provider}
+				}
+				vault, err := docbank.New(ctx, docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				versions := make([]string, 0, 2)
+				for _, path := range []string{"/source.txt", "/current.txt"} {
+					receipt, err := vault.Put(ctx, path, strings.NewReader("synthetic coverage needle"), docbank.PutOptions{MediaType: "text/plain"})
+					require.NoError(t, err)
+					versions = append(versions, receipt.Version.ID)
+					request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+					plan, err := vault.PlanProcessing(ctx, request)
+					require.NoError(t, err)
+					_, err = vault.StartProcessing(ctx, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+					require.NoError(t, err)
+				}
+				switch mutation {
+				case "replace":
+					_, err = vault.Put(ctx, "/source.txt", strings.NewReader("synthetic replacement"), docbank.PutOptions{MediaType: "text/plain"})
+				case "trash", "delete":
+					_, err = vault.TrashPath(ctx, "/source.txt", docbank.RevisionOptions{})
+				}
+				require.NoError(t, err)
+				if mutation == "delete" {
+					_, err = vault.EmptyTrash(ctx, docbank.TrashEmptyOptions{MaxRoots: 1})
+					require.NoError(t, err)
+				}
+				for _, ids := range [][]string{versions[:1], versions} {
+					fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: ids}
+					coverage, err := vault.DocumentCoverage(ctx, docbank.CoverageRequest{Profile: "test", Fence: fence})
+					require.NoError(t, err)
+					stale, state := 0, "complete"
+					if mutation != "unchanged" {
+						stale, state = 1, "partial"
+					}
+					require.Equal(t, state, coverage.State)
+					classes := append([]docbank.CoverageClass{coverage.Renditions}, coverage.Embeddings...)
+					for _, class := range classes {
+						require.Equal(t, len(ids), class.Total, class.Name)
+						require.Equal(t, stale, class.Stale, class.Name)
+						require.Equal(t, len(ids)-stale, class.Complete, class.Name)
+						require.Zero(t, class.Unavailable, class.Name)
+						require.Zero(t, class.Ineligible, class.Name)
+						classState := state
+						if stale == len(ids) {
+							classState = "stale"
+						}
+						require.Equal(t, classState, class.State, class.Name)
+					}
+					result, err := vault.SearchDocuments(ctx, docbank.DocumentSearchRequest{Query: "needle", Mode: docbank.DocumentSearchLexical, Profile: "test", Fence: fence})
+					require.NoError(t, err)
+					require.Len(t, result.Results, len(ids)-stale)
+				}
+			})
+		}
+	}
+}

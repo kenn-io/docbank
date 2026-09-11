@@ -695,8 +695,19 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 		State: "complete", Renditions: CoverageClass{Name: "rendition", Required: profile.portable.Rendition != nil,
 			State: "not_required", Total: len(ids)}}
 	if profile.portable.Rendition != nil {
-		report.Renditions.State = "complete"
 		for _, id := range ids {
+			version, err := service.catalog.ContentVersionByID(ctx, id)
+			var node store.Node
+			if err == nil {
+				node, err = service.catalog.NodeByID(ctx, version.NodeID)
+			}
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return Coverage{}, err
+			}
+			if errors.Is(err, store.ErrNotFound) || node.CurrentVersionID != id || node.TrashedAt != nil {
+				report.Renditions.Stale++
+				continue
+			}
 			if _, err := service.catalog.ActiveRendition(ctx, id, profile.record.Fingerprint); err == nil {
 				report.Renditions.Complete++
 			} else if errors.Is(err, store.ErrNotFound) {
@@ -705,14 +716,15 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 				return Coverage{}, err
 			}
 		}
-		if report.Renditions.Complete != report.Renditions.Total {
-			report.Renditions.State, report.State = "unavailable", "partial"
+		report.Renditions.State = coverageClassState(report.Renditions)
+		if report.Renditions.State != "complete" {
+			report.State = "partial"
 		}
 	}
 	if len(profile.portable.Embeddings) == 0 {
 		return report, nil
 	}
-	required, completeRequired, ineligibleRequired := 0, 0, 0
+	required, completeRequired := 0, 0
 	optionalIncomplete := false
 	for _, binding := range profile.portable.Embeddings {
 		validated, err := service.catalog.RevalidateSearchCandidates(ctx, nil,
@@ -722,38 +734,36 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 		}
 		item := CoverageClass{Name: binding.Name, Required: binding.Activation == document.EmbeddingRequired,
 			Total: len(ids), Complete: validated.Coverage.CompleteDocuments,
-			Ineligible:  len(ids) - validated.Coverage.ScopedDocuments,
+			Stale:       len(ids) - validated.Coverage.ScopedDocuments,
 			Unavailable: validated.Coverage.ScopedDocuments - validated.Coverage.CompleteDocuments}
-		switch {
-		case item.Ineligible == item.Total:
-			item.State = "ineligible"
-		case item.Complete == item.Total:
-			item.State = "complete"
-		case item.Complete > 0:
-			item.State = "partial"
-		default:
-			item.State = "unavailable"
-		}
+		item.State = coverageClassState(item)
 		if item.Required {
 			required++
 			if item.State == "complete" {
 				completeRequired++
-			}
-			if item.State == "ineligible" {
-				ineligibleRequired++
 			}
 		} else if item.State != "complete" {
 			optionalIncomplete = true
 		}
 		report.Embeddings = append(report.Embeddings, item)
 	}
-	switch {
-	case required > 0 && ineligibleRequired == required:
-		report.State = "ineligible"
-	case completeRequired != required || (required == 0 && optionalIncomplete):
+	if completeRequired != required || (required == 0 && optionalIncomplete) {
 		report.State = "partial"
 	}
 	return report, nil
+}
+
+func coverageClassState(item CoverageClass) string {
+	switch {
+	case item.Stale == item.Total:
+		return "stale"
+	case item.Complete == item.Total:
+		return "complete"
+	case item.Complete > 0:
+		return "partial"
+	default:
+		return "unavailable"
+	}
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
