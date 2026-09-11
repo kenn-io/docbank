@@ -65,3 +65,11 @@ it("requires explicit reselection after a stale preview", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
   expect(onclose).toHaveBeenCalledOnce();
 });
+
+it("identifies a frozen visible selection without promising a snapshot refresh", () => {
+  render(BatchTagsModal, { props: { session: "session", targets, catalog: [tag], catalogTotal: 1,
+    disabled: false, context: "snapshot", onclose: vi.fn(), onchanged: vi.fn(), onauthfailure: vi.fn() } });
+
+  expect(screen.getByText(/visible frozen selection/)).toBeTruthy();
+  expect(screen.getByText(/Frozen membership, count, and order stay unchanged/)).toBeTruthy();
+});

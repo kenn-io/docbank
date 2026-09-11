@@ -13,8 +13,9 @@
     onclose: () => void;
     onchanged: (receipt: BatchTagReceipt) => void;
     onauthfailure: (cause: unknown) => void;
+    context?: "live" | "snapshot";
   }
-  let { session, targets, catalog, catalogTotal, disabled, onclose, onchanged, onauthfailure }: Props = $props();
+  let { session, targets, catalog, catalogTotal, disabled, onclose, onchanged, onauthfailure, context = "live" }: Props = $props();
   let currentTargets = $state(untrack(() => targets.map((target) => ({ ...target }))));
   let tagID = $state("");
   let preview = $state<BatchTagPreview>();
@@ -111,7 +112,7 @@
 <Modal title="Tag selected documents" tone="info" width="620px" maxWidth="min(620px, calc(100vw - 32px))"
   ariaLabel="Tag selected documents" onclose={close} closeOnOverlayClick={!pending && !loading}>
   <div class="batch-tags">
-    <p>{currentTargets.length} selected document{currentTargets.length === 1 ? "" : "s"}. Each operation changes one tag across this exact selection, or changes nothing if a document is stale.</p>
+    <p>{currentTargets.length} selected document{currentTargets.length === 1 ? "" : "s"}{context === "snapshot" ? " in the visible frozen selection" : ""}. Each operation changes one tag across this exact selection, or changes nothing if a document is stale.</p>
     <SelectDropdown value={tagID} {options} title="Tag for selected documents"
       disabled={busy || stale || uncertain !== undefined} onchange={selectTag} />
     {#if catalogTotal > catalog.length}
@@ -139,7 +140,7 @@
       <p role="alert">Closing loses this browser’s retry request without confirming the result. Refresh the documents before starting new work.</p>
       <Button disabled={busy} onclick={onclose}>Close without confirmation</Button>
     {/if}
-    <p class="hint">No query-wide selection or automatic conflict retry. A confirmed receipt describes the original operation; current membership is checked again afterward.</p>
+    <p class="hint">{context === "snapshot" ? "Frozen membership, count, and order stay unchanged; validated receipts appear as later observations." : "No query-wide selection or automatic conflict retry. A confirmed receipt describes the original operation; current membership is checked again afterward."}</p>
   </div>
   {#snippet footer()}<Button surface="soft" disabled={pending || loading} onclick={close}>Done</Button>{/snippet}
 </Modal>

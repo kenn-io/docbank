@@ -25,6 +25,7 @@ Choose a task:
   [select documents on this page](#select-documents-on-this-page).
 - [Upload files](#upload-verified-documents) or [download content](#download-verified-content).
 - [Manage tags](#manage-tag-definitions) and [search text](#browse-tags-and-search-text).
+- [Run complete queries](#work-with-a-frozen-query) with exact paging and facets.
 - [Move documents to trash](#move-a-node-to-recoverable-trash) or [restore them](#restore-from-recoverable-trash).
 - [Inspect versions](#inspect-immutable-versions) and [source records](#understand-where-a-document-came-from).
 - [Read permanent history](#read-permanent-audited-history) or [verify its evidence](#verify-permanent-audit-evidence).
@@ -103,10 +104,29 @@ expression. A newer edit cancels and supersedes an older validation request.
 stable identity. Closing the query editor keeps the draft in the tab and URL;
 **Discard query draft** removes it.
 
-Validation does not execute a search. **Run query** remains unavailable because
-the live-search endpoint cannot honor the complete expression, facets, and
-ordering contract. Ordinary name/content search remains separate and does not
-inherit draft constraints. See [field-aware query syntax](searching.md#preview-a-field-aware-query).
+Validation does not execute a search. Once the draft is valid, **Run query**
+creates a frozen result through the complete query endpoint. Ordinary
+name/content search remains separate and does not inherit draft constraints.
+See [field-aware query syntax](searching.md#preview-a-field-aware-query).
+
+## Work with a frozen query
+
+A completed run becomes the accepted frozen snapshot for the tab. Draft edits
+remain separate until you choose **Run query** again. The workspace shows exact
+document and byte totals, 100 rows at a time, previous and next page controls,
+and the node, content version, hash, size, revision, and tags observed when the
+snapshot was created. Later vault changes do not replace those rows.
+
+Use **Refine snapshot** to inspect collection, tag, media-family, extension,
+modified-time, size, text-coverage, and duplicate facets. Choosing a supported
+facet or changing the query creates a new snapshot; it never splices live
+results into the accepted one. An unavailable facet says why instead of
+presenting a zero count.
+
+Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
+minutes total. Locking the browser session or stopping the daemon revokes them.
+If paging reports that the snapshot is gone, run the complete query again and
+use only the new snapshot and its cursors.
 
 ## Assign and remove tags
 
@@ -141,6 +161,36 @@ After confirmation, the browser reloads current observations; the retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
 and backup behavior.
+
+### Tag a frozen query
+
+In a frozen snapshot, checkboxes select only documents on the visible page.
+**Tag whole query** instead captures every exact member across all pages, up to
+250,000 documents, and prepares revision-fenced batches of at most 1,000. The
+captured population does not expand when an untagged query starts receiving
+the tag: completed changes appear as overlays while the frozen rows and facet
+membership remain unchanged.
+
+Before any prepared action can mutate the vault, save its recovery checkpoint,
+select that saved file back, and confirm the displayed vault, action, tag,
+operation, and exact target count. The browser also journals the action in
+IndexedDB for that origin. Another tab on the same origin can resume it, but
+only the original operation identities, requests, and expected revisions are
+retried. If a response is lost after the daemon commits, **Retry same
+operation** recovers the retained receipt without applying the change twice.
+
+A daemon restart creates a fresh browser origin and session, so import the
+saved checkpoint to continue. Import validates and stages the action; it does
+not run it. The vault must match, and the new session still requires checkpoint
+readback and explicit confirmation. A stale document revision fences the
+action without silently refreshing its target or partially applying that
+batch.
+
+Recovery files contain private stable document identities, content-version
+identities, hashes, sizes, and revisions. They omit paths, names, query text,
+and browser credentials, but still need the same protection as vault metadata.
+Abandoning removes the browser journal and does not roll back changes that
+already committed.
 
 ## Manage tag definitions
 
@@ -181,10 +231,12 @@ It does not contain browser-session credentials. Reloading restores the draft,
 but does not renew the browser session; authentication still requires
 `docbank web`. **Discard query draft** removes it from the URL.
 
-Saved queries are definitions, not frozen result sets. Saved-query execution is
-unavailable because the live-search adapter cannot honor the complete query
-contract. Keeping or saving a draft does not run it or change the current live
-results. Unknown fields are rejected, not silently dropped.
+Saved queries are definitions, not frozen result sets. Opening a definition in
+the complete query editor and choosing **Run query** creates a new workspace
+snapshot from that draft; keeping or saving the draft alone does not run it or
+change the current live results. This browser run is not the durable saved-run
+receipt exposed by the authenticated HTTP API. Unknown fields are rejected,
+not silently dropped.
 
 Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
 with lowercase `#rrggbb` colors. They cannot run as queries, and the document
@@ -566,9 +618,11 @@ accepts that credential for the following operations:
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
 | Read collections and their members | Returns bounded lists of live import membership. |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
+| Create and page a frozen query snapshot | Uses complete validated query intent; handles remain bound to this session and daemon lifetime. |
+| Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and explicit confirmation; retries preserve the original operation identities. |
 
-The browser manages saved definitions and validates complete query drafts
-through its scoped session. Validation does not execute a query. See
+The browser manages saved definitions, validates complete query drafts, and
+runs accepted drafts as frozen snapshots through its scoped session. See
 [Saved queries and highlight sets](searching.md#save-complete-query-intent-over-http).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
@@ -577,10 +631,10 @@ file bytes. Upload can create only file nodes beneath the stable live
 directory selected in the browser. The daemon independently checks the
 caller-declared hash and size, as it does for other remote writers.
 
-These permissions do not allow bulk tag changes, emptying trash, other
-document mutations, audit enrollment, backup creation, restore, maintenance,
-configuration changes, or access to general API endpoints. A browser session
-never receives the master API key. See the
+These permissions do not allow emptying trash, document mutations other than
+the revision-fenced tag workflows above, audit enrollment, backup creation,
+restore, maintenance, configuration changes, or access to general API
+endpoints. A browser session never receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
 
 The lock button revokes the session in daemon memory and clears the page.
@@ -616,10 +670,11 @@ children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not compare versions, recursively import
-folders, edit, revert, prune, move live nodes between folders, bulk-apply tags,
-empty trash, enroll audit scopes, or run maintenance, backup creation,
-backup verification, general metadata/content verification, or restore
-operations.
+folders, edit, revert, prune, move live nodes between folders, empty trash,
+enroll audit scopes, or run maintenance, backup creation, backup verification,
+general metadata/content verification, or restore operations. Frozen-query tag
+actions are capped at 250,000 exact documents; use an authenticated API client
+for larger or different bulk workflows.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 
 If a page reports that its browser session or upload channel expired, ended,

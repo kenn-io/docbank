@@ -4,16 +4,19 @@
   import { APIError } from "./api.js";
   import { canonicalQuery, parseQuery, type Query } from "./query.js";
   import { previewQuery, querySelection, type QueryPreview } from "./queryPreview.js";
+  import type { SnapshotOptions } from "./snapshots.js";
 
   interface Props {
     session: string;
     query: Query;
+    profile?: string;
     onchange: (query: Query) => void;
+    onrun: (query: Query, options: SnapshotOptions) => void;
     onsave: () => void;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
-  let { session, query, onchange, onsave, onclose, onauthfailure }: Props = $props();
+  let { session, query, profile = "", onchange, onrun, onsave, onclose, onauthfailure }: Props = $props();
   let draft = $state<Query>(untrack(() => parseQuery(canonicalQuery(query))));
   let facets = $state(untrack(() => JSON.stringify(query.filters, null, 2)));
   let schemaError = $state("");
@@ -26,11 +29,16 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let currentIdentity = "";
+  let executionProfile = $state(untrack(() => profile));
   const syntaxOptions: SelectDropdownOption[] = [{value:"simple",label:"Simple"},{value:"advanced",label:"Advanced"}];
   const modeOptions: SelectDropdownOption[] = ["lexical","semantic","hybrid"].map((value) => ({value,label:value}));
   const sortOptions: SelectDropdownOption[] = ["name","path","modified_at","size","media_type","relevance"].map((value) => ({value,label:value}));
   const directionOptions: SelectDropdownOption[] = [{value:"asc",label:"Ascending"},{value:"desc",label:"Descending"}];
   const selection = $derived(querySelection(draft.text, position));
+  const profileError = $derived(new TextEncoder().encode(executionProfile.trim()).length > 128 ? "Processing profile exceeds 128 bytes." : "");
+  const requestedFacets: SnapshotOptions["facets"] = [
+    "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
+  ];
 
   function invalidate() {
     generation++;
@@ -101,11 +109,21 @@
     expression.focus();
     expression.setSelectionRange(selection.start, selection.end);
   }
+
+  function run(): void {
+    if (schemaError || profileError) return;
+    const selectedProfile = executionProfile.trim();
+    onrun(draft, {
+      ...(selectedProfile ? { profile: selectedProfile } : {}),
+      page_size: 100,
+      facets: requestedFacets,
+    });
+  }
 </script>
 
 <section class="query-bar" aria-label="Query editor">
   <div class="heading"><h2>Query editor</h2><Button size="sm" onclick={close}>Close query editor</Button></div>
-  <p>Edit complete query intent. This draft does not change the live results below.</p>
+  <p>Edit complete query intent. Draft edits do not change an accepted frozen snapshot until you run them.</p>
   <div class="controls">
     <SelectDropdown value={draft.syntax} options={syntaxOptions} title="Query syntax" onchange={(value) => { draft = {...draft,syntax:value as Query["syntax"]}; validate(true); }} />
     <SelectDropdown value={draft.mode} options={modeOptions} title="Query mode" onchange={(value) => { draft = {...draft,mode:value as Query["mode"]}; validate(true); }} />
@@ -126,11 +144,15 @@
   <div class="summaries" aria-label="Structured facet summaries">
     {#each Object.entries(draft.filters).filter(([, value]) => value !== undefined) as [key, value]}<Chip>{key}: {JSON.stringify(value)}</Chip>{/each}
   </div>
+  <label for="query-profile">Processing profile <span>(optional, exact configured name)</span></label>
+  <input id="query-profile" value={executionProfile} autocomplete="off" spellcheck="false"
+    oninput={(event) => (executionProfile = event.currentTarget.value)} />
+  {#if profileError}<p role="alert">{profileError}</p>{/if}
   {#if schemaError}<p role="alert">{schemaError}</p>{/if}
   <div aria-live="polite">
     {#if pending}<span class="checking"><Spinner size={14} /> Validating query…</span>{/if}
     {#if preview}
-      <p>Query validated. Execution is unavailable.</p>
+      <p>Query validated. Run creates a new frozen snapshot.</p>
       <div class="summaries" aria-label="Resolved query dependencies">
         {#each preview.dependencies as dependency (`${dependency.kind}:${dependency.id}`)}<Chip>{dependency.kind}: {dependency.id} · revision {dependency.revision}</Chip>{/each}
       </div>
@@ -140,8 +162,8 @@
   {#if selection}<Button size="sm" onclick={focusError}>Focus query error</Button>{/if}
   <div class="controls">
     <Button disabled={schemaError !== ""} onclick={onsave}>Save query draft</Button>
-    <Button disabled>Run query</Button>
-    <span>The available live-search endpoint cannot honor this complete query. Validation never drops constraints or runs a broader search.</span>
+    <Button tone="info" disabled={schemaError !== "" || profileError !== ""} onclick={run}>Run query</Button>
+    <span>Run executes the complete draft. Folder browsing and ordinary live search stay separate.</span>
   </div>
 </section>
 
@@ -152,6 +174,8 @@
   .heading, .controls, .summaries, .checking { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .heading { justify-content: space-between; }
   .controls > span { color: var(--text-muted); font-size: var(--font-size-sm); flex: 1; min-width: 200px; }
-  textarea { box-sizing: border-box; width: 100%; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font-family: var(--font-mono); }
+  textarea, input { box-sizing: border-box; width: 100%; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font-family: var(--font-mono); }
+  textarea { resize: vertical; }
+  label span { color: var(--text-muted); font-size: var(--font-size-xs); }
   .summaries { overflow-wrap: anywhere; }
 </style>

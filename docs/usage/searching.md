@@ -264,8 +264,10 @@ saved query again, then use only the new snapshot's cursors.
 
 Snapshot execution supports duplicate and text-coverage constraints. Supply a
 configured `profile` when the query uses text coverage. Semantic and hybrid
-modes and relevance ordering remain unsupported. The current web query editor
-manages and validates complete drafts but does not render snapshot pages.
+modes and relevance ordering remain unsupported. The web query editor runs a
+validated draft through this workspace endpoint and renders its exact totals,
+facets, frozen authority, and forward/backward pages. See
+[Work with a frozen query](web.md#work-with-a-frozen-query).
 
 ## Preview a field-aware query
 
@@ -281,10 +283,11 @@ values. For example, selecting `pdf` and `txt` extensions creates
 as a structured filter. Suggestions require an explicit action and leave live
 search unchanged.
 
-The editor validates intent only. It never sends an unsupported query through
-ordinary live search with constraints removed. **Run query** remains
-unavailable in the current editor; independent HTTP clients use the snapshot
-workflow above.
+The editor never sends an unsupported query through ordinary live search with
+constraints removed. After validation, **Run query** creates a new frozen
+snapshot from the complete draft. Draft edits do not alter the accepted
+snapshot until another run succeeds; closing or reloading the tab preserves
+the draft separately.
 
 `POST /api/v1/queries/parse` validates a QueryV1 expression and resolves its
 references. It returns `query`, `query_fingerprint`, and `dependencies`, each
