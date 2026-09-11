@@ -379,6 +379,27 @@ func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
 
+func TestSavedQueryRunRejectsActiveAuditAuthorityWithoutPublishingHandle(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	seedMetadataRoundTrip(t, s)
+	definition, err := s.CreateSavedQuery(t.Context(), "audit run", "", SavedQueryKindQuery, []byte(`{}`))
+	require.NoError(t, err)
+	target, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, target.ID)
+	service := newQuerySnapshotService(s, querySnapshotServiceOptions{HMACKey: bytes.Repeat([]byte{0x71}, 32)})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+
+	_, _, err = service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{})
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
+	assert.Equal(t, snapshotCacheStats{}, service.stats())
+}
+
 func TestInitialAuditAuthorityAllowsReadOnlyMaintenancePreviews(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -24,6 +25,7 @@ Choose a task:
   [select documents on this page](#select-documents-on-this-page).
 - [Upload files](#upload-verified-documents) or [download content](#download-verified-content).
 - [Manage tags](#manage-tag-definitions) and [search text](#browse-tags-and-search-text).
+- [Run complete queries](#work-with-a-frozen-query) with exact paging and facets.
 - [Move documents to trash](#move-a-node-to-recoverable-trash) or [restore them](#restore-from-recoverable-trash).
 - [Inspect versions](#inspect-immutable-versions) and [source records](#understand-where-a-document-came-from).
 - [Read permanent history](#read-permanent-audited-history) or [verify its evidence](#verify-permanent-audit-evidence).
@@ -84,6 +86,54 @@ ending the browser session also clear the selection.
 
 ![Two documents selected on the current page while the authority card shows one document's details.](https://docbank.ai/assets/generated/web-page-selection.png)
 
+## Edit a complete query
+
+Choose **Edit query** to write a complete expression, select simple or advanced
+syntax, and edit its mode, sort, and structured facets. Facets stay separate
+from field operands in the expression. Their summaries show the constraints
+you entered; validation does not move operands into hidden filters.
+
+The daemon validates each edited draft after a short pause. It resolves saved,
+tag, and collection references and reports their observed revisions. Errors
+remain visible; **Focus query error** selects the reported part of the
+expression. A newer edit cancels and supersedes an older validation request.
+
+**Save query draft** opens the saved-definition editor with the entire draft.
+**Open query** beside a saved query opens it here. From an import collection,
+**New query for this collection** starts a new draft scoped to that collection's
+stable identity. Closing the query editor keeps the draft in the tab and URL;
+**Discard query draft** removes it.
+
+Validation does not execute a search. Once the draft is valid, **Run query**
+creates a frozen result through the complete query endpoint. Ordinary
+name/content search remains separate and does not inherit draft constraints.
+See [field-aware query syntax](searching.md#preview-a-field-aware-query).
+
+## Work with a frozen query
+
+A completed run becomes the accepted frozen snapshot for the tab. Draft edits
+remain separate until you choose **Run query** again. The workspace shows exact
+document and byte totals, 100 rows at a time, previous and next page controls,
+and the node, content version, hash, size, revision, and tags observed when the
+snapshot was created. Later vault changes do not replace those rows.
+
+Select a frozen row to inspect those original facts and the exact selected
+version. The same card loads current path, revision, tags, provenance, and audit
+status separately as live observations. A later rename, retag, or content
+replacement therefore does not rewrite the snapshot facts or substitute the
+new head for preview and download.
+
+Use **Refine snapshot** to inspect collection, tag, media-family, extension,
+modified-time, size, text-coverage, and duplicate facets. Choosing a supported
+facet or changing the query creates a new snapshot; it never splices live
+results into the accepted one. An unavailable facet says why instead of
+presenting a zero count.
+
+Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
+minutes total. Locking the browser session or stopping the daemon revokes them.
+If paging reports that the snapshot is gone, run the complete query again and
+use only the new snapshot and its cursors.
+
 ## Assign and remove tags
 
 1. Select a file or folder.
@@ -101,6 +151,52 @@ assignment count. It also refreshes the tag catalog and permanent-audit
 status. If another person, agent, or CLI command changed the node first, the
 dialog keeps the failed decision visible and asks you to refresh rather than
 applying it to newer state.
+
+### Tag selected documents
+
+Use the document checkboxes to select files on the displayed page, then choose
+**Add tags** in the selection dock. The picker shows whether all, some, or none
+of the selected documents have the chosen tag. **Add to all** and **Remove from
+all** apply one atomic, revision-fenced operation to at most 1,000 documents.
+Folders and undisplayed query results are not included in page selection.
+
+Keep the dialog open if the result is uncertain: **Retry same operation**
+reuses its original identity and revisions. A stale selection requires an
+explicit refresh rather than an automatic retry against newer documents.
+After confirmation, the browser reloads current observations; the retained
+receipt may describe an earlier successful operation. See
+[selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
+and backup behavior.
+
+### Tag a frozen query
+
+In a frozen snapshot, checkboxes select only documents on the visible page.
+**Tag whole query** instead captures every exact member across all pages, up to
+250,000 documents, and prepares revision-fenced batches of at most 1,000. The
+captured population does not expand when an untagged query starts receiving
+the tag: completed changes appear as overlays while the frozen rows and facet
+membership remain unchanged.
+
+Before any prepared action can mutate the vault, save its recovery checkpoint,
+select that saved file back, and confirm the displayed vault, action, tag,
+operation, and exact target count. The browser also journals the action in
+IndexedDB for that origin. Another tab on the same origin can resume it, but
+only the original operation identities, requests, and expected revisions are
+retried. If a response is lost after the daemon commits, **Retry same
+operation** recovers the retained receipt without applying the change twice.
+
+A daemon restart creates a fresh browser origin and session, so import the
+saved checkpoint to continue. Import validates and stages the action; it does
+not run it. The vault must match, and the new session still requires checkpoint
+readback and explicit confirmation. A stale document revision fences the
+action without silently refreshing its target or partially applying that
+batch.
+
+Recovery files contain private stable document identities, content-version
+identities, hashes, sizes, and revisions. They omit paths, names, query text,
+and browser credentials, but still need the same protection as vault metadata.
+Abandoning removes the browser journal and does not roll back changes that
+already committed.
 
 ## Manage tag definitions
 
@@ -125,7 +221,39 @@ change assignment rules.
 
 The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
-for exhaustive definition management and bulk assignment.
+for exhaustive definition management and assignments outside the displayed selection.
+
+## Saved queries and highlights
+
+Open the bookmark button in the top bar to manage saved queries and highlight
+sets. A new query starts with the current search text, selected tag and display
+sort. The complete query editor preserves the expression, filters, mode and sort
+together. Choose **Save as new** to name a definition, or **Edit** and **Save
+changes** to update one. The catalog is paginated in groups of 100.
+
+**Keep query draft** retains the complete query in the tab and URL fragment.
+The fragment contains query text and filters, so treat copied URLs as private.
+It does not contain browser-session credentials. Reloading restores the draft,
+but does not renew the browser session; authentication still requires
+`docbank web`. **Discard query draft** removes it from the URL.
+
+Saved queries are definitions, not frozen result sets. Opening a definition in
+the complete query editor and choosing **Run query** creates a new workspace
+snapshot from that draft; keeping or saving the draft alone does not run it or
+change the current live results. This browser run is not the durable saved-run
+receipt exposed by the authenticated HTTP API. Unknown fields are rejected,
+not silently dropped.
+
+Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
+with lowercase `#rrggbb` colors. They cannot run as queries, and the document
+viewer does not apply them yet. Neither result rows nor document bodies are
+stored in browser preferences.
+
+Edits and deletions use the definition's inspected revision. A stale response
+remains visible without automatically retrying against newer state. Reload the
+definitions and reopen the item before deciding again. Deletion requires a
+separate confirmation naming the definition, ID and revision; it never deletes
+documents. An already loaded draft remains until explicitly discarded.
 
 ## Move a node to recoverable trash
 
@@ -205,19 +333,33 @@ CLI or authenticated API workflows.
 
 ## Download verified content
 
-Choose **Download** on a file to retrieve its current version. Docbank first
+The selected document card previews eligible UTF-8 text and bounded static PNG
+or JPEG images. Text is rendered as inert text, never as document HTML. Docbank
+verifies the selected version UUID, size, media type, and SHA-256 after receiving
+the complete body and before publishing text or an image URL. Unsupported files
+and text larger than 16 MiB remain available through **Download verified
+original** without being decoded in the page.
+
+Choose **Download verified original** on a file to retrieve its selected
+version. A live row selects its current head; a frozen query row keeps the
+version captured by that snapshot even when the live head has since changed.
+Docbank first
 copies the object from loose or packed storage into owner-private daemon
 staging while the browser shows verified byte progress. The selected node
 revision, version UUID, SHA-256 identity, and exact size must still agree before
-that work starts. A concurrent replacement, move, or trash operation therefore
-asks you to refresh instead of silently downloading a different document.
+that work starts. The current node revision authorizes access to a retained
+historical version but never changes which bytes were selected. A concurrent
+replacement, move, or trash operation therefore asks you to refresh instead of
+silently downloading a different document.
 
 After the complete content passes verification, Docbank issues a one-use
 download ticket. The browser starts its save only after that check succeeds.
-Cancellation or a verification failure removes the private staging file and
-publishes nothing to the browser. The ticket identifies only that prepared file, expires
-after two minutes, and cannot call any other Docbank route. It is not the vault
-API key or the browser session.
+Cancellation or a verification failure removes a pending private staging file
+and publishes nothing to the browser. Changing the selected source or locking
+the session also cancels pending previews and revokes published image URLs. A
+ticket identifies only its prepared file, expires after two minutes, and cannot
+call any other Docbank route. It is not the vault API key or the browser
+session.
 
 Preparation streams on the daemon and does not buffer the object in browser
 memory. It temporarily needs local free space equal to the document's logical
@@ -424,6 +566,42 @@ still readable. Run `docbank backup verify` to independently prove repository
 integrity, and periodically restore into a separate vault to rehearse the
 complete recovery path.
 
+## Browse import collections
+
+Choose **Import collections** in the top bar to browse the vault's import groups.
+Each card shows its label or source description, ingest time, current live
+file count, and logical bytes. Select a collection to browse its current
+live members and inspect a document by its stable node identity. Counts are
+current membership, not a historical import total. The browser refresh time
+is separate from the ingest time.
+
+Labels belong to the import group, not its documents. Rename or clear a label
+under its inspected revision; if another client changes it first, the drawer
+keeps your draft and reports the conflict. Reload the label before deciding
+whether to save again. Label changes are unavailable once permanent audit
+authority has been enabled.
+
+Collection and member lists show at most 100 entries each. Empty groups,
+failed reads, and truncated lists are reported separately; use the paginated
+HTTP API to browse beyond that limit. This is direct member browsing, not
+a collection-filtered text search.
+
+Choose **Inspect collection quality** for document distributions, duplicate
+content counts, zero-byte files, media/extension mismatches, and text coverage.
+With multiple processing profiles, choose one before reading coverage. Without
+a configured profile, coverage is unavailable, not zero failures or complete
+processing. A configured policy does not mean an extraction adapter is running.
+
+Coverage distinguishes complete, partial, failed, unprocessed, and activated
+output with no text. Retained searchable output takes precedence over a failed
+retry. The existing worker rejects blank provider output as a failed attempt.
+Quality reads are bounded to 250,000 members, a 64 MiB census, and five seconds;
+an exceeded limit returns an error, never a partial successful summary.
+
+Select distribution values and choose **New query** to open a collection-scoped
+draft. Multiple selected values use OR. This does not change live results or
+execute a search. Concentrations describe common values, not document defects.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -453,14 +631,18 @@ accepts that credential for the following operations:
 | Read background jobs and physical storage status | Cannot start or change maintenance. |
 | List backup snapshots | Uses only the repository already configured for this daemon. |
 | List trash | Returns a bounded list of restorable roots. |
-| Prepare a download | Writes only a private temporary file and issues one expiring ticket for that file. |
+| Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
+| Read collections and their members | Returns bounded lists of live import membership. |
+| Set or clear a collection label | Requires the inspected collection-label revision. |
+| Create and page a frozen query snapshot | Uses complete validated query intent; handles remain bound to this session and daemon lifetime. |
+| Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and explicit confirmation; retries preserve the original operation identities. |
 
-The API permits saved-definition management with a browser session, but the
-current application has no controls for it. See
+The browser manages saved definitions, validates complete query drafts, and
+runs accepted drafts as frozen snapshots through its scoped session. See
 [Saved queries and highlight sets](searching.md#save-complete-query-intent-over-http).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
@@ -469,10 +651,10 @@ file bytes. Upload can create only file nodes beneath the stable live
 directory selected in the browser. The daemon independently checks the
 caller-declared hash and size, as it does for other remote writers.
 
-These permissions do not allow bulk tag changes, emptying trash, other
-document mutations, audit enrollment, backup creation, restore, maintenance,
-configuration changes, or access to general API endpoints. A browser session
-never receives the master API key. See the
+These permissions do not allow emptying trash, document mutations other than
+the revision-fenced tag workflows above, audit enrollment, backup creation,
+restore, maintenance, configuration changes, or access to general API
+endpoints. A browser session never receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
 
 The lock button revokes the session in daemon memory and clears the page.
@@ -508,10 +690,15 @@ children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
 The current web application does not compare versions, recursively import
-folders, edit, revert, prune, move live nodes between folders, bulk-apply tags,
-empty trash, enroll audit scopes, or run maintenance, backup creation,
-backup verification, general metadata/content verification, or restore
-operations.
+folders, edit, revert, prune, move live nodes between folders, empty trash,
+enroll audit scopes, or run maintenance, backup creation, backup verification,
+general metadata/content verification, or restore operations. Frozen-query tag
+actions are capped at 250,000 exact documents; use an authenticated API client
+for larger or different bulk workflows.
+Original-file previews support UTF-8 or ASCII text up to 16 MiB and bounded
+static PNG or JPEG images up to 32 MiB. Other document, image, audio, video, and
+archive formats use verified download; rendered document pages and extracted
+text navigation are separate workflows.
 Use the corresponding CLI or authenticated HTTP endpoint for those workflows.
 
 If a page reports that its browser session or upload channel expired, ended,
