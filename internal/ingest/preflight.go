@@ -23,8 +23,9 @@ const (
 // Patterns use path.Match syntax over source-relative slash paths. A pattern
 // without a slash matches a basename anywhere; exclusions take precedence.
 type Options struct {
-	Include []string
-	Exclude []string
+	Include         []string
+	Exclude         []string
+	CollectionLabel *string
 	// Replace versions the live file already at a source's destination path
 	// instead of importing the source under an auto-suffixed name. Preflight
 	// ignores it because it never resolves a destination.

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // ProvenanceAppendInput describes one post-ingest origin assertion. A positive
@@ -155,7 +154,7 @@ func validateProvenancePredecessorTx(
 	}
 	// Operational facts anchor re-ingest idempotency. Corrections may retire
 	// caller-supplied evidence, but must leave those ingest observations active.
-	if !strings.HasPrefix(sourceKind, callerSuppliedSourceKindPrefix) {
+	if !sourceKindIsEmbedded(sourceKind) {
 		return fmt.Errorf("operational ingest provenance cannot be superseded: %w", ErrProvenanceMismatch)
 	}
 	var successor int

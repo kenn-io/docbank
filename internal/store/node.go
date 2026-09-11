@@ -169,10 +169,7 @@ func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (N
 		if err != nil {
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
 		}
-		row := q.QueryRowContext(ctx,
-			`SELECT `+nodeCols+` FROM `+nodeFrom+`
-			 WHERE n.parent_id = ? AND n.name = ? AND n.trashed_at IS NULL`, n.ID, seg)
-		n, err = scanNode(row)
+		n, err = childByName(ctx, q, n.ID, seg)
 		if err != nil {
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
 		}

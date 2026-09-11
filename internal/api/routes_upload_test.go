@@ -83,6 +83,7 @@ func TestUploadCreatesReceiptAndIdempotentRetry(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var added api.UploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &added))
+	assert.NotContains(t, body, `"ingest_id"`)
 	assert.Equal(t, "added", added.Status)
 	assert.Equal(t, in.expectedHash, added.ComputedHash)
 	assert.Equal(t, in.expectedSize, added.ComputedSize)
@@ -97,6 +98,7 @@ func TestUploadCreatesReceiptAndIdempotentRetry(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var skipped api.UploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &skipped))
+	assert.NotContains(t, body, `"ingest_id"`)
 	assert.Equal(t, "skipped", skipped.Status)
 	assert.Equal(t, added.Node.ID, skipped.Node.ID)
 	assert.Equal(t, added.Node.Revision, skipped.Node.Revision)

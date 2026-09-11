@@ -1,6 +1,7 @@
 ---
 title: Importing Documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
+last_edited: 2026-09-10
 ---
 
 # Importing Documents
@@ -109,6 +110,49 @@ When the source argument is one explicit file, a basename rule such as `*.pdf`
 matches it; a path-form rule such as `reports/*.pdf` applies to a directory
 source's relative paths.
 
+## Label and browse one import run
+
+The HTTP ingest body can attach an optional label to the logical run. The
+label publishes atomically with the first committed document observation:
+
+```bash
+curl -sS -X POST -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"paths":["/srv/import/review"],"dest":"/archive","collection_label":"Review set"}' \
+  http://127.0.0.1:43210/api/v1/ingest
+```
+
+For streamed progress, send the same field to the streaming route:
+
+```bash
+curl -sS -N -X POST -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"paths":["/srv/import/receipts"],"dest":"/archive","collection_label":"Receipt batch"}' \
+  http://127.0.0.1:43210/api/v1/ingest/stream
+```
+
+The terminal report includes `ingest_id` when at least one file committed. Use
+that ID with `GET /api/v1/collections/{id}` and
+`GET /api/v1/collections/{id}/members`; list current nonempty runs with
+`GET /api/v1/collections`. Collection membership follows the documents as they
+move within the vault and reports current paths, sizes, and versions. Trashed
+files and superseded provenance disappear from live membership. Caller-supplied
+`embedded:` provenance never creates a collection.
+
+The label has a separate ETag and edit route. Read
+`GET /api/v1/collections/{id}/label`, then PUT exactly `{"label":"New name"}`
+or `{"label":null}` to the same path with its quoted revision in `If-Match`.
+Non-null labels stay unique even while a collection is empty. After permanent
+audit is enabled, label changes fail with HTTP 409 and
+`audit_mutation_unsupported`; the existing label and collection remain
+readable.
+
+If only some files succeed, the receipt names the real run and lists failures
+beside it. If nothing commits, the receipt omits `ingest_id` and no collection
+or label is created. Label collisions and audit restrictions on an initial
+label use this same per-file failure list instead of turning the whole batch
+into one transport error.
+
 ## Follow a long import
 
 Human-mode `docbank add` performs a metadata-only scan to establish file and
@@ -148,6 +192,17 @@ Repeating the same source import does not create extra copies of its entries.
 Two differently named source files with identical bytes still import as two
 file entries. They share stored content but have distinct version UUIDs.
 
+Each explicit filesystem re-run is still a new logical ingest run. When bytes
+already match a destination node, Docbank adds that existing node to the new
+run without creating a content version. Recording this new membership advances
+the node revision, even without a collection label or any flags. This also
+applies to `--replace` when the bytes are identical. API clients holding the
+old ETag must refresh it before their next write; otherwise `If-Match` returns
+`412 stale_revision`. Repeating the same observation within one run is a no-op.
+
+Digest-checked `POST /uploads` retries keep their existing behavior: an equal retry returns the existing node with an unchanged revision
+and does not return an unused ingest identity.
+
 ## Collisions
 
 Two different files arriving at the same virtual name don't conflict —
@@ -164,11 +219,12 @@ docbank add ~/reports/summary.pdf --dest /archive --replace
 
 Docbank resolves the exact destination name and records its node revision
 before reading the source. Different bytes become a new content version on the
-same node, while unchanged bytes skip without changing the revision, stored
-MIME type, provenance, or version count. A live directory fails that file
-before source content is opened. If an absent destination is claimed while
-the source is read, the exact create reports a conflict and never chooses a
-suffix. A stale observed revision reports a conflict and leaves the newer
+same node. Unchanged bytes count as skipped and keep the stored MIME type and
+version history, while the new run membership advances the node revision as
+[described above](#what-happens-when-i-run-the-import-again). A live directory
+fails that file before source content is opened. If an absent destination is
+claimed while the source is read, the exact create reports a conflict and never
+chooses a suffix. A stale observed revision reports a conflict and leaves the newer
 content current. Omit `--replace` for ordinary collision suffixing.
 
 ## Inspect where a document came from
@@ -233,6 +289,11 @@ computes both independently while streaming, and creates no node or blob
 authority when either differs. See the [HTTP API](../architecture/http-api.md#addendum-post-uploads)
 and [Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
 for the exact contract.
+
+Backups include collection labels, their revision fences, run membership, and
+the audit history for repeated operational observations. Older readers that do
+not understand this added authority reject such a snapshot explicitly instead
+of restoring it without the collection records.
 
 ## Continuously ingest a local inbox
 

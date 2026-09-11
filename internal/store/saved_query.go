@@ -20,8 +20,7 @@ const (
 	// SavedQueryKindHighlightSet identifies a canonical HighlightSetV1 payload.
 	SavedQueryKindHighlightSet = "highlight_set"
 
-	maxSavedQueryPageSize         = 1000
-	maxSavedQueryNameBytes        = 256
+	maxLabelNameBytes             = 256
 	maxSavedQueryDescriptionBytes = 4096
 )
 
@@ -52,7 +51,7 @@ type SavedQueryPatch struct {
 func (s *Store) CreateSavedQuery(
 	ctx context.Context, name, description, kind string, payload []byte,
 ) (SavedQuery, error) {
-	name, err := normalizeSavedQueryName(name)
+	name, err := normalizeLabelName(name, ErrInvalidSavedQuery)
 	if err != nil {
 		return SavedQuery{}, err
 	}
@@ -163,7 +162,7 @@ func (s *Store) UpdateSavedQuery(
 	}
 	var normalizedName *string
 	if patch.Name != nil {
-		name, err := normalizeSavedQueryName(*patch.Name)
+		name, err := normalizeLabelName(*patch.Name, ErrInvalidSavedQuery)
 		if err != nil {
 			return SavedQuery{}, err
 		}
@@ -300,20 +299,20 @@ func checkSavedQueryRevision(record SavedQuery, expected int64) error {
 	return nil
 }
 
-func normalizeSavedQueryName(name string) (string, error) {
+func normalizeLabelName(name string, invalid error) (string, error) {
 	if !utf8.ValidString(name) {
-		return "", fmt.Errorf("%w: name is not valid UTF-8", ErrInvalidSavedQuery)
+		return "", fmt.Errorf("%w: name is not valid UTF-8", invalid)
 	}
 	name = norm.NFC.String(name)
-	if len(name) < 1 || len(name) > maxSavedQueryNameBytes {
+	if len(name) < 1 || len(name) > maxLabelNameBytes {
 		return "", fmt.Errorf("%w: name must contain 1 to %d UTF-8 bytes",
-			ErrInvalidSavedQuery, maxSavedQueryNameBytes)
+			invalid, maxLabelNameBytes)
 	}
 	if strings.TrimFunc(name, unicode.IsSpace) == "" {
-		return "", fmt.Errorf("%w: name must not be all whitespace", ErrInvalidSavedQuery)
+		return "", fmt.Errorf("%w: name must not be all whitespace", invalid)
 	}
 	if strings.ContainsFunc(name, unicode.IsControl) {
-		return "", fmt.Errorf("%w: name contains a control character", ErrInvalidSavedQuery)
+		return "", fmt.Errorf("%w: name contains a control character", invalid)
 	}
 	return name, nil
 }
@@ -373,11 +372,8 @@ func validateSavedQueryPage(kind string, limit, offset int) error {
 	if kind != "" && kind != SavedQueryKindQuery && kind != SavedQueryKindHighlightSet {
 		return fmt.Errorf("%w: unknown kind %q", ErrInvalidSavedQuery, kind)
 	}
-	if limit < 1 || limit > maxSavedQueryPageSize {
-		return fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidSavedQuery, maxSavedQueryPageSize)
-	}
-	if offset < 0 {
-		return fmt.Errorf("%w: offset must not be negative", ErrInvalidSavedQuery)
+	if err := validatePage(limit, offset); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidSavedQuery, err)
 	}
 	return nil
 }

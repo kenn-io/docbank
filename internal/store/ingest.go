@@ -12,9 +12,14 @@ import (
 // Keep the stored prefix compatible with existing provenance records.
 const callerSuppliedSourceKindPrefix = "embedded:"
 
+func sourceKindIsEmbedded(kind string) bool {
+	return len(kind) >= len(callerSuppliedSourceKindPrefix) &&
+		strings.EqualFold(kind[:len(callerSuppliedSourceKindPrefix)], callerSuppliedSourceKindPrefix)
+}
+
 func publicProvenanceSourceKind(kind string) string {
-	if supplied, ok := strings.CutPrefix(kind, callerSuppliedSourceKindPrefix); ok {
-		return supplied
+	if sourceKindIsEmbedded(kind) {
+		return kind[len(callerSuppliedSourceKindPrefix):]
 	}
 	return kind
 }
@@ -25,6 +30,7 @@ func publicProvenanceSourceKind(kind string) string {
 type IngestRun struct {
 	record           metadataIngest
 	operationalWatch bool
+	initialLabel     *string
 }
 
 // ID returns the stable ingest identity.
@@ -34,7 +40,33 @@ func (r IngestRun) ID() string { return r.record.ID }
 // atomically with the first file that actually imports, so audited vaults never
 // contain a run whose provenance was committed in a separate transaction.
 func (s *Store) BeginIngest(ctx context.Context, sourceKind, sourceDesc string) (IngestRun, error) {
-	return s.beginIngest(ctx, sourceKind, sourceDesc, sourceKind == "watch")
+	return s.BeginIngestWithLabel(ctx, sourceKind, sourceDesc, nil)
+}
+
+// BeginIngestWithLabel prepares an authority-free ingest run carrying an
+// optional initial collection label. The run and label publish atomically with
+// its first committed document observation.
+func (s *Store) BeginIngestWithLabel(
+	ctx context.Context, sourceKind, sourceDesc string, label *string,
+) (IngestRun, error) {
+	normalizedValue, hasLabel, err := normalizeOptionalCollectionLabel(label)
+	if err != nil {
+		return IngestRun{}, err
+	}
+	if hasLabel && sourceKindIsEmbedded(sourceKind) {
+		return IngestRun{}, fmt.Errorf(
+			"%w: caller-supplied provenance cannot define a collection label",
+			ErrInvalidCollectionLabel,
+		)
+	}
+	run, err := s.beginIngest(ctx, sourceKind, sourceDesc, sourceKind == "watch")
+	if err != nil {
+		return IngestRun{}, err
+	}
+	if hasLabel {
+		run.initialLabel = &normalizedValue
+	}
+	return run, nil
 }
 
 // BeginCallerSuppliedIngest prepares generic provenance without interpreting any
@@ -136,6 +168,21 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	if err := validateIngestRecord(run.record); err != nil {
 		return false, fmt.Errorf("validating ingest run: %w", err)
 	}
+	var alreadyStored bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM ingests WHERE id=?)`, run.record.ID,
+	).Scan(&alreadyStored); err != nil {
+		return false, fmt.Errorf("checking ingest run %s: %w", run.record.ID, err)
+	}
+	if run.initialLabel != nil && !alreadyStored {
+		active, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return false, err
+		}
+		if active {
+			return false, ErrAuditMutationUnsupported
+		}
+	}
 	result, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO ingests (id, started_at, source_kind, source_desc)
 		 VALUES (?, ?, ?, ?)`,
@@ -158,6 +205,11 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	if stored.ID != run.record.ID || stored.StartedAt != run.record.StartedAt ||
 		stored.SourceKind != run.record.SourceKind || stored.SourceDesc != run.record.SourceDesc {
 		return false, fmt.Errorf("ingest identity %s names different immutable metadata", run.record.ID)
+	}
+	if inserted == 1 {
+		if err := insertInitialCollectionLabelTx(ctx, tx, run); err != nil {
+			return false, err
+		}
 	}
 	return inserted == 1, nil
 }
@@ -268,7 +320,7 @@ func sameOriginTx(
 			return false, fmt.Errorf("scanning provenance of node %d: %w", nodeID, err)
 		}
 		sawProvenance = true
-		if strings.HasPrefix(storedSourceKind, callerSuppliedSourceKindPrefix) {
+		if sourceKindIsEmbedded(storedSourceKind) {
 			continue
 		}
 		if storedSourceKind != sourceKind {
@@ -292,8 +344,8 @@ func sameOriginTx(
 // applying the idempotency rule and recording provenance. Returns
 // added=false when the content is already present under a candidate name.
 func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, bool, error) {
-	receipt, added, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, false, false, physical...)
+	receipt, added, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, ingestFileOptions{}, physical...)
 	return receipt.Node, added, err
 }
 
@@ -301,8 +353,8 @@ func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, n
 // bulk migration it never suffixes or adopts an existing same-content node;
 // a watched source needs its configured source identity to remain one-to-one.
 func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, error) {
-	receipt, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, true, false, physical...)
+	receipt, _, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, ingestFileOptions{exact: true}, physical...)
 	return receipt.Node, err
 }
 
@@ -313,22 +365,34 @@ func (s *Store) IngestFileExactWithReceipt(
 	ctx context.Context, run IngestRun, parentID int64, name, blobHash string,
 	size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical,
 ) (ContentWriteReceipt, error) {
-	receipt, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
-		originalPath, originalMtime, true, true, physical...)
+	receipt, _, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, ingestFileOptions{exact: true, completeReceipt: true}, physical...)
 	return receipt, err
+}
+
+type ingestFileOptions struct {
+	exact             bool
+	completeReceipt   bool
+	observeMembership bool
+	directoryPlan     *IngestDirectoryPlan
 }
 
 func (s *Store) ingestFile(
 	ctx context.Context, run IngestRun, parentID int64, name, blobHash string,
-	size int64, mimeType, originalPath, originalMtime string, exact, completeReceipt bool,
+	size int64, mimeType, originalPath, originalMtime string, options ingestFileOptions,
 	physical ...BlobPhysical,
-) (ContentWriteReceipt, bool, error) {
+) (ContentWriteReceipt, bool, IngestDirectoryResolution, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
-		return ContentWriteReceipt{}, false, err
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 	}
 	if err := validateIngestRecord(run.record); err != nil {
-		return ContentWriteReceipt{}, false, fmt.Errorf("validating ingest run: %w", err)
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("validating ingest run: %w", err)
+	}
+	if options.directoryPlan != nil {
+		if err := validateIngestDirectoryPlan(*options.directoryPlan); err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
 	}
 	var recordedMtime *string
 	if originalMtime != "" {
@@ -339,15 +403,31 @@ func (s *Store) ingestFile(
 		OriginalPath: originalPath, OriginalMTime: recordedMtime,
 	}
 	if err := validateProvenanceFields(provenance); err != nil {
-		return ContentWriteReceipt{}, false, fmt.Errorf("validating ingest provenance: %w", err)
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("validating ingest provenance: %w", err)
 	}
 	var (
-		receipt ContentWriteReceipt
-		added   bool
+		receipt    ContentWriteReceipt
+		added      bool
+		resolution IngestDirectoryResolution
 	)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		ingestAdded := false
+		if options.directoryPlan != nil || options.observeMembership {
+			ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
+			if err != nil {
+				return err
+			}
+		}
+		if options.directoryPlan != nil {
+			leaf, resolved, err := s.ensureIngestDirectoryTx(ctx, tx, *options.directoryPlan)
+			if err != nil {
+				return err
+			}
+			parentID = leaf.ID
+			resolution = resolved
+		}
 		finalName := name
-		if exact {
+		if options.exact {
 			var existingID int64
 			err := tx.QueryRow(
 				`SELECT id FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
@@ -378,7 +458,20 @@ func (s *Store) ingestFile(
 				if err != nil {
 					return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
 				}
-				if !completeReceipt {
+				if options.observeMembership {
+					provenance.NodeID = receipt.Node.ID
+					provenance.Identity, err = provenanceIdentity(provenance)
+					if err != nil {
+						return fmt.Errorf("identifying ingest observation for %q: %w", name, err)
+					}
+					receipt.Node, err = s.observeOperationalIngestTx(
+						ctx, tx, run, receipt.Node, provenance, ingestAdded,
+					)
+					if err != nil {
+						return err
+					}
+				}
+				if !options.completeReceipt {
 					return nil
 				}
 				receipt.Version, err = scanContentVersion(tx.QueryRow(
@@ -414,9 +507,11 @@ func (s *Store) ingestFile(
 				return err
 			}
 		}
-		ingestAdded, err := ensureIngestRunTx(ctx, tx, run)
-		if err != nil {
-			return err
+		if options.directoryPlan == nil && !options.observeMembership {
+			ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
+			if err != nil {
+				return err
+			}
 		}
 		operation, err := newContentVersionOperation()
 		if err != nil {
@@ -472,7 +567,7 @@ func (s *Store) ingestFile(
 				return err
 			}
 		}
-		if completeReceipt {
+		if options.completeReceipt {
 			receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 			if err != nil {
 				return err
@@ -482,9 +577,9 @@ func (s *Store) ingestFile(
 		return nil
 	})
 	if err != nil {
-		return ContentWriteReceipt{}, false, err
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 	}
-	return receipt, added, nil
+	return receipt, added, resolution, nil
 }
 
 func insertWatchSourceTx(

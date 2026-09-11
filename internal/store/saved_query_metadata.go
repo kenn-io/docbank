@@ -67,7 +67,7 @@ func validateSavedQueryMetadataRecord(record metadataSavedQuery) error {
 	if err := validateUUIDv4(record.ID); err != nil {
 		return fmt.Errorf("invalid saved query ID: %w", err)
 	}
-	name, err := normalizeSavedQueryName(record.Name)
+	name, err := normalizeLabelName(record.Name, ErrInvalidSavedQuery)
 	if err != nil {
 		return err
 	}

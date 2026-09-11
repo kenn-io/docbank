@@ -394,7 +394,7 @@ func validateAuditedHistory(
 					if len(mutationScopeIDs) != 1 {
 						err = errors.New("cross-scope provenance mutation is unsupported")
 					} else {
-						err = replay.applyProvenanceAppend(
+						err = replay.applyProvenanceMutation(
 							vaultID, mutation, allocation, scopeEntry,
 							attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 						)

@@ -135,6 +135,24 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.NotNil(t, provenanceEvent.Attachment.After)
 	assert.Equal(t, "/source/taxes/receipt.txt",
 		*provenanceEvent.Attachment.After.OriginalPath)
+	secondRun, err := s.BeginIngest(t.Context(), "cli", "/source/taxes-second")
+	require.NoError(t, err)
+	observed, added, err := s.IngestFileWithMembership(
+		t.Context(), secondRun, taxes.ID, "receipt.txt", testHash("audit provenance"), 7,
+		"text/plain", "/source/taxes-second/receipt.txt", "2026-07-19T12:00:00Z",
+	)
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, ingested.ID, observed.ID)
+	observationHistory, err := c.AuditHistory(t.Context(), "", ingested.ID, 10, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, observationHistory.Items)
+	observationEvent := observationHistory.Items[0]
+	assert.Equal(t, "ingest_observe", observationEvent.Kind)
+	require.NotNil(t, observationEvent.Attachment)
+	require.NotNil(t, observationEvent.Attachment.After)
+	assert.Equal(t, ingested.ID, observationEvent.Attachment.After.NodeID)
+	assert.Equal(t, observed.CurrentVersionID, *observationEvent.ResultingCurrentVersionID)
 
 	scopeHistory, err := c.AuditScopeHistory(t.Context(), preview.ScopeID, 2, "")
 	require.NoError(t, err)
@@ -144,6 +162,7 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	assert.Greater(t, scopeHistory.Total, 2)
 	require.Len(t, scopeHistory.Items, 2)
 	require.NotEmpty(t, scopeHistory.NextCursor)
+	assert.Equal(t, "ingest_observe", scopeHistory.Items[0].Kind)
 	for _, event := range scopeHistory.Items {
 		assert.Equal(t, preview.ScopeID, event.ScopeID)
 	}

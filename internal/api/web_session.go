@@ -181,6 +181,12 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			((method == http.MethodPatch || method == http.MethodDelete) &&
 				r.URL.RawQuery == "")
 	}
+	if method == http.MethodPut && r.URL.RawQuery == "" {
+		if collectionID, resource, ok := collectionResourcePath(path); ok &&
+			collectionID != "" && resource == "label" {
+			return true
+		}
+	}
 	if method == http.MethodPost && path == webDownloadPreparePath {
 		return true
 	}
@@ -229,6 +235,12 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if method != http.MethodGet {
 		return false
 	}
+	if path == "/api/v1/collections" {
+		return true
+	}
+	if collectionID, resource, ok := collectionResourcePath(path); ok && collectionID != "" {
+		return resource == "" || resource == "members" || resource == "label"
+	}
 	if path == "/api/v1/trash" {
 		// The master API retains the released unbounded form, but a browser
 		// session may request only the UI's fixed bounded page.
@@ -265,6 +277,22 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	return len(parts) == 1 || parts[1] == "children" ||
 		parts[1] == "versions" || parts[1] == "provenance" ||
 		parts[1] == "tags"
+}
+
+func collectionResourcePath(path string) (collectionID, resource string, ok bool) {
+	const prefix = "/api/v1/collections/"
+	after, ok := strings.CutPrefix(path, prefix)
+	if !ok {
+		return "", "", false
+	}
+	parts := strings.Split(after, "/")
+	if len(parts) == 1 {
+		return parts[0], "", true
+	}
+	if len(parts) == 2 && parts[1] != "" {
+		return parts[0], parts[1], true
+	}
+	return "", "", false
 }
 
 func registerWebSession(

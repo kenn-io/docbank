@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/audit"
@@ -21,6 +20,22 @@ func persistAuditedProvenanceAppend(
 	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
 	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
 	priorNode, resultingNode Node, ingest metadataIngest, provenance metadataProvenance,
+) error {
+	eventKind := "provenance_add"
+	if provenance.Supersedes != nil {
+		eventKind = "provenance_supersede"
+	}
+	return persistAuditedProvenanceMutation(
+		ctx, tx, vaultID, operationID, recordedAt, nodeSequence, authority, scopes,
+		priorNode, resultingNode, ingest, provenance, eventKind, true,
+	)
+}
+
+func persistAuditedProvenanceMutation(
+	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
+	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
+	priorNode, resultingNode Node, ingest metadataIngest, provenance metadataProvenance,
+	eventKind string, ingestAdded bool,
 ) error {
 	sequence, err := nextAuditInteger("operation sequence", authority.sequence)
 	if err != nil {
@@ -53,23 +68,20 @@ func persistAuditedProvenanceAppend(
 	if err != nil {
 		return err
 	}
-	// The ingest row and its provenance row are one logical assertion. Both
-	// become auditable attachments in the same mutation delta.
-	ingestChange, err := makeAttachedMetadataAddition(ingestRecord)
-	if err != nil {
-		return err
+	changes := make([]audit.Record, 0, 2)
+	if ingestAdded {
+		ingestChange, err := makeAttachedMetadataAddition(ingestRecord)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, ingestChange)
 	}
-	delta, deltaDigest, err := makeAttachedMetadataDelta(
-		values.operationID, []audit.Record{ingestChange, provenanceChange},
-	)
+	changes = append(changes, provenanceChange)
+	delta, deltaDigest, err := makeAttachedMetadataDelta(values.operationID, changes)
 	if err != nil {
 		return err
 	}
 	events := make([]audit.Record, len(scopes))
-	eventKind := "provenance_add"
-	if provenance.Supersedes != nil {
-		eventKind = "provenance_supersede"
-	}
 	for index, scope := range scopes {
 		events[index], err = makeAuditedProvenanceEvent(
 			values, scope.scopeID, uint64(index), priorNode, resultingNode,
@@ -88,7 +100,7 @@ func persistAuditedProvenanceAppend(
 		return err
 	}
 	mutation, err = replaceAuditRecordField(
-		mutation, auditAttachedMetadataChangeCountField, audit.Unsigned(2),
+		mutation, auditAttachedMetadataChangeCountField, audit.Unsigned(uint64(len(changes))),
 	)
 	if err != nil {
 		return err
@@ -123,7 +135,7 @@ func persistAuditedProvenanceAppend(
 	if err != nil {
 		return err
 	}
-	allocation, err = addAttachedMetadataToAllocation(allocation, 2, deltaDigest.value)
+	allocation, err = addAttachedMetadataToAllocation(allocation, uint64(len(changes)), deltaDigest.value)
 	if err != nil {
 		return err
 	}
@@ -225,15 +237,16 @@ func makeAuditedProvenanceEvent(
 	}}, nil
 }
 
-type replayedProvenanceAppend struct {
-	nodeID     uint64
-	ingest     audit.Record
-	provenance audit.Record
-	change     audit.Record
-	digest     string
+type replayedProvenanceMutation struct {
+	nodeID      uint64
+	ingest      audit.Record
+	provenance  audit.Record
+	digest      string
+	eventKind   string
+	ingestAdded bool
 }
 
-func (replay *auditedHistoryReplay) applyProvenanceAppend(
+func (replay *auditedHistoryReplay) applyProvenanceMutation(
 	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
 	deltaRecords, eventRecords map[string]storedAuditRecord,
 	usedDeltas, usedEvents map[string]bool,
@@ -256,13 +269,24 @@ func (replay *auditedHistoryReplay) applyProvenanceAppend(
 	if err := requireAuditAbsent(mutation.record, "grouping_id"); err != nil {
 		return err
 	}
-	transition, err := replay.validateProvenanceAppendDelta(
-		mutation.record, operationID, deltaRecords, usedDeltas,
-	)
+	eventKind, err := auditedMutationFirstEventKind(mutation.record)
 	if err != nil {
 		return err
 	}
-	if err := replay.validateProvenanceAppendEvent(
+	var transition replayedProvenanceMutation
+	if eventKind == "ingest_observe" {
+		transition, err = replay.validateIngestObservationDelta(
+			mutation.record, operationID, deltaRecords, usedDeltas,
+		)
+	} else {
+		transition, err = replay.validateProvenanceAppendDelta(
+			mutation.record, operationID, deltaRecords, usedDeltas,
+		)
+	}
+	if err != nil {
+		return err
+	}
+	if err := replay.validateProvenanceMutationEvent(
 		operationID, mutation.record, transition, eventRecords, usedEvents,
 	); err != nil {
 		return err
@@ -287,7 +311,11 @@ func (replay *auditedHistoryReplay) applyProvenanceAppend(
 			return err
 		}
 	}
-	if err := requireAuditUnsigned(mutation.record, auditAttachedMetadataChangeCountField, 2); err != nil {
+	changeCount := uint64(1)
+	if transition.ingestAdded {
+		changeCount = 2
+	}
+	if err := requireAuditUnsigned(mutation.record, auditAttachedMetadataChangeCountField, changeCount); err != nil {
 		return err
 	}
 	if err := requireAuditDigest(mutation.record, "attached_metadata_change_digest", transition.digest); err != nil {
@@ -296,135 +324,139 @@ func (replay *auditedHistoryReplay) applyProvenanceAppend(
 	if err := replay.advanceScope(vaultID, mutation, scopeEntry); err != nil {
 		return err
 	}
-	if err := replay.advanceAllocation(vaultID, operationID, mutation, allocation, transition.digest, 2); err != nil {
+	if err := replay.advanceAllocation(vaultID, operationID, mutation, allocation, transition.digest, changeCount); err != nil {
 		return err
 	}
-	return replay.applyProvenanceAppendState(transition, mutation.record)
+	return replay.applyProvenanceMutationState(transition, mutation.record)
 }
 
 func (replay *auditedHistoryReplay) validateProvenanceAppendDelta(
 	mutation audit.Record, operationID string,
 	deltaRecords map[string]storedAuditRecord, usedDeltas map[string]bool,
-) (replayedProvenanceAppend, error) {
+) (replayedProvenanceMutation, error) {
 	digest, err := auditDigestField(mutation, "attached_metadata_change_digest")
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	delta, ok := deltaRecords[digest]
 	if !ok || usedDeltas[digest] {
-		return replayedProvenanceAppend{}, errors.New("provenance mutation lacks one unique attached-metadata delta")
+		return replayedProvenanceMutation{}, errors.New("provenance mutation lacks one unique attached-metadata delta")
 	}
 	if err := requireAuditUUID(delta.record, auditOperationIDField, operationID); err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	changes, err := auditRecordListField(delta.record, "changes")
 	if err != nil || len(changes) != 2 {
-		return replayedProvenanceAppend{}, errors.New("provenance mutation must contain ingest and provenance changes")
+		return replayedProvenanceMutation{}, errors.New("provenance mutation must contain ingest and provenance changes")
 	}
 	var change, ingestChange audit.Record
 	for _, candidate := range changes {
 		kind, kindErr := auditTextField(candidate, "record_kind")
 		if kindErr != nil {
-			return replayedProvenanceAppend{}, kindErr
+			return replayedProvenanceMutation{}, kindErr
 		}
 		_, hasPre, preErr := optionalNestedAuditRecord(candidate, auditPreField)
 		if preErr != nil || hasPre {
-			return replayedProvenanceAppend{}, errors.New("provenance mutation changes an existing attachment")
+			return replayedProvenanceMutation{}, errors.New("provenance mutation changes an existing attachment")
 		}
 		_, hasPost, postErr := optionalNestedAuditRecord(candidate, auditPostField)
 		if postErr != nil || !hasPost {
-			return replayedProvenanceAppend{}, errors.New("provenance mutation lacks an added attachment")
+			return replayedProvenanceMutation{}, errors.New("provenance mutation lacks an added attachment")
 		}
 		switch kind {
 		case metadataProvenanceType:
 			if change.Kind != "" {
-				return replayedProvenanceAppend{}, errors.New("provenance mutation repeats its fact change")
+				return replayedProvenanceMutation{}, errors.New("provenance mutation repeats its fact change")
 			}
 			change = candidate
 		case metadataIngestType:
 			if ingestChange.Kind != "" {
-				return replayedProvenanceAppend{}, errors.New("provenance mutation repeats its ingest change")
+				return replayedProvenanceMutation{}, errors.New("provenance mutation repeats its ingest change")
 			}
 			ingestChange = candidate
 		default:
-			return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation carries unsupported attachment %q", kind)
+			return replayedProvenanceMutation{}, fmt.Errorf("provenance mutation carries unsupported attachment %q", kind)
 		}
 	}
 	if change.Kind == "" || ingestChange.Kind == "" {
-		return replayedProvenanceAppend{}, errors.New("provenance mutation must add one ingest and one fact")
+		return replayedProvenanceMutation{}, errors.New("provenance mutation must add one ingest and one fact")
 	}
 	ingestPost, err := validateAuditedIngestAddition(ingestChange)
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	ingestKey, err := attachedAuditKey(ingestPost)
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	if _, exists := replay.attachments[ingestKey]; exists {
-		return replayedProvenanceAppend{}, errors.New("provenance mutation reuses ingest identity")
+		return replayedProvenanceMutation{}, errors.New("provenance mutation reuses ingest identity")
 	}
 	post, _, err := optionalNestedAuditRecord(change, auditPostField)
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	ingestID, err := auditUUIDField(ingestPost, "ingest_id")
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	if err := validateReplayedIngest(ingestPost); err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	if err := validateReplayedProvenance(post, ingestID); err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	identity, err := attachedAuditIdentity(post)
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	storedIdentity, err := auditNestedField(change, "stable_identity")
 	if err != nil || !auditRecordEqual(storedIdentity, identity) {
-		return replayedProvenanceAppend{}, errors.New("provenance delta identity does not match its record")
+		return replayedProvenanceMutation{}, errors.New("provenance delta identity does not match its record")
 	}
 	nodeID, err := auditUnsignedField(post, metadataNodeIDField)
 	if err != nil || !replay.memberSet[nodeID] {
-		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation targets unaudited node %d", nodeID)
+		return replayedProvenanceMutation{}, fmt.Errorf("provenance mutation targets unaudited node %d", nodeID)
 	}
 	topologyIndex, ok := replay.topologyIndex[nodeID]
 	if !ok {
-		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation target %d is absent from topology", nodeID)
+		return replayedProvenanceMutation{}, fmt.Errorf("provenance mutation target %d is absent from topology", nodeID)
 	}
 	nodeKind, err := auditTextField(replay.topology[topologyIndex], "node_kind")
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	if nodeKind != nodeKindFile {
-		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation targets non-file node %d", nodeID)
+		return replayedProvenanceMutation{}, fmt.Errorf("provenance mutation targets non-file node %d", nodeID)
 	}
 	provenanceID, err := auditDigestField(post, "identity")
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	key, err := attachedAuditKey(post)
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	if _, exists := replay.attachments[key]; exists {
-		return replayedProvenanceAppend{}, fmt.Errorf("provenance mutation reuses identity %s", provenanceID)
+		return replayedProvenanceMutation{}, fmt.Errorf("provenance mutation reuses identity %s", provenanceID)
 	}
 	supersedes, err := auditOptionalDigestField(post, "supersedes")
 	if err != nil {
-		return replayedProvenanceAppend{}, err
+		return replayedProvenanceMutation{}, err
 	}
 	if supersedes != nil {
 		if err := replay.requireSupersedableProvenance(nodeID, *supersedes); err != nil {
-			return replayedProvenanceAppend{}, err
+			return replayedProvenanceMutation{}, err
 		}
 	}
+	eventKind := "provenance_add"
+	if supersedes != nil {
+		eventKind = "provenance_supersede"
+	}
 	usedDeltas[digest] = true
-	return replayedProvenanceAppend{
-		nodeID: nodeID, provenance: post, change: change, digest: digest,
-		ingest: ingestPost,
+	return replayedProvenanceMutation{
+		nodeID: nodeID, provenance: post, digest: digest,
+		ingest: ingestPost, ingestAdded: true, eventKind: eventKind,
 	}, nil
 }
 
@@ -524,7 +556,7 @@ func (replay *auditedHistoryReplay) requireSupersedableProvenance(nodeID uint64,
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(sourceKind, callerSuppliedSourceKindPrefix) {
+	if !sourceKindIsEmbedded(sourceKind) {
 		return errors.New("operational ingest provenance cannot be superseded")
 	}
 	return nil
@@ -568,8 +600,8 @@ func (replay *auditedHistoryReplay) activeProvenanceRecord(
 	return result, nil
 }
 
-func (replay *auditedHistoryReplay) validateProvenanceAppendEvent(
-	operationID string, mutation audit.Record, transition replayedProvenanceAppend,
+func (replay *auditedHistoryReplay) validateProvenanceMutationEvent(
+	operationID string, mutation audit.Record, transition replayedProvenanceMutation,
 	eventRecords map[string]storedAuditRecord, usedEvents map[string]bool,
 ) error {
 	events, err := auditRecordListField(mutation, "events")
@@ -589,12 +621,7 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendEvent(
 	if err != nil || !auditRecordEqual(storedIdentity, identity) {
 		return errors.New("provenance event identity does not match its attachment")
 	}
-	eventKind := "provenance_add"
-	if supersedes, err := auditOptionalDigestField(transition.provenance, "supersedes"); err != nil {
-		return err
-	} else if supersedes != nil {
-		eventKind = "provenance_supersede"
-	}
+	eventKind := transition.eventKind
 	var expectedPre audit.Record
 	if eventKind == "provenance_supersede" {
 		supersedes, err := auditOptionalDigestField(transition.provenance, "supersedes")
@@ -642,7 +669,7 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendEvent(
 				return nil
 			}
 			if hasPre {
-				return errors.New("provenance-add event unexpectedly has a pre-state")
+				return errors.New("provenance event unexpectedly has a pre-state")
 			}
 			return nil
 		},
@@ -659,19 +686,21 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendEvent(
 	return nil
 }
 
-func (replay *auditedHistoryReplay) applyProvenanceAppendState(
-	transition replayedProvenanceAppend, mutation audit.Record,
+func (replay *auditedHistoryReplay) applyProvenanceMutationState(
+	transition replayedProvenanceMutation, mutation audit.Record,
 ) error {
 	key, err := attachedAuditKey(transition.provenance)
 	if err != nil {
 		return err
 	}
 	replay.attachments[key] = transition.provenance
-	ingestKey, err := attachedAuditKey(transition.ingest)
-	if err != nil {
-		return err
+	if transition.ingestAdded {
+		ingestKey, err := attachedAuditKey(transition.ingest)
+		if err != nil {
+			return err
+		}
+		replay.attachments[ingestKey] = transition.ingest
 	}
-	replay.attachments[ingestKey] = transition.ingest
 	state := replay.states[transition.nodeID]
 	revision, err := auditUnsignedField(state, auditNodeRevisionField)
 	if err != nil {
@@ -712,7 +741,7 @@ func validateReplayedIngest(record audit.Record) error {
 	if err != nil {
 		return err
 	}
-	if kind, supplied := strings.CutPrefix(sourceKind, callerSuppliedSourceKindPrefix); !supplied || kind == "" {
+	if !sourceKindIsEmbedded(sourceKind) || len(sourceKind) == len(callerSuppliedSourceKindPrefix) {
 		return errors.New("provenance mutation ingest requires a non-empty caller-supplied source kind")
 	}
 	description, err := auditField(record, "source_desc")

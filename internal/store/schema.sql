@@ -423,6 +423,15 @@ CREATE TABLE IF NOT EXISTS ingests (
     source_desc TEXT NOT NULL
 );
 
+-- Mutable collection labels are separate from immutable ingest identity.
+-- A cleared label retains its row so optimistic-concurrency fences never reset.
+CREATE TABLE IF NOT EXISTS collection_labels (
+    ingest_id  TEXT PRIMARY KEY REFERENCES ingests(id),
+    label      TEXT UNIQUE,
+    revision   INTEGER NOT NULL CHECK (revision >= 1),
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS provenance (
     identity       TEXT PRIMARY KEY NOT NULL,
     node_id        INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,

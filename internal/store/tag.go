@@ -12,7 +12,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const maxTagPageSize = 1000
+const maxPageSize = 1000
 
 // Tag is one stable organization label. Name is mutable; ID is permanent and
 // never reused. AssignmentCount is the current number of tagged nodes.
@@ -133,7 +133,7 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 
 // Tags lists one name-sorted page and the total number of definitions.
 func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error) {
-	if err := validateTagPage(limit, offset); err != nil {
+	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
@@ -453,7 +453,7 @@ func changeTagAssignmentTx(
 
 // NodeTags lists one name-sorted page of tags assigned to a node.
 func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) ([]Tag, int, error) {
-	if err := validateTagPage(limit, offset); err != nil {
+	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
@@ -514,7 +514,7 @@ func (s *Store) LiveTaggedNodes(
 func (s *Store) taggedNodes(
 	ctx context.Context, tagID string, limit, offset int, liveOnly bool,
 ) ([]TaggedNode, int, int, error) {
-	if err := validateTagPage(limit, offset); err != nil {
+	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, 0, err
 	}
 	if err := validateUUIDv4(tagID); err != nil {
@@ -627,12 +627,12 @@ func touchTaggedNodesTx(tx *sql.Tx, tagID, timestamp string) error {
 	return nil
 }
 
-func validateTagPage(limit, offset int) error {
-	if limit < 1 || limit > maxTagPageSize {
-		return fmt.Errorf("tag limit must be between 1 and %d", maxTagPageSize)
+func validatePage(limit, offset int) error {
+	if limit < 1 || limit > maxPageSize {
+		return fmt.Errorf("limit must be between 1 and %d", maxPageSize)
 	}
 	if offset < 0 {
-		return errors.New("tag offset must not be negative")
+		return errors.New("offset must not be negative")
 	}
 	return nil
 }

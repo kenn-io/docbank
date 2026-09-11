@@ -293,7 +293,7 @@ func TestSavedQueryOldestReleasedSchemaUpgradeCreatesEmptyAuthority(t *testing.T
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
 			var schemaVersion int
 			require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&schemaVersion))
-			assert.Equal(t, 7, schemaVersion)
+			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			rows, total, err := s.SavedQueries(t.Context(), "", 10, 0)
 			require.NoError(t, err)
 			assert.Zero(t, total)
@@ -323,19 +323,23 @@ func TestSavedQueryCurrentSchemaRejectsMissingAuthorityTable(t *testing.T) {
 
 func TestSavedQuerySchemaRejectsPriorUnreleasedLayout(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
-		t.Run(test.name, func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "docbank.db")
-			s, err := Open(dbPath, test.driver)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=6 WHERE singleton=1`)
-			require.NoError(t, err)
-			require.NoError(t, s.Close())
+		for _, version := range []int{6, 7} {
+			t.Run(fmt.Sprintf("%s/v%d", test.name, version), func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`DROP TABLE collection_labels`)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, version)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
 
-			reopened, err := Open(dbPath, test.driver)
-			if reopened != nil {
-				require.NoError(t, reopened.Close())
-			}
-			require.ErrorContains(t, err, "schema version 6 has no supported JSONL cutover")
-		})
+				reopened, err := Open(dbPath, test.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, fmt.Sprintf("schema version %d has no supported JSONL cutover", version))
+			})
+		}
 	}
 }

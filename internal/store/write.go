@@ -188,7 +188,11 @@ func (s *Store) ChildByName(ctx context.Context, parentID int64, name string) (N
 // childByName returns the live child of dirID named name (name must already
 // be normalized).
 func (s *Store) childByName(ctx context.Context, dirID int64, name string) (Node, error) {
-	row := s.db.QueryRowContext(ctx,
+	return childByName(ctx, s.db, dirID, name)
+}
+
+func childByName(ctx context.Context, q rowQuerier, dirID int64, name string) (Node, error) {
+	row := q.QueryRowContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
 		 WHERE n.parent_id = ? AND n.name = ? AND n.trashed_at IS NULL`, dirID, name)
 	return scanNode(row)

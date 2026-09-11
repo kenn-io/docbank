@@ -67,6 +67,7 @@ func describeSources(sources []string) string {
 
 // Report summarizes an ingest run.
 type Report struct {
+	IngestID string
 	Added    int
 	Skipped  int
 	Excluded int
@@ -409,13 +410,31 @@ func (ing *Ingester) AddPathsWithSelection(
 	if err := ctx.Err(); err != nil {
 		return rep, err
 	}
-	dest, err := ing.Store.MkdirAll(ctx, destPath)
-	if err != nil {
-		return rep, fmt.Errorf("resolving destination %q: %w", destPath, err)
-	}
-	ingestID, err := ing.Store.BeginIngest(ctx, "cli", describeSources(sources))
-	if err != nil {
-		return rep, err
+	dest := &ingestDirectory{sourcePath: destPath}
+	files := &filesystemIngest{ing: ing, destination: dest}
+	if opts.CollectionLabel == nil {
+		directory, err := ing.Store.MkdirAll(ctx, destPath)
+		if err != nil {
+			return rep, fmt.Errorf("resolving destination %q: %w", destPath, err)
+		}
+		dest.id = directory.ID
+		files.run, err = ing.Store.BeginIngest(ctx, "cli", describeSources(sources))
+		if err != nil {
+			return rep, err
+		}
+	} else {
+		files.run, err = ing.Store.BeginIngestWithLabel(
+			ctx, "cli", describeSources(sources), opts.CollectionLabel,
+		)
+		if err != nil {
+			return rep, err
+		}
+		destPlan, planErr := ing.Store.PrepareIngestDirectory(ctx, destPath)
+		if planErr != nil {
+			return rep, fmt.Errorf("resolving destination %q: %w", destPath, planErr)
+		}
+		dest.plan = &destPlan
+		files.directories = append(files.directories, dest)
 	}
 
 	for _, rawSource := range sources {
@@ -448,12 +467,12 @@ func (ing *Ingester) AddPathsWithSelection(
 				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addOne(ctx, &rep, ingestID, dest.ID, src, src, opts.Replace, progress); err != nil {
+			if err := files.addOne(ctx, &rep, dest, src, src, opts.Replace, progress); err != nil {
 				return rep, err
 			}
 		case info.IsDir():
-			if err := ing.addTree(
-				ctx, &rep, ingestID, dest.ID, src, src, selection, opts.Replace, progress,
+			if err := files.addTree(
+				ctx, &rep, src, src, selection, opts.Replace, progress,
 			); err != nil {
 				return rep, err
 			}
@@ -493,8 +512,8 @@ func (ing *Ingester) AddPathsWithSelection(
 				progress.report(rep, false)
 				continue
 			}
-			if err := ing.addTree(
-				ctx, &rep, ingestID, dest.ID, src, walkRoot, selection, opts.Replace, progress,
+			if err := files.addTree(
+				ctx, &rep, src, walkRoot, selection, opts.Replace, progress,
 			); err != nil {
 				return rep, err
 			}
@@ -509,12 +528,39 @@ func (ing *Ingester) AddPathsWithSelection(
 			progress.report(rep, false)
 		}
 	}
+	if err := files.finalize(ctx, &rep, progress); err != nil {
+		return rep, err
+	}
 	progress.report(rep, true)
 	return rep, nil
 }
 
+// ingestDirectory keeps parentage anchored to a node ID. Labeled imports defer
+// missing directories in plan until the label can be admitted atomically.
+type ingestDirectory struct {
+	sourcePath string
+	id         int64
+	plan       *store.IngestDirectoryPlan
+}
+
+type filesystemIngest struct {
+	ing               *Ingester
+	run               store.IngestRun
+	destination       *ingestDirectory
+	directories       []*ingestDirectory // Deferred plans, including the destination.
+	admissionRejected bool
+}
+
+func (files *filesystemIngest) applyResolution(
+	resolution store.IngestDirectoryResolution,
+) {
+	for _, directory := range files.directories {
+		*directory.plan = resolution.Rebase(*directory.plan)
+	}
+}
+
 // addTree imports walkRoot recursively; sourceRoot's basename becomes a
-// directory under destDirID and relative structure is preserved. The roots
+// directory under the destination and relative structure is preserved. The roots
 // differ only when the user explicitly supplied a symlink to a directory:
 // traversal uses its resolved target while provenance retains the supplied
 // spelling.
@@ -524,21 +570,15 @@ func (ing *Ingester) AddPathsWithSelection(
 // accepted — docbank is single-user and imports the user's own trees, so a
 // process able to race the walk already runs as the user; importFile's
 // no-follow open covers the accidental symlink case.
-func (ing *Ingester) addTree(
+func (files *filesystemIngest) addTree(
 	ctx context.Context,
 	rep *Report,
-	ingestRun store.IngestRun,
-	destDirID int64,
 	sourceRoot, walkRoot string,
 	selection sourceSelection,
 	replace bool,
 	progress *progressTracker,
 ) error {
-	// Absolutize first. WalkDir hands back the root spelled exactly as given
-	// while children come from filepath.Join, which cleans — dirIDs keys must
-	// use one spelling. And a source spelled "." or ".." has no usable
-	// basename: a ".." topName would climb out of the destination when
-	// joined into the virtual path below.
+	// Use one absolute spelling for map keys and a real basename for "."/"..".
 	sourceRoot, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return fmt.Errorf("resolving source %s: %w", sourceRoot, err)
@@ -552,13 +592,9 @@ func (ing *Ingester) addTree(
 		return fmt.Errorf("cannot import filesystem root %q", sourceRoot)
 	}
 
-	// Parentage stays ID-based throughout: every directory is created under
-	// the resolved id of its parent, never by re-deriving a path from
-	// destDirID — a concurrent move or trash of the destination would make
-	// that path re-create (even resurrect) a tree somewhere else.
-	dirIDs := map[string]int64{}  // source dir path -> virtual dir node id
-	dirErrs := map[string]error{} // source dir path -> reported creation failure
-	walkErr := filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
+	directories := map[string]*ingestDirectory{}
+	directoryErrors := map[string]error{}
+	return filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -589,33 +625,25 @@ func (ing *Ingester) addTree(
 			if len(selection.include) > 0 {
 				return nil
 			}
-			parentID, name := destDirID, topName
-			if p != walkRoot {
-				pid, ok := dirIDs[filepath.Dir(p)]
-				if !ok {
-					return fmt.Errorf("internal: no virtual dir recorded for %s", filepath.Dir(p))
-				}
-				parentID, name = pid, d.Name()
-			}
-			dir, err := ing.Store.EnsureDir(ctx, parentID, name)
+			_, err := files.ensureSourceDirectory(
+				ctx, directories, directoryErrors, topName, sourceRoot, walkRoot, p,
+			)
 			if err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return ctxErr
 				}
-				rep.Failed = append(rep.Failed, FileError{Path: sourcePath,
-					Err: fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)})
+				rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
 				progress.report(*rep, false)
 				return fs.SkipDir
 			}
-			dirIDs[p] = dir.ID
 		case d.Type().IsRegular():
 			if !selection.included(sourceRoot, sourcePath) {
 				rep.Excluded++
 				progress.report(*rep, false)
 				return nil
 			}
-			parentID, err := ing.ensureSourceDir(
-				ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(p),
+			parent, err := files.ensureSourceDirectory(
+				ctx, directories, directoryErrors, topName, sourceRoot, walkRoot, filepath.Dir(p),
 			)
 			if err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -623,12 +651,14 @@ func (ing *Ingester) addTree(
 				}
 				rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
 				progress.report(*rep, false)
-				if _, rootFailed := dirErrs[walkRoot]; rootFailed {
+				if _, rootFailed := directoryErrors[walkRoot]; rootFailed {
 					return fs.SkipAll
 				}
 				return fs.SkipDir
 			}
-			if err := ing.addOne(ctx, rep, ingestRun, parentID, p, sourcePath, replace, progress); err != nil {
+			if err := files.addOne(
+				ctx, rep, parent, p, sourcePath, replace, progress,
+			); err != nil {
 				return err
 			}
 		default:
@@ -643,44 +673,217 @@ func (ing *Ingester) addTree(
 		}
 		return nil
 	})
-	return walkErr
 }
 
-func (ing *Ingester) ensureSourceDir(
-	ctx context.Context, dirIDs map[string]int64, dirErrs map[string]error,
-	destDirID int64, topName, walkRoot, dirPath string,
-) (int64, error) {
-	if id, ok := dirIDs[dirPath]; ok {
-		return id, nil
+func (files *filesystemIngest) prepareSourceDirectory(
+	ctx context.Context, parent *ingestDirectory, name, sourcePath string,
+) (*ingestDirectory, error) {
+	if parent.plan == nil {
+		directory, err := files.ing.Store.EnsureDir(ctx, parent.id, name)
+		if err != nil {
+			return nil, fmt.Errorf("creating virtual dir %q under node %d: %w", name, parent.id, err)
+		}
+		return &ingestDirectory{sourcePath: sourcePath, id: directory.ID}, nil
 	}
-	if err, ok := dirErrs[dirPath]; ok {
-		return 0, err
+	plan, err := files.ing.Store.ExtendIngestDirectory(ctx, *parent.plan, name)
+	if err != nil {
+		return nil, fmt.Errorf("preparing virtual dir %q: %w", name, err)
 	}
-	rel, err := filepath.Rel(walkRoot, dirPath)
+	directory := &ingestDirectory{sourcePath: sourcePath, plan: &plan}
+	files.directories = append(files.directories, directory)
+	return directory, nil
+}
+
+func (files *filesystemIngest) ensureSourceDirectory(
+	ctx context.Context,
+	directories map[string]*ingestDirectory,
+	directoryErrors map[string]error,
+	topName, sourceRoot, walkRoot, directoryPath string,
+) (*ingestDirectory, error) {
+	if directory, ok := directories[directoryPath]; ok {
+		return directory, nil
+	}
+	if err, ok := directoryErrors[directoryPath]; ok {
+		return nil, err
+	}
+	rel, err := filepath.Rel(walkRoot, directoryPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		err = fmt.Errorf("source directory %q is outside traversal root %q", dirPath, walkRoot)
-		dirErrs[dirPath] = err
-		return 0, err
+		err = fmt.Errorf("source directory %q is outside traversal root %q", directoryPath, walkRoot)
+		directoryErrors[directoryPath] = err
+		return nil, err
 	}
-	parentID, name := destDirID, topName
-	if dirPath != walkRoot {
-		parentID, err = ing.ensureSourceDir(
-			ctx, dirIDs, dirErrs, destDirID, topName, walkRoot, filepath.Dir(dirPath),
+	parent, name := files.destination, topName
+	if directoryPath != walkRoot {
+		parent, err = files.ensureSourceDirectory(
+			ctx, directories, directoryErrors, topName, sourceRoot, walkRoot, filepath.Dir(directoryPath),
 		)
 		if err != nil {
-			dirErrs[dirPath] = err
-			return 0, err
+			directoryErrors[directoryPath] = err
+			return nil, err
 		}
-		name = filepath.Base(dirPath)
+		name = filepath.Base(directoryPath)
 	}
-	dir, err := ing.Store.EnsureDir(ctx, parentID, name)
+	directory, err := files.prepareSourceDirectory(
+		ctx, parent, name, sourceTreePath(sourceRoot, walkRoot, directoryPath),
+	)
 	if err != nil {
-		err = fmt.Errorf("creating virtual dir %q under node %d: %w", name, parentID, err)
-		dirErrs[dirPath] = err
-		return 0, err
+		directoryErrors[directoryPath] = err
+		return nil, err
 	}
-	dirIDs[dirPath] = dir.ID
-	return dir.ID, nil
+	directories[directoryPath] = directory
+	return directory, nil
+}
+
+func (files *filesystemIngest) addOne(
+	ctx context.Context,
+	rep *Report,
+	parent *ingestDirectory,
+	openPath, sourcePath string,
+	replace bool,
+	progress *progressTracker,
+) error {
+	added, resolution, err := files.importFile(
+		ctx, parent, openPath, sourcePath, replace, progress,
+	)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if store.IsInitialIngestAdmissionError(err) {
+			files.admissionRejected = true
+		}
+		rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
+	} else {
+		files.applyResolution(resolution)
+		rep.IngestID = files.run.ID()
+		if added {
+			rep.Added++
+		} else {
+			rep.Skipped++
+		}
+	}
+	progress.report(*rep, false)
+	return nil
+}
+
+func (files *filesystemIngest) importFile(
+	ctx context.Context,
+	parent *ingestDirectory,
+	openPath, sourcePath string,
+	replace bool,
+	progress *progressTracker,
+) (added bool, resolution store.IngestDirectoryResolution, retErr error) {
+	if err := validateSourcePath(sourcePath); err != nil {
+		return false, resolution, err
+	}
+	var observed struct {
+		node    store.Node
+		present bool
+	}
+	var name string
+	if replace {
+		var err error
+		name, err = store.NormalizeName(filepath.Base(sourcePath))
+		if err != nil {
+			return false, resolution, fmt.Errorf("normalizing destination name for %s: %w", sourcePath, err)
+		}
+		parentID, resolved := parent.id, true
+		if parent.plan != nil {
+			parentID, resolved = parent.plan.ResolvedID()
+		}
+		if resolved {
+			observed.node, err = files.ing.Store.ChildByName(ctx, parentID, name)
+			switch {
+			case err == nil:
+				observed.present = true
+				if observed.node.IsDir() {
+					return false, resolution, fmt.Errorf("destination %s: %w", sourcePath, store.ErrNotFile)
+				}
+			case errors.Is(err, store.ErrNotFound):
+			default:
+				return false, resolution, fmt.Errorf("resolving destination %s: %w", sourcePath, err)
+			}
+		}
+	}
+	content, err := files.ing.readLocalFile(ctx, openPath, sourcePath, progress, nil)
+	if err != nil {
+		return false, resolution, err
+	}
+	defer func() {
+		retErr = mutationCleanupResult(retErr, files.ing.cleanupLoose(content.hash))
+	}()
+	if replace {
+		if observed.present {
+			_, added, err = files.ing.Store.ReplaceContentForIngest(
+				ctx, files.run, observed.node.ID, observed.node.Revision,
+				content.hash, content.size, content.mimeType, sourcePath, content.mtime,
+				content.physical,
+			)
+			if err != nil {
+				return false, resolution, fmt.Errorf("recording %s: %w", sourcePath, err)
+			}
+			return added, resolution, nil
+		}
+		if parent.plan == nil {
+			_, err = files.ing.Store.IngestFileExact(
+				ctx, files.run, parent.id, filepath.Base(sourcePath), content.hash,
+				content.size, content.mimeType, sourcePath, content.mtime, content.physical,
+			)
+		} else {
+			_, resolution, err = files.ing.Store.IngestFileExactPlanned(
+				ctx, files.run, *parent.plan, filepath.Base(sourcePath), content.hash,
+				content.size, content.mimeType, sourcePath, content.mtime, content.physical,
+			)
+		}
+		if err != nil {
+			return false, resolution, fmt.Errorf("recording %s: %w", sourcePath, err)
+		}
+		return true, resolution, nil
+	}
+	if parent.plan == nil {
+		_, added, err = files.ing.Store.IngestFileWithMembership(
+			ctx, files.run, parent.id, filepath.Base(sourcePath), content.hash, content.size,
+			content.mimeType, sourcePath, content.mtime, content.physical,
+		)
+	} else {
+		_, added, resolution, err = files.ing.Store.IngestFileWithMembershipPlanned(
+			ctx, files.run, *parent.plan, filepath.Base(sourcePath), content.hash, content.size,
+			content.mimeType, sourcePath, content.mtime, content.physical,
+		)
+	}
+	if err != nil {
+		return false, resolution, fmt.Errorf("recording %s: %w", sourcePath, err)
+	}
+	return added, resolution, nil
+}
+
+func (files *filesystemIngest) finalize(
+	ctx context.Context, rep *Report, progress *progressTracker,
+) error {
+	if files.destination.plan == nil || files.admissionRejected && rep.IngestID == "" {
+		return nil
+	}
+	plans := make([]store.IngestDirectoryPlan, len(files.directories))
+	for i, directory := range files.directories {
+		plans[i] = *directory.plan
+	}
+	resolutions, err := files.ing.Store.FinalizeIngestDirectories(ctx, files.run, plans)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		path := files.destination.sourcePath
+		if directoryErr, ok := errors.AsType[*store.IngestDirectoryError](err); ok {
+			path = files.directories[directoryErr.Index].sourcePath
+		}
+		rep.Failed = append(rep.Failed, FileError{Path: reportPath(path), Err: err})
+		progress.report(*rep, false)
+		return nil
+	}
+	for _, resolution := range resolutions {
+		files.applyResolution(resolution)
+	}
+	return nil
 }
 
 func sourceTreePath(sourceRoot, walkRoot, walkPath string) string {
@@ -689,107 +892,6 @@ func sourceTreePath(sourceRoot, walkRoot, walkPath string) string {
 		return sourceRoot
 	}
 	return filepath.Join(sourceRoot, rel)
-}
-
-// addOne imports a single regular file; failures land in the report.
-func (ing *Ingester) addOne(
-	ctx context.Context,
-	rep *Report,
-	ingestRun store.IngestRun,
-	parentID int64,
-	openPath, sourcePath string,
-	replace bool,
-	progress *progressTracker,
-) error {
-	added, err := ing.importFile(ctx, ingestRun, parentID, openPath, sourcePath, replace, progress)
-	switch {
-	case err != nil:
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		rep.Failed = append(rep.Failed, FileError{Path: reportPath(sourcePath), Err: err})
-	case added:
-		rep.Added++
-	default:
-		rep.Skipped++
-	}
-	progress.report(*rep, false)
-	return nil
-}
-
-func (ing *Ingester) importFile(
-	ctx context.Context,
-	ingestRun store.IngestRun,
-	parentID int64,
-	openPath, sourcePath string,
-	replace bool,
-	progress *progressTracker,
-) (added bool, retErr error) {
-	if err := validateSourcePath(sourcePath); err != nil {
-		return false, err
-	}
-	var observed struct {
-		node    store.Node
-		present bool
-	}
-	var name string
-	var err error
-	if replace {
-		name, err = store.NormalizeName(filepath.Base(sourcePath))
-		if err != nil {
-			return false, fmt.Errorf("normalizing destination name for %s: %w", sourcePath, err)
-		}
-		observed.node, err = ing.Store.ChildByName(ctx, parentID, name)
-		switch {
-		case err == nil:
-			observed.present = true
-			if observed.node.IsDir() {
-				return false, fmt.Errorf("destination %s: %w", sourcePath, store.ErrNotFile)
-			}
-		case errors.Is(err, store.ErrNotFound):
-		default:
-			return false, fmt.Errorf("resolving destination %s: %w", sourcePath, err)
-		}
-	}
-	content, err := ing.readLocalFile(ctx, openPath, sourcePath, progress, nil)
-	if err != nil {
-		return false, err
-	}
-	defer func() {
-		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(content.hash))
-	}()
-	if replace {
-		if observed.present {
-			if content.hash == observed.node.BlobHash && content.size == observed.node.Size {
-				_, err = ing.Store.ConfirmContentWithReceipt(ctx, observed.node.ID,
-					observed.node.Revision, content.hash, content.size, observed.node.MimeType,
-					content.physical)
-				if err != nil {
-					return false, fmt.Errorf("recording %s: %w", sourcePath, err)
-				}
-				return false, nil
-			}
-			_, _, err = ing.Store.ReplaceContent(ctx, observed.node.ID, observed.node.Revision,
-				content.hash, content.size, content.mimeType, content.physical)
-			if err != nil {
-				return false, fmt.Errorf("recording %s: %w", sourcePath, err)
-			}
-			return true, nil
-		}
-		_, err = ing.Store.IngestFileExact(ctx, ingestRun, parentID, filepath.Base(sourcePath), content.hash,
-			content.size, content.mimeType, sourcePath, content.mtime, content.physical)
-		if err != nil {
-			return false, fmt.Errorf("recording %s: %w", sourcePath, err)
-		}
-		return true, nil
-	}
-	_, added, err = ing.Store.IngestFile(ctx, ingestRun, parentID,
-		filepath.Base(sourcePath), content.hash, content.size, content.mimeType,
-		sourcePath, content.mtime, content.physical)
-	if err != nil {
-		return false, fmt.Errorf("recording %s: %w", sourcePath, err)
-	}
-	return added, nil
 }
 
 type localFileContent struct {
