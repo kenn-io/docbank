@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import FileIcon from "@lucide/svelte/icons/file";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -23,6 +24,8 @@
     type CollectionLabel,
   } from "./collections.js";
   import { formatBytes, formatDate } from "./format.js";
+  import QualityPanel from "./QualityPanel.svelte";
+  import type { Query } from "./query.js";
 
   interface Props {
     session: string;
@@ -30,9 +33,12 @@
     onauthfailure: (cause: unknown) => void;
     onopenmember: (node: Node, current: () => boolean) => void | Promise<void>;
     onnewquery?: (id: string) => void;
+    onqualityquery?: (query: Query) => void;
   }
 
-  let { session, onclose, onauthfailure, onopenmember, onnewquery }: Props = $props();
+  let { session, onclose, onauthfailure, onopenmember, onnewquery, onqualityquery }: Props = $props();
+  let qualityOpen = $state(false);
+  let profile = $state("");
 
   let items = $state<Collection[]>([]);
   let total = $state(0);
@@ -60,7 +66,7 @@
 
   $effect(() => {
     const currentSession = session;
-    void refresh(currentSession);
+    untrack(() => void refresh(currentSession));
     return () => {
       generation += 1;
       memberGeneration += 1;
@@ -93,6 +99,7 @@
     loading = true;
     error = "";
     if (currentSession !== loadedSession) {
+      profile = "";
       items = [];
       total = 0;
       refreshedAt = "";
@@ -108,7 +115,7 @@
     openingMemberID = null;
     openError = "";
     try {
-      const page = await collections(currentSession);
+      const page = await collections(currentSession,0,100,profile);
       if (request !== generation || currentSession !== session) return;
       items = page.items;
       total = page.total;
@@ -139,7 +146,7 @@
     labelNotice = "";
     void reloadLabel(collection);
     try {
-      const page = await collectionMembers(currentSession, collection.id);
+      const page = await collectionMembers(currentSession, collection.id,0,100,profile);
       if (
         request !== memberGeneration ||
         currentSession !== session ||
@@ -172,6 +179,16 @@
         : collection;
     items = items.map(update);
     if (selected?.id === label.ingest_id) selected = update(selected);
+  }
+
+  async function changeProfile(name: string): Promise<void> {
+    const id=selected?.id;
+    const currentSession=session;
+    profile=name;
+    await refresh();
+    if(session!==currentSession||profile!==name)return;
+    const current=items.find(item=>item.id===id);
+    if(current)await browse(current);
   }
 
   async function reloadLabel(collection = selected): Promise<void> {
@@ -342,6 +359,8 @@
       </section>
 
       {#if selected}
+        <Button onclick={()=>qualityOpen=!qualityOpen}>{qualityOpen ? "Close collection quality" : "Inspect collection quality"}</Button>
+        {#if qualityOpen}<QualityPanel {session} collectionID={selected.id} {profile} onprofile={(name)=>void changeProfile(name)} onnewquery={onqualityquery} {onauthfailure}/>{/if}
         {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}>New query for this collection</Button>{/if}
         <section class="label-editor" aria-labelledby="collection-label-heading">
           <div class="section-heading">
@@ -384,7 +403,7 @@
               >Reload label</Button>
             </div>
           {/if}
-          <p class="quality-note">Quality counters are unavailable for direct collection browsing.</p>
+          <p class="quality-note">Inspect collection quality for processing coverage and document distributions.</p>
           {#if labelError}<p class="error" role="alert">{labelError}</p>{/if}
           {#if labelNotice}<p class="notice" role="status">{labelNotice}</p>{/if}
         </section>

@@ -75,7 +75,7 @@ function pageParams(offset: number, limit: number): string {
   return new URLSearchParams({ limit: String(limit), offset: String(offset) }).toString();
 }
 
-function readCollection(value: unknown): Collection {
+export function readCollection(value: unknown): Collection {
   const record = object(value);
   check(typeof record.id === "string" && uuid.test(record.id));
   check(typeof record.source_kind === "string" && record.source_kind.length > 0 &&
@@ -93,22 +93,22 @@ function readPage(value: unknown, offset: number, limit: number) {
   return { items: page.items as unknown[], total: page.total, limit, offset };
 }
 
-export async function collections(session: string, offset = 0, limit = 100): Promise<CollectionPage> {
-  const raw = await requestJSON<unknown>(`${route}?${pageParams(offset, limit)}`, session);
+export async function collections(session: string, offset = 0, limit = 100, profile = ""): Promise<CollectionPage> {
+  const raw = await requestJSON<unknown>(`${route}?${pageParams(offset, limit)}${profile ? `&profile=${encodeURIComponent(profile)}` : ""}`, session);
   const page = readPage(raw, offset, limit);
   const items = page.items.map(readCollection);
   check(new Set(items.map((item) => item.id)).size === items.length && items.every((item) => item.file_count > 0));
   return { ...page, items };
 }
 
-export async function collectionByID(session: string, id: string): Promise<Collection> {
-  const result = readCollection(await requestJSON<unknown>(path(id), session));
+export async function collectionByID(session: string, id: string, profile = ""): Promise<Collection> {
+  const result = readCollection(await requestJSON<unknown>(`${path(id)}${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`, session));
   check(result.id === id);
   return result;
 }
 
-export async function collectionMembers(session: string, id: string, offset = 0, limit = 100): Promise<CollectionMemberPage> {
-  const raw = object(await requestJSON<unknown>(`${path(id)}/members?${pageParams(offset, limit)}`, session));
+export async function collectionMembers(session: string, id: string, offset = 0, limit = 100, profile = ""): Promise<CollectionMemberPage> {
+  const raw = object(await requestJSON<unknown>(`${path(id)}/members?${pageParams(offset, limit)}${profile ? `&profile=${encodeURIComponent(profile)}` : ""}`, session));
   const collection = readCollection(raw.collection);
   const page = readPage(raw, offset, limit);
   check(collection.id === id && page.total === collection.file_count);

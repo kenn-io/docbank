@@ -28,6 +28,7 @@ type Collection struct {
 	Label                                        *string
 	LabelRevision                                int64
 	LabelUpdatedAt                               string
+	Coverage                                     ProcessingCoverage
 }
 
 // CollectionMemberPage binds one collection summary and member page to the
@@ -82,8 +83,12 @@ func collectionSummaryByID(
 // Collections lists current nonempty operational collections and the total
 // number of such runs. The limit must be between 1 and 1000.
 func (s *Store) Collections(
-	ctx context.Context, limit, offset int,
+	ctx context.Context, limit, offset int, selections ...CoverageSelection,
 ) ([]Collection, int, error) {
+	selection, err := normalizeCoverageSelection(selections)
+	if err != nil {
+		return nil, 0, err
+	}
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
@@ -129,6 +134,21 @@ func (s *Store) Collections(
 	if err := rows.Close(); err != nil {
 		return nil, 0, fmt.Errorf("closing collections: %w", err)
 	}
+	generation, err := collectionGenerationTx(ctx, tx)
+	if err != nil {
+		return nil, 0, err
+	}
+	ids := make([]string, len(collections))
+	for i := range collections {
+		ids[i] = collections[i].ID
+	}
+	coverage, err := collectionCoverageTx(ctx, tx, ids, selection, generation)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range collections {
+		collections[i].Coverage = coverage[collections[i].ID]
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, 0, fmt.Errorf("closing collection snapshot: %w", err)
 	}
@@ -137,18 +157,47 @@ func (s *Store) Collections(
 
 // CollectionByID returns one current operational collection. Retained label
 // authority keeps direct access available when current membership is empty.
-func (s *Store) CollectionByID(ctx context.Context, id string) (Collection, error) {
+func (s *Store) CollectionByID(ctx context.Context, id string, selections ...CoverageSelection) (Collection, error) {
+	selection, err := normalizeCoverageSelection(selections)
+	if err != nil {
+		return Collection{}, err
+	}
 	if err := validateUUIDv4(id); err != nil {
 		return Collection{}, fmt.Errorf("collection %q: %w", id, ErrNotFound)
 	}
-	return collectionSummaryByID(ctx, s.db, id)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Collection{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	collection, err := collectionSummaryByID(ctx, tx, id)
+	if err != nil {
+		return Collection{}, err
+	}
+	generation, err := collectionGenerationTx(ctx, tx)
+	if err != nil {
+		return Collection{}, err
+	}
+	coverage, err := collectionCoverageTx(ctx, tx, []string{id}, selection, generation)
+	if err != nil {
+		return Collection{}, err
+	}
+	collection.Coverage = coverage[id]
+	if err := tx.Commit(); err != nil {
+		return Collection{}, err
+	}
+	return collection, nil
 }
 
 // CollectionMembers returns one current member page and collection summary
 // from the same read transaction.
 func (s *Store) CollectionMembers(
-	ctx context.Context, id string, limit, offset int,
+	ctx context.Context, id string, limit, offset int, selections ...CoverageSelection,
 ) (CollectionMemberPage, error) {
+	selection, err := normalizeCoverageSelection(selections)
+	if err != nil {
+		return CollectionMemberPage{}, err
+	}
 	if err := validateUUIDv4(id); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("collection %q: %w", id, ErrNotFound)
 	}
@@ -199,6 +248,15 @@ func (s *Store) CollectionMembers(
 		}
 		items = append(items, NodeView{Node: node, Path: path})
 	}
+	generation, err := collectionGenerationTx(ctx, tx)
+	if err != nil {
+		return CollectionMemberPage{}, err
+	}
+	coverage, err := collectionCoverageTx(ctx, tx, []string{id}, selection, generation)
+	if err != nil {
+		return CollectionMemberPage{}, err
+	}
+	collection.Coverage = coverage[id]
 	if err := tx.Commit(); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("closing collection member snapshot: %w", err)
 	}
