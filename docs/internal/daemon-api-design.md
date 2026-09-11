@@ -1,15 +1,21 @@
 # Daemon and API design
 
-The daemon is the sole process that opens a vault. The HTTP API is not an
-optional integration layer around a direct-access CLI; it is the only data
-contract for the CLI and agents.
+The daemon owns a standalone vault. Every CLI data command and standalone
+agent integration uses its HTTP API. Go applications can instead own a
+separately rooted [embedded vault](../embedding.md).
+
+This page owns contributor guidance for daemon and API changes. The public
+[daemon guide](../architecture/daemon.md) owns lifecycle and discovery behavior;
+the [HTTP API reference](../architecture/http-api.md) owns routes, wire fields,
+preconditions, and errors.
 
 ## Sole vault ownership
 
-`docbank daemon run` resolves the home, validates configuration, takes the
-portable vault lock exclusively and non-blocking, opens SQLite and the Kit blob store,
-cleans staging files, publishes a runtime record, and serves requests until
-graceful shutdown.
+`docbank daemon run` takes the portable vault lock exclusively and without
+waiting for another owner. It holds that lock while opening SQLite and the Kit
+blob store, cleaning staging files, and serving requests. Follow the exact
+[startup and shutdown order](../architecture/daemon.md#lifecycle) when changing
+this path.
 
 The lifetime lock proves startup cleanup cannot race another writer. A second
 daemon fails immediately because waiting on a lock held for another daemon's
@@ -181,14 +187,18 @@ memory or temporary files before invoking application code. Its OpenAPI
 operation is registered manually against the same Huma document. Keep the raw
 handler and schema synchronized in one registration function.
 
-The operation holds the application mutation gate before Kit's mutation lease.
-Kit durably publishes and hashes bytes first. A prepared upload exposes no
-application authority, allowing the handler to validate the closing boundary
-and absence of extra parts before its metadata transaction inserts the blob and
-node. Digest/size mismatch or malformed trailing multipart data can leave an
-untracked physical object, never a readable blob row; GC owns that ordinary
-crash/rejection residue. Successful retries return the existing node, so the
-receipt always carries stable identity.
+The upload handler follows this order:
+
+1. Hold the application mutation gate, then Kit's mutation lease.
+2. Ask Kit to durably publish and hash the bytes. This prepared upload grants
+   no application authority.
+3. Validate the multipart closing boundary and reject extra parts.
+4. Insert the blob and node in one metadata transaction.
+
+A digest or size mismatch, or malformed trailing multipart data, can leave an
+untracked physical object. It cannot leave a readable blob row. GC reclaims
+that residue. A successful retry returns the existing node, so the receipt
+continues to identify the same document.
 
 ## Change constraints
 

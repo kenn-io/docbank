@@ -5,36 +5,41 @@ description: Permanently retain every version and recorded change beneath a revi
 
 # Permanent audited history
 
-Full audit is for directories whose history matters more than reclaiming their
-old bytes: tax records, contracts, long-lived agent archives, or an
-application-owned collection. Enabling it makes a permanent promise:
+Enable permanent audit for a directory when you must retain its versions and
+recorded changes indefinitely. The selected directory and its protected
+members form an *audit scope*. Enabling a scope is irreversible: Docbank has no
+`audit disable` command.
 
-- every node and retained content version in the reviewed scope becomes
-  protected;
-- new children inherit that protection;
-- moving or trashing a protected node does not shed it;
-- supported content, tree, provenance, and tag changes are appended to a
-  tamper-evident history; and
-- ordinary version pruning and permanent trash deletion cannot erase that
-  authority.
+Once you enable it:
 
-This is stronger than ordinary version history. An unaudited file keeps all
-versions by default, but `versions prune` may deliberately release old ones.
-An audited version is a permanent reachability root. Docbank has no `audit
-disable` command.
+- Docbank protects every node and retained content version in the reviewed scope.
+- New children inherit protection.
+- Moving or trashing a protected node does not remove protection.
+- Docbank appends supported content, tree, provenance, and tag changes to a history
+  designed to expose tampering.
+- Ordinary version pruning and permanent trash deletion cannot erase protected
+  records or versions.
 
-First activation also permanently retains one vault-wide metadata snapshot:
-node names and topology plus tag, assignment, ingest, and provenance records,
-including records outside the selected directory. Those unrelated documents
-do not become audit members and their content versions are not protected by
-the scope, but the enrollment-time metadata remains part of the evidence.
+An unaudited file also keeps all versions by default, but you can release old
+versions with `versions prune`. An audited version permanently keeps its
+content reachable, so garbage collection cannot remove that content.
 
-![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/web-audit-evidence/web-audit-evidence.png)
+!!! warning "First enrollment retains metadata from the whole vault"
+    The first scope also permanently retains a snapshot of vault-wide metadata:
+    node names and folder structure, tags, assignments, ingests, and provenance.
+    This includes records outside the chosen directory. Those other documents
+    do not become scope members, and their content versions are not protected,
+    but their enrollment-time metadata remains in the audit evidence.
+
+See [Audited History](../architecture/audited-history.md) for the evidence
+format and [Integrity & Trust](../architecture/integrity.md) for verification
+limits.
+
+![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://docbank.ai/assets/generated/web-audit-evidence.png)
 
 ## Review before enabling
 
-Enrollment is always a separate preview and execution. Preview does not change
-the vault:
+First preview the scope. This command does not change the vault:
 
 ```bash
 docbank audit enable /taxes
@@ -52,10 +57,9 @@ It reports:
 - a one-use token with a ten-minute expiration.
 
 The vault-wide evidence counts matter even when `/taxes` is a small subtree.
-The allocation lineage commits the surrounding topology and attached metadata
-needed to prove identities and detect rollback; it does not enroll unrelated
-documents into the scope, but that enrollment-time metadata snapshot remains
-permanent.
+The vault-wide allocation history records the surrounding folder structure
+and metadata needed to check identities and detect a rollback. It does not
+enroll unrelated documents, but its initial metadata snapshot is permanent.
 
 Read the preview before executing the command it prints:
 
@@ -81,15 +85,16 @@ docbank audit enable id:42 --json
 
 ## Inspect protection
 
-Vault-wide status identifies the lineage, allocation head, scope target,
-baseline, membership count, and current scope-chain head:
+Vault-wide status identifies the audit history, selected directories, and
+protected member counts. It also reports each scope's baseline, the snapshot
+recorded at enrollment, and chain head, the hash of its latest history entry:
 
 ```bash
 docbank audit status
 docbank audit status --json
 ```
 
-Supply a live path or stable node ID to inspect sticky membership:
+Supply a live path or stable node ID to check whether a document is protected:
 
 ```bash
 docbank audit status /taxes/2026/return.pdf
@@ -101,7 +106,7 @@ require `protected: true` plus its scope and baseline identities.
 
 ## Read a node's history
 
-Read canonical events for one protected document or directory by its live path:
+Read the recorded changes for one protected document or directory by its live path:
 
 ```bash
 docbank audit history /taxes/2026/return.pdf
@@ -114,15 +119,19 @@ Use a stable node ID when a document has moved, or while it is in trash:
 docbank audit history id:57
 ```
 
-Events are newest first. Each one identifies its immutable event and operation,
-scope, recording time, origin, node revision before and after, and the fields
-relevant to that event. Path events include old and new coordinates plus their
-`live` or `trash` state; trash coordinates use the separate
-`@trash/known/...` or `@trash/unknown/...` domain rather than pretending to be
-live virtual paths. Content events include prior and resulting version IDs.
-Tag and provenance events include their stable attachment identity and complete
-before/after attachment state. Human output summarizes those changes. JSON
-returns the complete typed projection.
+Events appear newest first. Each event records its immutable event ID,
+operation ID, scope, time, origin, and node revisions before and after the
+change. Other fields depend on the event:
+
+- Path events record old and new paths and their `live` or `trash` state.
+- Trash paths use `@trash/known/...` or `@trash/unknown/...`, separate from live
+  vault paths.
+- Content events record prior and resulting version IDs.
+- Tag and provenance events record the attached metadata's stable ID and
+  complete before-and-after state.
+
+Human output summarizes these changes. JSON returns all event fields with
+their defined types.
 
 The default page contains at most 50 events. Continue an older timeline with
 the opaque cursor printed by human output or returned as `next_cursor` in JSON:
@@ -142,19 +151,18 @@ baseline protection; `audit status` is the membership authority.
 
 ## Read a scope's history
 
-Use the stable scope ID reported by `audit status` to read every canonical
-event across its protected members:
+Use the stable scope ID from `audit status` to read recorded changes across
+all protected members:
 
 ```bash
 docbank audit history --scope <scope-id>
 docbank audit history --scope <scope-id> --limit 100 --json
 ```
 
-Scope history answers “what changed anywhere under this permanent promise?”
-without walking each member separately. Each event includes its stable node ID,
-and human output prints that copyable `id:N` selector. The response also carries
-the scope target, baseline, member count, entry count, and current chain head so
-the timeline stays attached to its evidence authority.
+Scope history shows changes to all members without a separate request for
+each document. Each event includes its stable node ID, which human output
+prints as a copyable `id:N` selector. The response also includes the scope
+target, baseline, member count, entry count, and current chain head. These identify the scope and history being read.
 
 Pagination uses the same newest-first ordering as node history. A scope cursor
 is opaque, bound to that stable scope ID, and remains stable when later events
@@ -162,8 +170,8 @@ are appended. Reusing it with another scope returns `invalid_audit_cursor`.
 
 ## Verify the permanent evidence
 
-Run the audit-specific verifier when you need a compact proof of the permanent
-promise rather than a scan of unrelated vault content:
+Use `audit verify` to check permanent history and protected content. Save its
+JSON report outside the vault when you need a reference for later checks:
 
 ```bash
 docbank audit verify
@@ -172,23 +180,27 @@ docbank audit verify --json > audit-evidence.json
 docbank audit verify --expected audit-evidence.json
 ```
 
-The command independently replays canonical history against the current node,
-version, membership, topology, tag, and provenance projections. It then reads
-every unique blob retained by protected history through catalog authority and
-recomputes its SHA-256. Missing, corrupt, or unreadable protected bytes make the
-command fail.
+The verifier replays recorded history and compares the result with current
+nodes, versions, memberships, folder structure, tags, and provenance. It then
+reads each unique blob retained by protected history and recomputes its SHA-256
+hash. Missing, corrupt, or unreadable protected content makes the command fail.
 
-On success, the report contains the stable vault and allocation-lineage IDs,
-the allocation entry count and head, the current operation high-water mark,
-and every scope's entry count and chain head. The JSON `evidence` object is a
-compact terminal bundle suitable for recording outside the vault. A later
-verification can prove that exact bundle is a prefix of the current authority:
-the vault and allocation-lineage identities must match, the recorded allocation
-head must still exist at its recorded count, and every recorded scope head must
-still exist at its recorded count. Equal chains pass, and chains with valid
-later operations also pass. A missing, shorter, or divergent chain makes the
-command fail with a structured evidence problem while still reporting current
-metadata and protected-byte results.
+The successful JSON report includes an `evidence` object containing:
+
+- Stable vault and allocation-lineage IDs, which identify this vault and its
+  allocation history.
+- The allocation entry count and latest entry hash.
+- The operation high-water mark, which records how far operations have advanced.
+- Each scope's entry count and latest entry hash.
+
+When you supply this report with `--expected`, verification checks that the
+recorded history remains intact within the current history. The vault and
+allocation-lineage IDs must match. Each saved allocation or scope head must
+still exist at its recorded entry count.
+
+Unchanged chains pass, as do chains with valid later operations. A missing,
+shorter, or divergent chain fails with a structured evidence problem. The
+report still includes current metadata and protected-content results.
 
 `--expected` reads a successful active `audit verify --json` report, not an
 unverified hand-written head. Keep that report outside the vault and retain the
@@ -229,17 +241,18 @@ docbank audit enable /contracts
 docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention
 ```
 
-The first scope establishes one vault-wide genesis and allocation lineage.
-Later disjoint scopes reuse that authority, start their own scope chain, and
-add only their selected directory closure. The preview says when no second
-genesis is being created and reports the exact incremental JSONL growth.
+The first scope creates the vault-wide starting record, called the genesis,
+and allocation history. Later disjoint scopes reuse those records and start
+their own history chains. They add only the selected directory and its live
+or retained-trash descendants. The preview says that it is reusing the genesis
+and reports the exact added JSONL size.
 
 Scopes cannot overlap or nest. Docbank rejects a target when any node in its
-live or retained-trash closure is already permanently protected. Moving nodes
-between scopes and other operations that would need one transaction to rewrite
-multiple scope histories remain fail-closed. A vault accepts at most 1,000
-permanent scopes so every valid vault can still produce one bounded terminal
-evidence bundle. Status, history, verification,
+live or retained-trash subtree is already permanently protected. Docbank
+rejects moves between scopes and other operations that require one transaction
+to rewrite multiple scope histories, except the shared tag changes described
+below. A vault accepts at most 1,000 permanent scopes so one evidence report
+can include every scope. Status, history, verification,
 JSONL export/import, incremental backup, and restore preserve every scope.
 
 A tag may be assigned to documents in several protected scopes. Renaming or
@@ -249,5 +262,9 @@ assignment tombstone, every affected scope chain advances, and either all of
 those changes commit or none do. Ordinary optimistic tag revisions still apply,
 so a stale rename or deletion cannot overwrite a newer assignment set.
 
-!!! info "Planned"
-    Overlapping or nested scopes are not implemented.
+## Current limits
+
+Scopes cannot overlap or nest. There is no command to disable a scope or erase
+its protected history. The vault-wide execution restrictions on `trash empty`
+and `versions prune` apply once audit records exist, including outside a
+selected scope.

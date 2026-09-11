@@ -5,9 +5,9 @@ description: Diagnose docbank startup, daemon, import, integrity, update, and HT
 
 # Troubleshooting
 
-Start with observation, not cleanup. Keep the vault intact until you know
-whether the problem is configuration, daemon lifecycle, source-file access, or
-stored data.
+Check daemon status and verify the vault before changing files. Keep the
+vault intact while you identify whether the failure concerns configuration,
+the daemon, source-file access, or stored content.
 
 ```bash
 docbank daemon status --json
@@ -41,7 +41,7 @@ start anything.
 
 ## A command cannot connect
 
-First ask the CLI to converge the daemon explicitly:
+Restart the daemon, then check whether it is running:
 
 ```bash
 docbank daemon restart
@@ -63,18 +63,20 @@ in the [Agent Integration Guide](agents/integration.md).
 each failure. Its exit status is non-zero if any file failed, even when other
 files were added successfully.
 
-Fix source permissions or availability, then rerun the same command. Already
-imported content is skipped, so a rerun converges instead of duplicating the
-successful portion.
+Fix the reported source permissions or availability problem, then repeat the
+command. Docbank skips matching content already imported under a destination
+name, so the completed files do not need another entry.
 
 ```bash
 docbank add ~/Documents/archive --dest /imports
 ```
 
 A missing or unreadable top-level argument is reported as a failed source, and
-the command continues with any remaining arguments. Symlinks and non-regular
-files are intentionally skipped; import the regular target file explicitly if
-it belongs in the vault.
+the command continues with any remaining arguments. Docbank does not import
+non-regular files or file symlinks. Name the regular target file explicitly if
+it belongs in the vault. A source argument may be a
+symlink to a directory; links inside that directory are still skipped and
+reported. See [Importing Documents](usage/importing.md).
 
 ## Search cannot find document text
 
@@ -132,12 +134,14 @@ is known-good.
 
 ## GC reclaimed fewer bytes than expected
 
-Packed blobs are immutable members of pack files. GC can remove their catalog
-authority, but that only makes their stored ranges logically dead; physical
-pack space remains until `docbank storage repack` selects and retires the
-sparse source pack. The report separates
-`pending_packed_bytes` from loose bytes actually reclaimable so logical
-deletion is not presented as disk reclamation.
+A pack stores several blobs in one file that Docbank does not edit in place.
+GC can remove the database references to an unused blob, but its bytes remain
+inside the pack. `docbank storage repack` rewrites eligible packs with only
+the content still needed and retires the old files.
+
+Check `pending_packed_bytes` in the GC report. This counts packed bytes waiting
+for repack, separately from individual files that GC can remove immediately.
+See [Trash, GC, Repack & Verify](usage/trash-and-gc.md).
 
 ## Update fails
 
@@ -160,9 +164,10 @@ X-Api-Key: <key>
 Authorization: Bearer <key>
 ```
 
-The health check, ping, interactive API docs, and OpenAPI documents are
-auth-exempt. A successful `/health` response therefore proves reachability,
-not authenticated access.
+The health check, ping, interactive API docs, and OpenAPI documents do not
+require authentication. A successful `/health` response shows that the server
+is reachable; it does not check your key. See
+[HTTP API authentication](architecture/http-api.md) for the request contract.
 
 ## Before asking for help
 

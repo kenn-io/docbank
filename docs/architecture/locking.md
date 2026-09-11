@@ -5,13 +5,14 @@ description: How daemon and embedded owners coordinate concurrent access with SQ
 
 # Ownership and concurrency
 
-A standalone vault has one daemon owner: it holds the vault lock **exclusively**
-for its entire lifetime, and every CLI or agent reaches that vault through its
-HTTP API ([Daemon](daemon.md)). An embedded `Vault` is a different owner shape
-for an independently rooted archive, but it takes the same exclusive hierarchy
-lock and cannot overlap a daemon, restore, or another embedded owner. SQLite
-serializes metadata writes inside either owner; the owner's in-process locks
-coordinate operations that also cross the filesystem.
+Only one process may own a vault at a time. A daemon or embedded `Vault` holds
+an exclusive lock for its lifetime. The lock also excludes another owner or
+restore in any parent or descendant directory.
+
+Standalone CLI commands and agents use the owner's [HTTP API](daemon.md).
+Embedded applications own a separate vault root. Inside either owner, SQLite
+serializes metadata writes. In-process locks coordinate operations that also
+read or change files.
 
 ## What SQLite handles
 
@@ -22,15 +23,20 @@ of a name race get a typed `name already exists` error, not corruption.
 
 ## What SQLite can't handle
 
-Garbage collection reads the database ("which blobs are unreachable?"), then
-deletes files from `blobs/`. Between those two steps, a concurrent import could
-ingest the same content, observe the blob file still present, deduplicate
-against it — and then GC deletes the file out from under a freshly committed
-reference. No database transaction can close that window, because half of it
-lives on the filesystem.
+Garbage collection must coordinate its database query with file deletion.
+Without that coordination, the operations would have this race:
 
-The same shape recurs at startup: clearing stale `blobs/tmp/` files must not
-delete a temp file another process is actively writing.
+1. GC identifies a blob that no metadata retains.
+2. An import finds the same bytes already on disk and reuses that file.
+3. The import commits a new reference.
+4. GC deletes the file selected in step 1.
+
+A SQLite transaction cannot coordinate all four steps because file deletion
+happens outside SQLite. The maintenance gate described below prevents this
+interleaving.
+
+Startup cleanup has a related requirement: the daemon must not remove a
+`blobs/tmp/` file that another writer still uses.
 
 ## The vault lock: one exclusive holder per vault tree
 
@@ -88,11 +94,9 @@ would allow a contender to create and lock a different inode at the same path,
 breaking mutual exclusion; restore retries therefore ignore the retained file
 when applying the empty-target rule.
 
-Startup blob-tmp cleanup (`blob.CleanTmp`, the same stale-temp-file problem
-described above) needs no locking scheme of its own anymore: the daemon holding
-the vault lock exclusively at that point in startup *proves* it's the sole
-process that could have left those files mid-write, so cleanup is unconditional
-rather than a best-effort non-blocking attempt.
+Startup calls `blob.CleanTmp` while the daemon holds the exclusive vault lock.
+No other Docbank process can be writing those temporary files at that point,
+so cleanup does not need a separate lock or retry policy.
 
 The lock implementation is platform-specific without changing the contract. Unix
 retries interrupted `flock` calls; Windows uses non-blocking shared or exclusive

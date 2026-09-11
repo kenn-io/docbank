@@ -1,215 +1,97 @@
 ---
 title: Roadmap
-description: What is implemented today and what each phase adds.
+description: Current capabilities, current limits, and planned product direction.
 ---
 
 # Roadmap
 
-docbank ships in independently useful increments. This page is a high-level
-public view of current capability and product direction. It does not track
-tasks, ordering, blockers, or completion criteria. Durable future contracts
-appear elsewhere only when they materially explain the design and are marked
-"Planned."
+Docbank stores, organizes, versions, verifies, and backs up documents today.
+The CLI, web app, and terminal browser use one authenticated local daemon.
+Go applications can also own separate vaults and use the document-processing
+packages directly.
 
-| Phase | Scope | Status |
-|-------|-------|--------|
-| 0 | Extract msgvault's pack/backup and packed-CAS engines into `go.kenn.io/kit` | **Implemented** (Docbank uses Kit's shared backup and multi-location packstore engines) |
-| 1 | Core: store, blob store, ingest pipeline, full CLI | **Implemented** |
-| 2a | Infrastructure: daemon, HTTP API, daemon-first CLI, self-update, release pipeline | **Implemented** |
-| 2b | Features: content versions, versioned editing, full audit, tags, watched inboxes, text extraction, ingest provenance | **In progress**: versions, tags, queryable provenance, watched inboxes, disjoint audit scopes, bounded plain-text extraction, automatic source-metadata extraction from originals, auxiliary MD5 checksums, canonical JPEG previews through the embedded API, and the durable derivative catalog (renditions, lexical projection, consent) implemented; reusable document normalization, OCR and rendition provider adapters, media detection, and embedding packages are available as Go libraries, while daemon-owned rendition processing and automatic PDF/Office extraction into a Docbank vault remain |
-| 3 | Primary kit-ui web portal and focused operator TUI | **In progress**: analytical tree/search/detail, audited-history, daemon-job and storage/backup inspection, web tag definition/browsing/assignment workflows, version history, provenance, verified current/historical content download, verified upload, and recoverable trash with restoration implemented |
-| 4 | Backup commands over the kit engine | **Implemented**; representative-corpus hardening continues |
+This page describes product direction. The [capability guide](capabilities.md)
+summarizes available features; the linked guides own instructions and limits.
+The [changelog](changelog.md) records published releases.
 
-## Implemented (Phase 1)
+## What can I use now?
 
-- Virtual tree store with schema-enforced invariants (single root,
-  live-sibling name uniqueness, no cycles, NFC name normalization,
-  revision bumps)
-- Content-addressed blob store with full fsync durability discipline
-- Idempotent, resumable bulk import with collision suffixing and
-  provenance
-- FTS5 search over names and verified UTF-8 text content, ranked and operator-safe
-- Trash / restore / `trash empty`, explicit unreachable-content GC, and
-  separate packed-space reclamation
-- `gc` (dry-run default) and `verify`
-- Inter-process vault locking (`flock` on Unix, `LockFileEx` on Windows)
-- CLI: `add`, `provenance`, `mkdir`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
-  `trash`, `gc`, `verify`
+| Reader task | Current capability | Guide |
+| --- | --- | --- |
+| Collect documents | Import files and trees, select files with glob patterns, replace existing content deliberately, and watch local inboxes | [Importing](usage/importing.md) |
+| Organize documents | Stable IDs, folders, tags, and atomic batch moves; the web app groups and colors tags | [Organizing](usage/organizing.md) |
+| Find documents | Ranked name and text search, bounded filters without a query, and API storage for named queries and highlight sets | [Searching](usage/searching.md) |
+| Keep earlier content | Immutable versions, revision checks, reversion, and deliberate history pruning | [Editing and versions](architecture/editing-and-versions.md) |
+| Record origin and evidence | Append-only provenance and permanent audited directory scopes | [Importing](usage/importing.md) and [audited history](usage/audited-history.md) |
+| Recover documents | Recoverable trash, explicit permanent deletion, garbage collection, and pack reclamation | [Trash and GC](usage/trash-and-gc.md) |
+| Recover a vault | Incremental backups, verified restore into a separate target, and snapshot removal through the embedded API | [Backup and restore](usage/backup.md) |
+| Add physical storage | Verified placement, repair, salvage, and evacuation across filesystem and S3-compatible stores | [Multi-store storage](usage/storage.md) |
+| Integrate an application | Authenticated HTTP API, offline OpenAPI generation, and separately rooted embedded Go vaults | [Agent integration](agents/integration.md) and [Embed in Go](embedding.md) |
 
-## Phase 2a — Infrastructure (implemented)
+Release archives cover Linux, macOS, and Windows on amd64 and arm64.
+`docbank update` installs a published release and coordinates daemon restart.
 
-- `docbank daemon` (`run`/`start`/`status`/`restart`/`stop`): a single
-  daemon owns the vault; discovery, auto-start, idle shutdown, and
-  PID-reuse-safe lifecycle on `go.kenn.io/kit` primitives
-  ([design](architecture/daemon.md))
-- Huma v2 HTTP API under `/api/v1` implementing stat, list, content,
-  search, create-directory, ingest, move, trash/restore, trash-empty,
-  gc, and verify — the CLI's data commands are HTTP clients of this
-  surface, with no other path into the vault
-  ([design](architecture/http-api.md))
-- Daemon background-task supervision with shared cancellation, bounded
-  shutdown before storage closes, failure capture, and observable
-  `docbank jobs` / `GET /api/v1/jobs` status. Watched inboxes and bounded text
-  extraction now run through this implemented lifecycle.
-- The vault lock becomes a single exclusive holder (the daemon) instead
-  of Phase 1's per-command shared/exclusive split; an in-daemon
-  maintenance gate replaces `gc`'s own exclusive acquisition
-  ([design](architecture/locking.md))
-- `config.toml` for the daemon's listen address, API key, idle timeout,
-  and embedded web-application toggle ([design](configuration.md))
-- `docbank update`: self-update from GitHub releases via
-  `kit/selfupdate`, coordinating daemon stop/replace/restart
-- `docbank openapi`: offline OpenAPI document for agents and client
-  generation
-- Tag-driven release pipeline building archives plus `SHA256SUMS` for Linux,
-  macOS, and Windows on amd64 and arm64
-- A responsive kit-ui web application at `/`, launched through `docbank web`
-  with session-local authentication and tree, search, sorting, and
-  current-authority inspection
-- Internal mixed loose/packed blob storage on `kit/packstore`: docbank's
-  `blobs` rows remain the read-authority boundary, existing loose vaults
-  open without conversion, and GC/verify operate through the shared
-  physical store
+## What document processing is available?
 
-`docbank storage status` reports loose, live-packed, and dead-packed inventory,
-and `docbank storage pack` performs explicit optionally budgeted packing through
-the daemon. `docbank storage repack` compacts eligible sparse packs and retires
-dead source files. This is the complete ordinary storage-maintenance surface;
-Kit unpack remains internal to tests, migrations, or a future purpose-built
-recovery workflow rather than a planned user command. Ordinary ingests continue
-to publish loose blobs; startup never performs an implicit migration.
+Go applications can extract source metadata, generate visual previews, and use
+local or hosted providers to produce text, Markdown, and embeddings. An
+embedding represents content as numbers for comparison. The
+[Go processing guide](document-understanding.md) maps the provider packages and
+their requirements.
 
-## Phase 2b — Features (in progress)
+The vault retains derived results with their source versions, processing
+profiles, disclosure consent, and independent embedding sets. It has
+rebuildable vector indexes and internal hybrid retrieval, which combines
+lexical and vector matches. Optional internal components expand queries,
+rerank results, and retrieve from operator-hosted QMD. See
+[Document Processing](architecture/document-processing.md) for the flow and
+trust boundaries.
 
-Implemented foundation: every initial ingest/upload creates a stable UUIDv4
-content version and current node pointer. `docbank versions list|show|cat`,
-bounded HTTP listing, ID-addressed metadata/byte retrieval, GC reachability,
-verification evidence, and deterministic JSONL backup/restore all carry that
-identity through loose and packed storage. File-node responses expose current
-version plus immutable SHA-256 identity; content streams carry both catalog
-identities plus a freshly computed digest trailer. Remote writers must declare
-SHA-256 and size, and receive the stable node/version plus server-computed
-identity only after both match. `docbank put`, `docbank edit`, and raw
-`PUT /nodes/{id}/content` now add a digest-checked `content_replace` head under
-an optimistic revision precondition while retaining every prior version.
-`docbank revert` and `POST /nodes/{id}/revert` add a metadata-only
-`content_revert` head from one prior version without copying its loose or packed
-blob. `docbank versions prune` and `POST /nodes/{id}/versions/prune` provide
-preview-first individual, age, count, and complete-prior-history selection,
-with revert dependency handling and honest GC/repack consequences. `docbank
-refs` and `GET /content-references` resolve a SHA-256 identity to
-every retaining current, historical, or trashed node/version pair. Stable tags
-are available across the CLI, authenticated API, typed client, OpenAPI, and
-metadata-v1 backup/restore authority, including bounded forward and reverse
-listings. Transactional batch move validates and applies bounded swaps and
-nested reorganizations as one final-state operation across the CLI, API, typed
-client, and audited history. Permanent audit enrollment is preview-first across the
-CLI and API. The first scope creates one vault-wide genesis; later disjoint
-scopes reuse it and begin independent scope chains. Sticky membership, supported logical mutations, allocation and
-scope chains, status evidence, and JSONL backup/restore validation are
-implemented. Canonical audit history is available by node path, stable node ID,
-or stable scope ID with bounded, append-stable cursor pagination. Independent verification returns
-stable terminal evidence, checks every protected blob, and can prove that
-current allocation and scope chains extend an externally recorded bundle.
-Daemon-owned watched inboxes recursively observe configured local directories,
-wait for stable size and modification time plus an optional minimum source age,
-preserve portable source identity, and append later changes to the same stable
-node without touching source files. Their effective source, destination, timing
-policy, exclusions, and live job state are inspectable together through the CLI
-and authenticated API.
+The daemon automatically extracts supported plain text. Its configured
+[embedding workers](configuration.md#embedding-workers-and-credentials) can
+execute retained jobs for the registered runtime contracts. Those jobs still
+need prepared input generations, matching profiles, and current consent.
 
-- Overlapping audit scopes
-  ([current workflow](usage/audited-history.md),
-  [model](architecture/audited-history.md))
-- Additional text extraction workers for PDF text layers and office formats;
-  bounded UTF-8 text, Markdown, JSON, and JSONL extraction is implemented
-- External integration surface: embedded immutable creation accepts generic
-  source kind, description, opaque reference, and optional modification time,
-  and exposes those portable facts through the root Go API. Standalone local
-  ingestion still presents its source as a filesystem path. To settle before
-  an external-reference schema exists: whether external
-  references pin nodes against `trash empty`/`gc`, or dangling-ref
-  detection stays the referrer's job (docbank guarantees only that node
-  ids are never reused)
+These pieces do not yet form an automatic OCR-to-semantic-search workflow for
+new imports. Public CLI, web, and TUI search remains lexical. Saving a query
+with hybrid-search settings does not execute internal retrieval.
 
-## Phase 3 — Human applications
+## What can the human interfaces do?
 
-The kit-ui web portal is the primary human interface over the authenticated
-daemon API. Its browsing foundation implements responsive virtual-tree
-browsing, analytical sorting, name and extracted-text search, and complete
-current document authority. A selected live file can be downloaded through
-bounded daemon staging: progress is visible, content is terminally verified
-before a one-use browser handoff, and the browser never buffers the whole
-object or receives the vault API key. Every file exposes its newest-first immutable
-version history and complete version, hash, operation, and revert-source
-authority, plus its newest-first immutable provenance facts and supersession
-history. Every selected node exposes its tag assignments and can add or remove
-an existing definition under its inspected revision. The shared catalog
-creates, revision-safely renames, and deliberately deletes stable definitions,
-and a stable tag identity can drive either a live assignment view or a
-text-search filter.
-Protected nodes also expose their permanent newest-first audit timeline
-and the complete stable identity and before/after state of every event. The
-portal can independently replay permanent authority, verify every protected
-blob, and present the terminal allocation and scope-chain evidence. It also
-uploads local files through the same caller-declared and
-server-verified byte-identity contract used by remote agents, moves a selected
-revision-bound live node to recoverable trash after explicit confirmation,
-lists newest-first trash roots, restores one inspected revision while
-reporting its actual collision- or fallback-resolved path, lists configured
-backup recovery points, reports current and terminal daemon background jobs,
-and separates physical loose files, live packed content, complete pack payload,
-and logically dead payload awaiting explicit repack. Future slices cover
-broader metadata and version comparison. Store health and per-store authority
-are read-only in the portal; placement mutations remain operator/agent API
-workflows.
-Application-neutral tree, timeline, diff, evidence, and job components should
-be reusable by Msgvault and later tools.
+The [web app](usage/web.md) browses and searches the vault. Users can upload
+files, download current or historical content, manage tags, and trash or
+restore documents. They can inspect versions, source history, audit evidence,
+background jobs, backup recovery points, and storage health.
 
-The focused TUI provides virtual-tree navigation, name and extracted-content
-search, stable document/version/hash detail, a compact node-focused
-audited-history timeline, and revision-bound recoverable trash and restore. Its
-daemon-activity screen reports supervised job lifecycle, timestamps, and
-complete terminal failures without inventing percentages where workers expose
-no authoritative total. A read-only operations screen separates logical
-authority from loose and packed inventory and lists the configured repository's
-backup recovery points. It also distinguishes each physical store's role,
-health, sole authority, affected documents, and stored bytes. Later slices add ingest progress and broader
-metadata/evidence. Rich document comparison belongs in external tools or the
-web portal. Neither client has privileged operations — anything either does,
-the API can do.
+The [terminal browser](usage/tui.md) provides tree navigation, search, document
+and version details, a node audit timeline, and recoverable trash and restore.
+Its operations views show daemon jobs, storage inventory, and configured
+backup recovery points.
 
-## Phase 4 — Backup (implemented)
+Storage placement controls remain an operator or agent API workflow. The web
+and terminal storage views are read-only. Saved queries and highlight sets
+have HTTP APIs; neither client has a management screen for them.
 
-`docbank backup init|create|list|verify|restore` against the kit engine
-([design](architecture/backup.md)).
+## What remains planned?
 
-The internal Kit application adapter, loose/packed capture proof, and atomic
-packed restore publication are implemented. Every new internal capture uses
-Docbank's deterministic logical JSONL artifact, which round-trips directory
-structure, stable node IDs, content membership, trash state, versions,
-provenance, tags, and extraction state into a fresh current-schema database.
-Historical SQLite page-map snapshots remain restorable. Authenticated daemon
-API and CLI orchestration for repository initialization, snapshot creation,
-listing, verification, and confined packed restore are implemented. Remaining
-Phase 4 work is representative-corpus hardening and eventual retention policy,
-not a missing recovery command.
+- Automatic PDF and Office extraction for new vault imports, broader daemon
+  processing workflows, and public semantic search.
+- An MCP server for agent integrations.
+- Overlapping permanent audit scopes.
+- A retention contract for external references to Docbank nodes. Embedded
+  source references currently record origin; they do not prevent deletion.
+- Broader metadata inspection and version comparison in the web app.
+- Import progress and broader metadata and evidence in the terminal browser.
+- Reusable tree, timeline, comparison, evidence, and job components for other
+  applications.
+- Automatic replication targets, primary-store replacement, lifecycle
+  policies, and web or terminal storage-placement controls.
+- Broader backup retention policy and representative-corpus hardening.
 
-## Multi-store placement (implemented)
-
-New content remains local-first in one fixed filesystem primary. Operators can
-attach fenced filesystem or S3-compatible secondaries, preview and execute
-verified placement or evacuation, repair a damaged location, salvage immutable
-bytes from a fenced store, and resume uncertain work through durable job IDs.
-Backup reads one verified candidate for every retained blob, captures a
-non-secret deterministic placement artifact, restores locally by default, and
-can explicitly remap source stores through owner-private deployment bindings.
-Automatic replication targets, primary succession, lifecycle-policy
-management, and browser/TUI mutation controls are deliberately deferred.
+Rich document comparison belongs in the web app or external tools.
 
 ## Deferred beyond v1
 
-At-rest encryption of the live store, encryption for backup repositories,
-importing attachments out of msgvault, and multi-user/sharing. Daemon-owned
-document processing, embeddings, semantic search, and an MCP server are in
-progress on top of the derivative catalog.
+- Encryption for live storage and backup repositories.
+- Importing attachments from msgvault.
+- Multi-user access and sharing.

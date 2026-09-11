@@ -285,8 +285,19 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 	if err != nil {
 		return nil, fmt.Errorf("opening temporary database with %s: %w", driver.Name(), err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
-		return nil, fmt.Errorf("applying current schema to temporary database: %w", err)
+	// Match bootstrap's transaction boundary instead of syncing every schema
+	// statement separately each time an existing vault is opened.
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("beginning temporary schema transaction: %w", err)
+	}
+	if _, err := tx.Exec(schemaSQL); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("applying current schema to temporary database: %w", err), tx.Rollback(),
+		)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing temporary schema transaction: %w", err)
 	}
 	columns = make(map[string][]string, len(currentSchemaTables))
 	for _, table := range currentSchemaTables {

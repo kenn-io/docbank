@@ -5,18 +5,23 @@ description: How Docbank identifies and retains canonical visual derivatives.
 
 # Visual previews
 
-Docbank has a separate catalog for visual previews of images, camera RAW files,
-and video. A preview is a retained derivative of one immutable content version.
-It does not replace the original and does not change document identity.
+A visual preview lets an application display a document without decoding the
+original each time. Docbank retains the preview as one image tied to an
+immutable content version. The original bytes and document identity remain
+unchanged.
 
-The catalog is deliberately separate from document renditions. Document
-renditions describe normalized evidence, text, and provider artifacts. A visual
-preview is a single display-oriented image that another application can resize
-for grids, detail views, or search results without decoding the original again.
+The preview catalog can describe image, camera RAW, and video sources. The
+[built-in producer](#backup-and-embedded-reads) supports the still-image formats
+listed below. Applications can resize a preview for grids, details, or search
+results.
+
+Docbank keeps previews separate from **document renditions**, which retain
+normalized evidence, text, and provider artifacts.
 
 ## Recipe identity
 
-Every preview records the complete recipe that can affect its bytes:
+A **recipe** records every choice that can affect the preview's bytes. Each
+preview stores:
 
 - the maximum output edge;
 - output image format;
@@ -92,12 +97,18 @@ is JPEG. GIF inputs use their primary frame, including for animated sources.
 WebP inputs apply bounded EXIF orientation and reject embedded ICC profiles;
 animated WebP remains unsupported by the built-in decoder.
 Accepted images scale without upscaling to a 4096-pixel maximum edge
-and encode as a quality-90 JPEG. Malformed source bytes become a durable
+and encode as a quality-90 JPEG. The decoded source image must have positive
+dimensions and no more than 100,000,000 pixels; a larger image records
+`failed` with `source_dimensions_exceed_limit`. For camera RAW files, this
+limit applies to the embedded JPEG being decoded.
+
+Malformed source bytes become a durable
 `failed` result; unsupported media types, decoder features, and color profiles
 become a durable `unsupported` result. Read, verification, storage, and
 cancellation failures are retryable.
 
 Preview production is application-driven: opening a vault does not start a
-worker. Other still-image formats, RAW containers without a supported embedded
-JPEG, video frames, and managed color conversion require additional producers,
+worker. Reading source metadata from ORF, RW2, CR3, or MP4 does not mean the
+built-in producer can preview those formats. Other still-image formats, RAW
+containers without a supported embedded JPEG, video frames, and managed color conversion require additional producers,
 but they use the same generation, retention, backup, and read contracts.

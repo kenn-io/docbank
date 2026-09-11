@@ -59,7 +59,13 @@ def nav_paths(value: object) -> set[str]:
     return result
 
 
-LLMS_BASE_URL = "https://docbank.ai/"
+LLMS_BASE_URL = "https://docbank.ai/docs/"
+LLMS_PUBLIC_SITE = [
+    "## Public Site",
+    "- [Docbank](https://docbank.ai/index.md): Keep and recover documents for people, applications, and agents.",
+    "- [Document guide](https://docbank.ai/guide.md): Follow a document from import through saved versions, processing choices, and recovery.",
+    "",
+]
 
 
 def frontmatter_field(path: pathlib.Path, field: str) -> str:
@@ -114,7 +120,7 @@ def check_llms_txt(config: dict, errors: list[str]) -> None:
     actual = [line.rstrip() for line in lines[first_section:]]
     while actual and not actual[-1]:
         actual.pop()
-    expected = expected_llms_sections(config["project"]["nav"])
+    expected = LLMS_PUBLIC_SITE + expected_llms_sections(config["project"]["nav"])
     while expected and not expected[-1]:
         expected.pop()
     if actual != expected:

@@ -5,10 +5,10 @@ description: Browsing, moving, renaming, and tagging in the virtual tree.
 
 # Organizing & Tagging
 
-The folder structure you see in `ls` and `tree` is virtual — rows in
-SQLite, not directories on disk. That makes reorganization instant and
-transactional no matter how large the files are: moving a 4 GB scan
-archive is one metadata update.
+Move, rename, and tag documents without rewriting their stored bytes. The
+folders in `ls` and `tree` are database entries. Even moving a 4 GB archive
+changes only metadata. See [Storage](../architecture/storage.md) for how the
+folder tree relates to stored content.
 
 ## Browsing
 
@@ -24,9 +24,9 @@ and its ordered children. `tree --json` returns the root plus a flat,
 deterministic pre-order list whose entries carry absolute paths and depths;
 this avoids parsing indentation when a script needs to walk a subtree.
 
-Node selectors appear everywhere deliberately. A path is a live coordinate
-that can change during reorganization; `id:42` continues to name the same node.
-Commands that target an existing node accept either form:
+Each file or folder has a stable node ID. Its path can change when you
+reorganize the tree, but `id:42` continues to select the same entry. Commands
+that target an existing node accept either form:
 
 ```bash
 docbank cat id:42
@@ -36,9 +36,10 @@ docbank rm id:42
 docbank restore id:42
 ```
 
-Use paths when the coordinate itself is your intent, and `id:N` when you mean
-the object regardless of its current name. JSON uses numeric node IDs, and the
-[HTTP API](../architecture/http-api.md) is ID-first throughout.
+Use a path to select whatever is at that location. Use `id:N` to select a
+specific file or folder regardless of its current name. JSON uses numeric node
+IDs, and the [HTTP API](../architecture/http-api.md) uses IDs as its primary
+selectors.
 
 Live-tree commands such as `ls`, `tree`, `mv`, `rm`, `put`, `edit`, `revert`,
 version pruning, and tag assignment reject a trashed selector. Read-only
@@ -55,7 +56,7 @@ docbank mv /taxes/2026/scan.pdf /taxes/2026/w2.pdf   # dest doesn't exist → re
 docbank mv /inbox/receipts /archive             # directories move with their subtree
 ```
 
-Rules the store enforces, atomically, per move:
+Docbank checks these rules before committing a move:
 
 - **No overwrites.** Moving onto an existing live file or directory name
   fails with `name already exists`. Rename or trash the occupant first.
@@ -64,8 +65,9 @@ Rules the store enforces, atomically, per move:
   NUL are rejected. Names are Unicode-normalized (NFC) so visually
   identical names can't coexist, and compared case-sensitively.
 
-A move bumps the node's revision and both affected directories' — that's
-the change-detection signal the HTTP API's `If-Match` preconditions use.
+A move increases the node's revision and both affected directories' revisions.
+A revision is a change counter. HTTP clients send the revision they inspected
+in `If-Match` so the daemon can reject a decision based on older state.
 
 ## Trashed names don't block
 
@@ -80,7 +82,14 @@ Tags organize documents independently of their current paths. Each tag has a
 stable UUID; its name can change without breaking assignments or agent-held
 references.
 
-![The Docbank web application managing a synthetic vault's stable tag catalog.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/web-tag-catalog/web-tag-catalog.png)
+In the web application, slash-separated names form display groups. For
+example, `matter/acme/reviewed` appears as `reviewed` under `matter/acme`.
+The full name is still one tag; assigning it does not assign a parent tag.
+Use the full name or UUID in CLI commands. Colors come from stable tag IDs,
+so renaming a tag keeps its color. You do not need to configure groups or
+colors. See [web tag controls](web.md#manage-tag-definitions).
+
+![The Docbank web application managing a synthetic vault's stable tag catalog.](https://docbank.ai/assets/generated/web-tag-catalog.png)
 
 ```bash
 docbank tag create taxes
@@ -97,8 +106,9 @@ the tag revision; they also bump affected nodes' revisions. Rename and delete
 condition their change on the inspected tag revision, so a concurrent stale
 decision fails rather than silently overwriting newer metadata. CLI assignment
 paths resolve in the same transaction as the change, so an ancestor move cannot
-make the command tag a node that has already left the requested path. Repeating
-an existing assignment or missing unassignment is an idempotent no-op.
+make the command tag a node that has already left the requested path.
+Assigning an already assigned tag or removing an absent assignment changes
+nothing.
 
 Canonical UUID-shaped selectors are always interpreted as stable IDs. A tag
 whose display name happens to look like a UUID remains addressable through its
@@ -130,16 +140,16 @@ standard input with `-`:
 docbank mv batch reorganization.json
 ```
 
-Every source is interpreted against the tree as it existed at the start of the
-transaction. A batch destination is the exact final coordinate; an existing
+Docbank resolves every source against the tree at the start of the transaction.
+Each batch destination is the exact final path; an existing
 directory is not shorthand for “move into this directory.” Destination parents
 are resolved in the planned final tree, so one item can move beneath a directory
 that another item moves in the same batch. To move a document into `/filed`
 while retaining `a.pdf`, name `/filed/a.pdf` explicitly. This makes file and
 directory swaps unambiguous.
-The complete final tree is then checked for missing parents, duplicate sibling
-names, and cycles before any row changes. If any selector, revision, or final
-coordinate is invalid, nothing moves.
+Before changing any entry, Docbank checks the complete proposed tree for missing
+parents, duplicate names within a folder, and cycles. If any selector, revision,
+or final path is invalid, nothing moves.
 
 A path source means “the node at this coordinate when the transaction runs.”
 An `id:N` source means “this exact node”; the CLI resolves it before submission

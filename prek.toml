@@ -15,5 +15,5 @@ always_run = true
 id = "forbid-superpowers-artifacts"
 name = "forbid-superpowers-artifacts"
 language = "fail"
-entry = ".superpowers is temporary workspace output; publish inspected screenshots to docs-assets instead"
+entry = ".superpowers is temporary workspace output; inspect make docs-screenshots output and publish the complete set to docs-assets instead"
 files = "^\\.superpowers/"

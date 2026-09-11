@@ -5,18 +5,18 @@ description: Keep document bytes local-first, add filesystem or S3-compatible st
 
 # Multi-store storage
 
-Every new Docbank write lands in the vault's built-in filesystem store first.
-That fixed primary keeps ordinary ingest simple and gives every document a
-local verified copy before placement policy is considered. You can attach
-secondary filesystem or S3-compatible stores when a collection needs another
-physical location or the primary needs space.
+Add a secondary store when you need another location for document bytes or
+want to free space in the vault. Every new write first goes to the built-in
+filesystem store, called the primary. You can then copy or move verified
+content to a secondary filesystem or S3-compatible store.
 
-Placement is capacity management, not synchronization or backup. Docbank
-records which verified stores may satisfy each retained SHA-256 identity, but
-it does not mirror arbitrary filesystem changes, manage bucket lifecycle
-rules, or replace a complete [backup](backup.md).
+Docbank records which stores hold a verified copy of each retained content
+hash. This catalog record authorizes a store to serve those bytes. Moving
+content between stores manages capacity; it does not synchronize arbitrary
+filesystem changes, manage bucket lifecycle rules, or replace a complete
+[backup](backup.md).
 
-![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/multi-store-storage/web-multi-store-storage.png)
+![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://docbank.ai/assets/generated/web-multi-store-storage.png)
 
 The web application and TUI expose this inventory read-only. Registration,
 placement, repair, takeover, evacuation, and removal remain explicit CLI or
@@ -24,9 +24,11 @@ master-key API operations.
 
 ## Configure a binding
 
-Bindings are machine-local deployment configuration. Paths, endpoints,
-buckets, prefixes, and credentials never enter portable metadata, audit
-history, browser sessions, or backup placement manifests.
+A binding tells this machine how to reach a store. It contains the path or S3
+connection settings and credential profile. Docbank keeps paths, endpoints,
+buckets, prefixes, and credentials out of portable metadata, audit history,
+browser sessions, and backup placement manifests. See
+[Configuration](../configuration.md) for binding fields.
 
 ```toml
 # $DOCBANK_HOME/config.toml
@@ -76,16 +78,16 @@ docbank storage list
 docbank storage status cold --refresh
 ```
 
-The stable store UUID is authority. A canonical UUID selector is always
-treated as an ID, never as a name. `--refresh` performs a fresh
-ownership-marker check. Ordinary status
-uses bounded daemon observations so it does not add a network request to every
-read.
+Select a store by its stable UUID when its identity must survive a rename.
+Docbank always treats a canonical UUID selector as an ID, not a display name.
+`--refresh` checks the ownership marker again. Ordinary status uses the
+daemon's recorded observations without a network request on every read.
 
-Use `--takeover` only when deliberately transferring an already marked
-namespace from another vault instance. Takeover writes a fresh ownership epoch
-and fences the former owner. It is not a way to share one prefix between two
-live vaults.
+Use `--takeover` to transfer a store namespace from another vault instance.
+A namespace is the filesystem directory or S3 prefix reserved for that store.
+Takeover writes a new ownership epoch, the value identifying the current owner,
+and blocks the former owner from using the store normally. Two live vaults
+cannot share one prefix this way.
 
 Each active secondary must own a disjoint namespace. Filesystem paths may not
 overlap the vault, a watched inbox, or another active filesystem store. S3
@@ -138,18 +140,19 @@ docbank storage place /archive/closed-projects --to cold --move
 
 The preview reports logical bytes, bytes requiring transfer, verification
 read-back, remote egress, local scratch, shared-reference constraints,
-audit-pinned bytes, and immutable-pack bytes that need a later repack. The run
-revalidates every object before its short catalog commit; concurrent document
-changes can safely reduce reclamation without invalidating the verified copy.
+audit-pinned bytes, and immutable-pack bytes that need a later repack. Before
+committing catalog changes, the daemon rechecks every object. If documents
+changed during the transfer, it may reclaim less source space while keeping
+the verified destination copy valid.
 
 Audited content stays on the primary by default. Remote-only audited retention
 requires `--allow-audited-remote-only` in the preview. That acknowledgement
 means Docbank will never authorize deletion, but it cannot prevent deletion by
 bucket lifecycle rules, storage administrators, or lost credentials.
 
-## Offline, damaged, and fenced stores
+## Recover offline, damaged, or taken-over stores
 
-Reads try catalog-authorized candidates in stable priority order. An
+Docbank tries the locations recorded for each blob in stable priority order. An
 unavailable redundant store does not block a healthy copy. Missing and corrupt
 locations are reported distinctly and are immediately demoted for the current
 daemon run; durable catalog authority changes only through an explicit repair.
@@ -187,9 +190,9 @@ docbank storage detach cold
 docbank storage unregister cold
 ```
 
-Evacuation copies every source-only object into the fixed primary, verifies
-the destination, then revokes the secondary catalog locations. Immutable pack
-containers may retain dead physical bytes until repack. Detach preserves the
+Evacuation copies every object held only by the secondary into the primary.
+It verifies the destination, then removes the secondary locations from the
+catalog. Immutable pack containers may retain unused bytes until repack. Detach preserves the
 empty store identity while removing it from runtime use; unregister is the
 separate final action and is accepted only for an empty detached store.
 
@@ -205,8 +208,9 @@ source store IDs, display names, backend kinds, roles, per-hash source store
 IDs, and aggregate counts. It contains no deployment path, endpoint, bucket,
 prefix, credential profile, ownership epoch, encoding, or pack coordinate.
 
-Default restore ignores source topology and rebuilds a fresh local primary.
-To reconstruct selected placement, provide an owner-private mapping file:
+Default restore puts all recovered content in a fresh local primary store.
+To restore selected content to other stores, provide a mapping file that only
+the owner can access:
 
 ```toml
 version = 1

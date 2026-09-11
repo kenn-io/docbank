@@ -6,16 +6,21 @@ description: The agent-first HTTP API — filesystem-shaped endpoints, revision 
 
 # HTTP API
 
-The endpoints below exist in `docbank daemon run` and back the CLI's data
-commands — the CLI is an HTTP client of exactly this surface, with no other
-path into the vault.
+The HTTP API lets clients browse, retrieve, file, and reorganize documents.
+`docbank daemon run` serves it, and every CLI data command uses it. CLI commands
+cannot open the vault directly.
 
-**Design test: an agent must be able to do everything the CLI can,
-through the API alone.** Agents are not a secondary interface bolted
-onto a human tool; browsing, retrieving, filing, and reorganizing the
-tree must work for a client that only speaks HTTP — and the CLI itself
-takes no shortcut, so this is enforced by construction rather than by
-discipline.
+This page owns the wire contract: routes, authentication, preconditions, content
+verification, and errors. Use [Agent Guide](../agents.md) for a task-oriented
+starting point.
+
+| Reader question | Contract |
+| --- | --- |
+| Which operation should I call? | [Endpoint map](#shape) |
+| How do I reject a stale write? | [Revisions and `If-Match`](#concurrency-resource-revisions-and-if-match) |
+| When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
+| Which credentials does a request need? | [Authentication](#auth) |
+| How do I handle a failed request? | [Error mapping](#error-mapping) |
 
 ## Shape
 
@@ -86,8 +91,50 @@ adds a stable UUID, canonical payload fingerprint, revision, timestamps, and a
 quoted numeric `ETag`. Payloads remain JSON objects on the wire; they are not
 base64 strings.
 
-Names are unique across both kinds. Descriptions normalize Windows CRLF line
-endings to LF on create and update. An omitted or `null` size bound is unset;
+QueryV1 stores these fields. Defaults apply when a field is omitted:
+
+| Field | Accepted value | Default |
+|-------|----------------|---------|
+| `v` | `1` | `1` |
+| `text` | Up to 8,192 Unicode characters, preserved exactly | Empty text |
+| `syntax` | `simple` or `advanced` | `simple` |
+| `mode` | `lexical`, `semantic`, or `hybrid` | `lexical` |
+| `filters` | Object described below | `{}` |
+| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, or `relevance` | `name` |
+| `sort.direction` | `asc` or `desc` | `asc` |
+
+The `filters` object accepts the following saved choices. These are storage
+fields, not additional parameters for `GET /search`:
+
+| Fields | Values |
+|--------|--------|
+| `paths`, `exclude_paths` | Absolute virtual paths; at most 64 in each set |
+| `collection_ids`, `exclude_collection_ids`, `tag_ids`, `exclude_tag_ids` | Canonical UUIDv4 values; at most 64 in each set |
+| `no_tags`, `has_duplicates`, `collapse_duplicates` | Boolean choices |
+| `mime_types` | At most 64 concrete media types without parameters |
+| `extensions` | At most 32 lowercase extensions without a leading dot |
+| `media_families` | Array of at most 13 entries: `email`, `document`, `spreadsheet`, `presentation`, `image`, `audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, or `unknown` |
+| `modified_after`, `modified_before` | RFC3339 timestamps, normalized to UTC |
+| `size_min`, `size_max` | Byte counts from 0 through 9,007,199,254,740,991 |
+| `text_coverage` | Array of at most 6 entries: `complete`, `partial`, `failed`, `unprocessed`, `none`, or `unavailable` |
+
+Filter sets are sorted and deduplicated when saved. Query text is not trimmed
+or rewritten. Unknown fields and duplicate JSON object keys are rejected.
+A raw payload may use at most 128 KiB; its normalized encoding may use at most
+64 KiB. Nested JSON is limited to 16 levels.
+
+A `highlight_set` payload contains `v: 1` and `terms`. Each term has `text`
+and `color`. Supply 1–64 terms with unique literal text, each 1–256 Unicode
+characters long. Colors must be lowercase `#rrggbb`. The term order is
+preserved, and terms are not regular expressions. See the
+[creation examples](../usage/searching.md#save-complete-query-intent-over-http).
+
+Names are unique across both kinds. Names use Unicode NFC normalization and
+must contain 1–256 UTF-8 bytes afterward. Blank names and control characters
+are rejected. Descriptions allow at most 4,096 UTF-8 bytes; Windows CRLF line
+endings normalize to LF on create and update.
+
+An omitted or `null` size bound is unset;
 `size_max: 0` preserves an empty-file bound, while `size_min: 0` is equivalent
 to no lower bound. A minimum greater than the maximum is rejected.
 
@@ -98,6 +145,11 @@ route returns one definition and its current ETag. `PATCH` accepts only
 `name`, `description`, and `payload`; omitted fields stay unchanged, `null` and
 an empty patch are rejected, and `kind` cannot change. Update and delete both
 require `If-Match`. A canonical no-op keeps its revision and timestamp.
+Replacing `payload` replaces the whole payload, not individual nested fields.
+A stale revision returns `412 stale_revision`. A successful create
+returns `201`; update and delete return `200` with the resulting or deleted
+definition and its ETag. Saved definitions are included in metadata backup and
+restore.
 
 These endpoints store intent. They do not execute a query, translate QueryV1
 into the current `/search` query string, read document content, render

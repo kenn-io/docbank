@@ -36,13 +36,26 @@ class PageParser(html.parser.HTMLParser):
 
 
 def local_target(
-    site: pathlib.Path, page: pathlib.Path, raw: str
+    site: pathlib.Path, page: pathlib.Path, raw: str, url_prefix: str = ""
 ) -> tuple[pathlib.Path, str] | None:
     parsed = urllib.parse.urlsplit(raw)
     if parsed.scheme or parsed.netloc:
         return None
     if parsed.path:
-        target = site / parsed.path.lstrip("/") if parsed.path.startswith("/") else page.parent / parsed.path
+        if parsed.path.startswith("/"):
+            normalized_prefix = f"/{url_prefix.strip('/')}" if url_prefix else ""
+            if normalized_prefix:
+                if parsed.path == normalized_prefix:
+                    local_path = "/"
+                elif parsed.path.startswith(f"{normalized_prefix}/"):
+                    local_path = parsed.path[len(normalized_prefix) :]
+                else:
+                    return None
+            else:
+                local_path = parsed.path
+            target = site / local_path.lstrip("/")
+        else:
+            target = page.parent / parsed.path
         if parsed.path.endswith("/") or target.suffix == "":
             target /= "index.html"
     else:
@@ -63,6 +76,7 @@ def markdown_output(site: pathlib.Path, rel: pathlib.Path) -> pathlib.Path:
 def main() -> None:
     site = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "site").resolve()
     source = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
+    url_prefix = sys.argv[3] if len(sys.argv) > 3 else ""
     errors: list[str] = []
 
     llms_source = source / "llms.txt" if source is not None else None
@@ -120,14 +134,8 @@ def main() -> None:
                 f"og:{field}"
             ):
                 errors.append(f"{rel}: Twitter {field} differs from Open Graph {field}")
-        if (
-            rel == pathlib.Path("index.html")
-            and parser.metadata.get("og:title")
-            != "Your documents. Your agents. One system."
-        ):
-            errors.append("index.html: social title differs from the homepage message")
         for raw in parser.urls:
-            local = local_target(site, page, raw)
+            local = local_target(site, page, raw, url_prefix)
             if local is None:
                 continue
             target, fragment = local

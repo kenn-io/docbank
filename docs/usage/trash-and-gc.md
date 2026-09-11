@@ -5,10 +5,12 @@ description: The explicit deletion and physical-reclamation lifecycle.
 
 # Trash, GC, Repack & Verify
 
-`docbank rm` is always a soft deletion. There is no `rm --hard`, and neither GC
-nor repack runs automatically. Permanent deletion and physical reclamation are
-separate operator decisions, so the window for regret is as wide as you want it
-to be:
+`docbank rm` moves documents to recoverable trash. To delete them permanently
+and reclaim space, you must empty trash, run garbage collection (GC), and
+repack eligible packed content. GC removes stored content with no remaining
+references. Repack rewrites pack files to remove unused bytes.
+
+There is no `rm --hard`. GC and repack do not run automatically:
 
 ```mermaid
 flowchart LR
@@ -71,14 +73,15 @@ reference becomes a GC candidate.
 
 ## Stage 3: Garbage collection (`gc`)
 
-Unreachable blob authority is removed only by explicit GC. A blob is *reachable*
-— and therefore never collected — while any of these reference it:
+GC removes a blob's catalog record only when nothing retains its content. A
+blob remains *reachable*, and GC keeps it, while any of these reference it:
 
 - a live node,
 - a trashed node (trash is always restorable in full), or
-- a retained prior version of an edited document. Explicit, preview-first
-  [version pruning](../architecture/editing-and-versions.md#choosing-retention)
-  can release that reference without deleting the current file.
+- a retained prior version of an edited document.
+
+Preview-first [version pruning](../architecture/editing-and-versions.md#choosing-retention)
+can release a prior version's reference without deleting the current file.
 
 ```bash
 docbank gc          # dry run: candidate count and reclaimable bytes
@@ -106,10 +109,9 @@ packed payload appears in `storage status` as `dead_packed_bytes`. An explicit
 `docbank storage repack` rewrites eligible sparse packs with their live blobs
 and retires the old source packs. Empty packs are retired directly.
 
-Repack is not part of `rm`, `trash empty`, or `gc`, and there is currently no
-background maintenance scheduler. This is intentional: repacking may rewrite
-unrelated live blobs that share the same pack, so its timing and selection
-thresholds remain an independent storage-policy decision.
+Run repack explicitly; `rm`, `trash empty`, and `gc` do not run it. There is no
+automatic repack schedule. Repacking can rewrite live content that shares a
+pack with unused bytes, so you choose its timing and selection thresholds.
 
 ## Embedded maintenance
 
@@ -134,10 +136,11 @@ only a bounded blob page and does not validate the whole metadata catalog. The
 daemon commands above preserve full orphan reconciliation and whole-catalog
 verification.
 
-Physical maintenance never determines whether application data is live. Tree,
-trash, version-retention, and any future external-reference policy decide which
-logical references remain. GC only reclaims authority after those policies have
-made a blob unreachable, and Repack only reclaims pack space made dead by GC.
+Tree, trash, and version-retention rules decide which references remain. GC
+reclaims content only after those references are gone. Repack then reclaims
+pack space that GC made unused. The
+[CLI Reference](../cli-reference.md) describes the full daemon maintenance
+commands.
 
 ## Verify
 
@@ -145,12 +148,11 @@ made a blob unreachable, and Repack only reclaims pack space made dead by GC.
 docbank verify
 ```
 
-Validates logical metadata and audit history, then re-hashes every stored blob
-against its recorded SHA-256. It reports `metadata` failures or `missing`,
-`corrupt`, and `unreadable` problem blobs, exiting non-zero if anything is
-wrong. Corruption is something you detect on your schedule, not something you
-discover the day you need the document. Run it after moving the vault between
-disks, before deleting original sources, and periodically from cron.
+Docbank validates metadata and audit history, then reads every stored blob
+and checks its SHA-256 hash. It reports `metadata` failures or `missing`,
+`corrupt`, and `unreadable` blobs. Any problem produces a non-zero exit status.
+Run verification after moving the vault between disks, before deleting source
+files, and periodically from a scheduler such as cron.
 
 Next: protect what remains with [Backup & Restore](backup.md), and see
 [Integrity & Trust](../architecture/integrity.md) for what `verify` defends

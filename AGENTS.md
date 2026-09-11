@@ -21,11 +21,53 @@ Instructions for autonomous coding agents working in this repository.
   `frontend/package-lock.json`. Run `make frontend-test` for type, kit-ui,
   unit, and production-build checks. Release CI builds the frontend once and
   embeds those exact assets in all six platform archives.
-- Real web screenshots use the repository-owned Playwright harness in
-  `frontend/screenshots/`. Run `make frontend-screenshots`; captures must use
+- Real documentation screenshots use the repository-owned Playwright harness in
+  `frontend/screenshots/`. Run `make docs-screenshots`; captures must use
   its temporary synthetic vault and real daemon, never a developer vault or
   mocked API data. Generated images stay under `.superpowers/screenshots/`
-  until they are visually inspected and attached to the relevant pull request.
+  until they are visually inspected and published as a complete reviewed set.
+  Publish the complete set as one orphan `docs-assets` commit, then pin that
+  exact commit in `scripts/docs-assets.ref`. Documentation builds consume the
+  pin and never generate screenshots or follow a mutable branch head.
+- Run `make docs-serve` from the repository root to build, watch, and preview
+  the product page, authority guide, and operating documentation on one origin.
+  Run `make docs-build` after the final source or asset-pin edit. The strict
+  build stages only the explicit public allowlist into `site/`; internal plans,
+  scripts, and agent instructions must not enter the output.
+- A software release makes a documentation source eligible; it does not publish
+  that source. The selected source is normally the post-tag documentation-only
+  follow-up. Deployment still requires maintainer authorization. From the
+  repository root, `make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)` uploads
+  an unpromoted production build, verifies it and the release boundary, and
+  then promotes it. The deploy path does not generate screenshots, build the
+  product, run Docker, or install frontend dependencies. Pull-request jobs
+  never receive Vercel credentials; the authenticated upload dry run is a
+  trusted `main`-push check, and the manual production workflow validates its
+  requested source without credentials before entering the protected
+  environment.
+
+## Documentation
+
+- Write for the person trying to use or maintain Docbank. Lead with the
+  outcome, name who does what, use short sentences, and explain unfamiliar terms.
+- Organize around reader questions. Put purpose and current capabilities first;
+  separate limitations and future work. Use only the sections the topic needs.
+- Give each bullet one main idea. Use numbered steps for sequences, paragraphs
+  for rationale, and tables or diagrams when they clarify a comparison or flow.
+- State rules directly. Preserve exact commands, field names, authorization
+  checks, limits, and failure behavior when simplifying the wording.
+- Give each fact an owning guide or reference and link to it elsewhere. Update
+  that section instead of appending a narrative of the latest change. Indexes
+  should route readers, not repeat implementation status.
+- Describe current architecture separately from approved but unbuilt work,
+  proposals, and historical decisions. Preserve rationale, approvals, and active
+  exceptions with their removal conditions. Label superseded designs and keep
+  them outside normal navigation.
+- Keep the website, its Markdown companions, README, and documentation on
+  message. Published documentation describes its selected release; sources on
+  `main` describe the candidate release in present tense. Follow
+  [docs/README.md](docs/README.md) for the publishing layout, release boundary,
+  and checks.
 
 ## Private Data Boundary
 

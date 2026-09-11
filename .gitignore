@@ -10,8 +10,14 @@ internal/web/dist/*
 !internal/web/dist/.keep
 
 # docs build
+**/__pycache__/
+/.cache/docs-assets/
+/site/
+/.vercel/
+/.vercel-tools/
 docs/.venv/
 docs/site/
 docs/zensical-public-docs.*
 docs/.zensical-build.*
 .kata.local.toml
+.env*

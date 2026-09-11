@@ -5,11 +5,13 @@ description: What docbank defends against, which layer owns each integrity guara
 
 # Integrity and trust
 
-This page records where docbank's integrity guarantees live and — just
-as deliberately — where they don't. Several of the decisions below have
-been proposed, evaluated, and declined during review; they are written
-down here so the rationale is auditable and doesn't have to be
-re-litigated from scratch each time.
+Docbank verifies stored content and metadata within a single-user trust
+boundary. Its checks address crashes, corruption, stale state, and accidental
+damage. They do not establish trust against someone who can rewrite both the
+vault and its expected evidence.
+
+This page owns that boundary and the rationale for accepted trade-offs. The
+mechanism table identifies which component performs each check.
 
 ## Trust boundary
 
@@ -61,12 +63,9 @@ import would double the I/O of the most common bulk-import case to
 detect exactly one thing the structural check misses: **same-length
 corrupt bytes**, i.e. bit rot or tampering.
 
-That detection intentionally lives in `docbank verify`, and for a
-reason beyond cost: a corrupt blob is equally wrong for every node
-*already pointing at it*. Catching it only when a duplicate import
-happens to pass by is not an integrity guarantee — it's a coincidence.
-The systematic answer is a scan that covers every blob regardless of
-import traffic, which is precisely `verify`'s contract.
+`docbank verify` owns detection of same-length corruption. A corrupt blob also
+affects every node that already references it. Verification scans all blobs,
+so detection does not depend on a later duplicate import.
 
 ### Fail closed on an invalid canonical object
 

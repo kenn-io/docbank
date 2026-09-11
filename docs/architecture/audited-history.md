@@ -5,18 +5,39 @@ description: The permanent, tamper-evident history model for protected directory
 
 # Audited history
 
+Audited history permanently retains a selected directory's document history.
+Enrollment captures the records Docbank still holds, then protects subsequent
+changes. It cannot recover records deleted before enrollment.
+
+This page owns the audit design and its normative record contracts. Start with
+[Permanent Audited History](../usage/audited-history.md) to preview and enable
+protection. The implementation boundary below distinguishes current behavior
+from the wider design described here.
+
+| Reader question | Read |
+| --- | --- |
+| What is protected, including moved files and trash? | [Scope identity and membership](#scope-identity-and-sticky-membership) |
+| Which changes become evidence? | [What becomes history](#what-becomes-history) |
+| What does verification prove? | [Tamper evidence and its limits](#tamper-evidence-and-the-guarantee-boundary) |
+| Which deletion and maintenance operations remain possible? | [Deletion and maintenance](#deletion-and-storage-maintenance) |
+| What must a backup or restore preserve? | [JSONL, backup, and restore](#jsonl-backup-and-restore) |
+
 !!! info "Current implementation boundary"
-    Docbank implements permanent disjoint-scope enrollment, sticky membership,
-    mutation and allocation chains for the supported changes described below,
-    JSONL backup/restore fidelity, status inspection, and bounded per-node
-    history. Independent audit verification returns stable terminal evidence
-    and checks every protected blob; supplied external evidence is proved as an
-    exact prefix of current allocation and scope chains. Scope-wide browsing is
-    available. A shared tag-definition rename or deletion advances every
-    affected disjoint scope atomically. The web application exposes read-only
-    protection status, node history, and independent verification evidence;
-    the TUI exposes node history. Overlapping scopes and cross-scope topology
-    changes remain planned. See
+    Docbank currently provides:
+
+    - Permanent enrollment of disjoint scopes and sticky membership.
+    - Mutation and allocation chains for the supported changes described below.
+    - JSONL backup and restore of audit authority.
+    - Status inspection, bounded per-node history, and scope-wide browsing.
+    - Independent verification of audit history and every protected blob.
+      Verification returns stable terminal evidence and can prove supplied
+      external evidence is an exact prefix of current allocation and scope chains.
+    - Atomic updates to every affected disjoint scope when a shared tag
+      definition is renamed or deleted.
+    - Read-only protection status, node history, and independent verification
+      evidence in the web application; node history in the TUI.
+
+    Overlapping scopes and cross-scope topology changes remain planned. Use
     [Permanent Audited History](../usage/audited-history.md) for the current
     operator workflow.
 
@@ -41,9 +62,15 @@ ones after a chosen age. Full audit never applies those limits.
 
 ## Scope identity and sticky membership
 
-An audit scope attaches to a directory's stable node ID, not its current path.
-Renaming or moving the directory therefore moves the scope with it. Enabling a
-scope runs as a daemon job behind the mutation gate and atomically records:
+An **audit scope** is the permanent protection attached to one directory's
+stable node ID. Renaming or moving that directory moves the scope with it.
+**Sticky membership** means a node stays protected after it joins a scope,
+even if its path later changes.
+
+A **baseline** is the immutable snapshot captured when nodes join a scope.
+A **scope chain** is the ordered, hash-linked record of later changes.
+Enabling a scope runs as a daemon job behind the mutation gate and records all
+of the following atomically:
 
 - the scope and its initial chain state;
 - one shared baseline batch containing the directory, every live descendant,
@@ -195,17 +222,22 @@ The policy is vault metadata, not `config.toml`. It therefore participates in
 the same transactional authority, JSONL export, backup, and restore as the
 documents it protects.
 
-Because enrollment is irreversible, every enablement surface — CLI, API
-clients and agents, TUI, and web — requires the same two-step shape. Preview
-returns the baseline inventory, storage impact, unresolved trash origins, and
-a **vault-wide metadata-retention disclosure** described below, plus a
-short-lived server-issued token bound to the scope ID, baseline digest, vault
-identity, and—on first activation—the exact topology- and
-attached-metadata-genesis digests behind that disclosure. Enablement requires
-that token and an explicit acknowledgment of both the scope promise and
-vault-wide disclosure; it fails if the token is expired, belongs to another
-scope, or the baseline or either genesis projection changed. A client therefore
-cannot bypass review by calling the execution operation directly.
+Enrollment is irreversible. The contract for every enablement surface—CLI,
+API clients and agents, TUI, and web—therefore requires two steps:
+
+1. **Preview.** The daemon returns the baseline inventory, storage impact,
+   unresolved trash origins, and the **vault-wide metadata-retention
+   disclosure** described below. It also issues a short-lived token bound to
+   the scope ID, baseline digest, and vault identity. On first activation, the
+   token also binds the exact topology- and attached-metadata-genesis digests
+   behind the disclosure.
+2. **Enable.** The caller supplies that token and explicitly acknowledges both
+   the scope promise and the vault-wide disclosure. The daemon rejects an
+   expired token, a token for another scope, or a changed baseline or genesis
+   projection.
+
+Calling execution directly cannot bypass review. Client availability remains
+subject to the implementation boundary at the top of this page.
 
 Preview tokens are one-use and held by the issuing daemon. Execution recomputes
 the complete baseline and allocation-genesis digests; any intervening
@@ -860,25 +892,29 @@ An attached-metadata identity uses `tag_definition_identity`,
 selected by `record_kind`; event attachment identity uses the same matching
 record. No other identity record is valid.
 
-Origin presence and identity are exact. The unique vault root is a live
-directory with absent `parent_id`, empty `name`, and absent `origin`. Every
-other live node has a present live-directory parent, a valid non-root name, and
-absent `origin`. A current trash root has state `trash`, an operational
-`parent_id` equal to the vault root, a valid non-root name, and exactly one
-origin record. That origin's `node_id` must equal the enclosing
-`topology_node.node_id`. A `known_origin` has a different positive `parent_id`
-and a valid non-root `name`; its parent ID must resolve in the replayed
-last-known topology to immutable `node_kind: dir`, whether that parent is live,
-trashed, or tombstoned. The resulting parent graph must be acyclic and terminate
-at either the vault root, a current trash root carrying `unknown_origin`, or a
-tombstoned former trash root that retained that unknown origin verbatim. That
-current or historical record is the terminal sentinel, and traversal never
-follows its operational parent.
-An `unknown_origin` has the registered absent
-parent and an absent or valid non-root retained name. The known name and any
-present unknown retained name equal the enclosing trash root's topology name
-byte-for-byte. Neither form may appear on the vault root, a live node, or a
-trash descendant.
+Origin presence and identity follow exact rules:
+
+- The unique vault root is a live directory with absent `parent_id`, empty
+  `name`, and absent `origin`.
+- Every other live node has a present live-directory parent, a valid non-root
+  name, and absent `origin`.
+- A current trash root has state `trash`, operational `parent_id` equal to the
+  vault root, a valid non-root name, and exactly one origin record. That record's
+  `node_id` equals the enclosing `topology_node.node_id`.
+- A `known_origin` has a different positive `parent_id` and a valid non-root
+  `name`. In replayed last-known topology, its parent ID resolves to immutable
+  `node_kind: dir`, whether that parent is live, trashed, or tombstoned.
+- An `unknown_origin` has the registered absent parent and an absent or valid
+  non-root retained name.
+
+The parent graph must be acyclic. It terminates at the vault root, a current
+trash root carrying `unknown_origin`, or a tombstoned former trash root that
+retained that unknown origin verbatim. The current or historical unknown-origin
+record is the terminal sentinel; traversal never follows its operational parent.
+
+The known name and any present unknown retained name must equal the enclosing
+trash root's topology name byte-for-byte. Neither origin form may appear on the
+vault root, a live node, or a trash descendant.
 
 Every trash descendant has absent `origin`, a parent in the same detached trash
 subtree, and the same non-null `trashed_at` as its unique trash root. No live
@@ -1154,7 +1190,9 @@ while verification continues to check each transaction independently.
 Enabling the first scope also creates a vault-wide allocation-lineage genesis
 that commits a cryptographically random 128-bit lineage ID and the existing
 node-ID and operation-sequence allocator high-water marks immediately before
-enrollment. The genesis also commits separate counts and digests for a complete,
+enrollment.
+
+The genesis also commits separate counts and digests for a complete,
 canonically sorted topology snapshot containing every extant node's stable ID,
 parent, name, file/directory kind, live/trash state, canonical node timestamps,
 and available or unknown trash-origin record, and for the complete
@@ -1163,6 +1201,7 @@ and import recomputes both digests before deriving the first enrollment. This
 vault-wide authority—not a batch's claimed member or
 attachment list—establishes which detached roots and authoritative metadata
 existed when audit was activated.
+
 For every detached root, genesis freezes its available origin edge as
 last-known topology. A later operational `trash_parent` locator clear remains
 non-authoritative: it creates no delta and does not alter the replay projection.
@@ -1174,8 +1213,9 @@ delta, independently of the repairable locator.
 
 That same transaction then appends the enrollment as the first ordinary lineage
 entry. Copies that enable audit independently therefore start different
-lineages even when they inherited the same vault ID and allocator state. Every
-authoritative operation from that enrollment onward, audited or not, appends one
+lineages even when they inherited the same vault ID and allocator state.
+
+Every authoritative operation from that enrollment onward, audited or not, appends one
 allocation-lineage entry in its transaction. An entry commits
 its previous lineage head, operation sequence, a cryptographically random
 128-bit operation ID, the ordered node IDs allocated by the operation, both
@@ -1184,12 +1224,15 @@ mutation hash or an explicit no-audited-mutation marker, and either its
 topology-delta digest or an explicit no-topology-mutation marker, plus either its
 witness-change count/digest or an explicit no-witness-change marker, and either
 its attached-metadata-delta count/digest or an explicit
-no-attached-metadata-change marker. Every JSONL
-topology delta resolves to exactly one lineage entry with the same operation ID
+no-attached-metadata-change marker.
+
+Every JSONL topology delta resolves to exactly one lineage entry with the same operation ID
 and digest; an entry for a topology-changing transaction cannot carry the
 no-topology marker. Every witness-change list likewise resolves to its lineage
 entry and, when an audited mutation exists, to the identical count/digest in
-that mutation hash. The random operation ID is generated once for that
+that mutation hash.
+
+The random operation ID is generated once for that
 transaction and is the same value hashed into the canonical mutation. It makes
 independently mutated copies diverge even when they consume the same numeric IDs
 in the same sequence position. The lineage records allocation identity,
@@ -1197,13 +1240,15 @@ ancestry, replayable topology facts, and authoritative attached-metadata
 transitions required by audit verification, not an unaudited operation's file
 content.
 
-The guarantee is application-enforced and tamper-evident. It protects against
-ordinary Docbank commands, API clients, maintenance, software mistakes, and
-incomplete metadata restores. It cannot make bytes metaphysically indelible to
-the operating-system account that can rewrite SQLite, packs, the executable,
-and every backup. Backup manifests and externally recorded evidence bundles—
-the stable vault ID, every scope count/head, and the allocation-lineage
-count/head—provide stronger independent evidence.
+Docbank enforces retention in its application and makes changes to recorded
+history detectable. This boundary covers ordinary commands, API clients,
+maintenance, software mistakes, and incomplete metadata restores.
+
+An operating-system account that can rewrite SQLite, packs, the executable,
+and every backup can still destroy or replace that evidence. Backup manifests
+and externally recorded evidence provide an independent comparison. The
+recorded bundle contains the stable vault ID, every scope count/head, and the
+allocation-lineage count/head.
 
 ### Metadata protection boundary
 
@@ -1313,33 +1358,44 @@ that imported current projection.
 Conversely, any scope or other audit record requires exactly one valid genesis
 and the full cross-bound authority; a partial audit form is rejected.
 
-Export orders those records deterministically from one pinned metadata
-snapshot. Import into a fresh current-schema store validates IDs, membership
-topology, event order, chain hashes and heads, node revisions, every protected
-blob reference, and the referential closure of authoritative attachments in one
-transaction. It reconstructs every enrollment baseline batch, verifies its
-digest and member set, replays attached-metadata changes, and requires the
-resulting tag and provenance projection to equal the imported current state
-before accepting the chain. It also recomputes the complete event sort keys and
-sorted baseline-binding lists; an event ordinal, duplicate key, kind code, or
-digest order that is not canonical is rejected. Every membership must resolve
-to exactly one batch
-that created it with the same scope and operation; initial memberships resolve
-to the scope's sole enablement batch. Imported batches must use normalized
-non-overlapping targets, contain exactly their declared newly adopted members,
-and never assign one member to two batches for the same scope and operation.
-Ingest/provenance updates are always invalid because those records are
-immutable. A deletion is valid only when replay of the pre-operation projection
-proves that the record belongs solely to unaudited nodes, is not retained by any
-baseline or historical protected reference, and—for an ingest—has no remaining
-provenance reference. A deleted provenance fact may have no retained incoming
-`supersedes` edge; every dependent fact must be included in the same protected-
-closure check and deletion delta. The canonical attached-metadata delta must
-contain every tombstone. These rules are unchanged when the same transaction has
-an unrelated audited effect: the deletion emits no scoped event, while the
-canonical mutation still binds the complete delta. Import rejects a deletion
-that fails those pre/post referential checks, a missing tombstone, or any current
-provenance fact whose ingest or supersession target is absent.
+Export orders records deterministically from one pinned metadata snapshot.
+Import validates them in one transaction against a fresh current-schema store.
+It checks IDs, membership topology, event order, chain hashes and heads, node
+revisions, every protected blob reference, and the complete set of referenced
+authoritative attachments.
+
+For each enrollment baseline batch, import:
+
+1. Reconstructs the batch and verifies its digest and member set.
+2. Replays attached-metadata changes and compares the resulting tag and
+   provenance projection with the imported current state.
+3. Recomputes complete event sort keys and sorted baseline-binding lists.
+4. Rejects a non-canonical event ordinal, duplicate key, kind code, or digest
+   order before accepting the chain.
+
+Every membership must resolve to exactly one batch created by the same scope
+and operation. Initial memberships resolve to the scope's sole enablement batch.
+Imported batches must use normalized, non-overlapping targets and contain
+exactly their declared newly adopted members. Two batches for the same scope
+and operation cannot assign the same member.
+
+Ingest and provenance records are immutable, so import always rejects updates.
+A deletion requires replay of the pre-operation projection to prove all of these
+conditions:
+
+- The record belongs solely to unaudited nodes.
+- No baseline or historical protected reference retains it.
+- For an ingest, no provenance reference remains.
+- For a provenance fact, no retained incoming `supersedes` edge remains. Every
+  dependent fact participates in the same protected-closure check and deletion
+  delta.
+- The canonical attached-metadata delta contains every tombstone.
+
+These rules also apply when the transaction has an unrelated audited effect.
+The deletion emits no scoped event, but the canonical mutation still binds the
+complete delta. Import rejects failed pre/post referential checks, missing
+tombstones, and current provenance facts with an absent ingest or supersession
+target.
 
 Import builds the vault-wide topology projection from its digested genesis
 snapshot and the complete attached-metadata projection from its independently

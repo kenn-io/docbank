@@ -5,9 +5,11 @@ description: A guided model of vaults, document identity, immutable content, sto
 
 # How Docbank works
 
-Docbank presents a familiar tree of directories and files, but it is not a
-folder of ordinary files. It is a document system built from two cooperating
-parts:
+Docbank lets people and agents organize documents without rewriting their
+stored bytes. It presents directories and files as a virtual tree: paths live
+in a database, while document bytes live in a separate content store.
+
+Two parts make this work:
 
 - **SQLite metadata** describes the tree people and agents work with: stable
   document identity, paths, versions, tags, provenance, trash state, and
@@ -15,10 +17,9 @@ parts:
 - **Immutable content storage** holds the bytes, addressed by their SHA-256
   digest and stored either as individual files or inside sealed pack files.
 
-Separating those parts makes large reorganizations cheap, deduplicates
-identical content, retains version history without copying mutable files in
-place, and lets backup rebuild the same logical vault independently of its
-physical layout.
+A move changes metadata instead of copying file bytes. Identical content
+shares storage, and each edit keeps the earlier version. Backup can rebuild
+the same document collection even when the restored storage layout differs.
 
 Docbank does not assume one global archive per machine. A person or application
 may operate many independent vaults, each with its own identity, metadata,
@@ -55,10 +56,14 @@ flowchart LR
     CATALOG -->|"loose or packed"| CONTENT
 ```
 
-The arrows matter. A path resolves to a node; a file node selects a current
-version; a version names a content digest; and the catalog selects an
-authorized physical representation. Skipping a layer would make mutable names
-or stray files into accidental authority.
+Docbank follows these links in order:
+
+1. Resolve the path to a node.
+2. Read the file node's current version ID.
+3. Read the version's content digest.
+4. Ask the catalog which stored copy may supply those bytes.
+
+A name or a stray file cannot authorize a read on its own.
 
 ## Identity, addressing, and authority
 
@@ -140,10 +145,9 @@ Docbank keeps logical decisions distinct from physical storage maintenance:
 | GC | Removes unreferenced catalog authority and loose bytes | Dead entries inside an immutable pack do not shrink that pack |
 | Repack | Copies live pack entries into new packs and retires sparse old packs | Logical document history is not changed |
 
-This staging provides a regret window without pretending storage is free.
-Users and agents can retain every edit by default, deliberately prune unwanted
-history, empty trash on their own schedule, and reclaim packed space only when
-repacking is worthwhile. [Editing & Versions](editing-and-versions.md) and
+These separate steps give users time to undo a deletion. Docbank retains every
+edit by default. Users and agents choose when to prune history, empty trash,
+and reclaim space from packs. [Editing & Versions](editing-and-versions.md) and
 [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) give the command-level
 contracts.
 
@@ -197,17 +201,17 @@ and [Embed in Go](../embedding.md) describe those boundaries.
 
 ## Backup reconstructs meaning, not a live database copy
 
-Snapshot repositories are append-only and incremental. Each snapshot contains
-a complete deterministic JSONL description of the logical vault plus every
-catalog-authorized content blob. Unchanged objects are reused by digest across
-snapshots.
+Snapshots are immutable and incremental. Embedded applications can explicitly
+forget selected snapshots and reclaim repository data that no surviving
+snapshot uses. Each snapshot contains a complete deterministic JSONL description
+of the logical vault plus every retained content and derivative blob. Unchanged
+objects are reused by digest across snapshots.
 
-Restore verifies repository content, imports JSONL into a fresh current-schema
-database, reconstructs search and physical catalog state, checks SQLite and
-manifest statistics, and only then publishes the result. Source loose-versus-
-packed placement is not logical metadata. This makes backup a recovery contract
-rather than a fragile copy of a running SQLite file. See
-[Backup & Recovery](backup.md).
+Restore publishes a vault only after it verifies the repository, imports the
+logical metadata, rebuilds search and content locations, and checks the result.
+The backup does not require the restored vault to use the source's loose or
+packed layout. [Backup & Recovery](backup.md) owns the capture and restore
+sequence, including failure and publication rules.
 
 ## Integrity boundary
 
@@ -227,6 +231,7 @@ and which threats require independent evidence.
 
 | If you want to understand… | Read… |
 | --- | --- |
+| How renditions, embeddings, and search indexes relate to originals | [Document Processing](document-processing.md) |
 | The on-disk database, blob tree, and enforced invariants | [Storage](storage.md) |
 | Loose publication, packs, GC, and repacking | [Loose & Packed Content](packed-storage.md) |
 | Stable versions, replacement, reversion, and pruning | [Editing & Versions](editing-and-versions.md) |

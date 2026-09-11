@@ -5,48 +5,52 @@ description: docbank daemon run — the single process that owns the vault, and 
 
 # Daemon and process model
 
-`docbank daemon run` is the one process that opens the vault. Every data
-command — `add`, `ls`, `tree`, `cat`, `mv`, `rm`, `restore`, `search`,
-`trash list`/`empty`, `gc`, `verify` — is an HTTP client of it, over the
-[HTTP API](http-api.md). `docbank openapi` is the one exception:
-it renders the API contract offline, with routes registered but never
-invoked, so it needs neither a daemon nor a vault.
+The daemon owns a standalone vault and serves every CLI data command through
+the [HTTP API](http-api.md). This includes `add`, `ls`, `tree`, `cat`, `mv`,
+`rm`, `restore`, `search`, `trash list`/`empty`, `gc`, and `verify`.
+
+`docbank openapi` renders the API contract offline. It registers routes without
+invoking them, so it needs neither a daemon nor a vault. Applications that own
+an embedded vault use the separate [Go integration](../embedding.md).
 
 ## Why a daemon
 
-One process owns SQLite and the blob store; the CLI and agents are HTTP clients
-of the same `/api/v1` surface. There
-is no separate code path that opens the store directly — the CLI's own
-commands are the design test that the agent-facing API is sufficient,
-because the CLI has no other way to reach the vault.
+One owner coordinates SQLite writes and content storage. The CLI and agents
+use the same `/api/v1` contract. Because CLI commands cannot open the store
+directly, each command also exercises the API an agent would use.
 
-Earlier development builds let every command open the store and coordinate
-through the vault lock directly. The current single-lock-holder model is
-described in [Ownership & Concurrency](locking.md).
+[Ownership & Concurrency](locking.md) owns the locking contract. Earlier
+development builds opened the store once per command; that historical design
+no longer describes standalone operation.
 
 ## Lifecycle
 
-`docbank daemon run` runs in the foreground: it resolves `$DOCBANK_HOME`,
-creates only that root directory, takes the vault lock **exclusively**
-for its entire run, initializes the remaining layout, loads and validates
-`config.toml`, opens the store, cleans up any stale `blobs/tmp/`
-files left by a prior crash (safe unconditionally — the exclusive lock
-proves this process is the only one that could be writing them), binds
-the API listener, and serves until it receives `SIGINT`/`SIGTERM` or a
-shutdown request.
+`docbank daemon run` runs in the foreground. At startup, the daemon:
+
+1. Resolves `$DOCBANK_HOME` and creates only that root directory.
+2. Takes the vault lock **exclusively** for its entire run.
+3. Initializes the remaining layout, then loads and validates `config.toml`.
+4. Opens the store and removes stale files from `blobs/tmp/`. The exclusive
+   lock excludes another Docbank writer during cleanup.
+5. Binds the API listener and serves requests until `SIGINT`, `SIGTERM`, or a
+   shutdown request arrives.
 
 `docbank daemon start` spawns the same binary as a detached background
 process running `daemon run`; `docbank daemon stop` asks it to shut down;
 `docbank daemon restart` stops it (tolerating it not already running) and
 starts it again; `docbank daemon status` reports whether it's running.
-Shutdown is graceful: background tasks receive cancellation, in-flight
-requests drain, tasks receive a bounded window to return, the store closes,
-the vault lock releases, and the runtime record is removed — in that order,
-so a stopped daemon leaves no trace for the next `daemon start` or
-auto-start to trip over. HTTP draining and background-task draining each have
-a ten-second ceiling. Clients preserve a 25-second graceful-exit window before
-forced termination, so scheduling and cleanup do not consume either drain
-budget.
+During graceful shutdown, the daemon:
+
+1. Cancels background tasks.
+2. Drains in-flight HTTP requests.
+3. Waits for background tasks to return.
+4. Closes the store.
+5. Releases the vault lock.
+6. Removes the runtime record used for discovery.
+
+HTTP draining and background-task draining each have a ten-second ceiling.
+Clients allow 25 seconds for graceful exit before forced termination. The extra
+time covers scheduling and cleanup without consuming either drain budget.
 
 ```bash
 docbank daemon run          # foreground; logs to stderr
@@ -106,20 +110,25 @@ transient file beside that external lock, included in a startup failure, and
 removed when the start attempt finishes.
 
 The listener closes before background tasks finish draining. During that
-interval ping-based discovery cannot identify the daemon, but its runtime
-record and process remain live while it still owns the vault lock. Public ping
-fields cannot prove that a listener appearing on the same loopback port still
-belongs to that PID. Discovery therefore follows ping with a fresh nonce
-challenge whose HMAC requires the per-run shutdown secret in the private
-runtime record; neither that secret nor the API key crosses the socket during
-the proof. Credential-bearing requests remain pinned to that proven TCP
-connection and fail rather than redirecting or reconnecting. A forged or
-pingless endpoint is never sent secrets. The starter instead requests graceful
-process termination only for the create-time-verified PID, waits for exit, and
-then starts replacement. Runtime records without create-time proof are never
-trusted for this path. This handles shutdown and the rarer uncoordinated
-slow-start transition without spawning into an owned vault or trusting a
-rebound listener.
+interval, the process and runtime record remain live and the daemon still owns
+the vault lock, but ping cannot identify it.
+
+A public ping response also cannot prove that a listener on the recorded port
+belongs to the recorded PID. Discovery therefore checks the connection:
+
+1. Send a fresh random challenge after ping.
+2. Verify the reply's HMAC using the per-run shutdown secret from the private
+   runtime record. Neither that secret nor the API key crosses the socket
+   during this proof.
+3. Keep credential-bearing requests on that proven TCP connection. Requests
+   fail instead of redirecting or reconnecting.
+
+The starter sends no secrets to a forged or pingless endpoint. It requests
+graceful process termination only after verifying the PID's create-time, waits
+for exit, then starts a replacement. A runtime record without create-time proof
+cannot authorize this path. The same process handles shutdown and an
+uncoordinated slow start without launching into an owned vault or trusting a
+new listener that reused the port.
 
 ## Auto-start and idle shutdown
 
@@ -148,19 +157,25 @@ process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
 terminal state in deterministic order. Terminal records remain until restart,
 which makes a failed task visible instead of silently disappearing.
 
-Every daemon runs three derived-data jobs. `extract:plain-text` is the bounded
-worker that verifies and indexes supported current text content.
-`extract:source-metadata` reads every retained original that the current
-extractor has not processed and publishes typed metadata for it; it keeps
-watching for new content. `maintenance:auxiliary-checksums` computes the MD5
-of every retained blob that predates auxiliary checksums, then completes; new
-writes record their MD5 at ingest, so on an existing vault the first daemon
-start after upgrade reads every stored blob once. `process:renditions` runs
-only when a rendition provider is bound to the daemon, so its presence in
-`docbank jobs` means rendition work can actually happen. Configured watched
-inboxes add one `watch:<name>` runner each. All derived-data writes share the
-ordinary mutation side of the daemon operation gate, one target at a time, so
-GC cannot retire a blob while a worker is reading and publishing from it.
+Every daemon runs three jobs that derive information from retained content:
+
+- `extract:plain-text` verifies and indexes supported current text content with
+  a bounded worker.
+- `extract:source-metadata` reads retained originals that the current extractor
+  has not processed. It publishes typed metadata and keeps watching for new
+  content.
+- `maintenance:auxiliary-checksums` computes MD5 for retained blobs that
+  predate auxiliary checksums, then completes. New writes record MD5 at ingest.
+  On an existing vault, the first daemon start after this upgrade therefore
+  reads every stored blob once.
+
+`process:renditions` runs only when a rendition provider is bound to the daemon.
+Its presence in `docbank jobs` means the daemon can process renditions.
+Configured watched inboxes add one `watch:<name>` runner each.
+
+All derived-data writes take the ordinary mutation side of the daemon operation
+gate, one target at a time. This prevents GC from retiring a blob while a worker
+reads it and publishes a result.
 
 `docbank watch list` and authenticated `GET /api/v1/watches` join those runner
 records to the daemon's effective watched-inbox configuration. This gives

@@ -9,50 +9,55 @@ These are the actual Docbank interfaces backed by temporary synthetic vaults,
 not mockups. The names, contents, hashes, identifiers, storage history, and
 audit history were generated for the captures.
 
-## Browse one shared document authority
+## Browse and identify documents
 
-The local web application combines a sortable document table with the selected
-node's current path, stable ID, revision, immutable version, SHA-256 identity,
-tags, provenance, and permanent-audit status. The browser receives scoped,
-daemon-lifetime credentials rather than the daemon's master API key.
+Browse a sortable table and inspect a document without opening it. The details
+include its current path, stable ID, revision, version ID, SHA-256 content hash,
+tags, origin records, and permanent-audit status. The browser receives limited
+credentials that last for one daemon run. See [Web application](usage/web.md)
+for controls and authentication.
 
-![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/v0.12.0/web-vault-browser.png)
+![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
 ## Organize independently of folders
 
-Tags form a shared vocabulary with stable UUIDs and revision-protected
-definitions. People can manage the catalog or a selected document's
-assignments in the web application; agents use the same bounded daemon API.
+Group documents across folders with tags. Each tag keeps its UUID when its
+name changes. The browser keeps its color and groups slash-separated names.
+You can manage tags in the browser; people and agents use the
+same daemon API, which rejects changes based on an outdated revision. See
+[Organizing & Tagging](usage/organizing.md).
 
-![The Docbank web application managing a synthetic vault's stable tag catalog.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/web-tag-catalog/web-tag-catalog.png)
+![The Docbank web application managing a synthetic vault's stable tag catalog.](https://docbank.ai/assets/generated/web-tag-catalog.png)
 
 ## Verify permanent history
 
-An audited scope permanently retains its protected versions and supported
-changes. Independent verification replays the history, re-hashes protected
-content, and returns terminal scope heads that can be recorded outside the
-vault for later comparison.
+Permanently retain a directory's versions and recorded changes by enabling an
+audit scope. Verification replays that history and checks the protected
+content hashes. Save its evidence report outside the vault to compare against
+a later check. [Permanent Audited History](usage/audited-history.md) explains
+the irreversible retention rules.
 
-![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/web-audit-evidence/web-audit-evidence.png)
+![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://docbank.ai/assets/generated/web-audit-evidence.png)
 
-## See where physical authority lives
+## See where document bytes are stored
 
-The document catalog remains authoritative while verified content can occupy a
-fixed local primary and configured filesystem or S3-compatible secondaries.
-The web view is deliberately read-only: it separates logical authority,
-physical inventory, store health, sole copies, and live-document impact without
-exposing deployment paths or credentials.
+Inspect the built-in local store and configured filesystem or S3-compatible
+stores. The read-only browser view distinguishes database records from bytes
+on disk. It also reports store health, content with only one copy, and affected
+live documents. See [Multi-store Storage](usage/storage.md) for placement and
+recovery commands.
 
-![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/multi-store-storage/web-multi-store-storage.png)
+![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://docbank.ai/assets/generated/web-multi-store-storage.png)
 
 ## Operate from a terminal
 
-The daemon-backed TUI provides analytical tree and search views, complete
-document identity, permanent history, recoverable trash and restore, job
-status, and a read-only operational screen. Storage and backup results load
-independently so one unavailable repository does not hide live-vault status.
+Use the terminal user interface (TUI) to browse, search, inspect document IDs
+and history, and move documents to or from recoverable trash. Its operations
+screen loads storage and backup results independently, so an unavailable backup
+repository does not hide vault status. See the
+[terminal browser guide](usage/tui.md) for keys and limits.
 
-![The Docbank TUI showing physical storage inventory and two synthetic backup recovery points.](https://raw.githubusercontent.com/kenn-io/docbank/docs-assets/screenshots/tui-storage-backup/tui-storage-backup.png)
+![The Docbank TUI showing physical storage inventory, two content stores, and two synthetic backup recovery points.](https://docbank.ai/assets/generated/tui-multi-store-storage.png)
 
 Continue with the [Quickstart](quickstart.md), or choose a task from
 [Capabilities](capabilities.md).

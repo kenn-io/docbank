@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "./scripts/vercel-install-docs.sh",
+  "buildCommand": "./scripts/vercel-build-docs.sh",
+  "outputDirectory": "site",
+  "trailingSlash": true,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.docbank.ai"
+        }
+      ],
+      "destination": "https://docbank.ai/:path*",
+      "permanent": true
+    }
+  ]
+}

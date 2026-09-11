@@ -5,16 +5,19 @@ description: The SQLite schema, blob store layout, durability discipline, and en
 
 # Storage
 
-A standalone vault normally lives under `~/.docbank/`: one SQLite database and
-one built-in primary blob directory. That pair is a complete manual archive
-only while every retained blob has authority in the primary. Optional
-secondary stores add verified physical locations without becoming a second
-document catalog, and a vault may deliberately keep its sole verified copy in
-one of them. `docbank backup create` is therefore the topology-independent
-backup path: it reads one verified location for every logical blob or fails
-without publishing a partial snapshot. A stopped filesystem copy remains valid
-for a primary-complete vault; never copy a running vault. `docbank verify`
-proves a completed copy is internally consistent.
+Docbank stores document metadata in SQLite and document bytes in immutable
+content storage. A standalone vault normally keeps its database and built-in
+primary blob directory under `~/.docbank/`. The catalog may also authorize
+copies in secondary stores.
+
+Use `docbank backup create` to capture content across all stores. Copying the
+database and primary directory is a complete manual archive only when the
+primary holds every retained blob; stop the daemon before making that copy.
+Run `docbank verify` before relying on the result. [Backup & Recovery](backup.md)
+owns the complete capture and restore contract.
+
+This page owns the on-disk layout, schema relationships, and upgrade rules.
+Start with [How Docbank Works](overview.md) for the document model.
 
 ## Blob store
 
@@ -36,14 +39,17 @@ S3-compatible location. When a released database schema needs an incompatible
 upgrade, Docbank rebuilds the SQLite catalog through deterministic JSONL and
 translates existing physical authority without rewriting content bytes.
 
-**Durability discipline.** `go.kenn.io/kit/packstore` streams every write to
-`blobs/tmp/`, fsyncs the file, renames it into place, then fsyncs the shard
-directory — including on the
-deduplication fast path, so a reference is never handed out for a
-directory entry that could vanish on power loss. The database
-transaction that references a blob commits only after the blob is
-durable. A crash between the two leaves an *orphan blob*: harmless,
-invisible, reclaimed by `gc`.
+`go.kenn.io/kit/packstore` publishes each new write in this order:
+
+1. Stream the bytes into `blobs/tmp/`.
+2. Sync the completed file to durable storage with `fsync`.
+3. Rename the file into its canonical location.
+4. Sync the containing shard directory.
+
+Kit also syncs the directory on the deduplication fast path. Docbank commits a
+database reference only after the blob is durable. A crash before that commit
+can leave an **orphan blob**: bytes with no catalog authority. Reads cannot see
+it, and `gc` can reclaim it.
 
 Stale `tmp/` files from interrupted writes are cleaned at startup — but
 only when no other docbank process holds the vault (see
@@ -209,11 +215,12 @@ backend:
   `blobs`; a blob row can't be deleted while any retained version points at it,
   which is what makes GC's reachability query trustworthy.
 
-The store layer adds the rules SQL can't express: name validation
-(reject empty, `.`, `..`, `/`, NUL) with Unicode NFC normalization,
-cycle prevention on moves (ancestry walk inside the move transaction),
-revision bumps on every mutation, and size consistency between a node
-and its blob row.
+The Go store layer enforces the remaining rules:
+
+- Normalize names to Unicode NFC and reject empty names, `.`, `..`, `/`, and NUL.
+- Walk ancestry inside a move transaction to reject cycles.
+- Advance revisions on every mutation.
+- Require a node's size to agree with its blob row.
 
 Tag IDs are random UUIDv4 values and names are NFC-normalized, mutable text.
 Assignments refer to the stable ID. Each tag revision covers its name and

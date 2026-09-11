@@ -5,14 +5,16 @@ description: Stable content-version identity, retrieval, replacement, reversion,
 
 # Editing and versions
 
-Every file enters Docbank with a stable content-version identity. The file node
-is document identity; the version identifies one immutable set of bytes. Users
-and agents can list versions, inspect one by UUID, and retrieve its bytes even
-after the node moves or is renamed.
+Editing a file adds a new immutable version and keeps its earlier versions.
+The file's **node ID** identifies the document across moves and renames. A
+**version ID** identifies one retained state of that file, including its bytes
+and media type.
 
-Content replacement is implemented by `docbank put`, interactive replacement
-by `docbank edit`, and reversion by `docbank revert`. Each changed result adds
-immutable history instead of rewriting an existing version.
+Use `docbank put` to replace content, `docbank edit` to use a local editor, and
+`docbank revert` to make a prior version current again. Users and agents can
+list versions, inspect one by UUID, and retrieve its bytes after the file moves
+or is renamed. This page owns the version, replacement, reversion, and pruning
+contracts.
 
 ## Version contract
 
@@ -143,12 +145,16 @@ rather than falsely inviting a retry.
 docbank revert /taxes/2025/return.pdf <prior-version-id>
 ```
 
-Reversion is a metadata-only content transition. The selected version must
-belong to the target file and must not already be its current head. Under the
-target's inspected revision, one transaction creates a new `content_revert`
-version with the source's exact blob hash, size, and media type; records the
-source version ID; advances `current_version_id`; and bumps the node revision.
-No loose or packed bytes are read, copied, or rewritten.
+Reversion changes metadata only. The selected version must belong to the
+target file and must not already be current. Docbank checks the target's
+inspected revision, then performs these steps in one transaction:
+
+1. Create a `content_revert` version with the source's exact blob hash, size,
+   and media type.
+2. Record the source version ID.
+3. Advance `current_version_id` and the node revision.
+
+Docbank does not read, copy, or rewrite loose or packed bytes during reversion.
 
 The source and every intervening version remain immutable and addressable. A
 later repeat of the same historical choice creates another explicit revert

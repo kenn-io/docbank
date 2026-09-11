@@ -5,9 +5,9 @@ description: A ten-minute tour of the docbank CLI.
 
 # Quickstart
 
-This walkthrough exercises every core command against a scratch vault.
-Point `DOCBANK_HOME` at a temporary directory so you can experiment
-freely:
+Import documents, find and organize them, then test recovery in a temporary
+vault. These examples use a Unix shell. Set `DOCBANK_HOME` first so the commands
+use a scratch vault:
 
 ```bash
 export DOCBANK_HOME=$(mktemp -d)
@@ -31,14 +31,15 @@ preserved. Without `--dest`, files land in `/inbox`.
 
 ### The daemon
 
-That `add` just auto-started the `docbank` daemon in the background —
-every data command does, if one isn't already running. You don't need
-to think about it day to day; `docbank daemon status` shows it if you're
-curious, and `docbank daemon stop` shuts it down (it also exits on its
-own after a period of inactivity). See [Daemon](architecture/daemon.md).
+The first `add` command starts the daemon, the background process that owns
+and reads the vault. Data commands start it automatically when needed. Use
+`docbank daemon status` to inspect it and `docbank daemon stop` to stop it; it
+also exits after a period of inactivity. See [Daemon](architecture/daemon.md)
+for startup and lifetime rules.
 
-Re-running the same import is safe — already-imported files (matched by
-content, not name) are skipped:
+Repeat the same import to see the completed files skipped. Docbank checks
+content at the destination name and its collision suffixes; see
+[Importing Documents](usage/importing.md) for the matching rules:
 
 ```
 added: 0  skipped: 214  failed: 0
@@ -79,16 +80,17 @@ docbank tui
 ```
 
 Use the arrow keys or `j`/`k` to select a document, Enter to open a directory,
-and `/` to search names and extracted text. Press `i` for complete document
-authority or `a` for the selected node's permanent audited-history timeline.
+and `/` to search names and extracted text. Press `i` to inspect the document's
+IDs, revision, and content hash, or `a` for its permanent audit timeline.
 Press `x` to review moving the selected revision to recoverable trash, or `T`
 to browse and restore trash roots. Press `O` for the read-only storage inventory
 and configured backup recovery points. The TUI does not expose permanent
 deletion or maintenance mutations. See the
 [interactive terminal browser](usage/tui.md) guide for the complete key map.
 
-`cat` streams a file's bytes to stdout. For a durable local file, `get` first
-verifies the complete download in private staging and only then publishes it:
+`cat` streams a file's bytes to stdout. To save a local file, use `get`. It
+verifies the complete download in a private temporary file before publishing
+the destination:
 
 ```bash
 docbank cat /taxes/checklist.pdf
@@ -122,9 +124,10 @@ erasing the replacement:
 docbank revert /taxes/checklist.pdf <old-version-id>
 ```
 
-Reversion creates another immutable head that records its source. It does not
-copy the source blob or rewind history, so both the replacement and the original
-remain addressable.
+Reverting creates a new current version that records the older version it
+uses. Docbank reuses the stored bytes and preserves both earlier versions.
+See [Editing & Versions](architecture/editing-and-versions.md) for retention
+and revision rules.
 
 For text and other editor-friendly files, `edit` verifies a private copy, opens
 the blocking command from `VISUAL` or `EDITOR`, and creates a replacement only
@@ -145,10 +148,10 @@ docbank tag assign taxes /taxes/checklist.pdf
 docbank tag nodes taxes
 ```
 
-The human CLI accepts the current tag name or UUID. Canonical UUID-shaped input
-is always treated as an ID, so stable authority cannot later be captured by a
-display name. `docbank tag list` shows revisions and assignment counts; `tag
-rename` changes only the display name, and `tag delete` removes assignments
+The human CLI accepts the current tag name or UUID. Input shaped like a
+canonical UUID is always treated as an ID, even if a tag has that string as its
+display name. `docbank tag list` shows revisions and assignment counts.
+`tag rename` changes only the display name. `tag delete` removes assignments
 without deleting any document.
 
 ## Reorganize
@@ -169,7 +172,8 @@ moved [231] /taxes/2025/filing-checklist.pdf
 
 ## Search
 
-Names are indexed with SQLite FTS5; every term is a prefix match:
+Search matches the start of each word in document names and supported current
+text. Every term must match:
 
 ```bash
 docbank search tax check
@@ -228,10 +232,15 @@ docbank verify            # re-hash every stored blob
 
 ## Prove recovery
 
-Backup repositories are separate from the live vault. Captures are
-incremental: unchanged content is reused across snapshots. This scratch loop
-creates a repository, captures the vault, verifies the repository, and restores
-the latest snapshot into a different vault:
+A backup repository stores recovery snapshots outside the live vault. Each
+capture reuses unchanged content from earlier snapshots. The commands below
+perform this recovery test:
+
+1. Create temporary backup and restore directories.
+2. Initialize a repository and capture the vault.
+3. List and verify the snapshots.
+4. Restore the latest snapshot into a separate vault.
+5. Browse and verify the restored vault.
 
 ```bash
 export DOCBANK_BACKUP=$(mktemp -d)
@@ -247,9 +256,10 @@ DOCBANK_HOME="$DOCBANK_RESTORE" docbank tree /
 DOCBANK_HOME="$DOCBANK_RESTORE" docbank verify
 ```
 
-The restored target is independently usable; the running source vault is not
-replaced. See [Backup & Restore](usage/backup.md) for progress modes, snapshot
-selection, overwrite rules, and the exact proof returned by restore.
+You can use the restored vault independently. Restore does not replace the
+running source vault. See [Backup & Restore](usage/backup.md) for progress
+modes, snapshot selection, overwrite rules, and the exact proof returned by
+restore.
 
 That is the core document workflow. Continue with
 [Capabilities](capabilities.md) for the complete product map, see the real

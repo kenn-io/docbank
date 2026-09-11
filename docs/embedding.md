@@ -5,10 +5,10 @@ description: Own one or more independently rooted Docbank vaults inside a Go app
 
 # Embed in Go
 
-Go applications can use Docbank as an in-process document store without starting
-or discovering a daemon. An embedded vault uses the same virtual tree, immutable
-content versions, content-addressed blob store, packed-storage authority, and
-exclusive hierarchy locking as a standalone vault.
+Use `go.kenn.io/docbank` to own a document vault inside your Go process.
+Your application can store, version, retrieve, and back up documents without
+starting or discovering a daemon. The embedded API uses the same tree, content
+checks, storage rules, and exclusive vault lock as standalone Docbank.
 
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
@@ -74,11 +74,13 @@ appended, err := vault.AppendProvenance(ctx, receipt.Node.ID,
     })
 ```
 
-The append returns the resulting node, live path, fact, and revision-bound
-receipt. A zero `IfRevision` is an unconditional embedded operation; a
-positive value fences a caller's earlier read. Set `Supersedes` to an active
-caller-supplied fact identity on the same node to add a correction. The source reference is opaque
-evidence and is never opened by Docbank.
+The result contains the updated node, live path, appended fact, and receipt.
+Set a positive `IfRevision` to require the node revision you inspected;
+zero makes the operation unconditional.
+
+To correct an active caller-supplied fact on the same node, set `Supersedes`
+to that fact's identity. Docbank records the source reference exactly as
+supplied and never opens it.
 
 `Put` creates missing virtual directories. Repeating the same bytes and media
 type converges on the current version; changed bytes append an immutable content
@@ -144,10 +146,9 @@ for _, fact := range page.Items {
 ```
 
 The node, live path, total, and page come from one read snapshot. `Path` is
-empty for a trashed node. Provenance is evidence, not ownership: it does not
-prevent trash empty, version pruning, or garbage collection. Applications that
-need independent retention authority should keep that policy outside Docbank
-until the external-reference contract is implemented.
+empty for a trashed node. Provenance records origin; it does not prevent trash
+empty, version pruning, or garbage collection. Applications must manage any
+retention policy for external references themselves.
 
 `ContentIdentity` always describes decoded document bytes, regardless of
 whether those bytes are stored raw, zstd-compressed, or in a pack. SHA-256 is
@@ -171,21 +172,27 @@ for _, field := range metadata.Fields {
 }
 ```
 
-The operation is synchronous, local, and scoped to the requested version. It
-reuses the current extractor generation when one already exists and does not
-start background workers or process other content. It holds the vault's
-mutation lock for the whole extraction, up to a 64 MiB read of the original,
-so concurrent `Put`, `Create`, and maintenance calls wait behind it. It returns
-`ErrContentUnavailable` when the cataloged source bytes cannot be opened or
-verified. `SourceMetadata` remains a read-only lookup and returns `ErrNotFound`
-when no generation has been published. Both methods return all local fields,
-including fields marked sensitive. The embedding application must decide what
-it may disclose to its own users and transports.
+`EnsureSourceMetadata` runs locally and returns when extraction finishes.
+It processes only the requested version and reuses the current extractor's
+result when one exists. It does not start background workers.
+
+The method holds the vault's mutation lock during extraction. It verifies the
+complete original, including large media files, then applies the
+[format-specific parsing limits](architecture/source-metadata.md#current-format-boundary).
+Concurrent `Put`, `Create`, and maintenance calls wait.
+If Docbank cannot open or verify the source bytes, it returns
+`ErrContentUnavailable`.
+
+Use `SourceMetadata` for a read-only lookup. It returns `ErrNotFound` when no
+result has been published. Both methods return all local fields, including
+sensitive fields. Your application decides which fields it may disclose.
 
 ## Read canonical visual previews
 
-`EnsureVisualPreview` synchronously produces or reuses the current built-in
-preview for one immutable content version. Ready results identify exact preview
+`EnsureVisualPreview` synchronously processes one immutable content version
+when the current built-in recipe has no recorded result. It returns the active
+preview; if the recipe was already recorded, another recipe's active result
+stays selected. Ready results identify exact preview
 bytes and dimensions; unsupported and failed results carry a stable failure
 code without pretending that content is available.
 
@@ -209,11 +216,16 @@ content. It returns `ErrVisualPreviewUnavailable` for a cataloged unsupported
 or failed result and `ErrNotFound` when no preview result exists.
 `VisualPreview` remains a read-only lookup. Opening an embedded vault does not
 start a preview worker; applications choose when to call the synchronous
-producer.
+producer. The built-in producer supports JPEG, PNG, GIF, still WebP, and
+supported embedded JPEG previews in ARW, DNG, CR2, NEF, and RAF camera RAW
+files. See [Visual previews](architecture/visual-previews.md) for format limits,
+output size, and recipe selection.
 
-Both write receipts include `Physical`, which distinguishes logical bytes from
-their current raw, zstd, or packed representation. Most applications should
-treat that field as operational evidence rather than document identity.
+## Inspect and repair stored content
+
+`Put` and `Create` receipts include `Physical`. This field describes the raw,
+zstd, or packed representation on disk. Use it to inspect storage; use
+`ContentIdentity` to identify document bytes.
 
 `Put` is an idempotent content write, not an integrity repair primitive. Kit's
 structural dedup can reuse an existing canonical representation without hashing
@@ -262,6 +274,8 @@ split between raw and compressed object counts. Applications can therefore
 schedule packing from physical storage growth without walking loose objects.
 The report does not make packing automatic.
 
+## Identify a vault and verify reads
+
 `vault.ID()` returns the archive's stable UUID. JSONL backup and restore
 preserve that identity even when the restored vault has a different filesystem
 root; applications can therefore distinguish logical archives without treating
@@ -295,18 +309,20 @@ defer part.Reader.Close()
 _, err = io.Copy(dst, part.Reader)
 ```
 
-Raw loose content uses native filesystem offsets. Compressed loose content is
-decoded to a temporary file first, and packed content is decoded into memory
-in full before the range is served, so a range read of a large packed object
-costs its whole decoded size in RAM; applications should not infer cheap
-physical seeking from the public range contract. A range outside the version's
-bytes returns `ErrInvalidContentRange`. The reader returns exactly the
-requested length, or `io.ErrUnexpectedEOF` if the stream ends early, and holds
-the vault lifecycle lease until `Close`. A successful partial read proves
-catalog authorization, decoded size, and range bounds; it is not whole-object
-integrity verification. Use `OpenVersionContent` to consume and verify the full
-stream, or a maintenance verification operation when full integrity evidence is
-required.
+Range-read costs depend on storage:
+
+- Raw loose content uses filesystem offsets.
+- Compressed loose content is decoded to a temporary file first.
+- Packed content is decoded in full into memory. Reading a small range can
+  therefore need RAM for the whole decoded object.
+
+A range outside the version's bytes returns `ErrInvalidContentRange`. The
+reader returns exactly the requested length, or `io.ErrUnexpectedEOF` if the
+stream ends early. It keeps the vault open until the caller calls `Close`.
+
+A successful partial read checks the selected location, decoded size, and
+range bounds. It does not verify the whole object. Use `OpenVersionContent`
+to read and verify all bytes, or run maintenance verification.
 
 ## Traverse and mutate the tree
 
@@ -369,17 +385,18 @@ for {
 }
 ```
 
-The zero page size uses `DefaultWalkPageSize`, and no page can exceed
-`MaxWalkPageSize`. Traversal expands an indexed ordered frontier incrementally;
-setup does not materialize the selected subtree, and each returned node requires
-at most two sibling range seeks and one child seek. The second sibling seek is
-needed only when an include-trash walk exhausts duplicate node IDs for one path
-and advances to the next name. Canonical paths are limited to
-`MaxWalkPathBytes`, and absolute hierarchy depth is limited to `MaxWalkDepth`.
-Later tree mutations do not enter the pinned snapshot. `Walker.Close` is
-required even after `io.EOF`: it idempotently releases the read transaction,
-dedicated connection, and vault lifecycle lease. A concurrent `Vault.Close`
-waits for every walker and content reader to close.
+A zero page size uses `DefaultWalkPageSize`; no page can exceed
+`MaxWalkPageSize`. Paths are limited to `MaxWalkPathBytes`, and absolute tree
+depth is limited to `MaxWalkDepth`. Later tree changes do not enter the snapshot.
+
+The walker loads the tree incrementally. Setup does not load the whole
+subtree. Each node needs at most two sibling range seeks and one child seek.
+The second sibling seek applies only when an include-trash walk finishes
+the node IDs sharing one path and advances to the next name.
+
+Always call `Walker.Close`, including after `io.EOF`. Repeated calls are safe.
+It releases the read transaction, dedicated connection, and vault lease.
+`Vault.Close` waits for all walkers and content readers to close.
 
 `MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
 path. Their optional positive `IfRevision` rejects stale mutations;
@@ -435,23 +452,34 @@ _, err = vault.RestoreBackup(ctx, repository, docbank.BackupRestoreOptions{
 return err
 ```
 
-Use `OpenBackupRepository` after process restart. `Snapshots` lists immutable
-recovery points in chronological order. Capture holds a preservation lease for
-the complete snapshot, but ordinary appends resume after Docbank pins the short
-SQLite metadata view. An embedding application may use `Prepare` to create an
-immutable snapshot of its own catalog while that freeze is held, then declare
-the file in `ExtraFiles` so the same manifest covers both authorities. Prepared
-files must remain unchanged until `CreateBackup` returns. Mark an extra file
-`Sensitive` when it contains credentials or tokens. Docbank refuses to put a
-sensitive file in its plaintext backup repository unless the application sets
-`AllowPlaintextSecrets` for that backup. Physical maintenance waits until the
-manifest is published. Restore always targets a separate root, rejects overlap
-with the live vault or repository, and proves content, SQLite integrity, and
-manifest statistics before publication. An embedding application supplies any
-additional storage it owns through `ProtectedRoots`; Docbank applies the same
-canonical, filesystem-aware exclusion before restore cleanup. The embedded
-restore path reconstructs a fresh fixed primary; deployment-specific
-secondary-store placement is not restored.
+Use `OpenBackupRepository` after process restart. `Snapshots` lists recovery
+points in chronological order.
+
+Capture prevents content reclamation for the whole snapshot. Ordinary appends
+resume once Docbank fixes the SQLite view that the backup will use. Physical
+maintenance waits until Docbank publishes the manifest.
+
+To include your application's catalog in the same backup:
+
+1. Use `Prepare` to create an immutable catalog snapshot while writes are paused.
+2. Declare the file in `ExtraFiles`.
+3. Keep the file unchanged until `CreateBackup` returns.
+
+`RecordAs` is the file's relative location beneath the restored vault root.
+Your application must coordinate its own writes during `Prepare`; Docbank's
+freeze pauses Docbank mutations, not changes to an unrelated application
+database. The callback must not call vault mutations while that lock is held.
+
+Mark files containing credentials or tokens as `Sensitive`. Docbank rejects
+sensitive files in a plaintext repository unless your application explicitly
+sets `AllowPlaintextSecrets` for that backup.
+
+Restore always uses a separate root. It rejects overlap with the live vault
+or repository and checks content, SQLite integrity, and manifest statistics
+before making the result available. Supply other application storage in
+`ProtectedRoots`; Docbank checks those locations before restore cleanup too.
+Embedded restore builds a fresh primary store. It does not recreate secondary
+store placement.
 
 If the original vault is unavailable, open the backup repository and restore
 directly without initializing or opening a source vault:
@@ -567,12 +595,10 @@ handles bounded unreachable catalog authority but does not enumerate untracked
 filesystem files. The daemon's `verify` and `gc` commands retain those full-run
 checks.
 
-These methods coordinate physical representation and reclamation; they never
-decide application-level liveness. The embedding application decides when nodes
-leave trash, when prior versions are pruned, and which logical references
-remain. Only then can GC observe a blob as unreachable. There is no background
-maintenance scheduler for embedded vaults, so the owner chooses when to resume
-these bounded passes.
+Your application decides when to empty trash and prune prior versions.
+GC can reclaim a blob only after no retained reference needs it. Embedded
+vaults have no background maintenance scheduler, so your application also
+chooses when to resume each bounded pass.
 
 ## Choose SQLite
 
