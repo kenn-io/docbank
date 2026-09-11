@@ -172,6 +172,9 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
+	if path == "/api/v1/queries/parse" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")
@@ -252,7 +255,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if collectionID, resource, ok := collectionResourcePath(path); ok && collectionID != "" {
-		return resource == "" || resource == "members" || resource == "label"
+		return resource == "" || resource == "members" || resource == "label" || resource == "quality"
 	}
 	if path == "/api/v1/trash" {
 		// The master API retains the released unbounded form, but a browser

@@ -127,6 +127,7 @@ func NewServer(d Deps) *Server {
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
+	registerCollectionQualityRoutes(humaAPI, d)
 	registerDuplicateRoutes(humaAPI, d)
 	registerInfoRoute(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
@@ -143,6 +144,7 @@ func NewServer(d Deps) *Server {
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g)
+	registerQueryCompileRoutes(humaAPI, d)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)

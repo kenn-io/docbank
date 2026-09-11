@@ -1,7 +1,7 @@
 ---
+last_edited: 2026-09-11
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
-last_edited: 2026-09-11
 ---
 
 # HTTP API
@@ -47,6 +47,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
+| `POST /queries/parse` | validate complete QueryV1 intent and resolve dependency revisions without executing a search | Implemented |
 | `POST /audit/preview` · `POST /audit/enable` · `GET /audit/status` | review permanent first-scope retention, enable the exact reviewed plan, and inspect authority or membership | Implemented |
 | `GET /audit/history?path=&node_id=&limit=&cursor=` | read one audited node's canonical newest-first event timeline with a stable continuation cursor | Implemented |
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
@@ -83,6 +84,22 @@ work before reaching `limit`. The normal `limit` and `truncated` contract
 remains in force, without a cursor. If `truncated` is true, the page is
 incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+### Query compilation preview
+
+`POST /queries/parse` accepts one QueryV1 object and returns its canonical
+`query`, `query_fingerprint`, and `dependencies` (`kind`, stable `id`, and
+observed `revision`). Definition reads share one read transaction. No result
+rows, membership snapshot, or executable SQL are returned. The endpoint is
+available to authenticated API clients and browser sessions; browser requests
+must use POST without query parameters.
+
+The compiler preserves expression scope and separate structured filters.
+Missing references, including negative tag and collection operands, fail with
+`422 invalid_query`; expression errors include a `position` object with
+half-open UTF-8 byte `offset` and `end`. Backend failures remain server errors.
+See [query grammar and limits](../usage/searching.md#preview-a-field-aware-query).
+Existing `/search` requests do not gain advanced syntax through this endpoint.
 
 ### Saved query and highlight definitions
 
@@ -530,6 +547,31 @@ Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: ingest-run collections
 
+`GET /api/v1/collections/{id}/quality` returns a current aggregate receipt with
+the collection, `source_fingerprint`, dimensions, zero-byte and mismatch counts,
+duplicate-document counts, and descriptive concentrations. Optional `fields`
+accepts at most seven distinct comma-separated names: `extension`, `media_type`,
+`media_family`, `modified_month`, `size`, `text_coverage`, and `duplicates`.
+The default includes all seven. Unknown or repeated fields return 422.
+
+List, detail, members, and quality accept `profile=<configured name>` and include
+the same `coverage` object. One profile is selected automatically; no profiles
+returns `unconfigured`, and multiple without a choice returns `profile_required`.
+These unavailable states have null counts. An unknown name returns 422.
+Configured coverage includes the selected name and fingerprint, active generation,
+and complete, partial, failed, unprocessed, and none counts over current members.
+Selection identifies policy, not runtime readiness. Retained active output wins
+over a later failed attempt; source hashes alone cannot transfer profile authority.
+
+Quality uses one source snapshot, bounded to 250,000 members, 64 MiB of projected
+census data, and five seconds. Size bounds return 413 `quality_too_large`;
+interruption or timeout returns 503 `quality_unavailable`, not partial results.
+Frequency dimensions retain the top 50 values with missing and other counts.
+Duplicate membership is vault-wide current content, counted within this collection.
+Concentrations require at least ten members and 80% of the collection.
+The server caches at most 64 aggregate receipts and 8 MiB for ten seconds, checking
+a fresh source fingerprint before every hit. No document bodies enter the cache.
+
 A collection is an immutable ingest-run identity with live document
 membership. It is not a folder: moving or renaming a member leaves its run
 identity intact. Membership excludes caller-supplied `embedded:` provenance,
@@ -798,8 +840,9 @@ requires the key.
 
 ## Error mapping
 
-Errors are RFC 7807 problem-JSON with one extension member, `code`, a
-machine-readable string clients branch on instead of parsing `detail`:
+Errors are RFC 7807 problem-JSON with a `code` extension, a machine-readable
+string clients branch on instead of parsing `detail`. Query errors may also
+include a `position` span:
 
 ```json
 {
@@ -829,6 +872,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, is already superseded, or is an operational ingest fact |
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `invalid_saved_query` | 422 | saved name, description, kind, payload, or patch violates the saved-definition contract |
+| `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

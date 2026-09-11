@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -84,6 +85,29 @@ ending the browser session also clear the selection.
 
 ![Two documents selected on the current page while the authority card shows one document's details.](https://docbank.ai/assets/generated/web-page-selection.png)
 
+## Edit a complete query
+
+Choose **Edit query** to write a complete expression, select simple or advanced
+syntax, and edit its mode, sort, and structured facets. Facets stay separate
+from field operands in the expression. Their summaries show the constraints
+you entered; validation does not move operands into hidden filters.
+
+The daemon validates each edited draft after a short pause. It resolves saved,
+tag, and collection references and reports their observed revisions. Errors
+remain visible; **Focus query error** selects the reported part of the
+expression. A newer edit cancels and supersedes an older validation request.
+
+**Save query draft** opens the saved-definition editor with the entire draft.
+**Open query** beside a saved query opens it here. From an import collection,
+**New query for this collection** starts a new draft scoped to that collection's
+stable identity. Closing the query editor keeps the draft in the tab and URL;
+**Discard query draft** removes it.
+
+Validation does not execute a search. **Run query** remains unavailable because
+the live-search endpoint cannot honor the complete expression, facets, and
+ordering contract. Ordinary name/content search remains separate and does not
+inherit draft constraints. See [field-aware query syntax](searching.md#preview-a-field-aware-query).
+
 ## Assign and remove tags
 
 1. Select a file or folder.
@@ -126,6 +150,36 @@ change assignment rules.
 The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
 for exhaustive definition management and bulk assignment.
+
+## Saved queries and highlights
+
+Open the bookmark button in the top bar to manage saved queries and highlight
+sets. A new query starts with the current search text, selected tag and display
+sort. The complete query editor preserves the expression, filters, mode and sort
+together. Choose **Save as new** to name a definition, or **Edit** and **Save
+changes** to update one. The catalog is paginated in groups of 100.
+
+**Keep query draft** retains the complete query in the tab and URL fragment.
+The fragment contains query text and filters, so treat copied URLs as private.
+It does not contain browser-session credentials. Reloading restores the draft,
+but does not renew the browser session; authentication still requires
+`docbank web`. **Discard query draft** removes it from the URL.
+
+Saved queries are definitions, not frozen result sets. Saved-query execution is
+unavailable because the live-search adapter cannot honor the complete query
+contract. Keeping or saving a draft does not run it or change the current live
+results. Unknown fields are rejected, not silently dropped.
+
+Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
+with lowercase `#rrggbb` colors. They cannot run as queries, and the document
+viewer does not apply them yet. Neither result rows nor document bodies are
+stored in browser preferences.
+
+Edits and deletions use the definition's inspected revision. A stale response
+remains visible without automatically retrying against newer state. Reload the
+definitions and reopen the item before deciding again. Deletion requires a
+separate confirmation naming the definition, ID and revision; it never deletes
+documents. An already loaded draft remains until explicitly discarded.
 
 ## Move a node to recoverable trash
 
@@ -424,6 +478,42 @@ still readable. Run `docbank backup verify` to independently prove repository
 integrity, and periodically restore into a separate vault to rehearse the
 complete recovery path.
 
+## Browse import collections
+
+Choose **Import collections** in the top bar to browse the vault's import groups.
+Each card shows its label or source description, ingest time, current live
+file count, and logical bytes. Select a collection to browse its current
+live members and inspect a document by its stable node identity. Counts are
+current membership, not a historical import total. The browser refresh time
+is separate from the ingest time.
+
+Labels belong to the import group, not its documents. Rename or clear a label
+under its inspected revision; if another client changes it first, the drawer
+keeps your draft and reports the conflict. Reload the label before deciding
+whether to save again. Label changes are unavailable once permanent audit
+authority has been enabled.
+
+Collection and member lists show at most 100 entries each. Empty groups,
+failed reads, and truncated lists are reported separately; use the paginated
+HTTP API to browse beyond that limit. This is direct member browsing, not
+a collection-filtered text search.
+
+Choose **Inspect collection quality** for document distributions, duplicate
+content counts, zero-byte files, media/extension mismatches, and text coverage.
+With multiple processing profiles, choose one before reading coverage. Without
+a configured profile, coverage is unavailable, not zero failures or complete
+processing. A configured policy does not mean an extraction adapter is running.
+
+Coverage distinguishes complete, partial, failed, unprocessed, and activated
+output with no text. Retained searchable output takes precedence over a failed
+retry. The existing worker rejects blank provider output as a failed attempt.
+Quality reads are bounded to 250,000 members, a 64 MiB census, and five seconds;
+an exceeded limit returns an error, never a partial successful summary.
+
+Select distribution values and choose **New query** to open a collection-scoped
+draft. Multiple selected values use OR. This does not change live results or
+execute a search. Concentrations describe common values, not document defects.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -458,9 +548,11 @@ accepts that credential for the following operations:
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
+| Read collections and their members | Returns bounded lists of live import membership. |
+| Set or clear a collection label | Requires the inspected collection-label revision. |
 
-The API permits saved-definition management with a browser session, but the
-current application has no controls for it. See
+The browser manages saved definitions and validates complete query drafts
+through its scoped session. Validation does not execute a query. See
 [Saved queries and highlight sets](searching.md#save-complete-query-intent-over-http).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
