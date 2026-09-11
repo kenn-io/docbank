@@ -116,6 +116,41 @@ func TestResolveQuerySavedReferenceRetainsNestedASTAndFacetScope(t *testing.T) {
 	}, resolved.Dependencies)
 }
 
+func TestPositiveTextTermsFollowResolvedBooleanAndSavedScope(t *testing.T) {
+	nested := lexicalQuery(`nested OR NOT "excluded nested" OR name:caption`)
+	root := lexicalQuery(`alpha AND "two words" AND NOT excluded AND name:title AND extension:pdf AND saved:review`)
+	resolver := resolverFunc(func(_ context.Context, kind ReferenceKind, key string, byID bool) (Reference, error) {
+		require.Equal(t, ReferenceSaved, kind)
+		require.Equal(t, "review", key)
+		require.False(t, byID)
+		return Reference{
+			Dependency: Dependency{Kind: ReferenceSaved, ID: savedID, Revision: 4},
+			Query:      &nested,
+		}, nil
+	})
+
+	resolved, err := ResolveQuery(context.Background(), root, resolver)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"alpha", "two words", "nested"}, PositiveTextTerms(resolved))
+}
+
+func TestPositiveTextTermsAreStableUniqueAndBounded(t *testing.T) {
+	terms := make([]string, 0, 70)
+	for index := range 70 {
+		terms = append(terms, fmt.Sprintf("term-%02d", index))
+	}
+	terms = append(terms, "term-00")
+	resolved, err := ResolveQuery(context.Background(), lexicalQuery(strings.Join(terms, " OR ")), nil)
+	require.NoError(t, err)
+
+	want := make([]string, 64)
+	for index := range want {
+		want[index] = fmt.Sprintf("term-%02d", index)
+	}
+	assert.Equal(t, want, PositiveTextTerms(resolved))
+}
+
 func TestResolveQueryNormalizesCopyWithoutMutatingInput(t *testing.T) {
 	sizeMax := int64(20)
 	input := lexicalQuery("alpha")

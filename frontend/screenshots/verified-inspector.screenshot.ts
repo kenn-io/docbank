@@ -14,6 +14,7 @@ const repository = path.resolve(
 );
 const binary = path.join(repository, "docbank");
 const screenshots = process.env.DOCBANK_VERIFIED_INSPECTOR_SCREENSHOT_DIR;
+const db17BrowserURL = process.env.DOCBANK_DB17_BROWSER_URL;
 test.skip(
   !screenshots,
   "DOCBANK_VERIFIED_INSPECTOR_SCREENSHOT_DIR is required for PR-only inspector captures",
@@ -226,4 +227,47 @@ test("verified inspector pins replaced content and cancels a changed source", as
     if (running) await run("daemon", "stop").catch(() => undefined);
     await rm(workspace, { recursive: true, force: true });
   }
+});
+
+test("DB17 real PDF text and fifty-step snapshot navigation", async ({ page }) => {
+  test.skip(!db17BrowserURL, "DOCBANK_DB17_BROWSER_URL is supplied by the real-PDF Go fixture");
+  test.setTimeout(300_000);
+  page.setDefaultTimeout(30_000);
+  await mkdir(screenshots!, { recursive: true, mode: 0o700 });
+  const requestCounts = { resolve: 0, content: 0, pages: 0, highlights: 0 };
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "POST" && pathname === "/api/v1/renditions/text") requestCounts.resolve++;
+    if (request.method() === "GET" && pathname === "/api/v1/renditions/text/content") requestCounts.content++;
+    if (request.method() === "POST" && pathname === "/api/v1/queries/highlights") requestCounts.highlights++;
+    if (request.method() === "POST" && /^\/api\/v1\/workspace\/queries\/[^/]+\/pages$/.test(pathname)) requestCounts.pages++;
+  });
+  await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
+  await page.goto(queryURL(db17BrowserURL!));
+  const editor = page.getByRole("region", { name: "Query editor" });
+  await editor.getByLabel("Query expression").fill("Extracted");
+  await editor.getByLabel("Processing profile").fill("archive");
+  await editor.getByLabel("Documents per page").selectOption("50");
+  await editor.getByRole("button", { name: "Run query", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "/01-evidence.pdf", exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Close query editor", exact: true }).click();
+  await page.getByRole("cell", { name: "/01-evidence.pdf", exact: true }).click();
+  await page.getByRole("tab", { name: "Text" }).click();
+  await expect(page.getByLabel("Verified text of 01-evidence.pdf"))
+    .toContainText("Extracted alpha evidence from a real synthetic PDF");
+  await expect(page.getByText("Document 1 of 51", { exact: true })).toBeVisible();
+
+  for (let position = 2; position <= 51; position++) {
+    const content = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/v1/renditions/text/content" && response.status() === 200,
+    );
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await content;
+    await expect(page.getByText(`Document ${position} of 51`, { exact: true })).toBeVisible();
+  }
+  expect(requestCounts).toEqual({ resolve: 51, content: 51, pages: 1, highlights: 1 });
+  await expect(page.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
+  await page.getByLabel("Find in verified text").fill("PDF");
+  await expect(page.getByText("1 of 2", { exact: true })).toBeVisible();
+  await page.screenshot({ path: path.join(screenshots!, "web-inspector-text.png"), animations: "disabled" });
 });

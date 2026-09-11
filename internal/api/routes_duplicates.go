@@ -41,7 +41,53 @@ type DuplicatePage struct {
 	Offset          int              `json:"offset" minimum:"0"`
 }
 
+type DuplicateContextReference struct {
+	NodeID     int64  `json:"node_id" minimum:"1"`
+	Revision   int64  `json:"revision" minimum:"1"`
+	VersionID  string `json:"version_id" format:"uuid"`
+	SHA256     string `json:"sha256" pattern:"^[0-9a-f]{64}$"`
+	Size       int64  `json:"size" minimum:"0"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	MediaType  string `json:"media_type"`
+	ModifiedAt string `json:"modified_at" format:"date-time"`
+}
+
+type DuplicateContextGroup struct {
+	SHA256              string                      `json:"sha256" pattern:"^[0-9a-f]{64}$"`
+	Size                int64                       `json:"size" minimum:"0"`
+	ReferenceCount      int                         `json:"reference_count" minimum:"2"`
+	References          []DuplicateContextReference `json:"references" maxItems:"16"`
+	ReferencesTruncated bool                        `json:"references_truncated"`
+}
+
 func registerDuplicateRoutes(api huma.API, d Deps) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getDuplicateContentByHash", Method: http.MethodGet,
+		Path: "/api/v1/duplicates/by-hash", Summary: "Read one exact live-current duplicate group",
+	}, func(ctx context.Context, in *struct {
+		SHA256 string `query:"sha256" pattern:"^[0-9a-f]{64}$"`
+		Size   int64  `query:"size" minimum:"0"`
+	}) (*struct{ Body DuplicateContextGroup }, error) {
+		group, err := d.Store.DuplicateGroupByHash(ctx, in.SHA256, in.Size)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		body := DuplicateContextGroup{SHA256: group.Hash, Size: group.Size,
+			ReferenceCount: group.ReferenceCount, References: []DuplicateContextReference{},
+			ReferencesTruncated: group.ReferencesTruncated}
+		for _, member := range group.References {
+			body.References = append(body.References, DuplicateContextReference{
+				NodeID: member.Reference.Node.ID, Revision: member.Reference.Node.Revision,
+				VersionID: member.Reference.Version.ID, SHA256: member.Reference.Version.BlobHash,
+				Size: member.Reference.Version.Size, Name: member.Reference.Node.Name,
+				Path: member.Reference.Path, MediaType: member.Reference.Version.MimeType,
+				ModifiedAt: member.Reference.Node.ModifiedAt,
+			})
+		}
+		return &struct{ Body DuplicateContextGroup }{Body: body}, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "listDuplicateContent", Method: http.MethodGet, Path: "/api/v1/duplicates",
 		Summary:     "Find live documents that share current content",

@@ -1091,7 +1091,7 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   });
   render(App);
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
-  await screen.findByRole("region", { name: "Verified preview of readme.txt" });
+  await screen.findByRole("region", { name: "Verified content of readme.txt" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
   await fireEvent.click(screen.getByRole("combobox", { name: /Tag for selected documents/ }));
@@ -1101,7 +1101,7 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
 
   await screen.findByText("Folder refresh unavailable");
   await waitFor(() => expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("tax"));
-  expect(screen.getByRole("region", { name: "Verified preview of readme.txt" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Verified content of readme.txt" })).toBeTruthy();
 });
 
 it("uses refreshed live metadata for the selected row and tag actions", async () => {
@@ -1191,7 +1191,7 @@ it.each(["before", "during"])("blocks document actions when content changes %s l
   for (const name of actions) {
     expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
   }
-  expect(screen.queryByRole("region", { name: "Verified preview of readme.txt" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Verified content of readme.txt" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Download verified original" })).toBeNull();
   expect(requests.some((request) => request.revision === 2 && request.version_id === original.current_version_id)).toBe(false);
 
@@ -1766,14 +1766,14 @@ it.each(["click", "Enter"] as const)(
     render(App);
     const cell = await screen.findByRole("cell", { name: "zeta.txt" });
     await waitFor(() => expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("reviewed"));
-    expect(screen.getByRole("region", { name: "Verified preview of zeta.txt" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Verified content of zeta.txt" })).toBeTruthy();
 
     if (interaction === "click") await fireEvent.click(cell);
     else await fireEvent.keyDown(cell.closest("tr")!, { key: "Enter" });
     backend.resolveTagReload();
 
     await waitFor(() => expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("reviewed"));
-    expect(screen.getByRole("region", { name: "Verified preview of zeta.txt" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Verified content of zeta.txt" })).toBeTruthy();
   },
 );
 

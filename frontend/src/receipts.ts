@@ -403,6 +403,16 @@ export async function renditionArtifact(session: string, attachmentID: string): 
   const bytes = await readBoundedRendition(response, declaredSize);
   if (bytesToHex(sha256(bytes)) !== blobHash) throw new Error("The rendition transport checksum does not match.");
   const artifact = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const metadata = parseRenditionMarkdown(artifact);
+  if (metadata.buildID !== buildID || metadata.completeness !== transportCompleteness) {
+    throw new Error("The rendition transport metadata does not match its frontmatter.");
+  }
+  return { attachmentID, buildID, artifactID, contentVersionID, blobHash, profileFingerprint,
+    frontmatter: metadata.frontmatter, markdown: metadata.markdown, completeness: metadata.completeness, warnings, source: metadata.source,
+    document: metadata.document, navigation: metadata.navigation };
+}
+
+export function parseRenditionMarkdown(artifact: string) {
   if (!artifact.startsWith("---\n")) throw new Error("The rendition is missing canonical frontmatter.");
   const closing = artifact.indexOf("\n---\n", 4);
   if (closing < 0 || closing + 5 > 256 * 1024) throw new Error("The rendition frontmatter is incomplete or too large.");
@@ -414,12 +424,7 @@ export async function renditionArtifact(session: string, attachmentID: string): 
   if (bytesToHex(sha256(utf8ToBytes(markdown))) !== bodyHash) {
     throw new Error("The rendition body checksum does not match.");
   }
-  if (metadata.buildID !== buildID || metadata.completeness !== transportCompleteness) {
-    throw new Error("The rendition transport metadata does not match its frontmatter.");
-  }
-  return { attachmentID, buildID, artifactID, contentVersionID, blobHash, profileFingerprint,
-    frontmatter, markdown, completeness: metadata.completeness, warnings, source: metadata.source,
-    document: metadata.document, navigation: metadata.navigation };
+  return { frontmatter, markdown, ...metadata };
 }
 
 async function readBoundedRendition(response: Response, declaredSize: number): Promise<Uint8Array> {

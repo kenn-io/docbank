@@ -1525,6 +1525,36 @@ export interface DuplicateCollection {
   label: string | null;
 }
 
+export interface DuplicateContextReference {
+  media_type: string;
+  modified_at: string;
+  name: string;
+  /** @minimum 1 */
+  node_id: number;
+  path: string;
+  /** @minimum 1 */
+  revision: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  sha256: string;
+  /** @minimum 0 */
+  size: number;
+  version_id: string;
+}
+
+export interface DuplicateContextGroup {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 2 */
+  reference_count: number;
+  /** @maxItems 16 */
+  references: DuplicateContextReference[];
+  references_truncated: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  sha256: string;
+  /** @minimum 0 */
+  size: number;
+}
+
 export interface DuplicateReference {
   /** @minimum 0 */
   collection_count: number;
@@ -2971,6 +3001,17 @@ export interface QueryDependency {
   revision: number;
 }
 
+export interface QueryHighlightPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 256 */
+  dependencies: QueryDependency[];
+  /** @pattern ^sha256:[0-9a-f]{64}$ */
+  query_fingerprint: string;
+  /** @maxItems 64 */
+  terms: string[];
+}
+
 export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
 
 
@@ -3151,6 +3192,113 @@ export interface RenditionSelectorRequest {
      */
   max_bytes: number;
   selector: ProcessingSelector;
+}
+
+export interface RenditionTextArtifact {
+  id: string;
+  media_type: string;
+  sha256: string;
+  size: number;
+}
+
+export type RenditionTextObservedConfiguration = typeof RenditionTextObservedConfiguration[keyof typeof RenditionTextObservedConfiguration];
+
+
+export const RenditionTextObservedConfiguration = {
+  configured: 'configured',
+  unconfigured: 'unconfigured',
+  profile_required: 'profile_required',
+} as const;
+
+export type RenditionTextObservedCoverageState = typeof RenditionTextObservedCoverageState[keyof typeof RenditionTextObservedCoverageState];
+
+
+export const RenditionTextObservedCoverageState = {
+  complete: 'complete',
+  partial: 'partial',
+  failed: 'failed',
+  unprocessed: 'unprocessed',
+  none: 'none',
+  unavailable: 'unavailable',
+} as const;
+
+export interface RenditionTextObserved {
+  /** @pattern ^[0-9a-f]{64}$ */
+  attachment_id?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  build_id?: string;
+  configuration: RenditionTextObservedConfiguration;
+  coverage_state?: RenditionTextObservedCoverageState;
+  /** @pattern ^[0-9a-f]{64}$ */
+  generation_id?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  profile_fingerprint?: string;
+}
+
+export type RenditionTextProfileConfiguration = typeof RenditionTextProfileConfiguration[keyof typeof RenditionTextProfileConfiguration];
+
+
+export const RenditionTextProfileConfiguration = {
+  configured: 'configured',
+  unconfigured: 'unconfigured',
+  profile_required: 'profile_required',
+} as const;
+
+export interface RenditionTextProfile {
+  configuration: RenditionTextProfileConfiguration;
+  fingerprint: string;
+  name: string;
+}
+
+export type RenditionTextReceiptState = typeof RenditionTextReceiptState[keyof typeof RenditionTextReceiptState];
+
+
+export const RenditionTextReceiptState = {
+  ready: 'ready',
+  verified_empty: 'verified_empty',
+  failed: 'failed',
+  unprocessed: 'unprocessed',
+  unconfigured: 'unconfigured',
+  profile_required: 'profile_required',
+  historical_unavailable: 'historical_unavailable',
+} as const;
+
+export interface RenditionTextSource {
+  blob_hash: string;
+  media_type: string;
+  node_id: number;
+  revision: number;
+  size: number;
+  version_id: string;
+}
+
+export interface RenditionTextReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  artifact?: RenditionTextArtifact;
+  attachment_id: string;
+  build_id: string;
+  generation_id: string;
+  profile: RenditionTextProfile;
+  source: RenditionTextSource;
+  state: RenditionTextReceiptState;
+}
+
+export interface RenditionTextRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  blob_hash: string;
+  /** @minimum 1 */
+  node_id: number;
+  observed?: RenditionTextObserved;
+  /** @maxLength 128 */
+  profile?: string;
+  /** @minimum 1 */
+  revision: number;
+  /** @minimum 0 */
+  size: number;
+  version_id: string;
 }
 
 export type RenditionTextWindowMediaType = typeof RenditionTextWindowMediaType[keyof typeof RenditionTextWindowMediaType];
@@ -4176,6 +4324,17 @@ limit?: number;
 offset?: number;
 };
 
+export type GetDuplicateContentByHashParams = {
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+sha256?: string;
+/**
+ * @minimum 0
+ */
+size?: number;
+};
+
 export type ListEmailDocumentRelationsParams = {
 parent_version_id?: string;
 child_version_id?: string;
@@ -4353,6 +4512,46 @@ cursor?: string;
 
 export type ResolvePathParams = {
 path: string;
+};
+
+export type ReadRenditionTextParams = {
+/**
+ * @minimum 1
+ */
+node_id?: number;
+/**
+ * @minimum 1
+ */
+revision?: number;
+version_id?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+blob_hash?: string;
+/**
+ * @minimum 0
+ */
+size?: number;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+profile_fingerprint?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+generation_id?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+attachment_id?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+build_id?: string;
+/**
+ * @maxLength 128
+ */
+artifact_id?: string;
 };
 
 export type GetDocumentRenditionParams = {
@@ -5757,6 +5956,37 @@ export const getListDuplicateContentUrl = (params?: ListDuplicateContentParams,)
 export const listDuplicateContent = async (params?: ListDuplicateContentParams, options?: Parameters<typeof sessionJSON>[1]): Promise<DuplicatePage> => {
 
   return sessionJSON<DuplicatePage>(getListDuplicateContentUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetDuplicateContentByHashUrl = (params?: GetDuplicateContentByHashParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/duplicates/by-hash?${stringifiedParams}` : `/api/v1/duplicates/by-hash`
+}
+
+/**
+ * @summary Read one exact live-current duplicate group
+ */
+export const getDuplicateContentByHash = async (params?: GetDuplicateContentByHashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<DuplicateContextGroup> => {
+
+  return sessionJSON<DuplicateContextGroup>(getGetDuplicateContentByHashUrl(params),
   {
     ...options,
     method: 'GET'
@@ -7893,6 +8123,45 @@ return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceU
 
 
 
+export const getPreviewQueryHighlightsUrl = () => {
+
+
+
+
+  return `/api/v1/queries/highlights`
+}
+
+/**
+ * Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.
+ * @summary Preview positive document-text highlight terms
+ */
+export const previewQueryHighlights = async (savedQueryV1Schema: NonReadonly<SavedQueryV1Schema>, options?: Parameters<typeof sessionJSON>[1]): Promise<QueryHighlightPreview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<QueryHighlightPreview>(getPreviewQueryHighlightsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(savedQueryV1Schema)
+  }
+);}
+
+
+
 export const getParseQueryUrl = () => {
 
 
@@ -7965,6 +8234,75 @@ return sessionResponse<Blob>(getReadDocumentRenditionBySelectorUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(renditionSelectorRequest)
+  }
+);}
+
+
+
+export const getResolveRenditionTextUrl = () => {
+
+
+
+
+  return `/api/v1/renditions/text`
+}
+
+/**
+ * @summary Resolve exact verified text for one selected document version
+ */
+export const resolveRenditionText = async (renditionTextRequest: NonReadonly<RenditionTextRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RenditionTextReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RenditionTextReceipt>(getResolveRenditionTextUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(renditionTextRequest)
+  }
+);}
+
+
+
+export const getReadRenditionTextUrl = (params?: ReadRenditionTextParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/renditions/text/content?${stringifiedParams}` : `/api/v1/renditions/text/content`
+}
+
+/**
+ * @summary Read one exact verified text rendition artifact
+ */
+export const readRenditionText = (params?: ReadRenditionTextParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<void>(getReadRenditionTextUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

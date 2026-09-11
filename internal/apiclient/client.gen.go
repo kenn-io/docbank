@@ -1750,6 +1750,58 @@ func (c *Client) ListDuplicateContent(ctx context.Context, options *ListDuplicat
 	return responseParser(ctx, resp)
 }
 
+// GetDuplicateContentByHash Read one exact live-current duplicate group
+func (c *Client) GetDuplicateContentByHash(ctx context.Context, options *GetDuplicateContentByHashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDuplicateContentByHashResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"sha256": {Style: "form", Explode: &[]bool{false}[0]},
+		"size":   {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/duplicates/by-hash",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDuplicateContentByHashResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDuplicateContentByHashResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetDuplicateContentByHashResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetDuplicateContentByHashErrorResponse](resp, "GetDuplicateContentByHashErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/duplicates/by-hash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RequestEmailDocumentProcessing Request ordinary consent-aware attachment processing
 func (c *Client) RequestEmailDocumentProcessing(ctx context.Context, options *RequestEmailDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RequestEmailDocumentProcessingResponse, error) {
 	var err error
@@ -4625,6 +4677,53 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 	return responseParser(ctx, resp)
 }
 
+// PreviewQueryHighlights Preview positive document-text highlight terms
+func (c *Client) PreviewQueryHighlights(ctx context.Context, options *PreviewQueryHighlightsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewQueryHighlightsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/queries/highlights",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewQueryHighlightsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewQueryHighlightsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewQueryHighlightsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreviewQueryHighlightsErrorResponse](resp, "PreviewQueryHighlightsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/queries/highlights")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ParseQuery Validate a search expression and resolve its saved references
 func (c *Client) ParseQuery(ctx context.Context, options *ParseQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ParseQueryResponse, error) {
 	var err error
@@ -4704,6 +4803,107 @@ func (c *Client) ReadDocumentRenditionBySelector(ctx context.Context, options *R
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/select")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolveRenditionText Resolve exact verified text for one selected document version
+func (c *Client) ResolveRenditionText(ctx context.Context, options *ResolveRenditionTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveRenditionTextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/renditions/text",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveRenditionTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveRenditionTextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveRenditionTextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveRenditionTextErrorResponse](resp, "ResolveRenditionTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/text")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadRenditionText Read one exact verified text rendition artifact
+func (c *Client) ReadRenditionText(ctx context.Context, options *ReadRenditionTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"artifact_id":         {Style: "form", Explode: &[]bool{false}[0]},
+		"attachment_id":       {Style: "form", Explode: &[]bool{false}[0]},
+		"blob_hash":           {Style: "form", Explode: &[]bool{false}[0]},
+		"build_id":            {Style: "form", Explode: &[]bool{false}[0]},
+		"generation_id":       {Style: "form", Explode: &[]bool{false}[0]},
+		"node_id":             {Style: "form", Explode: &[]bool{false}[0]},
+		"profile_fingerprint": {Style: "form", Explode: &[]bool{false}[0]},
+		"revision":            {Style: "form", Explode: &[]bool{false}[0]},
+		"size":                {Style: "form", Explode: &[]bool{false}[0]},
+		"version_id":          {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/renditions/text/content",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadRenditionTextErrorResponse](resp, "ReadRenditionTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/text/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -8214,6 +8414,37 @@ func (o *ListDuplicateContentRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// GetDuplicateContentByHashRequestOptions is the options needed to make a request to GetDuplicateContentByHash.
+type GetDuplicateContentByHashRequestOptions struct {
+	Query *GetDuplicateContentByHashQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetDuplicateContentByHashRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetDuplicateContentByHashRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetDuplicateContentByHashRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetDuplicateContentByHashRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RequestEmailDocumentProcessingRequestOptions is the options needed to make a request to RequestEmailDocumentProcessing.
 type RequestEmailDocumentProcessingRequestOptions struct {
 	Body *RequestEmailDocumentProcessingBody
@@ -10033,6 +10264,34 @@ func (o *ResolveDocumentSourceFenceRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// PreviewQueryHighlightsRequestOptions is the options needed to make a request to PreviewQueryHighlights.
+type PreviewQueryHighlightsRequestOptions struct {
+	Body *PreviewQueryHighlightsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewQueryHighlightsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewQueryHighlightsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewQueryHighlightsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewQueryHighlightsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ParseQueryRequestOptions is the options needed to make a request to ParseQuery.
 type ParseQueryRequestOptions struct {
 	Body *ParseQueryBody
@@ -10086,6 +10345,65 @@ func (o *ReadDocumentRenditionBySelectorRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ReadDocumentRenditionBySelectorRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolveRenditionTextRequestOptions is the options needed to make a request to ResolveRenditionText.
+type ResolveRenditionTextRequestOptions struct {
+	Body *ResolveRenditionTextBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveRenditionTextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveRenditionTextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveRenditionTextRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveRenditionTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadRenditionTextRequestOptions is the options needed to make a request to ReadRenditionText.
+type ReadRenditionTextRequestOptions struct {
+	Query *ReadRenditionTextQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadRenditionTextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadRenditionTextRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadRenditionTextRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadRenditionTextRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -11586,6 +11904,45 @@ const (
 	N1 HighlightSetV1SchemaV = 1
 )
 
+type RenditionTextObservedConfiguration string
+
+const (
+	Configured      RenditionTextObservedConfiguration = "configured"
+	ProfileRequired RenditionTextObservedConfiguration = "profile_required"
+	Unconfigured    RenditionTextObservedConfiguration = "unconfigured"
+)
+
+type RenditionTextObservedCoverageState string
+
+const (
+	Complete    RenditionTextObservedCoverageState = "complete"
+	Failed      RenditionTextObservedCoverageState = "failed"
+	None        RenditionTextObservedCoverageState = "none"
+	Partial     RenditionTextObservedCoverageState = "partial"
+	Unavailable RenditionTextObservedCoverageState = "unavailable"
+	Unprocessed RenditionTextObservedCoverageState = "unprocessed"
+)
+
+type RenditionTextProfileConfiguration string
+
+const (
+	RenditionTextProfileConfigurationConfigured      RenditionTextProfileConfiguration = "configured"
+	RenditionTextProfileConfigurationProfileRequired RenditionTextProfileConfiguration = "profile_required"
+	RenditionTextProfileConfigurationUnconfigured    RenditionTextProfileConfiguration = "unconfigured"
+)
+
+type RenditionTextReceiptState string
+
+const (
+	HistoricalUnavailable                    RenditionTextReceiptState = "historical_unavailable"
+	Ready                                    RenditionTextReceiptState = "ready"
+	RenditionTextReceiptStateFailed          RenditionTextReceiptState = "failed"
+	RenditionTextReceiptStateProfileRequired RenditionTextReceiptState = "profile_required"
+	RenditionTextReceiptStateUnconfigured    RenditionTextReceiptState = "unconfigured"
+	RenditionTextReceiptStateUnprocessed     RenditionTextReceiptState = "unprocessed"
+	VerifiedEmpty                            RenditionTextReceiptState = "verified_empty"
+)
+
 type SavedQueryFiltersSchemaMediaFamilies string
 
 const (
@@ -11607,12 +11964,12 @@ const (
 type SavedQueryFiltersSchemaTextCoverage string
 
 const (
-	Complete    SavedQueryFiltersSchemaTextCoverage = "complete"
-	Failed      SavedQueryFiltersSchemaTextCoverage = "failed"
-	None        SavedQueryFiltersSchemaTextCoverage = "none"
-	Partial     SavedQueryFiltersSchemaTextCoverage = "partial"
-	Unavailable SavedQueryFiltersSchemaTextCoverage = "unavailable"
-	Unprocessed SavedQueryFiltersSchemaTextCoverage = "unprocessed"
+	SavedQueryFiltersSchemaTextCoverageComplete    SavedQueryFiltersSchemaTextCoverage = "complete"
+	SavedQueryFiltersSchemaTextCoverageFailed      SavedQueryFiltersSchemaTextCoverage = "failed"
+	SavedQueryFiltersSchemaTextCoverageNone        SavedQueryFiltersSchemaTextCoverage = "none"
+	SavedQueryFiltersSchemaTextCoveragePartial     SavedQueryFiltersSchemaTextCoverage = "partial"
+	SavedQueryFiltersSchemaTextCoverageUnavailable SavedQueryFiltersSchemaTextCoverage = "unavailable"
+	SavedQueryFiltersSchemaTextCoverageUnprocessed SavedQueryFiltersSchemaTextCoverage = "unprocessed"
 )
 
 type SavedQuerySortSchemaDirection string
@@ -12108,9 +12465,13 @@ type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
 
+type PreviewQueryHighlightsBody = SavedQueryV1Schema
+
 type ParseQueryBody = SavedQueryV1Schema
 
 type ReadDocumentRenditionBySelectorBody = RenditionSelectorRequest
+
+type ResolveRenditionTextBody = RenditionTextRequest
 
 type ReadDocumentRenditionWindowBody = RenditionWindowRequest
 
@@ -12235,6 +12596,11 @@ type ListDuplicateContentQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type GetDuplicateContentByHashQuery struct {
+	Sha256 *string `json:"sha256,omitempty"`
+	Size   *int64  `json:"size,omitempty"`
+}
+
 type ListEmailDocumentRelationsQuery struct {
 	ParentVersionID  *string `json:"parent_version_id,omitempty"`
 	ChildVersionID   *string `json:"child_version_id,omitempty"`
@@ -12290,6 +12656,19 @@ type ReadPackagePreflightDiagnosticsQuery struct {
 
 type ResolvePathQuery struct {
 	Path string `json:"path"`
+}
+
+type ReadRenditionTextQuery struct {
+	NodeID             *int64     `json:"node_id,omitempty"`
+	Revision           *int64     `json:"revision,omitempty"`
+	VersionID          *uuid.UUID `json:"version_id,omitempty"`
+	BlobHash           *string    `json:"blob_hash,omitempty"`
+	Size               *int64     `json:"size,omitempty"`
+	ProfileFingerprint *string    `json:"profile_fingerprint,omitempty"`
+	GenerationID       *string    `json:"generation_id,omitempty"`
+	AttachmentID       *string    `json:"attachment_id,omitempty"`
+	BuildID            *string    `json:"build_id,omitempty"`
+	ArtifactID         *string    `json:"artifact_id,omitempty"`
 }
 
 type GetDocumentRenditionQuery struct {
@@ -12479,6 +12858,10 @@ type ResolveDocumentSummariesErrorResponse = Error
 type ListDuplicateContentResponse = api.DuplicatePage
 
 type ListDuplicateContentErrorResponse = Error
+
+type GetDuplicateContentByHashResponse = api.DuplicateContextGroup
+
+type GetDuplicateContentByHashErrorResponse = Error
 
 type RequestEmailDocumentProcessingResponse = document.EmailDocumentProcessingReceipt
 
@@ -12744,6 +13127,10 @@ type ResolveDocumentSourceFenceResponse = api.DocumentSourceFenceResolution
 
 type ResolveDocumentSourceFenceErrorResponse = Error
 
+type PreviewQueryHighlightsResponse = api.QueryHighlightPreview
+
+type PreviewQueryHighlightsErrorResponse = Error
+
 type ParseQueryResponse = api.QueryPreview
 
 type ParseQueryErrorResponse = Error
@@ -12751,6 +13138,12 @@ type ParseQueryErrorResponse = Error
 type ReadDocumentRenditionBySelectorResponse = []byte
 
 type ReadDocumentRenditionBySelectorErrorResponse = Error
+
+type ResolveRenditionTextResponse = RenditionTextReceipt
+
+type ResolveRenditionTextErrorResponse = Error
+
+type ReadRenditionTextErrorResponse = Error
 
 type ReadDocumentRenditionWindowResponse = api.RenditionTextWindow
 
@@ -13182,6 +13575,10 @@ type DocumentSummaryResolveResponse = api.DocumentSummaryResolveResponse
 
 type DuplicateCollection = api.DuplicateCollection
 
+type DuplicateContextGroup = api.DuplicateContextGroup
+
+type DuplicateContextReference = api.DuplicateContextReference
+
 type DuplicateGroup = api.DuplicateGroup
 
 type DuplicatePage = api.DuplicatePage
@@ -13528,6 +13925,8 @@ type QualitySpike = api.QualitySpike
 
 type QueryDependency = api.QueryDependency
 
+type QueryHighlightPreview = api.QueryHighlightPreview
+
 type QueryPreview = api.QueryPreview
 
 type RegisterBlobStoreRequest struct {
@@ -13557,6 +13956,61 @@ type RenditionExecutionIdentityV1 = document.RenditionExecutionIdentityV1
 type RenditionPolicyIdentity = document.RenditionPolicyIdentity
 
 type RenditionSelectorRequest = api.RenditionSelectorRequest
+
+type RenditionTextArtifact struct {
+	ID        string `json:"id"`
+	MediaType string `json:"media_type"`
+	Sha256    string `json:"sha256"`
+	Size      int64  `json:"size"`
+}
+
+type RenditionTextObserved struct {
+	AttachmentID       *string                             `json:"attachment_id,omitempty"`
+	BuildID            *string                             `json:"build_id,omitempty"`
+	Configuration      RenditionTextObservedConfiguration  `json:"configuration"`
+	CoverageState      *RenditionTextObservedCoverageState `json:"coverage_state,omitempty"`
+	GenerationID       *string                             `json:"generation_id,omitempty"`
+	ProfileFingerprint *string                             `json:"profile_fingerprint,omitempty"`
+}
+
+type RenditionTextProfile struct {
+	Configuration RenditionTextProfileConfiguration `json:"configuration"`
+	Fingerprint   string                            `json:"fingerprint"`
+	Name          string                            `json:"name"`
+}
+
+type RenditionTextReceipt struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string                   `json:"$schema,omitempty"`
+	Artifact     *RenditionTextArtifact    `json:"artifact,omitempty"`
+	AttachmentID string                    `json:"attachment_id"`
+	BuildID      string                    `json:"build_id"`
+	GenerationID string                    `json:"generation_id"`
+	Profile      RenditionTextProfile      `json:"profile"`
+	Source       RenditionTextSource       `json:"source"`
+	State        RenditionTextReceiptState `json:"state"`
+}
+
+type RenditionTextRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string                `json:"$schema,omitempty"`
+	BlobHash  string                 `json:"blob_hash"`
+	NodeID    int64                  `json:"node_id"`
+	Observed  *RenditionTextObserved `json:"observed,omitempty"`
+	Profile   *string                `json:"profile,omitempty"`
+	Revision  int64                  `json:"revision"`
+	Size      int64                  `json:"size"`
+	VersionID uuid.UUID              `json:"version_id"`
+}
+
+type RenditionTextSource struct {
+	BlobHash  string `json:"blob_hash"`
+	MediaType string `json:"media_type"`
+	NodeID    int64  `json:"node_id"`
+	Revision  int64  `json:"revision"`
+	Size      int64  `json:"size"`
+	VersionID string `json:"version_id"`
+}
 
 type RenditionTextWindow = api.RenditionTextWindow
 

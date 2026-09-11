@@ -32,7 +32,7 @@ export default defineConfig({
           "streamBackupSnapshotRestore", "streamBackupSnapshotCreation",
           "streamBackupRepositoryVerification", "runDerivativePurge", "streamIngest",
           "getNodeContent", "getContentVersionBytes", "getEmailPart",
-          "readDocumentRenditionBySelector",
+          "readDocumentRenditionBySelector", "readRenditionText",
           "getSavedQuery", "createSavedQuery", "updateSavedQuery", "deleteSavedQuery",
           "getCollectionLabel", "setCollectionLabel", "prepareWebDownload",
           "createWorkspaceQuery", "readWorkspaceQueryPage",
