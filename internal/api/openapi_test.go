@@ -19,6 +19,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
 		"lookupContentReferences",
+		"listCollections", "getCollection", "listCollectionMembers", "getCollectionLabel", "setCollectionLabel",
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
 		"assignTagPath", "unassignTagPath",
@@ -300,6 +301,7 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	require.NotNil(t, keepNewest.Minimum)
 	assert.InDelta(t, 1, *keepNewest.Minimum, 0)
 	for _, operation := range []*huma.Operation{
+		doc.Paths["/api/v1/collections/{id}/label"].Put,
 		doc.Paths["/api/v1/nodes/{id}"].Patch,
 		doc.Paths["/api/v1/nodes/{id}/trash"].Post,
 		doc.Paths["/api/v1/nodes/{id}/restore"].Post,
@@ -322,6 +324,55 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	create := doc.Paths["/api/v1/tags"].Post
 	require.NotNil(t, create)
 	assert.NotNil(t, create.Responses["201"])
+}
+
+func TestOpenAPICollectionContractIsBoundedAndLabelSpecific(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	list := doc.Paths["/api/v1/collections"].Get
+	members := doc.Paths["/api/v1/collections/{id}/members"].Get
+	for _, operation := range []*huma.Operation{list, members} {
+		require.NotNil(t, operation)
+		parameters := map[string]*huma.Schema{}
+		for _, parameter := range operation.Parameters {
+			parameters[parameter.Name] = parameter.Schema
+		}
+		require.NotNil(t, parameters["limit"])
+		require.NotNil(t, parameters["limit"].Minimum)
+		require.NotNil(t, parameters["limit"].Maximum)
+		assert.InDelta(t, 1, *parameters["limit"].Minimum, 0)
+		assert.InDelta(t, 1000, *parameters["limit"].Maximum, 0)
+		require.NotNil(t, parameters["offset"])
+		require.NotNil(t, parameters["offset"].Minimum)
+		assert.InDelta(t, 0, *parameters["offset"].Minimum, 0)
+	}
+
+	schemas := doc.Components.Schemas.Map()
+	collection := schemas["Collection"]
+	require.NotNil(t, collection)
+	for _, field := range []string{
+		"id", "source_kind", "source_description", "started_at", "file_count",
+		"total_bytes", "label", "label_revision", "label_updated_at",
+	} {
+		assert.Contains(t, collection.Properties, field)
+	}
+	assert.NotContains(t, collection.Properties, "quality")
+	assert.NotContains(t, collection.Properties, "coverage")
+
+	request := schemas["SetCollectionLabelRequest"]
+	require.NotNil(t, request)
+	assert.Equal(t, []string{"label"}, request.Required)
+	assert.Len(t, request.Properties, 2, "only label plus Huma's read-only $schema member")
+	assert.NotContains(t, request.Properties, "revision")
+	assert.NotContains(t, request.Properties, "ingest_id")
+	assert.NotContains(t, request.Properties, "updated_at")
+	label := request.Properties["label"]
+	require.NotNil(t, label)
+	assert.True(t, label.Nullable)
+
+	operation := doc.Paths["/api/v1/collections/{id}/label"].Put
+	require.NotNil(t, operation)
+	require.NotNil(t, operation.Responses["200"])
+	assert.Contains(t, operation.Responses["200"].Headers, "ETag")
 }
 
 func TestOpenAPIProvenanceMTimeUsesDateTimeFormat(t *testing.T) {

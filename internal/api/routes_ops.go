@@ -305,7 +305,10 @@ func ingestParams(body IngestRequest) (string, ingest.Options, ingest.Selection,
 	if err := validateIngestPaths(body.Paths); err != nil {
 		return "", ingest.Options{}, ingest.Selection{}, err
 	}
-	opts := ingest.Options{Include: body.Include, Exclude: body.Exclude, Replace: body.Replace}
+	opts := ingest.Options{
+		Include: body.Include, Exclude: body.Exclude, Replace: body.Replace,
+		CollectionLabel: body.CollectionLabel,
+	}
 	selection, err := ingest.CompileSelection(opts)
 	if err != nil {
 		return "", ingest.Options{}, ingest.Selection{}, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
@@ -340,7 +343,10 @@ func runIngest(
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out = IngestReport{Added: rep.Added, Skipped: rep.Skipped, Excluded: rep.Excluded}
+			out = IngestReport{
+				IngestID: rep.IngestID, Added: rep.Added,
+				Skipped: rep.Skipped, Excluded: rep.Excluded,
+			}
 			for _, failure := range rep.Failed {
 				out.Failed = append(out.Failed, IngestFailure{
 					Path: failure.Path, Error: failure.Err.Error(),

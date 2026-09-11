@@ -126,6 +126,7 @@ func NewServer(d Deps) *Server {
 	}
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
+	registerCollectionRoutes(humaAPI, d, g)
 	registerInfoRoute(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -193,6 +194,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func markRevisionPreconditionsRequired(api huma.API) {
 	for _, route := range []struct{ path, method string }{
 		{"/api/v1/nodes/{id}", http.MethodPatch},
+		{"/api/v1/collections/{id}/label", http.MethodPut},
 		{"/api/v1/nodes/{id}/trash", http.MethodPost},
 		{"/api/v1/nodes/{id}/restore", http.MethodPost},
 		{"/api/v1/nodes/{id}/verify", http.MethodPost},

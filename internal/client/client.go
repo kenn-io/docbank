@@ -1244,7 +1244,13 @@ func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
 	} else if event.OldPath != nil || event.NewPath != nil {
 		return errors.New("non-path event contains path states")
 	}
-	return validateAuditAttachment(event.Kind, event.Attachment)
+	if err := validateAuditAttachment(event.Kind, event.Attachment); err != nil {
+		return err
+	}
+	if event.Kind == "ingest_observe" {
+		return validateAuditIngestObservation(event)
+	}
+	return nil
 }
 
 func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange) error {
@@ -1254,7 +1260,7 @@ func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange
 		wantKind = "tag_definition"
 	case "tag_assign", "tag_unassign":
 		wantKind = "tag_assignment"
-	case "provenance_add", "provenance_supersede":
+	case "ingest_observe", "provenance_add", "provenance_supersede":
 		wantKind = "provenance"
 	}
 	if wantKind == "" {
@@ -1287,9 +1293,9 @@ func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange
 		if change.Before != nil && change.After == nil {
 			return nil
 		}
-	case "tag_define", "tag_assign", "provenance_add":
+	case "tag_define", "tag_assign", "ingest_observe", "provenance_add":
 		if change.Before == nil && change.After != nil &&
-			(eventKind != "provenance_add" ||
+			((eventKind != "ingest_observe" && eventKind != "provenance_add") ||
 				change.After.ProvenanceID == change.Identity.ProvenanceID) {
 			return nil
 		}
@@ -1302,6 +1308,22 @@ func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange
 		}
 	}
 	return errors.New("audit attachment has an invalid transition shape")
+}
+
+func validateAuditIngestObservation(event api.AuditEvent) error {
+	change := event.Attachment
+	if event.PriorNodeRevision < 1 ||
+		event.ResultingNodeRevision != event.PriorNodeRevision+1 ||
+		event.PriorCurrentVersionID == nil || event.ResultingCurrentVersionID == nil ||
+		*event.PriorCurrentVersionID != *event.ResultingCurrentVersionID ||
+		event.SourceVersionID != nil || event.TargetNodeID != nil ||
+		change == nil || change.Before != nil || change.After == nil ||
+		change.After.NodeID != event.NodeID ||
+		change.After.ProvenanceID != change.Identity.ProvenanceID ||
+		change.After.Supersedes != nil {
+		return errors.New("ingest observation has an invalid authority transition")
+	}
+	return nil
 }
 
 func validateAuditAttachmentIdentity(kind string, identity api.AuditAttachmentIdentity) error {
@@ -2258,18 +2280,24 @@ func canonicalDirectoryPath(path string) (string, error) {
 	return "/" + strings.Join(segments, "/"), nil
 }
 
-// IngestOptions selects source filters and the destination policy for a
-// server-side import. The zero value keeps ordinary suffixing semantics.
+// IngestOptions selects source filters, destination policy, and an optional
+// initial collection label for a server-side import. The zero value keeps
+// ordinary suffixing semantics without a label.
 type IngestOptions struct {
-	Include []string
-	Exclude []string
-	Replace bool
+	Include         []string
+	Exclude         []string
+	Replace         bool
+	CollectionLabel *string
 }
 
 func (o IngestOptions) requestBody(paths []string, dest string) map[string]any {
-	return map[string]any{
+	body := map[string]any{
 		"paths": paths, "dest": dest, "include": o.Include, "exclude": o.Exclude, "replace": o.Replace,
 	}
+	if o.CollectionLabel != nil {
+		body["collection_label"] = *o.CollectionLabel
+	}
+	return body
 }
 
 func (c *Client) Ingest(ctx context.Context, paths []string, dest string) (api.IngestReport, error) {

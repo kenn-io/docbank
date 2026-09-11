@@ -525,6 +525,7 @@ type IngestFailure struct {
 
 // IngestReport summarizes an ingest run.
 type IngestReport struct {
+	IngestID string          `json:"ingest_id,omitempty"`
 	Added    int             `json:"added"`
 	Skipped  int             `json:"skipped"`
 	Excluded int             `json:"excluded"`
@@ -541,11 +542,12 @@ type IngestPreflightRequest struct {
 
 // IngestRequest imports server-side paths with optional source selection.
 type IngestRequest struct {
-	Replace bool     `json:"replace,omitempty"`
-	Paths   []string `json:"paths" minItems:"1"`
-	Dest    string   `json:"dest" default:"/inbox"`
-	Include []string `json:"include,omitempty"`
-	Exclude []string `json:"exclude,omitempty"`
+	Replace         bool     `json:"replace,omitempty"`
+	Paths           []string `json:"paths" minItems:"1"`
+	Dest            string   `json:"dest" default:"/inbox"`
+	Include         []string `json:"include,omitempty"`
+	Exclude         []string `json:"exclude,omitempty"`
+	CollectionLabel *string  `json:"collection_label,omitempty"`
 }
 
 // IngestProgress is one structured update from a server-side import. Scan

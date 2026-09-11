@@ -298,6 +298,83 @@ func (s *Store) ConfirmIngestedContentWithReceipt(
 	return receipt, nil
 }
 
+// ReplaceContentForIngest applies a logical operational import to an existing
+// file. A changed head and its collection membership commit together; an
+// identical head records only the new observation and reports changed=false.
+func (s *Store) ReplaceContentForIngest(
+	ctx context.Context, run IngestRun, nodeID, ifRev int64,
+	blobHash string, size int64, mimeType, originalPath, originalMtime string,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, bool, error) {
+	if size < 0 {
+		return ContentWriteReceipt{}, false, errors.New("content size must not be negative")
+	}
+	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
+		return ContentWriteReceipt{}, false, err
+	}
+	if err := validateIngestRecord(run.record); err != nil {
+		return ContentWriteReceipt{}, false, fmt.Errorf("validating ingest run: %w", err)
+	}
+	if err := requireOperationalIngestRun(run); err != nil {
+		return ContentWriteReceipt{}, false, err
+	}
+	var recordedMtime *string
+	if originalMtime != "" {
+		recordedMtime = &originalMtime
+	}
+	fact := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: nodeID, IngestID: run.ID(),
+		OriginalPath: originalPath, OriginalMTime: recordedMtime,
+	}
+	if err := validateProvenanceFields(fact); err != nil {
+		return ContentWriteReceipt{}, false, fmt.Errorf("validating ingest provenance: %w", err)
+	}
+	identity, err := provenanceIdentity(fact)
+	if err != nil {
+		return ContentWriteReceipt{}, false, fmt.Errorf("identifying ingest observation: %w", err)
+	}
+	fact.Identity = identity
+	var (
+		receipt ContentWriteReceipt
+		changed bool
+	)
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		prior, err := nodeByIDTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if prior.BlobHash == blobHash && prior.Size == size {
+			receipt, err = s.confirmContentWithReceiptTx(
+				tx, prior, ifRev, blobHash, size, prior.MimeType, physical...,
+			)
+		} else {
+			receipt.Node, receipt.Version, err = s.replaceContentTx(
+				ctx, tx, prior, ifRev, blobHash, size, mimeType, physical...,
+			)
+			changed = err == nil
+		}
+		if err != nil {
+			return err
+		}
+		ingestAdded, err := s.ensureIngestRunForMutationTx(ctx, tx, run)
+		if err != nil {
+			return err
+		}
+		receipt.Node, err = s.observeOperationalIngestTx(
+			ctx, tx, run, receipt.Node, fact, ingestAdded,
+		)
+		if err != nil {
+			return err
+		}
+		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+		return err
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, false, err
+	}
+	return receipt, changed, nil
+}
+
 func (s *Store) confirmContentWithReceiptTx(
 	tx *sql.Tx, n Node, ifRev int64, blobHash string, size int64, mimeType string,
 	physical ...BlobPhysical,

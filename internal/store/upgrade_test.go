@@ -68,6 +68,9 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			require.NoError(t, s.db.QueryRow(`
 				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&schemaVersion))
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
+			var collectionLabels int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM collection_labels`).Scan(&collectionLabels))
+			assert.Zero(t, collectionLabels, "released metadata predates collection labels")
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, upgraded.Bytes())

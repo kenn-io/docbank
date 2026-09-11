@@ -2,8 +2,10 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -445,4 +447,93 @@ func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
 	}))
 	err = s.ValidateMetadata(ctx)
 	require.ErrorContains(t, err, "provenance mutation targets non-file node")
+}
+
+// These digests bind the complete canonical record stream for caller-supplied
+// provenance and operational observations.
+func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
+	for operation, want := range map[string]string{
+		"append":           "a9ad4987c066f3fca86e36ff69c9c55e74b342cece6f79944dc38a75ef880b34",
+		"supersede":        "a83dec2c0d2295f015e1e4154587fcaa8e15423c095ab1d0f151bbc55e2b90c7",
+		"observe new":      "a7cb0b9617b42dc1ee0ccbfbcc9ef27ae3828365fc698dcd57bf2d6a7da6fd68",
+		"observe existing": "4f1b5d32845ab9cb0fb7e0e98b90b22277b4c7eb583db733a7f202cec6f8a3cb",
+	} {
+		t.Run(operation, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			seedMetadataRoundTrip(t, s)
+			s.vaultID = "99999999-9999-4999-8999-999999999999"
+			_, err := s.db.Exec("UPDATE vault_metadata SET vault_uid=?", s.vaultID)
+			require.NoError(t, err)
+			node, err := s.NodeByPath(ctx, "/Projects/report.txt")
+			require.NoError(t, err)
+			var predecessor string
+			if operation == "supersede" {
+				const priorIngest = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+				_, err = s.db.Exec("INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,'embedded:agent','Synthetic predecessor')",
+					priorIngest, testAuditTimestamp)
+				require.NoError(t, err)
+				prior := metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID, IngestID: priorIngest, OriginalPath: "/synthetic/prior.txt"}
+				predecessor, err = provenanceIdentity(prior)
+				require.NoError(t, err)
+				_, err = s.db.Exec("INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)",
+					predecessor, prior.NodeID, prior.IngestID, prior.OriginalPath)
+				require.NoError(t, err)
+			}
+			seedInitialAuditAuthority(t, s, *node.ParentID)
+			run := IngestRun{record: metadataIngest{
+				Type: metadataIngestType, ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				StartedAt: testAuditTimestamp, SourceKind: "embedded:agent", SourceDesc: "Synthetic canonical assertion",
+			}}
+			observation := operation == "observe new" || operation == "observe existing"
+			if observation {
+				run.record.SourceKind = "filesystem"
+			}
+			if operation == "observe existing" {
+				require.NoError(t, s.db.QueryRow("SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=?", metadataIngestID).
+					Scan(&run.record.ID, &run.record.StartedAt, &run.record.SourceKind, &run.record.SourceDesc))
+			}
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				ingestAdded, err := ensureIngestRunTx(ctx, tx, run)
+				if err != nil {
+					return err
+				}
+				fact := metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID,
+					IngestID: run.ID(), OriginalPath: "/synthetic/assertion.txt"}
+				if predecessor != "" {
+					fact.Supersedes = &predecessor
+				}
+				fact.Identity, err = provenanceIdentity(fact)
+				if err != nil {
+					return err
+				}
+				if _, err = tx.Exec("INSERT INTO provenance(identity,node_id,ingest_id,original_path,supersedes) VALUES(?,?,?,?,?)",
+					fact.Identity, fact.NodeID, fact.IngestID, fact.OriginalPath, fact.Supersedes); err != nil {
+					return err
+				}
+				if err = bumpRevisionTx(tx, node.ID, testAuditTimestamp); err != nil {
+					return err
+				}
+				resulting, err := nodeByIDTx(tx, node.ID)
+				if err != nil {
+					return err
+				}
+				authority, scopes, sequence, err := loadAuditedNodeAuthority(ctx, tx, node.ID)
+				if err != nil {
+					return err
+				}
+				const operationID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+				if observation {
+					return persistAuditedIngestObservation(ctx, tx, s.vaultID, operationID, testAuditTimestamp,
+						sequence, authority, scopes, node, resulting, run.record, fact, ingestAdded)
+				}
+				return persistAuditedProvenanceAppend(ctx, tx, s.vaultID, operationID, testAuditTimestamp,
+					sequence, authority, scopes, node, resulting, run.record, fact)
+			}))
+			require.NoError(t, s.ValidateMetadata(ctx))
+			var records bytes.Buffer
+			require.NoError(t, exportAuditRecords(ctx, s.db, newMetadataJSONWriter(&records)))
+			assert.Equal(t, want, fmt.Sprintf("%x", sha256.Sum256(records.Bytes())))
+		})
+	}
 }

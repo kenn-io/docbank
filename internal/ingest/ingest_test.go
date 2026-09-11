@@ -195,17 +195,21 @@ func TestAddReplaceVersionsDestinationWithoutSuffix(t *testing.T) {
 	rep, err = ing.AddPathsWithOptions(ctx, []string{path}, "/inbox", Options{Replace: true})
 	require.NoError(t, err)
 	assert.Equal(t, 1, rep.Added)
+	require.NotEmpty(t, rep.IngestID)
 	assert.Empty(t, rep.Failed)
 	updated, err := ing.Store.NodeByPath(ctx, "/inbox/notes.txt")
 	require.NoError(t, err)
 	assert.Equal(t, original.ID, updated.ID)
-	assert.Equal(t, original.Revision+1, updated.Revision)
+	assert.Equal(t, original.Revision+2, updated.Revision)
 	_, err = ing.Store.NodeByPath(ctx, "/inbox/notes (2).txt")
 	require.ErrorIs(t, err, store.ErrNotFound)
 	versions, total, err := ing.Store.ContentVersions(ctx, original.ID, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	assert.Equal(t, "content_replace", versions[0].TransitionKind)
+	collection, err := ing.Store.CollectionByID(ctx, rep.IngestID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), collection.FileCount)
 }
 
 func TestAddWithoutReplaceStillSuffixesChangedContent(t *testing.T) {
@@ -228,11 +232,11 @@ func TestAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
 	content := []byte("same bytes")
-	src := filepath.Join(t.TempDir(), "notes.bin")
+	src := filepath.Join(t.TempDir(), "notes.txt")
 	require.NoError(t, os.WriteFile(src, content, 0o644))
 	written, err := ing.Blobs.WriteDetailedContext(ctx, bytes.NewReader(content))
 	require.NoError(t, err)
-	original, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "notes.bin",
+	original, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "notes.txt",
 		written.Hash, written.Size, "application/octet-stream")
 	require.NoError(t, err)
 
@@ -240,14 +244,123 @@ func TestAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, rep.Added)
 	assert.Equal(t, 1, rep.Skipped)
+	require.NotEmpty(t, rep.IngestID)
 	assert.Empty(t, rep.Failed)
 	unchanged, err := ing.Store.NodeByID(ctx, original.ID)
 	require.NoError(t, err)
-	assert.Equal(t, original.Revision, unchanged.Revision)
+	assert.Equal(t, original.Revision+1, unchanged.Revision)
 	assert.Equal(t, "application/octet-stream", unchanged.MimeType)
 	_, total, err := ing.Store.ContentVersions(ctx, original.ID, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
+	collection, err := ing.Store.CollectionByID(ctx, rep.IngestID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), collection.FileCount)
+}
+
+func TestLabeledEmptyTreeCreatesDirectoriesWithoutReceipt(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	source := filepath.Join(t.TempDir(), "empty-source")
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "nested", "empty"), 0o755))
+	label := "Empty tree"
+
+	rep, err := ing.AddPathsWithOptions(ctx, []string{source}, "/new/inbox", Options{
+		CollectionLabel: &label,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, rep.IngestID)
+	assert.Zero(t, rep.Added)
+	assert.Empty(t, rep.Failed)
+	_, err = ing.Store.NodeByPath(ctx, "/new/inbox/empty-source/nested/empty")
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, ing.Store.ExportMetadata(ctx, &metadata))
+	assert.NotContains(t, metadata.String(), `"type":"collection_label"`)
+	assert.NotContains(t, metadata.String(), `"source_desc":`)
+}
+
+func TestLabeledEmptyTreeAdmissionFailureLeavesNoDirectories(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T, *Ingester, *string)
+		want  error
+	}{
+		{
+			name: "label collision",
+			setup: func(t *testing.T, ing *Ingester, label *string) {
+				t.Helper()
+				run, err := ing.Store.BeginIngestWithLabel(t.Context(), "cli", "winner", label)
+				require.NoError(t, err)
+				_, _, err = ing.Store.IngestFileWithMembership(
+					t.Context(), run, ing.Store.RootID(), "winner.txt", fakeIngestHash("a1"), 1,
+					"text/plain", "/synthetic/winner.txt", "",
+				)
+				require.NoError(t, err)
+			},
+			want: store.ErrExists,
+		},
+		{
+			name: "active audit",
+			setup: func(t *testing.T, ing *Ingester, _ *string) {
+				t.Helper()
+				plan, err := ing.Store.PreviewInitialAudit(t.Context(), ing.Store.RootID(), "api", nil)
+				require.NoError(t, err)
+				_, err = ing.Store.EnableInitialAudit(t.Context(), plan)
+				require.NoError(t, err)
+			},
+			want: store.ErrAuditMutationUnsupported,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ing := newTestIngester(t)
+			label := "Empty rejection"
+			test.setup(t, ing, &label)
+			source := filepath.Join(t.TempDir(), "empty-source")
+			require.NoError(t, os.MkdirAll(filepath.Join(source, "nested"), 0o755))
+
+			rep, err := ing.AddPathsWithOptions(
+				t.Context(), []string{source}, "/new/inbox", Options{CollectionLabel: &label},
+			)
+			require.NoError(t, err)
+			assert.Empty(t, rep.IngestID)
+			require.Len(t, rep.Failed, 1)
+			require.ErrorIs(t, rep.Failed[0].Err, test.want)
+			assert.Equal(t, "/new/inbox", rep.Failed[0].Path)
+			_, err = ing.Store.NodeByPath(t.Context(), "/new")
+			require.ErrorIs(t, err, store.ErrNotFound)
+		})
+	}
+}
+
+func TestFinalizeDirectoriesReportsTheFailingSource(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	first, err := ing.Store.Mkdir(ctx, ing.Store.RootID(), "first")
+	require.NoError(t, err)
+	later, err := ing.Store.Mkdir(ctx, ing.Store.RootID(), "later")
+	require.NoError(t, err)
+	destination, err := ing.Store.PrepareIngestDirectory(ctx, "/")
+	require.NoError(t, err)
+	run, err := ing.Store.BeginIngestWithLabel(ctx, "cli", "empty trees", new("Empty trees"))
+	require.NoError(t, err)
+	planned := &filesystemIngest{
+		ing: ing, run: run,
+		destination: &ingestDirectory{sourcePath: "/", plan: &destination},
+	}
+	planned.directories = append(planned.directories, planned.destination)
+	_, err = planned.prepareSourceDirectory(ctx, planned.destination, first.Name, "/synthetic/first")
+	require.NoError(t, err)
+	_, err = planned.prepareSourceDirectory(ctx, planned.destination, later.Name, "/synthetic/later")
+	require.NoError(t, err)
+	_, _, err = ing.Store.Trash(ctx, later.ID, later.Revision)
+	require.NoError(t, err)
+
+	var rep Report
+	require.NoError(t, planned.finalize(ctx, &rep, nil))
+	require.Len(t, rep.Failed, 1)
+	require.ErrorIs(t, rep.Failed[0].Err, store.ErrNotFound)
+	assert.Equal(t, "/synthetic/later", rep.Failed[0].Path)
 }
 
 func TestAddReplaceFailsBeforeSourceReadForDirectory(t *testing.T) {
@@ -257,7 +370,8 @@ func TestAddReplaceFailsBeforeSourceReadForDirectory(t *testing.T) {
 	require.NoError(t, err)
 	run, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
-	_, err = ing.importFile(ctx, run, ing.Store.RootID(), filepath.Join(t.TempDir(), "missing"),
+	files := &filesystemIngest{ing: ing, run: run}
+	_, _, err = files.importFile(ctx, &ingestDirectory{id: ing.Store.RootID()}, filepath.Join(t.TempDir(), "missing"),
 		"/synthetic/missing/notes.txt", true, nil)
 	assert.ErrorIs(t, err, store.ErrNotFile)
 }
@@ -824,7 +938,8 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 	var rep Report
 	selection, err := compileSourceSelection(Options{Include: []string{"*.txt"}})
 	require.NoError(t, err)
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, selection, false, nil))
+	files := &filesystemIngest{ing: ing, run: ingestID, destination: &ingestDirectory{id: dest.ID}}
+	require.NoError(t, files.addTree(ctx, &rep, src, src, selection, false, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 
@@ -844,7 +959,8 @@ func TestAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	var rep Report
-	require.NoError(t, ing.addTree(ctx, &rep, ingestID, dest.ID, src, src, sourceSelection{}, false, nil))
+	files := &filesystemIngest{ing: ing, run: ingestID, destination: &ingestDirectory{id: dest.ID}}
+	require.NoError(t, files.addTree(ctx, &rep, src, src, sourceSelection{}, false, nil))
 	assert.NotEmpty(t, rep.Failed)
 	assert.Zero(t, rep.Added)
 	_, err = ing.Store.NodeByPath(ctx, "/inbox")
@@ -857,9 +973,10 @@ func TestEnsureSourceDirRejectsPathOutsideWalkRoot(t *testing.T) {
 		ing := newTestIngester(t)
 		walkRoot := filepath.Join(t.TempDir(), "root")
 		dirPath := filepath.Join(filepath.Dir(walkRoot), "outside", "nested")
-		_, err := ing.ensureSourceDir(
-			t.Context(), map[string]int64{}, map[string]error{}, ing.Store.RootID(),
-			"source", walkRoot, dirPath,
+		files := &filesystemIngest{ing: ing, destination: &ingestDirectory{id: ing.Store.RootID()}}
+		_, err := files.ensureSourceDirectory(
+			t.Context(), map[string]*ingestDirectory{}, map[string]error{},
+			"source", walkRoot, walkRoot, dirPath,
 		)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "outside traversal root")

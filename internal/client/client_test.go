@@ -526,24 +526,32 @@ func TestIngestOptionsSendReplaceToJSONAndStream(t *testing.T) {
 		bodies = append(bodies, string(body))
 		if r.URL.Path == "/api/v1/ingest/stream" {
 			w.Header().Set("Content-Type", "application/x-ndjson")
-			_ = json.MarshalWrite(w, api.IngestEvent{Type: "result", Report: &api.IngestReport{}})
+			_ = json.MarshalWrite(w, api.IngestEvent{
+				Type: "result", Report: &api.IngestReport{IngestID: "stream-run"},
+			})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, api.IngestReport{})
+		_ = json.MarshalWrite(w, api.IngestReport{IngestID: "json-run"})
 	}))
 	t.Cleanup(ts.Close)
 
 	c := client.New(ts.URL, serverKey)
-	opts := client.IngestOptions{Exclude: []string{"cache"}, Replace: true}
-	_, err := c.IngestWithOptions(t.Context(), []string{"/source"}, "/inbox", opts)
+	label := "Review set"
+	opts := client.IngestOptions{
+		Exclude: []string{"cache"}, Replace: true, CollectionLabel: &label,
+	}
+	jsonReport, err := c.IngestWithOptions(t.Context(), []string{"/source"}, "/inbox", opts)
 	require.NoError(t, err)
-	_, err = c.IngestStream(t.Context(), []string{"/source"}, "/inbox", opts, nil)
+	assert.Equal(t, "json-run", jsonReport.IngestID)
+	streamReport, err := c.IngestStream(t.Context(), []string{"/source"}, "/inbox", opts, nil)
 	require.NoError(t, err)
+	assert.Equal(t, "stream-run", streamReport.IngestID)
 	require.Len(t, bodies, 2)
 	for _, body := range bodies {
 		assert.Contains(t, body, `"replace":true`)
 		assert.Contains(t, body, `"exclude":["cache"]`)
+		assert.Contains(t, body, `"collection_label":"Review set"`)
 	}
 }
 

@@ -253,3 +253,31 @@ func TestAppendNodeProvenanceAuditedRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, appended.Fact.Identity, page.Items[0].Identity)
 }
+
+func TestImportedMixedCaseEmbeddedProvenanceCanBeCorrected(t *testing.T) {
+	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginIngest(ctx, "Embedded:agent", "Synthetic application evidence")
+	require.NoError(t, err)
+	node, err := source.IngestFileExact(ctx, run, source.RootID(), "report.txt", fakeHash("a1"),
+		7, "text/plain", "/synthetic/report.txt", "")
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	seedInitialAuditAuthority(t, target, target.RootID())
+	_, err = target.CollectionByID(ctx, run.ID())
+	require.ErrorIs(t, err, ErrNotFound)
+	page, err := target.NodeProvenance(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, "agent", page.Items[0].SourceKind)
+	_, err = target.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+		NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent",
+		SourceDescription: "Synthetic correction", OriginalPath: "opaque://corrected",
+		Supersedes: &page.Items[0].Identity,
+	})
+	require.NoError(t, err)
+	require.NoError(t, target.ValidateMetadata(ctx))
+}

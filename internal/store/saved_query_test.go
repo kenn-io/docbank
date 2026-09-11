@@ -145,7 +145,7 @@ func TestSavedQueriesAreBoundedFilteredAndNameSorted(t *testing.T) {
 		limit, offset int
 	}{
 		{limit: 0},
-		{limit: maxSavedQueryPageSize + 1},
+		{limit: maxPageSize + 1},
 		{limit: 1, offset: -1},
 		{kind: "unknown", limit: 1},
 	} {

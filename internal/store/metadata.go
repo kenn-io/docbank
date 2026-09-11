@@ -330,6 +330,10 @@ func (layout metadataSourceLayout) hasDerivativeCatalog() bool {
 	return layout.schemaVersion >= 4
 }
 
+func (layout metadataSourceLayout) hasCollectionLabels() bool {
+	return layout.schemaVersion >= 8
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -389,6 +393,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportIngests(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasCollectionLabels() {
+		if err := exportCollectionLabels(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
@@ -969,6 +978,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
 		    + (SELECT COUNT(*) FROM visual_preview_heads)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
+		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
 		    + (SELECT COUNT(*) FROM extracted_text)
@@ -1254,6 +1264,12 @@ func (s *Store) importMetadataRecord(
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, v.ID, v.StartedAt, v.SourceKind, v.SourceDesc)
 		return err
+	case metadataCollectionLabelType:
+		var v metadataCollectionLabel
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importCollectionLabel(ctx, tx, v)
 	case metadataProvenanceType:
 		var v metadataProvenance
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1396,6 +1412,7 @@ var metadataRequiredFields = map[string][]string{
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
+	metadataCollectionLabelType:            {metadataTypeField, "ingest_id", "label", "revision", "updated_at"},
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
@@ -1438,6 +1455,7 @@ var metadataNullableFields = map[string]map[string]bool{
 	},
 	"content_version":                  {"mime_type": true, "source_version_id": true},
 	metadataProvenanceType:             {"original_mtime": true, "supersedes": true},
+	metadataCollectionLabelType:        {"label": true},
 	"extracted_text":                   {"error": true, "text": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
@@ -1797,6 +1815,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if err := validateWatchSourceRelations(ctx, tx); err != nil {
 		return err
+	}
+	if layout.hasCollectionLabels() {
+		if err := validateCollectionLabelMetadataState(ctx, tx); err != nil {
+			return err
+		}
 	}
 	if layout.hasDerivativeCatalog() {
 		if err := validateProcessingMetadataState(ctx, tx); err != nil {

@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-09
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+last_edited: 2026-09-10
 ---
 
 # HTTP API
@@ -54,6 +54,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and explicit `truncated` status | Implemented |
 | `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
+| `GET /collections` · `GET /collections/{id}` · `GET /collections/{id}/members` · `GET\|PUT /collections/{id}/label` | browse live ingest-run membership and inspect, set, or clear its revision-fenced label | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
@@ -438,8 +439,10 @@ in a pattern is rejected. Entries filtered by a rule are excluded without
 failure, while selected non-regular entries are reported as skipped findings.
 
 `POST /ingest` takes **server-side local paths** — `{paths: [...],
-dest: "/inbox", include: [...], exclude: [...], replace: false}` — and returns an `IngestReport` (`added`, `skipped`, `excluded`,
-per-path `failed` entries), backing `docbank add`. Paths must be
+dest: "/inbox", include: [...], exclude: [...], replace: false,
+collection_label: "Review set"}` — and returns an `IngestReport` (`ingest_id`,
+`added`, `skipped`, `excluded`, per-path `failed` entries), backing `docbank
+add`. `collection_label` is optional. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves `docbank
 add`'s arguments to absolute paths before calling, so the command-line
@@ -462,6 +465,26 @@ request context used by traversal, blob writing, and metadata transactions.
 Already completed files remain valid and converge on retry, while an
 incomplete blob never receives node authority.
 
+One request is one logical ingest run. Its `ingest_id` appears only after at
+least one document observation commits. A partial import therefore returns the
+run that owns its successful files alongside the individual failures. A scan,
+an excluded-only request, or an all-failed request returns no `ingest_id` and
+creates no collection or label authority. An initial label collision, or an
+initial label attempted after permanent audit enrollment, is reported through
+the same per-file failure protocol; other files in the request still follow
+the established partial-import behavior.
+
+Repeating a logical filesystem import creates a new run and records the
+existing same-content node as a member without creating a content version.
+That new provenance advances the node revision, even when `collection_label`
+and `replace` are omitted or `replace: true` finds identical bytes. A client
+holding the previous ETag must read the node again before writing; the old
+`If-Match` returns `412 stale_revision`. Within one run, the same observation
+is idempotent. The separate unkeyed
+`POST /uploads` retry contract is unchanged: an equal retry returns the
+existing node without changing its revision and does not expose an unused run
+identifier.
+
 Because they grant "read any daemon-readable local path," `POST /ingest` and
 `POST /ingest/stream` are checked per-request against `RemoteAddr` and
 **restricted to loopback callers** regardless of bind address or API key — a
@@ -482,6 +505,71 @@ invalid syntax and parent traversal are rejected before filesystem access. Use
 bracket expressions such as `report[[]1].txt` for literal metacharacters instead
 of backslash escaping.
 Watched-inbox exclusions are a separate literal contract.
+
+## Addendum: ingest-run collections
+
+A collection is an immutable ingest-run identity with live document
+membership. It is not a folder: moving or renaming a member leaves its run
+identity intact. Membership excludes caller-supplied `embedded:` provenance,
+superseded provenance, directories, and trashed files. Counts and byte totals
+deduplicate nodes within a run and describe each member's current version;
+they are browsing observations rather than an export snapshot.
+
+Lists default to 100 results and accept `limit=1..1000` and a nonnegative
+`offset`. They are ordered by `started_at` descending, then ingest ID. Member
+pages use the same bounds and return current `Node` representations with live
+paths. The list hides empty runs. A directly addressed run remains readable
+when it has retained label authority, even after its final member is trashed or
+purged.
+
+```console
+$ curl -sS -H "X-Api-Key: $DOCBANK_API_KEY" \
+    'http://127.0.0.1:43210/api/v1/collections?limit=100&offset=0'
+{"items":[{"id":"5ca58787-4608-4f69-8e67-8d5794970f77","source_kind":"cli","source_description":"/srv/import/review","started_at":"2026-09-10T09:30:00Z","file_count":2,"total_bytes":31,"label":"Review set","label_revision":1,"label_updated_at":"2026-09-10T09:30:00Z"}],"total":1,"limit":100,"offset":0}
+
+$ curl -sS -H "X-Api-Key: $DOCBANK_API_KEY" \
+    'http://127.0.0.1:43210/api/v1/collections/5ca58787-4608-4f69-8e67-8d5794970f77/members?limit=100&offset=0'
+```
+
+Labels have their own resource and revision. Read that resource for its ETag,
+then send the quoted positive revision in `If-Match`. The PUT body contains
+exactly one required `label` member. A string sets the label; explicit `null`
+clears it. Unknown fields and server-owned fields such as `revision` are
+rejected.
+
+```console
+$ curl -i -H "X-Api-Key: $DOCBANK_API_KEY" \
+    http://127.0.0.1:43210/api/v1/collections/5ca58787-4608-4f69-8e67-8d5794970f77/label
+HTTP/1.1 200 OK
+ETag: "1"
+
+{"ingest_id":"5ca58787-4608-4f69-8e67-8d5794970f77","label":"Review set","revision":1,"updated_at":"2026-09-10T09:30:00Z"}
+
+$ curl -sS -X PUT -H "X-Api-Key: $DOCBANK_API_KEY" \
+    -H 'Content-Type: application/json' -H 'If-Match: "1"' \
+    -d '{"label":"Filed set"}' \
+    http://127.0.0.1:43210/api/v1/collections/5ca58787-4608-4f69-8e67-8d5794970f77/label
+
+$ curl -sS -X PUT -H "X-Api-Key: $DOCBANK_API_KEY" \
+    -H 'Content-Type: application/json' -H 'If-Match: "2"' \
+    -d '{"label":null}' \
+    http://127.0.0.1:43210/api/v1/collections/5ca58787-4608-4f69-8e67-8d5794970f77/label
+```
+
+Labels are case-sensitive NFC strings of 1–256 UTF-8 bytes, with no control
+characters and at least one non-whitespace character. Intentional surrounding
+spaces are preserved. Non-null labels are unique across all retained label
+records, including empty collections, so trash and restore cannot transfer a
+name between runs. Clearing retains the revision fence. A stale fence returns
+`412 stale_revision`; a collision returns `409 exists`; an invalid name returns
+`422 invalid_collection_label`.
+
+Permanent audit authority currently records ingest and membership changes but
+has no event for label mutation. Once audit is enabled, label PUTs therefore
+fail closed with `409 audit_mutation_unsupported`, including clears and no-op
+requests. Existing labels remain readable and portable. Backup readers that
+predate collection labels or the `ingest_observe` audit kind reject that added
+authority explicitly instead of silently dropping it.
 
 ## Addendum: `POST /uploads`
 
@@ -714,6 +802,7 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `audit_not_enrolled` | 422 | the selected node exists but is outside every permanent audit scope |
 | `invalid_audit_cursor` | 422 | the history cursor is malformed or belongs to another stable node or scope |
 | `invalid_batch_move` | 422 | a batch has no moves, too many moves, ambiguous selectors, or an invalid final-state plan |
+| `invalid_collection_label` | 422 | a collection label violates the canonical UTF-8, NFC, length, control-character, or non-whitespace policy |
 | `stale_revision` | 412 | `store.ErrStaleRevision` — `If-Match` didn't match the current revision |
 | `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, is already superseded, or is an operational ingest fact |
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |

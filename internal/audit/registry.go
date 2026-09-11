@@ -507,7 +507,7 @@ func eventPayloadRule() valueRule {
 func eventKindRule() valueRule {
 	return textEnum(
 		"audit_enroll", "audit_inherit", "content_create", "content_replace", "content_revert",
-		"node_create", "node_path", "provenance_add", "provenance_supersede", "tag_assign",
+		"ingest_observe", "node_create", "node_path", "provenance_add", "provenance_supersede", "tag_assign",
 		"tag_define", "tag_delete", "tag_rename", "tag_unassign",
 	)
 }

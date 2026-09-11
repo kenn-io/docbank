@@ -193,7 +193,7 @@ func TestAddReplaceVersionsExactDestination(t *testing.T) {
 	after, err := c.Stat(t.Context(), "/inbox/notes.txt")
 	require.NoError(t, err)
 	assert.Equal(t, before.ID, after.ID)
-	assert.Equal(t, before.Revision+1, after.Revision)
+	assert.Equal(t, before.Revision+2, after.Revision)
 	_, err = c.Stat(t.Context(), "/inbox/notes (2).txt")
 	assert.ErrorIs(t, err, store.ErrNotFound)
 }
