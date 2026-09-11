@@ -35,11 +35,12 @@ it("runs the complete locally valid draft with explicit snapshot options", async
   vi.spyOn(globalThis, "fetch").mockResolvedValue(response());
   const { onrun } = open();
   await fireEvent.input(screen.getByLabelText(/^Processing profile/), { target: { value: "archive" } });
+  await fireEvent.change(screen.getByLabelText("Documents per page"), { target: { value: "50" } });
   await fireEvent.input(screen.getByLabelText("Query expression"), { target: { value: "report AND NOT tag:missing" } });
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   expect(onrun).toHaveBeenCalledWith(
     { ...query, text: "report AND NOT tag:missing" },
-    { profile: "archive", page_size: 100, facets: [
+    { profile: "archive", page_size: 50, facets: [
       "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
     ] },
   );

@@ -1,199 +1,94 @@
 <script lang="ts">
-  import { Chip, Spinner } from "@kenn-io/kit-ui";
-  import { APIError } from "./api.js";
+  import { Button } from "@kenn-io/kit-ui";
   import DownloadButton from "./DownloadButton.svelte";
-  import {
-    readVerifiedPreview,
-    type DownloadProgress,
-    type VerifiedPreview as Preview,
-  } from "./download.js";
-  import { formatBytes } from "./format.js";
-  import type { SelectedSource } from "./selectedSource.js";
+	import DuplicatesTab from "./DuplicatesTab.svelte";
+  import OriginalPreview from "./OriginalPreview.svelte";
+  import type { HighlightTerm } from "./query.js";
+  import type { RenditionObservation } from "./renditionText.js";
+	import { closeDuplicateSource, inspectorSource, openDuplicateSource,
+		type LiveSelectedSource, type SelectedSource } from "./selectedSource.js";
+  import VerifiedText from "./VerifiedText.svelte";
 
-  let {
-    session,
-    source,
-    authorizationRevision,
-    onauthfailure,
-  }: {
-    session: string;
-    source: SelectedSource;
-    authorizationRevision: number;
+  type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
+  let { session, source, authorizationRevision, profileName = "", observed, activeTab = $bindable("preview"),
+    queryTerms = [], queryHighlightError = "", highlightSets = [], snapshotPosition,
+    snapshotTotal, canPrevious = false, canNext = false, snapshotExpired = false,
+    onnavigate = () => undefined, onauthfailure }: {
+    session: string; source: SelectedSource; authorizationRevision: number; profileName?: string;
+		activeTab?: "preview" | "text" | "duplicates";
+    observed?: RenditionObservation; queryTerms?: string[]; queryHighlightError?: string;
+    highlightSets?: HighlightChoice[]; snapshotPosition?: number; snapshotTotal?: number;
+    canPrevious?: boolean; canNext?: boolean; snapshotExpired?: boolean;
+    onnavigate?: (direction: "previous" | "next") => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
   } = $props();
+	let duplicateSource = $state<LiveSelectedSource | undefined>();
+	let frozenKey = "";
+	const displayedSource = $derived(inspectorSource({ frozen: source, ...(duplicateSource ? { duplicate: duplicateSource } : {}) }));
+	const displayedRevision = $derived(duplicateSource?.mutationRevision ?? authorizationRevision);
 
-  let preview = $state<Preview | null>(null);
-  let progress = $state<DownloadProgress | null>(null);
-  let loading = $state(false);
-  let error = $state("");
-  let publishedURL = "";
+	$effect(() => {
+		const key = source.key;
+		if (key !== frozenKey) {
+			frozenKey = key;
+			duplicateSource = undefined;
+		}
+	});
 
-  function revokePublishedURL(): void {
-    if (!publishedURL) return;
-    URL.revokeObjectURL(publishedURL);
-    publishedURL = "";
-  }
+	function openDuplicate(next: LiveSelectedSource): void {
+		duplicateSource = openDuplicateSource({ frozen: source }, next).duplicate as LiveSelectedSource;
+		activeTab = "text";
+	}
 
-  $effect(() => {
-    const epoch = `${session}:${source.key}:${authorizationRevision}`;
-    const controller = new AbortController();
-    let current = true;
-    void epoch;
-    revokePublishedURL();
-    preview = null;
-    progress = { received: 0, total: source.size };
-    loading = true;
-    error = "";
-    void readVerifiedPreview(
-      session,
-      source,
-      authorizationRevision,
-      controller.signal,
-      (next) => { if (current) progress = next; },
-    ).then((next) => {
-      if (!current) {
-        if (next.kind === "image") URL.revokeObjectURL(next.url);
-        return;
-      }
-      preview = next;
-      if (next.kind === "image") publishedURL = next.url;
-    }).catch((cause: unknown) => {
-      if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
-      if (cause instanceof APIError && cause.status === 401) {
-        onauthfailure(cause);
-        return;
-      }
-      error = cause instanceof Error ? cause.message : String(cause);
-    }).finally(() => {
-      if (current) {
-        loading = false;
-        progress = null;
-      }
-    });
-    return () => {
-      current = false;
-      controller.abort();
-      revokePublishedURL();
-      preview = null;
-      progress = null;
-      error = "";
-    };
-  });
+	function closeDuplicate(): void {
+		duplicateSource = closeDuplicateSource({ frozen: source, duplicate: duplicateSource }).duplicate as undefined;
+		activeTab = "duplicates";
+	}
 </script>
 
-<section class="verified-preview" aria-label={`Verified preview of ${source.name}`}>
-  <div class="preview-heading">
-    <div>
-      <strong>Verified preview</strong>
-      <span>Exact selected version</span>
-    </div>
-    {#if preview}<Chip size="xs" tone="success" dot>SHA-256 verified</Chip>{/if}
-  </div>
-
-  {#if loading}
-    <div class="preview-loading" role="status">
-      <Spinner size={14} />
-      <span>
-        Verifying {formatBytes(progress?.received ?? 0)} / {formatBytes(progress?.total ?? source.size)}
-      </span>
-    </div>
-  {:else if preview?.kind === "text"}
-    <pre>{preview.text}</pre>
-  {:else if preview?.kind === "image"}
-    <div class="image-frame">
-      <img src={preview.url} alt={`Verified preview of ${source.name}`} />
-    </div>
-  {:else if error}
-    <p class="preview-unavailable" role="status">{error}</p>
+<section class="verified-preview" aria-label={`Verified content of ${displayedSource.name}`}>
+	{#if duplicateSource}
+		<div class="separate-context" role="status"><span>Outside duplicate · {duplicateSource.path}</span>
+			<Button size="sm" surface="soft" onclick={closeDuplicate}>Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button></div>
+	{/if}
+  {#if !duplicateSource && snapshotPosition !== undefined && snapshotTotal !== undefined}
+    <nav class="document-navigation" aria-label="Snapshot document navigation">
+      <Button size="sm" surface="soft" disabled={!canPrevious || snapshotExpired}
+        onclick={() => void onnavigate("previous")}>Previous</Button>
+      <span aria-live="polite">Document {snapshotPosition + 1} of {snapshotTotal}</span>
+      <Button size="sm" surface="soft" disabled={!canNext || snapshotExpired}
+        onclick={() => void onnavigate("next")}>Next</Button>
+    </nav>
+    {#if snapshotExpired}<p class="expired" role="status">This frozen snapshot expired. Run the query again to continue navigation.</p>{/if}
   {/if}
-
-  <DownloadButton
-    {session}
-    {source}
-    {authorizationRevision}
-    label="Download verified original"
-    {onauthfailure}
-  />
+  <div class="tabs" role="tablist" aria-label="Verified content view">
+    <button type="button" role="tab" aria-selected={activeTab === "preview"}
+      onclick={() => (activeTab = "preview")}>Preview</button>
+    <button type="button" role="tab" aria-selected={activeTab === "text"}
+      onclick={() => (activeTab = "text")}>Text</button>
+		<button type="button" role="tab" aria-selected={activeTab === "duplicates"}
+			onclick={() => (activeTab = "duplicates")}>Duplicates</button>
+  </div>
+  {#if activeTab === "preview"}
+		<OriginalPreview {session} source={displayedSource} authorizationRevision={displayedRevision} {onauthfailure} />
+  {:else}
+		{#if activeTab === "text"}
+			<VerifiedText {session} source={displayedSource} authorizationRevision={displayedRevision} {profileName}
+				observed={duplicateSource ? undefined : observed} {queryTerms} {queryHighlightError} {highlightSets} {onauthfailure} />
+		{:else}
+			<DuplicatesTab {session} source={displayedSource} onopen={openDuplicate} {onauthfailure} />
+		{/if}
+  {/if}
+	<DownloadButton {session} source={displayedSource} authorizationRevision={displayedRevision}
+		label="Download verified original" {onauthfailure} />
 </section>
 
 <style>
-  .verified-preview {
-    display: grid;
-    gap: var(--space-3);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border-default);
-  }
-
-  .preview-heading,
-  .preview-heading > div {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-
-  .preview-heading > div {
-    align-items: baseline;
-  }
-
-  .preview-heading strong {
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-  }
-
-  .preview-heading span,
-  .preview-loading,
-  .preview-unavailable {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .preview-loading {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: 96px;
-  }
-
-  pre,
-  .image-frame {
-    max-height: 320px;
-    overflow: auto;
-    margin: 0;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-inset);
-  }
-
-  pre {
-    padding: var(--space-3);
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    line-height: 1.55;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
-  }
-
-  .image-frame {
-    display: grid;
-    min-height: 120px;
-    place-items: center;
-    padding: var(--space-2);
-  }
-
-  img {
-    display: block;
-    max-width: 100%;
-    max-height: 300px;
-    object-fit: contain;
-  }
-
-  .preview-unavailable {
-    margin: 0;
-    padding: var(--space-3);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-inset);
-  }
+  .verified-preview { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-default); }
+  .tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-default); }
+  .tabs button { padding: var(--space-2) var(--space-3); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; font-size: var(--font-size-sm); }
+  .tabs button[aria-selected="true"] { border-bottom-color: var(--color-info); color: var(--text-primary); }
+  .document-navigation { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
+  .expired { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+	.separate-context { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-inset); color: var(--text-muted); font-size: var(--font-size-xs); }
 </style>

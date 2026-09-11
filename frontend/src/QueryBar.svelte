@@ -30,6 +30,7 @@
   let controller: AbortController | undefined;
   let currentIdentity = "";
   let executionProfile = $state(untrack(() => profile));
+  let pageSize = $state<50 | 100 | 250>(100);
   const syntaxOptions: SelectDropdownOption[] = [{value:"simple",label:"Simple"},{value:"advanced",label:"Advanced"}];
   const modeOptions: SelectDropdownOption[] = ["lexical","semantic","hybrid"].map((value) => ({value,label:value}));
   const sortOptions: SelectDropdownOption[] = ["name","path","modified_at","size","media_type","relevance"].map((value) => ({value,label:value}));
@@ -115,7 +116,7 @@
     const selectedProfile = executionProfile.trim();
     onrun(draft, {
       ...(selectedProfile ? { profile: selectedProfile } : {}),
-      page_size: 100,
+      page_size: pageSize,
       facets: requestedFacets,
     });
   }
@@ -147,6 +148,10 @@
   <label for="query-profile">Processing profile <span>(optional, exact configured name)</span></label>
   <input id="query-profile" value={executionProfile} autocomplete="off" spellcheck="false"
     oninput={(event) => (executionProfile = event.currentTarget.value)} />
+  <label for="query-page-size">Documents per page</label>
+  <select id="query-page-size" bind:value={pageSize}>
+    <option value={50}>50</option><option value={100}>100</option><option value={250}>250</option>
+  </select>
   {#if profileError}<p role="alert">{profileError}</p>{/if}
   {#if schemaError}<p role="alert">{schemaError}</p>{/if}
   <div aria-live="polite">
@@ -174,7 +179,7 @@
   .heading, .controls, .summaries, .checking { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .heading { justify-content: space-between; }
   .controls > span { color: var(--text-muted); font-size: var(--font-size-sm); flex: 1; min-width: 200px; }
-  textarea, input { box-sizing: border-box; width: 100%; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font-family: var(--font-mono); }
+  textarea, input, select { box-sizing: border-box; width: 100%; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font-family: var(--font-mono); }
   textarea { resize: vertical; }
   label span { color: var(--text-muted); font-size: var(--font-size-xs); }
   .summaries { overflow-wrap: anywhere; }

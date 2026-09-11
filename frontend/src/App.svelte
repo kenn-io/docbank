@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
@@ -53,6 +53,7 @@
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import { parseQuery, type Query } from "./query.js";
+	import { readQueryHighlights } from "./queryHighlights.js";
   import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
   import TagCatalogModal, {
     type TagDefinitionChange,
@@ -91,6 +92,8 @@
   import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
   import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
   import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
+	import { listSavedQueries } from "./savedQueries.js";
+	import type { RenditionObservation } from "./renditionText.js";
   import {
     clearSelection,
     reconcileSelection,
@@ -190,12 +193,29 @@
   let tagGeneration = 0;
   let tagCatalogGeneration = 0;
   let pendingSelectionRange = false;
+	let inspectorHighlightSets = $state<{ id: string; name: string; terms: import("./query.js").HighlightTerm[] }[]>([]);
+	let snapshotQueryTerms = $state<string[]>([]);
+	let snapshotQueryHighlightError = $state("");
+	let inspectorContentTab = $state<"preview" | "text" | "duplicates">("preview");
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshotState.status !== "idle");
   const snapshotPage = $derived(snapshotState.page);
   const snapshotQuery = $derived(snapshotState.query);
   const selectedSnapshot = $derived(snapshotPage?.rows.find((row) => row.node_id === selectedSnapshotID));
+	const selectedSnapshotPageIndex = $derived(snapshotPage?.rows.findIndex((row) => row.node_id === selectedSnapshotID) ?? -1);
+	const selectedSnapshotPosition = $derived(selectedSnapshotPageIndex < 0 ? undefined : snapshotState.offset + selectedSnapshotPageIndex);
+	const snapshotQueryHighlightKey = $derived(snapshotState.firstPage
+		? `${webSession}:${snapshotState.firstPage.snapshot_id}:${snapshotState.firstPage.query_fingerprint}` : "");
+	const selectedRenditionObservation = $derived<RenditionObservation | undefined>(selectedSnapshot && snapshotPage ? {
+		configuration: snapshotPage.coverage.configuration,
+		...(snapshotPage.coverage.profile_fingerprint ? { profileFingerprint: snapshotPage.coverage.profile_fingerprint } : {}),
+		...(snapshotPage.generation.kind === "rendition" && snapshotPage.generation.generation_id
+			? { generationID: snapshotPage.generation.generation_id } : {}),
+		...(selectedSnapshot.coverage_state ? { coverageState: selectedSnapshot.coverage_state } : {}),
+		...(selectedSnapshot.coverage_attachment_id ? { attachmentID: selectedSnapshot.coverage_attachment_id } : {}),
+		...(selectedSnapshot.coverage_build_id ? { buildID: selectedSnapshot.coverage_build_id } : {}),
+	} : undefined);
   const selectedSource = $derived(
     selectedSnapshot
       ? selectedSourceFromSnapshot(selectedSnapshot, snapshotPage?.observed_at ?? "")
@@ -255,6 +275,42 @@
     void loadSelectedTags(source.nodeID, source.key);
     void loadAuditStatus(source.nodeID, source.key);
   });
+
+	$effect(() => {
+		const session = webSession;
+		const controller = new AbortController();
+		let current = true;
+		inspectorHighlightSets = [];
+		if (!session) return () => controller.abort();
+		void listSavedQueries(session, "highlight_set", 0, 1000).then((page) => {
+			if (!current) return;
+			inspectorHighlightSets = page.items.flatMap((item) => item.kind === "highlight_set"
+				? [{ id: item.id, name: item.name, terms: item.payload.terms }] : []);
+		}).catch((cause: unknown) => {
+			if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
+			if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+		});
+		return () => { current = false; controller.abort(); };
+	});
+
+	$effect(() => {
+		const key = snapshotQueryHighlightKey;
+		const inputs = untrack(() => ({ session: webSession, snapshot: snapshotState.firstPage }));
+		const controller = new AbortController();
+		let current = true;
+		void key;
+		snapshotQueryTerms = [];
+		snapshotQueryHighlightError = "";
+		if (!inputs.session || !inputs.snapshot) return () => controller.abort();
+		void readQueryHighlights(inputs.session, inputs.snapshot, controller.signal).then((terms) => {
+			if (current) snapshotQueryTerms = terms;
+		}).catch((cause: unknown) => {
+			if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
+			if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+			else snapshotQueryHighlightError = cause instanceof Error ? cause.message : String(cause);
+		});
+		return () => { current = false; controller.abort(); };
+	});
 
   onMount(() => {
     try { savedQueryDraft = queryFromFragment(location.hash); }
@@ -811,6 +867,24 @@
 
   function pageSnapshot(direction: "previous" | "next"): void {
     void snapshotController?.page(direction);
+  }
+
+  async function navigateSnapshotDocument(direction: "previous" | "next"): Promise<void> {
+    const page = snapshotState.page;
+    const index = page?.rows.findIndex((row) => row.node_id === selectedSnapshotID) ?? -1;
+    if (!page || index < 0 || snapshotState.status !== "ready") return;
+    const target = direction === "next" ? index + 1 : index - 1;
+    if (target >= 0 && target < page.rows.length) {
+      selectedSnapshotID = page.rows[target]?.node_id;
+      return;
+    }
+    const acceptedSnapshot = page.snapshot_id;
+    if (!await snapshotController?.page(direction)) return;
+    const nextPage = snapshotState.page;
+    if (!nextPage || nextPage.snapshot_id !== acceptedSnapshot || nextPage.rows.length === 0) return;
+    selectedSnapshotID = direction === "next"
+      ? nextPage.rows[0]?.node_id
+      : nextPage.rows.at(-1)?.node_id;
   }
 
   function toggleSnapshotSelection(row: SnapshotRow, checked: boolean): void {
@@ -1822,9 +1896,22 @@
               </div>
               {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
                 <VerifiedPreview
+							bind:activeTab={inspectorContentTab}
                   session={webSession}
                   source={selectedSource}
                   authorizationRevision={currentInspectorNode.revision}
+							profileName={snapshotState.options?.profile ?? ""}
+							observed={selectedRenditionObservation}
+							queryTerms={snapshotQueryTerms}
+							queryHighlightError={snapshotQueryHighlightError}
+							highlightSets={inspectorHighlightSets}
+							snapshotPosition={selectedSnapshotPosition}
+							snapshotTotal={snapshotPage?.total}
+							canPrevious={snapshotState.status === "ready" && (selectedSnapshotPosition ?? 0) > 0}
+							canNext={snapshotState.status === "ready" && selectedSnapshotPosition !== undefined &&
+								selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
+							snapshotExpired={snapshotState.status === "expired"}
+							onnavigate={navigateSnapshotDocument}
                   onauthfailure={handleFailure}
                 />
               {/if}
@@ -1984,9 +2071,11 @@
                 </div>
                 {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
                   <VerifiedPreview
+							bind:activeTab={inspectorContentTab}
                     session={webSession}
                     source={selectedSource}
                     authorizationRevision={currentInspectorNode.revision}
+							highlightSets={inspectorHighlightSets}
                     onauthfailure={handleFailure}
                   />
                 {/if}

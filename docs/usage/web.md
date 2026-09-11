@@ -112,10 +112,11 @@ See [field-aware query syntax](searching.md#preview-a-field-aware-query).
 ## Work with a frozen query
 
 A completed run becomes the accepted frozen snapshot for the tab. Draft edits
-remain separate until you choose **Run query** again. The workspace shows exact
-document and byte totals, 100 rows at a time, previous and next page controls,
-and the node, content version, hash, size, revision, and tags observed when the
-snapshot was created. Later vault changes do not replace those rows.
+remain separate until you choose **Run query** again. Choose 50, 100, or 250
+documents per page before the run. The workspace shows exact document and byte
+totals, previous and next page controls, and the node, content version, hash,
+size, revision, and tags observed when the snapshot was created. Later vault
+changes do not replace those rows.
 
 Select a frozen row to inspect those original facts and the exact selected
 version. The same card loads current path, revision, tags, provenance, and audit
@@ -245,9 +246,10 @@ receipt exposed by the authenticated HTTP API. Unknown fields are rejected,
 not silently dropped.
 
 Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
-with lowercase `#rrggbb` colors. They cannot run as queries, and the document
-viewer does not apply them yet. Neither result rows nor document bodies are
-stored in browser preferences.
+with lowercase `#rrggbb` colors. They cannot run as queries. Choose one in a
+document's **Text** tab to apply its ordered colors without changing the saved
+definition. Neither result rows nor document bodies are stored in browser
+preferences.
 
 Edits and deletions use the definition's inspected revision. A stale response
 remains visible without automatically retrying against newer state. Reload the
@@ -339,6 +341,25 @@ verifies the selected version UUID, size, media type, and SHA-256 after receivin
 the complete body and before publishing text or an image URL. Unsupported files
 and text larger than 16 MiB remain available through **Download verified
 original** without being decoded in the page.
+
+Choose **Text** to read the verified text rendition for the exact selected
+version and processing profile. The browser binds the source, profile,
+generation, attachment, build, artifact, length, and digest before decoding the
+text. It reports failed, unprocessed, unconfigured, verified-empty, and
+unavailable historical results separately. An eligible original UTF-8 text file is used only
+as an exact-version fallback when no readable rendition is available.
+
+Query text operands are highlighted from the resolved query, not by splitting
+the expression in the browser. Negated and structured operands are excluded.
+The browser refuses query highlights if a saved definition revision no longer
+matches the accepted snapshot. **Find** and saved highlight sets share bounded,
+non-overlapping marks and previous/next match controls. All content stays inert.
+
+Previous and next document controls move through the accepted frozen snapshot,
+including across its existing page cursors. They stop at the snapshot boundary
+and do not replace an expired snapshot with live results. **Duplicates** lists
+at most 16 live documents with the selected content hash. Opening one creates a
+separately labeled live context; **Return** restores the exact frozen selection.
 
 Choose **Download verified original** on a file to retrieve its selected
 version. A live row selects its current head; a frozen query row keeps the
@@ -632,6 +653,7 @@ accepts that credential for the following operations:
 | List backup snapshots | Uses only the repository already configured for this daemon. |
 | List trash | Returns a bounded list of restorable roots. |
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
+| Read verified text and exact-content duplicate context | Revalidates the selected source and rendition identities; duplicate context is bounded to 16 live-current references. |
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |

@@ -296,7 +296,7 @@ export async function readVerifiedPreview(
   }
 }
 
-function previewEligibility(
+export function previewEligibility(
   rawMediaType: string,
   size: number,
 ): {

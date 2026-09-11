@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import VerifiedPreview from "./VerifiedPreview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
 
@@ -167,4 +167,56 @@ it("keeps unsupported content on the verified-download fallback without a previe
     screen.getByRole("button", { name: "Download verified original" }),
   ).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("loads one exact rendition only while Text is active and keeps hostile markup inert", async () => {
+  const original = new TextEncoder().encode("%PDF synthetic");
+  const selected = source(original, "55555555-5555-4555-8555-555555555555", "application/pdf");
+  const text = new TextEncoder().encode("Alpha 😀 <script>alert('blocked')</script> alpha");
+  const digest = createHash("sha256").update(text).digest("hex");
+  const authority = {
+    profile: "b".repeat(64), generation: "c".repeat(64), attachment: "d".repeat(64),
+    build: "e".repeat(64), artifact: `artifact_${"f".repeat(64)}`,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.endsWith("/api/v1/renditions/text")) return new Response(JSON.stringify({
+      state: "ready",
+      source: { node_id: selected.nodeID, revision: 8, version_id: selected.versionID,
+        blob_hash: selected.blobHash, size: selected.size, media_type: selected.mimeType },
+      profile: { name: "archive", configuration: "configured", fingerprint: authority.profile },
+      generation_id: authority.generation, attachment_id: authority.attachment, build_id: authority.build,
+      artifact: { id: authority.artifact, sha256: digest, size: text.length,
+        media_type: "text/markdown; charset=utf-8" },
+    }), { headers: { "Content-Type": "application/json" } });
+    if (path.includes("/api/v1/renditions/text/content?")) return new Response(text, { headers: {
+      "Content-Type": "text/markdown; charset=utf-8", "Content-Length": String(text.length),
+      "Content-Digest": `sha-256=:${createHash("sha256").update(text).digest("base64")}:`,
+      "X-Docbank-Rendition-SHA256": digest, "X-Docbank-Rendition-Size": String(text.length),
+      "X-Docbank-Rendition-Profile": authority.profile,
+      "X-Docbank-Rendition-Generation": authority.generation,
+      "X-Docbank-Rendition-Attachment": authority.attachment,
+      "X-Docbank-Rendition-Build": authority.build,
+      "X-Docbank-Rendition-Artifact": authority.artifact,
+    } });
+    throw new Error(`unexpected request ${path}`);
+  });
+  const props = {
+    session: "session", source: selected, authorizationRevision: 8, profileName: "archive",
+    observed: { configuration: "configured" as const, profileFingerprint: authority.profile,
+      generationID: authority.generation, coverageState: "complete" as const,
+      attachmentID: authority.attachment, buildID: authority.build },
+    queryTerms: ["alpha"], onauthfailure: vi.fn(),
+  };
+  const view = render(VerifiedPreview, props);
+  expect(fetchMock).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
+  expect(document.querySelector("script")).toBeNull();
+  expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+
+  await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
+  await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });

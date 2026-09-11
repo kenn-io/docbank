@@ -44,6 +44,14 @@ type QueryPreview struct {
 	Dependencies     []QueryDependency `json:"dependencies"`
 }
 
+// QueryHighlightPreview is a separate, bounded visual receipt. QueryPreview
+// remains the strict QueryV1 parse contract used by existing clients.
+type QueryHighlightPreview struct {
+	QueryFingerprint string            `json:"query_fingerprint" pattern:"^sha256:[0-9a-f]{64}$"`
+	Dependencies     []QueryDependency `json:"dependencies" maxItems:"256"`
+	Terms            []string          `json:"terms" maxItems:"64"`
+}
+
 func registerQueryCompileRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "parseQuery", Method: http.MethodPost, Path: "/api/v1/queries/parse",
@@ -81,5 +89,43 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			})
 		}
 		return &struct{ Body QueryPreview }{Body: preview}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "previewQueryHighlights", Method: http.MethodPost,
+		Path: "/api/v1/queries/highlights", Summary: "Preview positive document-text highlight terms",
+		Description:  "Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.",
+		MaxBodyBytes: query.MaxInputBytes,
+	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryHighlightPreview }, error) {
+		value, err := query.Parse(in.Body)
+		if err != nil {
+			problem := NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			problem.Position = &ErrorPosition{}
+			return nil, problem
+		}
+		compiled, err := d.Store.CompileQuery(ctx, value)
+		if err != nil {
+			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
+				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
+				problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
+				return nil, problem
+			}
+			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query highlights")
+		}
+		fingerprint, err := query.Fingerprint(compiled.Query)
+		if err != nil {
+			return nil, NewError(http.StatusInternalServerError, "internal", "Could not fingerprint query highlights")
+		}
+		preview := QueryHighlightPreview{
+			QueryFingerprint: fingerprint,
+			Dependencies:     make([]QueryDependency, 0, len(compiled.Dependencies)),
+			Terms:            compiled.PositiveTextTerms(),
+		}
+		for _, dependency := range compiled.Dependencies {
+			preview.Dependencies = append(preview.Dependencies, QueryDependency{
+				Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
+			})
+		}
+		return &struct{ Body QueryHighlightPreview }{Body: preview}, nil
 	})
 }

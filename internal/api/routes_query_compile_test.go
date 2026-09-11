@@ -11,6 +11,7 @@ import (
 )
 
 const queryParsePath = "/api/v1/queries/parse"
+const queryHighlightsPath = "/api/v1/queries/highlights"
 
 func TestQueryCompilePreviewRetainsIntentAndDependencies(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
@@ -96,5 +97,51 @@ func TestQueryCompilePreviewBrowserCapability(t *testing.T) {
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, headers, `{"text":"alpha"}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath+"?unrecognized=1", headers, `{}`)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+}
+
+func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	saved, _ := createSavedQuery(t, ts.URL, "Choice",
+		`{"syntax":"advanced","text":"nested OR NOT excluded OR name:caption"}`)
+	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryHighlightsPath,
+		map[string]string{"X-Api-Key": testAPIKey},
+		`{"syntax":"advanced","text":"alpha AND NOT hidden AND extension:pdf AND saved:Choice"}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var preview struct {
+		QueryFingerprint string `json:"query_fingerprint"`
+		Dependencies     []struct {
+			Kind     string `json:"kind"`
+			ID       string `json:"id"`
+			Revision int64  `json:"revision"`
+		} `json:"dependencies"`
+		Terms []string `json:"terms"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	require.True(t, strings.HasPrefix(preview.QueryFingerprint, "sha256:"))
+	require.Equal(t, []string{"alpha", "nested"}, preview.Terms)
+	require.Len(t, preview.Dependencies, 1)
+	require.Equal(t, saved.ID, preview.Dependencies[0].ID)
+	require.Equal(t, int64(1), preview.Dependencies[0].Revision)
+	require.Equal(t, "saved", preview.Dependencies[0].Kind)
+	require.NotContains(t, body, "hidden")
+	require.NotContains(t, body, "caption")
+}
+
+func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+
+	headers := map[string]string{api.WebSessionHeader: session.Token}
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, queryHighlightsPath,
+		headers, `{"text":"alpha beta"}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost,
+		queryHighlightsPath+"?unrecognized=1", headers, `{}`)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 }

@@ -90,16 +90,16 @@ export class SnapshotSession {
     }
   }
 
-  async page(direction: "previous" | "next"): Promise<void> {
+  async page(direction: "previous" | "next"): Promise<boolean> {
     const accepted = this.state;
     const acceptedPage = accepted.page;
     const firstPage = accepted.firstPage;
     const query = accepted.query;
     const options = accepted.options;
     if (this.disposed || accepted.status !== "ready" || acceptedPage === undefined ||
-        firstPage === undefined || query === undefined || options === undefined) return;
+        firstPage === undefined || query === undefined || options === undefined) return false;
     const cursor = direction === "next" ? acceptedPage.next_cursor : acceptedPage.previous_cursor;
-    if (cursor === undefined) return;
+    if (cursor === undefined) return false;
     this.request?.abort();
     const request = new AbortController();
     this.request = request;
@@ -107,7 +107,7 @@ export class SnapshotSession {
     this.emit({ ...accepted, status: "loading", error: undefined });
     try {
       const page = await readSnapshotPage(this.session, acceptedPage, cursor, request.signal);
-      if (!this.current(epoch)) return;
+      if (!this.current(epoch)) return false;
       const offset = direction === "next"
         ? accepted.offset + acceptedPage.rows.length
         : Math.max(0, accepted.offset - page.rows.length);
@@ -118,11 +118,13 @@ export class SnapshotSession {
       this.emit({
         status: "ready", firstPage, page, query, options, offset,
       });
+      return true;
     } catch (error) {
       const status = error instanceof APIError && error.status === 410 ? "expired" : "error";
       this.fail(epoch, error, {
         status, firstPage, page: acceptedPage, query, options, offset: accepted.offset,
       });
+      return false;
     }
   }
 

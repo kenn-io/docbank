@@ -236,6 +236,12 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if path == "/api/v1/queries/parse" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if path == "/api/v1/queries/highlights" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
+	if path == "/api/v1/renditions/text" {
+		return method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if path == "/api/v1/batch/tags" || path == "/api/v1/batch/tags/preview" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
@@ -319,6 +325,26 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			}
 		}
 		return true
+	}
+	if path == "/api/v1/duplicates/by-hash" {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		return err == nil && len(values) == 2 && len(values["sha256"]) == 1 &&
+			len(values["size"]) == 1 && values.Get("sha256") != "" && values.Get("size") != ""
+	}
+	if path == "/api/v1/renditions/text/content" {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		allowed := map[string]bool{"node_id": true, "revision": true, "version_id": true,
+			"blob_hash": true, "size": true, "profile_fingerprint": true, "generation_id": true,
+			"attachment_id": true, "build_id": true, "artifact_id": true}
+		for key, entries := range values {
+			if !allowed[key] || len(entries) != 1 || entries[0] == "" {
+				return false
+			}
+		}
+		return len(values) >= 9 && len(values) <= 10
 	}
 	if path == "/api/v1/collections" {
 		return true
