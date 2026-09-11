@@ -41,6 +41,7 @@ provider descriptor and profile, not to a filename extension.
 | Provider package | Where it runs | Contract and scope |
 |------------------|---------------|--------------------|
 | [`document/plaintext`](https://github.com/kenn-io/docbank/tree/main/document/plaintext) | In process | UTF-8 text, including declared source, structured-text, CSV, and mail formats; one generic unit with degraded provenance |
+| [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text resolved by the sealed audio digest for bounded WAV and MP3; one generic unit with degraded provenance and a retained provider transcript |
 | [`document/pymupdf`](https://github.com/kenn-io/docbank/tree/main/document/pymupdf) | Local process | PDF text through a pinned, digest-verified executable |
 | [`document/trafilatura`](https://github.com/kenn-io/docbank/tree/main/document/trafilatura) | Local process | Supplied HTML through a pinned isolated runner; the native runner requires Linux namespace and Landlock support |
 | [`document/docling`](https://github.com/kenn-io/docbank/tree/main/document/docling) | Operator-hosted | Uploaded files through Docling Serve; structured output and Markdown |
@@ -150,6 +151,13 @@ The evidence uses the `audio` family, a generic unit, and
 information. Your application must associate it with the audio source and
 source version. This function does not inspect audio, run speech recognition,
 verify the provider's identity, or create ingestion and search records.
+
+An application that wants the same transcript to travel through the rendition
+contract, sealed upload, authorization, receipt, and retained artifact can
+construct a `document/suppliedtranscript` provider whose `Source` uses the
+sealed audio digest as its key. The provider identity includes the caller's
+source binding, so deployments with different transcript sources receive
+different descriptors.
 
 ## Run Mistral OCR safely
 
