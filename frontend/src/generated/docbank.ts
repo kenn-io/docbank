@@ -2638,6 +2638,171 @@ export interface PackagePreflightRequest {
   source_ref: string;
 }
 
+export interface PageSource {
+  sha256: string;
+  size: number;
+  version_id: string;
+}
+
+export interface PageBinding {
+  node_id: number;
+  revision: number;
+  source: PageSource;
+}
+
+export interface PageRational {
+  denominator: number;
+  numerator: number;
+}
+
+export interface PageFrameV1 {
+  axes: string;
+  contract: string;
+  /**
+     * @minItems 4
+     * @maxItems 4
+     */
+  crop_box: number[];
+  height: number;
+  input_units: string;
+  /**
+     * @minItems 4
+     * @maxItems 4
+     */
+  media_box: number[];
+  output_units: string;
+  page: number;
+  pixel_height?: number;
+  pixel_width?: number;
+  pixels_per_metre_x?: number;
+  pixels_per_metre_y?: number;
+  rotation: number;
+  source: PageSource;
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  transform: PageRational[];
+  width: number;
+}
+
+export interface PageFrameView {
+  frame: PageFrameV1;
+  sha256: string;
+}
+
+export interface PageImageV1 {
+  contract: string;
+  frame_sha256: string;
+  height: number;
+  page: number;
+  recipe_sha256: string;
+  sha256: string;
+  size: number;
+  source: PageSource;
+  width: number;
+}
+
+export interface PageRuntimeIdentity {
+  deployment_identity: string;
+  inspector_memory_bytes: number;
+  inspector_sha256: string;
+  inspector_version: string;
+  limiter_sha256: string;
+  limiter_version: string;
+  max_axis: number;
+  max_diagnostic_bytes: number;
+  max_geometry_bytes: number;
+  max_output_bytes: number;
+  max_pages: number;
+  max_pixels: number;
+  max_source_bytes: number;
+  memory_enforcement: string;
+  phase_seconds: number;
+  platform: string;
+  renderer_memory_bytes: number;
+  renderer_sha256: string;
+}
+
+export interface PageRendererIdentity {
+  executable: string;
+  options: string[];
+  runtime?: PageRuntimeIdentity;
+  version: string;
+}
+
+export interface PageRecipeV1 {
+  contract: string;
+  dpi: number;
+  format: string;
+  renderer_identity: PageRendererIdentity;
+}
+
+export interface PageRecipeView {
+  recipe: PageRecipeV1;
+  sha256: string;
+}
+
+export interface PageInventory {
+  frames: PageFrameView[];
+  images: PageImageV1[];
+  page_count: number;
+  recipes: PageRecipeView[];
+  source: PageSource;
+}
+
+export interface PageInventoryResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  inventory: PageInventory;
+  runtime_available: boolean;
+}
+
+export interface PageJobRequest {
+  dpi: number;
+  node_id: number;
+  pages: number[];
+  revision: number;
+  runtime_fingerprint: string;
+  source: PageSource;
+}
+
+export interface PageRenderJob {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  failure_code: string;
+  id: string;
+  request: PageJobRequest;
+  request_sha256: string;
+  results: PageImageV1[];
+  state: string;
+  updated_at: string;
+}
+
+export interface PageRenderRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 0
+     * @maximum 1000000
+     */
+  dpi?: number;
+  operation_id: string;
+  /**
+     * @minItems 1
+     * @maxItems 16
+     */
+  pages: number[];
+  selection: PageBinding;
+}
+
+export interface PageSelectionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  selection: PageBinding;
+}
+
 export interface PreviewAuditEnrollmentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4508,6 +4673,44 @@ limit?: number;
  * Opaque next_cursor returned by this preflight's previous diagnostic page
  */
 cursor?: string;
+};
+
+export type ReadPageImageParams = {
+/**
+ * @minimum 1
+ */
+node_id?: number;
+/**
+ * @minimum 1
+ */
+revision?: number;
+version_id?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+source_sha256?: string;
+/**
+ * @minimum 1
+ * @maximum 67108864
+ */
+source_size?: number;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+page?: number;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+recipe_sha256?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+frame_sha256?: string;
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+image_sha256?: string;
 };
 
 export type ResolvePathParams = {
@@ -7590,6 +7793,191 @@ export const readPackagePreflightDiagnostics = async (preflightId: string,
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getReadPageImageUrl = (params?: ReadPageImageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/pages/image?${stringifiedParams}` : `/api/v1/pages/image`
+}
+
+/**
+ * @summary Read verified PNG bytes for an exact retained page receipt
+ */
+export const readPageImage = async (params?: ReadPageImageParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+  return sessionJSON<Blob>(getReadPageImageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getPageInventoryUrl = () => {
+
+
+
+
+  return `/api/v1/pages/inventory`
+}
+
+/**
+ * @summary Read physical frames and retained exact-version page images
+ */
+export const pageInventory = async (pageSelectionRequest: NonReadonly<PageSelectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PageInventoryResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PageInventoryResponse>(getPageInventoryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getCreatePageRenderJobUrl = () => {
+
+
+
+
+  return `/api/v1/pages/jobs`
+}
+
+/**
+ * @summary Request a bounded explicit set of verified page images
+ */
+export const createPageRenderJob = async (pageRenderRequest: NonReadonly<PageRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PageRenderJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PageRenderJob>(getCreatePageRenderJobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(pageRenderRequest)
+  }
+);}
+
+
+
+export const getGetPageRenderJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/pages/jobs/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a render job bound to the exact selected source
+ */
+export const getPageRenderJob = async (id: string,
+    pageSelectionRequest: NonReadonly<PageSelectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PageRenderJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PageRenderJob>(getGetPageRenderJobUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getCancelPageRenderJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/pages/jobs/${encodeURIComponent(String(id))}/cancel`
+}
+
+/**
+ * @summary Cancel a render job and fence late output
+ */
+export const cancelPageRenderJob = async (id: string,
+    pageSelectionRequest: NonReadonly<PageSelectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PageRenderJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(pageSelectionRequest)
   }
 );}
 

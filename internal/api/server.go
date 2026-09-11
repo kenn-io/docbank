@@ -18,6 +18,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -76,6 +77,7 @@ type Deps struct {
 	// randomness and the wall clock.
 	DocumentCursorKey []byte
 	DocumentCursorNow func() time.Time
+	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -183,6 +185,7 @@ func NewServer(d Deps) *Server {
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
 	registerRenditionTextRoutes(humaAPI, d)
+	registerPageRoutes(humaAPI, d, g)
 	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerProcessingRoutes(humaAPI, d)

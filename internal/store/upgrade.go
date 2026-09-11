@@ -77,6 +77,7 @@ var currentSchemaTables = [...]string{
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts", "package_preflights",
+	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 	"vector_index_reader_leases", "vector_index_unavailable_coverage",
 	"media_sources", "media_source_versions", "media_source_heads", "media_occurrences",

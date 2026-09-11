@@ -3979,6 +3979,247 @@ func (c *Client) ReadPackagePreflightDiagnostics(ctx context.Context, options *R
 	return responseParser(ctx, resp)
 }
 
+// ReadPageImage Read verified PNG bytes for an exact retained page receipt
+func (c *Client) ReadPageImage(ctx context.Context, options *ReadPageImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPageImageResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"frame_sha256":  {Style: "form", Explode: &[]bool{false}[0]},
+		"image_sha256":  {Style: "form", Explode: &[]bool{false}[0]},
+		"node_id":       {Style: "form", Explode: &[]bool{false}[0]},
+		"page":          {Style: "form", Explode: &[]bool{false}[0]},
+		"recipe_sha256": {Style: "form", Explode: &[]bool{false}[0]},
+		"revision":      {Style: "form", Explode: &[]bool{false}[0]},
+		"source_sha256": {Style: "form", Explode: &[]bool{false}[0]},
+		"source_size":   {Style: "form", Explode: &[]bool{false}[0]},
+		"version_id":    {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/pages/image",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPageImageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadPageImageResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadPageImageErrorResponse](resp, "ReadPageImageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/image")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PageInventory Read physical frames and retained exact-version page images
+func (c *Client) PageInventory(ctx context.Context, options *PageInventoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PageInventoryResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/pages/inventory",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PageInventoryResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PageInventoryResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PageInventoryResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PageInventoryErrorResponse](resp, "PageInventoryErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/inventory")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePageRenderJob Request a bounded explicit set of verified page images
+func (c *Client) CreatePageRenderJob(ctx context.Context, options *CreatePageRenderJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePageRenderJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/pages/jobs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePageRenderJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreatePageRenderJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePageRenderJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePageRenderJobErrorResponse](resp, "CreatePageRenderJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/jobs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPageRenderJob Read a render job bound to the exact selected source
+func (c *Client) GetPageRenderJob(ctx context.Context, options *GetPageRenderJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPageRenderJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/pages/jobs/{id}",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPageRenderJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPageRenderJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPageRenderJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPageRenderJobErrorResponse](resp, "GetPageRenderJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/jobs/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelPageRenderJob Cancel a render job and fence late output
+func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRenderJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelPageRenderJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/pages/jobs/{id}/cancel",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelPageRenderJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelPageRenderJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelPageRenderJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelPageRenderJobErrorResponse](resp, "CancelPageRenderJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/jobs/{id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -9880,6 +10121,163 @@ func (o *ReadPackagePreflightDiagnosticsRequestOptions) GetHeader() (map[string]
 	return nil, nil
 }
 
+// ReadPageImageRequestOptions is the options needed to make a request to ReadPageImage.
+type ReadPageImageRequestOptions struct {
+	Query *ReadPageImageQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPageImageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPageImageRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPageImageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPageImageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PageInventoryRequestOptions is the options needed to make a request to PageInventory.
+type PageInventoryRequestOptions struct {
+	Body *PageInventoryBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PageInventoryRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PageInventoryRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PageInventoryRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PageInventoryRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePageRenderJobRequestOptions is the options needed to make a request to CreatePageRenderJob.
+type CreatePageRenderJobRequestOptions struct {
+	Body *CreatePageRenderJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePageRenderJobRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePageRenderJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePageRenderJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePageRenderJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPageRenderJobRequestOptions is the options needed to make a request to GetPageRenderJob.
+type GetPageRenderJobRequestOptions struct {
+	PathParams *GetPageRenderJobPath
+	Body       *GetPageRenderJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPageRenderJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPageRenderJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPageRenderJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPageRenderJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CancelPageRenderJobRequestOptions is the options needed to make a request to CancelPageRenderJob.
+type CancelPageRenderJobRequestOptions struct {
+	PathParams *CancelPageRenderJobPath
+	Body       *CancelPageRenderJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelPageRenderJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelPageRenderJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelPageRenderJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -12261,6 +12659,14 @@ type ReadPackagePreflightDiagnosticsPath struct {
 	PreflightID uuid.UUID `json:"preflight_id"`
 }
 
+type GetPageRenderJobPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type CancelPageRenderJobPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
 type UnassignTagPathPath struct {
 	TagID string `json:"tag_id"`
 }
@@ -12442,6 +12848,14 @@ type RevertNodeContentBody = RevertNodeContentRequest
 type PruneNodeContentVersionsBody = VersionPruneRequest
 
 type CreatePackagePreflightBody = PackagePreflightRequest
+
+type PageInventoryBody = PageSelectionRequest
+
+type CreatePageRenderJobBody = PageRenderRequest
+
+type GetPageRenderJobBody = PageSelectionRequest
+
+type CancelPageRenderJobBody = PageSelectionRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -12652,6 +13066,18 @@ type ReadPackagePreflightDiagnosticsQuery struct {
 
 	// Cursor Opaque next_cursor returned by this preflight's previous diagnostic page
 	Cursor *string `json:"cursor,omitempty"`
+}
+
+type ReadPageImageQuery struct {
+	NodeID       *int64     `json:"node_id,omitempty"`
+	Revision     *int64     `json:"revision,omitempty"`
+	VersionID    *uuid.UUID `json:"version_id,omitempty"`
+	SourceSha256 *string    `json:"source_sha256,omitempty"`
+	SourceSize   *int64     `json:"source_size,omitempty"`
+	Page         *int64     `json:"page,omitempty"`
+	RecipeSha256 *string    `json:"recipe_sha256,omitempty"`
+	FrameSha256  *string    `json:"frame_sha256,omitempty"`
+	ImageSha256  *string    `json:"image_sha256,omitempty"`
 }
 
 type ResolvePathQuery struct {
@@ -13066,6 +13492,26 @@ type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON422 a
 type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON500 api.Error
 
 type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ReadPageImageResponse = []byte
+
+type ReadPageImageErrorResponse = Error
+
+type PageInventoryResponseJSON = api.PageInventoryResponse
+
+type PageInventoryErrorResponse = Error
+
+type CreatePageRenderJobResponse = store.PageRenderJob
+
+type CreatePageRenderJobErrorResponse = Error
+
+type GetPageRenderJobResponse = store.PageRenderJob
+
+type GetPageRenderJobErrorResponse = Error
+
+type CancelPageRenderJobResponse = store.PageRenderJob
+
+type CancelPageRenderJobErrorResponse = Error
 
 type ResolvePathResponse = api.Node
 
@@ -13815,6 +14261,38 @@ type PackagePreflight = api.PackagePreflight
 type PackagePreflightRequest = api.PackagePreflightRequest
 
 type PackageVolume = api.PackageVolume
+
+type PageBinding = store.PageBinding
+
+type PageFrameV1 = document.PageFrameV1
+
+type PageFrameView = store.PageFrameView
+
+type PageImageV1 = document.PageImageV1
+
+type PageInventory = store.PageInventory
+
+type PageInventoryResponse = api.PageInventoryResponse
+
+type PageJobRequest = store.PageJobRequest
+
+type PageRational = document.PageRational
+
+type PageRecipeV1 = document.PageRecipeV1
+
+type PageRecipeView = store.PageRecipeView
+
+type PageRenderJob = store.PageRenderJob
+
+type PageRenderRequest = api.PageRenderRequest
+
+type PageRendererIdentity = document.PageRendererIdentity
+
+type PageRuntimeIdentity = document.PageRuntimeIdentity
+
+type PageSelectionRequest = api.PageSelectionRequest
+
+type PageSource = document.PageSource
 
 type PendingFormatV1 = document.PendingFormatV1
 
