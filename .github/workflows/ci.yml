@@ -53,19 +53,8 @@ jobs:
           node --test scripts/docs/*.test.mjs
           make docs-build
 
-      - name: Verify Vercel upload boundary
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          if [ -z "$VERCEL_TOKEN" ]; then
-            echo "VERCEL_TOKEN must be configured for trusted main-branch documentation checks" >&2
-            exit 1
-          fi
-          npm install --global vercel@58.4.4
-          mkdir -p .superpowers
-          vercel deploy --dry --json --project docbank.ai --scope kenn-software --token "$VERCEL_TOKEN" > .superpowers/vercel-dry-run.json
-          node scripts/docs/assert-vercel-dry-run.mjs .superpowers/vercel-dry-run.json
+      - name: Verify documentation upload inputs locally
+        run: node scripts/docs/check-upload-inputs.mjs
 
       - name: Verify documentation in Chromium and WebKit
         run: |

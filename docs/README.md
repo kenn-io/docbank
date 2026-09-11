@@ -129,10 +129,10 @@ the release policy from `main` before the protected production job receives
 the validated SHA. It has no automatic push, pull-request, tag, or release
 trigger.
 
-Pull-request documentation checks never receive Vercel credentials.
-CI's authenticated upload dry run runs only after a trusted push to `main` and
-requires the repository `VERCEL_TOKEN` secret. The production wrapper repeats
-that check before upload. Production deployment requires
+CI checks local files selected by `.vercelignore` against the upload allowlist
+and 10 MiB limit. This check runs on pull requests and `main` without Vercel
+credentials or API calls. The production wrapper checks Vercel's actual dry-run
+report before upload. Production deployment requires
 the `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` secrets on the
 protected `production` environment.
 
