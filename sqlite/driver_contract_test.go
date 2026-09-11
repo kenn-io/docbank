@@ -57,6 +57,7 @@ func TestModerncDriverContract(t *testing.T) {
 
 func exerciseDriverContract(t *testing.T, driver docsqlite.Driver) driverObservations {
 	t.Helper()
+	exerciseQueryFunctions(t, driver)
 	var observations driverObservations
 
 	observations.name = driver.Name()

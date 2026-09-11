@@ -16,11 +16,18 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
-	Title  string   `json:"title"`
-	Status int      `json:"status"`
-	Detail string   `json:"detail,omitzero"`
-	Code   string   `json:"code,omitzero"`
-	Errors []string `json:"errors,omitempty"`
+	Title    string         `json:"title"`
+	Status   int            `json:"status"`
+	Detail   string         `json:"detail,omitzero"`
+	Code     string         `json:"code,omitzero"`
+	Errors   []string       `json:"errors,omitempty"`
+	Position *ErrorPosition `json:"position,omitempty"`
+}
+
+// ErrorPosition is a half-open UTF-8 byte span in the submitted query text.
+type ErrorPosition struct {
+	Offset int `json:"offset"`
+	End    int `json:"end"`
 }
 
 func (e *Error) Error() string  { return e.Detail }
