@@ -41,10 +41,10 @@ Instructions for autonomous coding agents working in this repository.
   an unpromoted production build, verifies it and the release boundary, and
   then promotes it. The deploy path does not generate screenshots, build the
   product, run Docker, or install frontend dependencies. Pull-request jobs
-  never receive Vercel credentials; the authenticated upload dry run is a
-  trusted `main`-push check, and the manual production workflow validates its
-  requested source without credentials before entering the protected
-  environment.
+  never receive Vercel credentials; CI checks local upload inputs against
+  `.vercelignore`, the allowlist, and the size limit without calling Vercel.
+  The manual production workflow validates its requested source without
+  credentials before entering the protected environment.
 
 ## Documentation
 
