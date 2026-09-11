@@ -130,8 +130,9 @@ not change text-search results or automatically collapse them.
 ## Save complete query intent over HTTP
 
 Save a named search definition when several clients need to reuse it. The
-HTTP API stores the definition with the vault's metadata. It does not run the
-search. Saved definitions survive backup and restore.
+saved-definition HTTP API stores the intent with the vault's metadata. A
+separate run endpoint executes a saved query. Saved definitions and run
+receipts survive backup and restore; snapshot rows do not.
 
 A query payload uses `QueryV1`: a JSON object with version `v: 1`, search text,
 filters, and optional syntax, mode, and sort choices. A saved mode such as
@@ -202,14 +203,69 @@ revision rules as a query.
 
 ### What are the saved-definition limits?
 
-The CLI, web application, and TUI have no saved-definition management screen
-or command. The HTTP endpoints do not execute saved queries, render
-highlights, or return result counts.
+The web application manages saved definitions. The CLI and TUI have no matching
+management command or screen. Definition CRUD does not execute saved queries,
+render highlights, or return result counts; use the saved-query run endpoint
+for execution.
 
 Once permanent audit history is enabled anywhere in the vault, create, update,
 and delete return `409 audit_mutation_unsupported`. Listing and reading still
 work. See [Permanent audited history](audited-history.md) before enabling it
 in a vault that needs editable saved definitions.
+
+## Run an exact query over HTTP
+
+Create a daemon-lifetime snapshot when you need the complete QueryV1 contract,
+exact totals, and stable pages while the live vault keeps changing:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"query":{"v":1,"syntax":"advanced","text":"name:(budget OR forecast) AND NOT extension:tmp","filters":{"paths":["/projects/example"]},"sort":{"field":"name","direction":"asc"}},"page_size":50,"facets":["extension","tags"]}' \
+  "$DOCBANK_URL/api/v1/workspace/queries"
+```
+
+The response contains the first rows, exact `total` and `total_bytes`, and a
+`snapshot_id`. When `next_cursor` is present, send it back unchanged with the
+returned snapshot ID:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"cursor":"<next-cursor>"}' \
+  "$DOCBANK_URL/api/v1/workspace/queries/<snapshot-id>/pages"
+```
+
+Do not rebuild a cursor or add query, filter, facet, or page-size overrides to
+a page request. A missing `next_cursor` means there is no next page. Rows,
+ordering, totals, and original node/content versions remain fixed even if the
+vault changes after creation.
+
+To execute a saved query, first read its current definition and keep its ETag.
+Then run exactly that inspected revision; the request body can change execution
+options but cannot replace the saved QueryV1 payload:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  -H 'If-Match: "<saved-query-revision>"' \
+  -H 'Content-Type: application/json' \
+  --data '{"page_size":100,"facets":["collections","text_coverage"]}' \
+  "$DOCBANK_URL/api/v1/saved-queries/<saved-query-id>/runs"
+```
+
+The `{run,snapshot}` response includes a durable receipt comparing this run
+with the previous one and the first ephemeral snapshot page. A receipt proves
+what ran and its exact totals; it cannot restore the rows. If paging returns
+`410 snapshot_gone`, explicitly create a new workspace snapshot or run the
+saved query again, then use only the new snapshot's cursors.
+
+Snapshot execution supports duplicate and text-coverage constraints. Supply a
+configured `profile` when the query uses text coverage. Semantic and hybrid
+modes and relevance ordering remain unsupported. The current web query editor
+manages and validates complete drafts but does not render snapshot pages.
 
 ## Preview a field-aware query
 
@@ -226,8 +282,9 @@ as a structured filter. Suggestions require an explicit action and leave live
 search unchanged.
 
 The editor validates intent only. It never sends an unsupported query through
-ordinary live search with constraints removed. **Run query** is unavailable
-until a route can honor the full query contract.
+ordinary live search with constraints removed. **Run query** remains
+unavailable in the current editor; independent HTTP clients use the snapshot
+workflow above.
 
 `POST /api/v1/queries/parse` validates a QueryV1 expression and resolves its
 references. It returns `query`, `query_fingerprint`, and `dependencies`, each
@@ -280,9 +337,10 @@ supported.
 Structured filter dimensions combine with `AND`. Values within one include
 list combine with `OR`; an exclude list removes that union. Paths are subtree
 constraints, not wildcard patterns. Collection unions do not duplicate files.
-Time comparisons retain nanosecond precision. Preview supports lexical mode;
-semantic/hybrid mode, relevance ordering, duplicate constraints, and text
-coverage constraints return explicit errors instead of being ignored.
+Time comparisons retain nanosecond precision. Preview and snapshot execution
+support duplicate and text-coverage constraints; snapshot execution requires a
+configured processing profile for coverage predicates. Semantic/hybrid mode
+and relevance ordering return explicit errors instead of being ignored.
 
 Expression errors return `422 invalid_query` with `position.offset` and
 `position.end`: a half-open UTF-8 byte span in the submitted text. Database

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -153,6 +154,23 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			t.Cleanup(server.Close)
 			httpServer := httptest.NewServer(server.Handler())
 			t.Cleanup(httpServer.Close)
+			createSnapshot := func() api.WorkspaceQueryResponse {
+				t.Helper()
+				req, err := http.NewRequest(http.MethodPost,
+					httpServer.URL+"/api/v1/workspace/queries",
+					bytes.NewBufferString(`{"query":{"text":"renditiononlyneedle"},"profile":"archive","page_size":50}`))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Api-Key", cfg.Server.APIKey)
+				response, err := httpServer.Client().Do(req)
+				require.NoError(t, err)
+				defer func() { _ = response.Body.Close() }()
+				var page api.WorkspaceQueryResponse
+				require.Equal(t, http.StatusOK, response.StatusCode)
+				require.NoError(t, json.UnmarshalRead(response.Body, &page))
+				require.True(t, page.Snapshot)
+				return page
+			}
 			read := func(path string, out any) {
 				t.Helper()
 				req, err := http.NewRequest(http.MethodGet, httpServer.URL+path, nil)
@@ -171,6 +189,8 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			hits, _, err := fixture.catalog.SearchPage(t.Context(), "renditiononlyneedle", 10)
 			require.NoError(t, err)
 			require.Empty(t, hits)
+			beforeSnapshot := createSnapshot()
+			require.Empty(t, beforeSnapshot.Rows)
 			registry := NewRenditionRuntimeRegistry()
 			require.NoError(t, registry.Register(provider.Descriptor().Fingerprint, coverageRuntime{t: t, base: provider, source: source, mode: mode}))
 			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: registry, Gate: api.NewOperationGate(), Owner: "synthetic-coverage", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
@@ -192,9 +212,89 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			if mode == "complete" || mode == "partial" {
 				require.Len(t, hits, 1)
 				assert.Equal(t, node.ID, hits[0].Node.ID)
+				afterSnapshot := createSnapshot()
+				require.Len(t, afterSnapshot.Rows, 1)
+				require.Equal(t, node.CurrentVersionID, afterSnapshot.Rows[0].ContentVersionID)
+				if mode == "complete" {
+					proveSnapshotReplacementAndRetainedFailure(
+						t, fixture, node, profile, provider, createSnapshot, afterSnapshot,
+					)
+				}
 			} else {
 				assert.Empty(t, hits)
+				require.Empty(t, createSnapshot().Rows)
 			}
 		})
 	}
+}
+
+func proveSnapshotReplacementAndRetainedFailure(
+	t *testing.T,
+	fixture publicationFixture,
+	node store.Node,
+	profile store.ProcessingProfileRecord,
+	provider *workerProvider,
+	createSnapshot func() api.WorkspaceQueryResponse,
+	frozen api.WorkspaceQueryResponse,
+) {
+	t.Helper()
+	replace := func(label string) (store.Node, []byte, blob.WriteReceipt) {
+		t.Helper()
+		pdf := fpdf.New("P", "mm", "A4", "")
+		pdf.SetCompression(false)
+		pdf.AddPage()
+		pdf.SetFont("Arial", "", 12)
+		pdf.Cell(50, 10, "Synthetic replacement "+label)
+		var encoded bytes.Buffer
+		require.NoError(t, pdf.Output(&encoded))
+		source := encoded.Bytes()
+		require.NotContains(t, string(source), "renditiononlyneedle")
+		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
+		require.NoError(t, err)
+		updated, _, err := fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision,
+			receipt.Hash, receipt.Size, "application/pdf", processingBlobPhysical(t, receipt))
+		require.NoError(t, err)
+		node = updated
+		return updated, source, receipt
+	}
+	runWorker := func(current store.Node, source []byte, receipt blob.WriteReceipt, mode string) {
+		t.Helper()
+		request := workerJobRequest(current.CurrentVersionID, profile, provider.Descriptor())
+		request.ExecutionIdentity.Upload.SHA256 = receipt.Hash
+		request.ExecutionIdentity.Upload.ByteLength = receipt.Size
+		request.ExecutionIdentity.Authorization.SourceSHA256 = receipt.Hash
+		request.ExecutionIdentity.Authorization.SourceBytes = receipt.Size
+		grantWorkerConsent(t, fixture.catalog, request)
+		_, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+		require.NoError(t, err)
+		registry := NewRenditionRuntimeRegistry()
+		require.NoError(t, registry.Register(provider.Descriptor().Fingerprint,
+			coverageRuntime{t: t, base: provider, source: source, mode: mode}))
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{
+			Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: registry,
+			Gate: api.NewOperationGate(), Owner: "synthetic-snapshot-replacement",
+			LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+		})
+		require.NoError(t, err)
+		processed, err := worker.RunOne(t.Context())
+		require.NoError(t, err)
+		require.True(t, processed)
+	}
+
+	originalVersion := node.CurrentVersionID
+	failedNode, failedSource, failedReceipt := replace("failed")
+	require.NotEqual(t, originalVersion, failedNode.CurrentVersionID)
+	require.Empty(t, createSnapshot().Rows, "a replacement has no inherited old-version rendition")
+	runWorker(failedNode, failedSource, failedReceipt, "failed")
+	require.Empty(t, createSnapshot().Rows, "failed replacement processing cannot become searchable")
+	require.Len(t, frozen.Rows, 1)
+	require.Equal(t, originalVersion, frozen.Rows[0].ContentVersionID,
+		"the already-published snapshot retains its exact old version")
+
+	completedNode, completedSource, completedReceipt := replace("complete")
+	runWorker(completedNode, completedSource, completedReceipt, "complete")
+	refreshed := createSnapshot()
+	require.Len(t, refreshed.Rows, 1)
+	require.Equal(t, completedNode.CurrentVersionID, refreshed.Rows[0].ContentVersionID)
+	require.NotEqual(t, originalVersion, refreshed.Rows[0].ContentVersionID)
 }

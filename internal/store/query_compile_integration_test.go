@@ -165,3 +165,33 @@ func TestCompiledQuerySQLiteCurrentRenditionGeneration(t *testing.T) {
 		return nil
 	}))
 }
+
+// Relation-backed predicates compile successfully but cannot be executed via
+// the legacy predicate-only Bind surface without the shared relation bindings.
+func TestCompiledQuerySQLiteRequiresPopulationRelations(t *testing.T) {
+	s := newTestStore(t)
+	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("relation-shared"), 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(t.Context(), s.RootID(), "second.txt", first.BlobHash, first.Size, first.MimeType)
+	require.NoError(t, err)
+	compiled := compileFixtureQuery(t, s, `has_duplicates:true`, query.Filters{})
+	_, _, err = compiled.Bind("", "")
+	require.ErrorContains(t, err, "matched population bindings")
+
+	population, err := matchedPopulation(compiled, "", "")
+	require.NoError(t, err)
+	statement, args, err := bindQueryPopulation(population, CoverageSelection{}, "")
+	require.NoError(t, err)
+	rows, err := s.db.Query(statement, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var got []int64
+	for rows.Next() {
+		var nodeID int64
+		var versionID string
+		require.NoError(t, rows.Scan(&nodeID, &versionID))
+		got = append(got, nodeID)
+	}
+	require.NoError(t, rows.Err())
+	require.ElementsMatch(t, []int64{first.ID, second.ID}, got)
+}

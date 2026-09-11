@@ -210,6 +210,21 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			createV090Fixture(t, dbPath, test.driver)
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			var count int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM saved_query_runs`).Scan(&count))
+			assert.Zero(t, count)
+		})
+	}
+}
+
 func TestOpenRejectsUnreleasedSchemaEightWithoutCutover(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {

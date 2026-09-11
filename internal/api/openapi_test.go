@@ -163,6 +163,56 @@ func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
 	assert.Equal(t, 256, *record.Properties["name"].MaxLength)
 }
 
+func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	create := doc.Paths["/api/v1/workspace/queries"].Post
+	page := doc.Paths["/api/v1/workspace/queries/{id}/pages"].Post
+	run := doc.Paths["/api/v1/saved-queries/{saved_query_id}/runs"].Post
+	require.NotNil(t, create)
+	require.NotNil(t, page)
+	require.NotNil(t, run)
+	assert.Equal(t, "createWorkspaceQuery", create.OperationID)
+	assert.Equal(t, "readWorkspaceQueryPage", page.OperationID)
+	assert.Equal(t, "runSavedQuery", run.OperationID)
+	required := map[string]bool{}
+	for _, parameter := range run.Parameters {
+		required[parameter.Name] = parameter.Required
+	}
+	assert.True(t, required["If-Match"])
+
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["WorkspaceQueryCreateRequest"]
+	require.NotNil(t, request)
+	assert.Contains(t, request.Required, "query")
+	assert.Equal(t, 100, request.Properties["page_size"].Default)
+	queryBody := resolveOpenAPISchema(t, schemas, request.Properties["query"])
+	assert.Contains(t, queryBody.Properties, "filters")
+	assert.NotContains(t, queryBody.Properties, "terms", "workspace creation accepts QueryV1, not highlight payloads")
+
+	response := schemas["WorkspaceQueryResponse"]
+	require.NotNil(t, response)
+	rows := resolveOpenAPISchema(t, schemas, response.Properties["rows"])
+	require.NotNil(t, rows.MaxItems)
+	assert.Equal(t, 250, *rows.MaxItems)
+	dependency := schemas["WorkspaceQueryDependency"]
+	require.NotNil(t, dependency)
+	assert.ElementsMatch(t, []string{"id", "kind", "revision"}, dependency.Required)
+	for _, field := range []string{"Kind", "ID", "Revision"} {
+		assert.NotContains(t, dependency.Properties, field)
+	}
+
+	facets := resolveOpenAPISchema(t, schemas, response.Properties["facets"])
+	facet := resolveOpenAPISchema(t, schemas, facets.Items)
+	values := resolveOpenAPISchema(t, schemas, facet.Properties["values"])
+	require.NotNil(t, values.MaxItems)
+	assert.Equal(t, 114, *values.MaxItems)
+	for _, field := range []string{"total", "missing", "other"} {
+		require.Len(t, facet.Properties[field].AnyOf, 2, field)
+		assert.Equal(t, "null", facet.Properties[field].AnyOf[1].Type, field)
+		assert.Nil(t, facet.Properties[field].Default, field)
+	}
+}
+
 func resolveOpenAPISchema(
 	t *testing.T, schemas map[string]*huma.Schema, schema *huma.Schema,
 ) *huma.Schema {

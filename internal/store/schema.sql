@@ -1218,6 +1218,28 @@ CREATE TABLE IF NOT EXISTS saved_queries (
     updated_at  TEXT NOT NULL
 );
 
+-- Saved run receipts retain comparison evidence while snapshot rows remain
+-- daemon-local. Evolving receipt policy is validated in Go, not SQL checks.
+CREATE TABLE IF NOT EXISTS saved_query_runs (
+    run_id                     TEXT PRIMARY KEY NOT NULL,
+    saved_query_id             TEXT NOT NULL REFERENCES saved_queries(id) ON DELETE CASCADE,
+    saved_query_revision       INTEGER NOT NULL,
+    query_fingerprint          TEXT NOT NULL,
+    snapshot_id                TEXT NOT NULL,
+    member_hash                TEXT NOT NULL,
+    total                      INTEGER NOT NULL,
+    total_bytes                INTEGER NOT NULL,
+    ran_at                     TEXT NOT NULL,
+    expires_at                 TEXT NOT NULL,
+    previous_run_id            TEXT,
+    previous_member_hash       TEXT,
+    previous_total             INTEGER,
+    previous_query_fingerprint TEXT
+);
+
+CREATE INDEX IF NOT EXISTS saved_query_runs_definition
+    ON saved_query_runs(saved_query_id, ran_at DESC);
+
 -- Canonical full-audit records are immutable content-addressed authority. The
 -- digest is over Docbank's typed canonical audit encoding, never the JSON
 -- spelling retained here for deterministic metadata-v1 transport.

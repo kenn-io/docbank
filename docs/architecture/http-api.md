@@ -47,7 +47,10 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
+| `POST /saved-queries/{saved_query_id}/runs` | execute one revision-fenced saved query and return its durable run receipt with the first snapshot page | Implemented |
 | `POST /queries/parse` | validate complete QueryV1 intent and resolve dependency revisions without executing a search | Implemented |
+| `POST /workspace/queries` | execute complete QueryV1 intent and return the first page of one exact bounded result snapshot | Implemented |
+| `POST /workspace/queries/{id}/pages` | read another page from an existing query snapshot with its opaque cursor | Implemented |
 | `POST /audit/preview` · `POST /audit/enable` · `GET /audit/status` | review permanent first-scope retention, enable the exact reviewed plan, and inspect authority or membership | Implemented |
 | `GET /audit/history?path=&node_id=&limit=&cursor=` | read one audited node's canonical newest-first event timeline with a stable continuation cursor | Implemented |
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
@@ -101,6 +104,71 @@ Missing references, including negative tag and collection operands, fail with
 half-open UTF-8 byte `offset` and `end`. Backend failures remain server errors.
 See [query grammar and limits](../usage/searching.md#preview-a-field-aware-query).
 Existing `/search` requests do not gain advanced syntax through this endpoint.
+
+### Exact query snapshots
+
+`POST /workspace/queries` executes one strict QueryV1 payload and returns HTTP
+200 with its first page. The request accepts `query`, an optional configured
+processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
+explicit subset of `collections`, `tags`, `media_family`, `extension`,
+`modified`, `size`, `text_coverage`, and `duplicates` facets.
+
+The response freezes the canonical query, dependency revisions, selected
+lexical generation and processing coverage, ordered row metadata, and exact
+node/content-version membership observed at creation. It also carries exact
+`total` and `total_bytes` values, `member_hash`, `snapshot_fingerprint`,
+`snapshot_id`, and creation and expiry times. Later edits, moves, tag changes,
+content replacements, or dependency changes do not rewrite an existing
+snapshot. Create another snapshot to observe them.
+
+`POST /workspace/queries/{id}/pages` accepts only the required `cursor`. Send
+the returned `next_cursor` or `previous_cursor` unchanged; it is bound to the
+snapshot, owner, ordering, direction, and page size. The response omits a
+directional cursor when no page exists in that direction. An empty snapshot
+therefore needs no page request.
+
+Requested facets use the same creation-time read snapshot. A facet omits only
+its matching outer structured filter so clients can see alternative values;
+expression operands and nested saved-query scope stay in force. `total` counts
+distinct documents in that self-excluded population, `missing` counts documents
+without a value, and `other` sums value counts omitted from the response. A
+document with several tags or collections contributes once to each value, so
+those value counts need not sum to `total`.
+
+Each available facet retains its leading 50 values plus selected QueryV1 values
+outside that set, including a selected value whose count is zero. Size uses the
+fixed `<1 MiB`, 1–10 MiB, 10–100 MiB, 100 MiB–1 GiB, and `>=1 GiB` buckets;
+modification time uses UTC calendar-month buckets. Fixed categorical facets
+include their defined zero-count buckets. A facet that cannot be computed
+within its coverage, member, or time budget returns `available: false` with a
+`reason` and omits count fields; it is not a successful zero.
+
+Materialization admits at most 250,000 rows and 64 KiB of serialized data per
+row. Across the daemon, the cache admits at most 1,000,000 rows and 512 MiB of
+serialized snapshot data, with at most eight handles per authenticated owner
+and two builders at once. A build has 30 seconds; all requested facets share a
+five-second facet budget. Handles expire after 15 minutes idle or 30 minutes
+absolute lifetime. These are cache-admission bounds, not a claim that the
+process uses at most 512 MiB of RSS.
+
+Snapshot ownership follows authentication. A browser token can read only its
+own handles, and revoking the browser session invalidates them. Master-key
+requests share the daemon's master owner. All handles are daemon-lifetime
+cache state and disappear on restart or shutdown.
+
+`POST /saved-queries/{saved_query_id}/runs` executes the saved query revision
+named by `If-Match`. Its body accepts only `profile`, `page_size`, and `facets`;
+it cannot replace the saved QueryV1 payload. The response is
+`{run,snapshot}`. `run` durably records the definition revision, fingerprints,
+exact totals, expiry, and comparison with the previous run. The accompanying
+snapshot rows remain ephemeral: backup and restore retain the receipt but do
+not reconstruct rows or silently rerun the query. Run the saved query again
+explicitly after `410 snapshot_gone`.
+
+Snapshot execution supports duplicate and text-coverage constraints.
+Text-coverage predicates require a configured processing profile. Semantic and
+hybrid modes and relevance ordering remain unsupported and return positioned
+`422 invalid_query` errors.
 
 ### Saved query and highlight definitions
 
@@ -171,11 +239,11 @@ returns `201`; update and delete return `200` with the resulting or deleted
 definition and its ETag. Saved definitions are included in metadata backup and
 restore.
 
-These endpoints store intent. They do not execute a query, translate QueryV1
-into the current `/search` query string, read document content, render
-highlights, or return result counts. Query text is preserved exactly, including
-quotes, parentheses, and Boolean operators, for an executor that understands
-the saved format.
+These definition endpoints store intent. They do not execute a query,
+translate QueryV1 into the current `/search` query string, read document content, render
+highlights, or return result counts. The separate `/runs` endpoint above
+executes a saved query. Query text is preserved exactly, including quotes,
+parentheses, and Boolean operators.
 
 Once audit authority is enabled for a vault, saved-definition reads remain
 available but create, update, and delete return `409
@@ -386,6 +454,7 @@ and maintenance are explicit exceptions:
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required — tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required — saved-definition revision |
+| `POST /saved-queries/{saved_query_id}/runs` | required — executes exactly the saved definition revision the caller inspected |
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
@@ -916,6 +985,14 @@ include a `position` span:
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `invalid_saved_query` | 422 | saved name, description, kind, payload, or patch violates the saved-definition contract |
 | `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |
+| `invalid_cursor` | 400 | malformed, tampered, wrong-direction, or otherwise invalid snapshot cursor |
+| `snapshot_gone` | 410 | snapshot is missing, expired, revoked, owned by another session, or lost with its daemon |
+| `snapshot_capacity` | 429 | bounded snapshot cache admission could not reserve the requested rows or serialized bytes |
+| `snapshot_busy` | 429 | both bounded snapshot builders are already occupied |
+| `snapshot_too_large` | 413 | one materialization exceeded its row, per-row, or serialized-size bound |
+| `snapshot_unavailable` | 503 | snapshot materialization exceeded its build deadline |
+| `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
+| `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
