@@ -1809,3 +1809,85 @@ func TestEmbeddedProcessingRejectsRenamedConsent(t *testing.T) {
 		})
 	}
 }
+
+func TestEmbeddedProcessingWaitsForBackupFreeze(t *testing.T) {
+	for _, rendition := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rendition=%t", rendition), func(t *testing.T) {
+			embedding := newSyntheticEmbeddingProvider(t)
+			profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+			config := docbank.ProcessingProfileConfig{Profile: profile}
+			if rendition {
+				plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+				require.NoError(t, err)
+				config.RenditionProvider = plain
+			} else {
+				config.Profile.Rendition = nil
+				config.Profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+				config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(embedding.descriptor)}
+				config.EmbeddingProviders = map[string]document.EmbeddingProvider{"direct": embedding}
+			}
+			root := t.TempDir()
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic freeze source"), docbank.PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+			plan, err := vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backup"))
+			require.NoError(t, err)
+			held, releaseCh := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(releaseCh) })
+			backupDone := make(chan struct{})
+			var backupErr error
+			go func() {
+				defer close(backupDone)
+				_, backupErr = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{Prepare: func(ctx context.Context) error {
+					close(held)
+					select {
+					case <-releaseCh:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}})
+			}()
+			t.Cleanup(func() { release(); <-backupDone })
+			select {
+			case <-held:
+			case <-backupDone:
+				t.Fatalf("backup returned before freeze: %v", backupErr)
+			}
+			done := make(chan struct{})
+			var runErr error
+			go func() {
+				defer close(done)
+				_, runErr = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+			}()
+			t.Cleanup(func() { release(); <-done })
+			var grants, jobs int
+			require.Never(t, func() bool {
+				err := db.QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM processing_consent_grants),(SELECT COUNT(*) FROM rendition_jobs)+(SELECT COUNT(*) FROM embedding_jobs)").Scan(&grants, &jobs)
+				require.NoError(t, err)
+				return grants > 0 || jobs > 0
+			}, 100*time.Millisecond, 10*time.Millisecond, "processing writes must wait for the backup freeze to end")
+			select {
+			case <-done:
+				t.Fatalf("worker finished while backup freeze held: %v", runErr)
+			default:
+			}
+			release()
+			<-backupDone
+			<-done
+			require.NoError(t, backupErr)
+			require.NoError(t, runErr)
+			if !rendition {
+				require.Equal(t, int32(1), embedding.calls.Load())
+			}
+		})
+	}
+}

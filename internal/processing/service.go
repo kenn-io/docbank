@@ -385,24 +385,29 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 		return Job{}, ErrConsentRequired
 	}
 	principal, scope := "embedded:operator", "document-processing"
-	for _, binding := range profile.portable.Embeddings {
-		_, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
-			Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
-			DisclosureFingerprint:   binding.DisclosureFingerprint,
-			InputClasses:            []string{string(binding.InputKind)},
-			RetainedArtifactClasses: []string{"embedding_vector_set"}})
-		if err != nil {
-			return Job{}, err
-		}
-		if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
-			_, err = service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
+	if err := service.gate.MutateContext(ctx, func() error {
+		for _, binding := range profile.portable.Embeddings {
+			_, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
 				Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
-				DisclosureFingerprint: binding.DisclosureFingerprint,
-				InputClasses:          []string{"query_text"}, RetainedArtifactClasses: []string{}})
+				DisclosureFingerprint:   binding.DisclosureFingerprint,
+				InputClasses:            []string{string(binding.InputKind)},
+				RetainedArtifactClasses: []string{"embedding_vector_set"}})
 			if err != nil {
-				return Job{}, err
+				return err
+			}
+			if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				_, err = service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
+					Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
+					DisclosureFingerprint: binding.DisclosureFingerprint,
+					InputClasses:          []string{"query_text"}, RetainedArtifactClasses: []string{}})
+				if err != nil {
+					return err
+				}
 			}
 		}
+		return nil
+	}); err != nil {
+		return Job{}, err
 	}
 	processingJobID, renditionJobID := "", ""
 	if profile.portable.Rendition != nil {
@@ -464,20 +469,26 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		return renditionRun{}, errors.New("planned rendition execution differs from executable runtime")
 	}
 	retained := retainedRenditionClasses(profile.portable)
-	if _, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
-		Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
-		DisclosureFingerprint: profile.record.RenditionDisclosureFingerprint,
-		InputClasses:          []string{string(document.RenditionInputOriginalFile)}, RetainedArtifactClasses: retained,
-	}); err != nil {
-		return renditionRun{}, err
-	}
-	job, waiter, err := service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
-		ContentVersionID: version.ID, Profile: profile.record,
-		CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity,
-		Authorization: store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
-			ProfileFingerprint:    profile.record.Fingerprint,
+	var job store.RenditionJob
+	var waiter store.RenditionJobWaiter
+	err = service.gate.MutateContext(ctx, func() error {
+		if _, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
+			Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
 			DisclosureFingerprint: profile.record.RenditionDisclosureFingerprint,
-			InputClasses:          []string{string(document.RenditionInputOriginalFile)}, RetainedArtifactClasses: retained},
+			InputClasses:          []string{string(document.RenditionInputOriginalFile)}, RetainedArtifactClasses: retained,
+		}); err != nil {
+			return err
+		}
+		var enqueueErr error
+		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
+			ContentVersionID: version.ID, Profile: profile.record,
+			CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity,
+			Authorization: store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
+				ProfileFingerprint:    profile.record.Fingerprint,
+				DisclosureFingerprint: profile.record.RenditionDisclosureFingerprint,
+				InputClasses:          []string{string(document.RenditionInputOriginalFile)}, RetainedArtifactClasses: retained},
+		})
+		return enqueueErr
 	})
 	if err != nil {
 		return renditionRun{}, err
@@ -830,10 +841,15 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		authorization := store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
-		job, enqueueErr := service.catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
-			ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
-			Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
-			Authorization: authorization,
+		var job store.EmbeddingJob
+		enqueueErr := service.gate.MutateContext(ctx, func() error {
+			var err error
+			job, err = service.catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
+				ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
+				Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
+				Authorization: authorization,
+			})
+			return err
 		})
 		if enqueueErr != nil {
 			if errors.Is(enqueueErr, store.ErrEmbeddingJobFenced) {
