@@ -74,6 +74,7 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidTag, http.StatusUnprocessableEntity, "invalid_tag"},
 	{store.ErrInvalidSavedQuery, http.StatusUnprocessableEntity, "invalid_saved_query"},
 	{store.ErrInvalidCollectionLabel, http.StatusUnprocessableEntity, "invalid_collection_label"},
+	{store.ErrInvalidDuplicatePage, http.StatusUnprocessableEntity, "invalid_duplicate_page"},
 	{store.ErrInvalidBatchMove, http.StatusUnprocessableEntity, "invalid_batch_move"},
 	{store.ErrNotTrashed, http.StatusUnprocessableEntity, "not_trashed"},
 	{store.ErrIsRoot, http.StatusUnprocessableEntity, "is_root"},

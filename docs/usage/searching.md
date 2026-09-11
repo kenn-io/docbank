@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-10
+last_edited: 2026-09-11
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -100,6 +100,32 @@ Search has no continuation cursor. When `truncated` is true, increase the
 limit or narrow the query. Time ranges alone cannot recover every result when
 more than 1,000 nodes share one modification timestamp, such as after a large
 restore.
+
+## Find documents with identical content
+
+Use authenticated `GET /api/v1/duplicates?limit=50&offset=0` to find live
+documents whose current versions share a SHA-256 content identity. A group
+requires at least two documents. Shared bytes do not mean the archive entries
+are interchangeable: each keeps its own node, version, path, and import
+memberships. This read does not delete or merge anything.
+
+The response reports exact group and current-reference totals. Groups sort by
+SHA-256; `limit` accepts 1–100 groups and defaults to 50. Increase `offset` to
+read the next page. Each page reflects one read snapshot, not a frozen result
+set across requests, so concurrent changes can affect later pages.
+
+Each group previews at most 16 references and reports `references_truncated`
+when more exist. References sort by earliest current modification time, then
+node ID; `representative_node_id` identifies the first. This choice does not
+assert which document was originally authored first. Each preview also shows
+up to 16 eligible collection identities and their labels, with an exact
+`collection_count` and `collections_truncated` flag.
+
+Historical versions and trash do not inflate live duplicate groups. To inspect
+all retained references for one hash, use `GET /api/v1/content-references` with
+`sha256`, `limit`, and `offset`. That lookup distinguishes current versions,
+live history, and trash. Duplicate discovery is a separate HTTP read; it does
+not change text-search results or automatically collapse them.
 
 ## Save complete query intent over HTTP
 

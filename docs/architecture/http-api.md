@@ -1,7 +1,7 @@
 ---
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
-last_edited: 2026-09-10
+last_edited: 2026-09-11
 ---
 
 # HTTP API
@@ -43,6 +43,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
+| `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
@@ -405,6 +406,27 @@ loose file or pack entry alone. Each item contains the complete immutable
 version, its current node projection, whether that version is the node's
 current head, and a path only while the node is live. Results are bounded and
 deterministic: live current references, live history, then trashed references.
+
+`GET /duplicates` discovers hashes shared by at least two live current file
+nodes. Its `items`, `total`, and `total_references` describe that population;
+historical versions and trash are excluded. `limit` defaults to 50 and accepts
+1–100; `offset` is nonnegative. Groups sort by canonical SHA-256, and counts
+remain exact on an exhausted page. Counts, references, paths, and collection
+labels share one read transaction per request.
+
+Each group contains `sha256`, `size`, `reference_count`,
+`representative_node_id`, `references`, and `references_truncated`. At most
+16 references are displayed in earliest `(modified_at,node_id)` order. Each
+reference wraps the existing content-reference identity in `reference`, plus
+`collections` (up to 16 distinct eligible IDs and optional labels),
+`collection_count`, and `collections_truncated`. Collection identities sort
+by ID; multiple import memberships never multiply document counts. The read
+is available to API-key clients and browser sessions. Browser access permits
+only GET on the exact route, with optional singleton `limit` and `offset`
+parameters. There is no duplicate-deletion operation.
+
+See [duplicate discovery](../usage/searching.md#find-documents-with-identical-content)
+for pagination and historical-lookup guidance.
 
 `POST /nodes/{id}/verify` is the bounded server-side proof. It requires
 `If-Match` from a prior node response, reopens the blob through the same mixed

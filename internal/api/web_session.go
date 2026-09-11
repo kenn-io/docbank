@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -234,6 +235,18 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if method != http.MethodGet {
 		return false
+	}
+	if path == "/api/v1/duplicates" {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if (key != "limit" && key != "offset") || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
 	}
 	if path == "/api/v1/collections" {
 		return true
