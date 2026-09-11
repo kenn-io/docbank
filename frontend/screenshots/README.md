@@ -23,9 +23,8 @@ an owner-private temporary vault, opens the daemon-issued browser session,
 captures the requested state, stops the daemon, and removes the vault.
 Generated images are atomically published beneath `.superpowers/screenshots/`
 for visual inspection and orphan-branch publication; the current set captures
-both move-to-trash and
-restore confirmations, the tag-definition catalog, and a completed tag
-assignment, current vault browsing, extracted-text search, retained-version
+desktop and mobile page selection, move-to-trash and restore confirmations,
+the tag-definition catalog, and a completed tag assignment, current vault browsing, extracted-text search, retained-version
 selection, packed-storage status, and independently verified permanent-audit
 evidence. Generated images are intentionally not committed to the main branch.
 

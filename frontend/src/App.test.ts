@@ -904,3 +904,329 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
   expect(await screen.findByRole("cell", { name: "Reports" })).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
 });
+
+function selectionNode(
+  id: number,
+  name: string,
+  kind: "dir" | "file",
+  parentID: number | undefined,
+  revision = 1,
+) {
+  return {
+    id,
+    parent_id: parentID,
+    name,
+    kind,
+    size: kind === "file" ? id * 10 : 0,
+    mime_type: kind === "file" ? "text/plain" : undefined,
+    current_version_id:
+      kind === "file" ? `${String(id).padStart(8, "0")}-1111-4111-8111-111111111111` : undefined,
+    blob_hash: kind === "file" ? id.toString(16).repeat(64).slice(0, 64) : undefined,
+    revision,
+    created_at: "2026-09-09T00:00:00Z",
+    modified_at: "2026-09-09T00:00:00Z",
+    path: kind === "dir" ? (id === 1 ? "/" : `/${name}`) : undefined,
+  };
+}
+
+function installSelectionBackend(rootHasFiles = true) {
+  const root = selectionNode(1, "", "dir", undefined);
+  const reports = selectionNode(2, "Reports", "dir", 1);
+  const rootFile = selectionNode(3, "readme.txt", "file", 1);
+  const alpha = selectionNode(10, "alpha.txt", "file", 2);
+  const beta = selectionNode(11, "beta.txt", "file", 2);
+  const gamma = selectionNode(12, "gamma.txt", "file", 2);
+  const tax = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 1,
+    assignment_count: 3,
+  };
+  let reportsReads = 0;
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+    async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/path?path=%2F") return json(root);
+      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+        return json({
+          directory: root,
+          items: rootHasFiles ? [reports, rootFile] : [reports],
+          total: rootHasFiles ? 2 : 1,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
+        reportsReads += 1;
+        return json({
+          directory: reports,
+          items:
+            reportsReads === 1
+              ? [alpha, beta, gamma]
+              : [{ ...alpha, revision: 7 }, gamma],
+          total: reportsReads === 1 ? 3 : 2,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url === "/api/v1/tags?limit=1000&offset=0") {
+        return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
+      }
+      if (url.startsWith("/api/v1/audit/status?node_id=")) {
+        return json({ enabled: false, scopes: [] });
+      }
+      if (/^\/api\/v1\/nodes\/\d+\/tags\?limit=1000&offset=0$/.test(url)) {
+        return json({ items: [], total: 0, limit: 1000, offset: 0 });
+      }
+      if (url === `/api/v1/tags/${tax.id}/nodes?limit=1000&offset=0&live_only=true`) {
+        return json({
+          items: [reports, alpha, rootFile].map((node) => ({
+            node,
+            path: node.path ?? (node.parent_id === 1 ? `/${node.name}` : `/Reports/${node.name}`),
+          })),
+          total: 3,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      if (url.startsWith("/api/v1/search?")) {
+        const requestedTag = new URL(`https://docbank.local${url}`).searchParams.get(
+          "tag_id",
+        );
+        return json({
+          hits: [
+            {
+              node: { ...alpha, revision: requestedTag ? 9 : 8 },
+              path: "/Reports/alpha.txt",
+              match: "name",
+            },
+          ],
+          limit: 1000,
+          truncated: false,
+          tag_id: requestedTag ?? undefined,
+        });
+      }
+      if (url === "/api/daemon/web-session" && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  );
+  return { fetchMock, getReportsReads: () => reportsReads };
+}
+
+function prepareSelectionApp(): void {
+  history.replaceState(
+    null,
+    "",
+    "/#web_session=short-lived&web_upload_secret=proof",
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+}
+
+it("selects displayed files without requests or changing the inspector, then reconciles a refresh", async () => {
+  prepareSelectionApp();
+  const { fetchMock, getReportsReads } = installSelectionBackend();
+  render(App);
+
+  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+  await screen.findByRole("checkbox", { name: "Select alpha.txt" });
+  await waitFor(() => expect(getReportsReads()).toBe(1));
+  const requestsBeforeSelection = fetchMock.mock.calls.length;
+
+  const selectVisible = screen.getByRole("checkbox", {
+    name: "Select visible documents",
+  });
+  await fireEvent.click(selectVisible);
+  expect(screen.getByText("3 selected on this page")).toBeTruthy();
+  await fireEvent.click(selectVisible);
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+  expect(fetchMock.mock.calls).toHaveLength(requestsBeforeSelection);
+
+  const alpha = screen.getByRole("checkbox", { name: "Select alpha.txt" });
+  const beta = screen.getByRole("checkbox", { name: "Select beta.txt" });
+  await fireEvent.click(alpha);
+  beta.focus();
+  await fireEvent.click(beta, { shiftKey: true });
+
+  expect(fetchMock.mock.calls).toHaveLength(requestsBeforeSelection);
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  expect(screen.getByText("2 selected on this page")).toBeTruthy();
+  expect(document.activeElement).toBe(beta);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(getReportsReads()).toBe(2));
+  expect(await screen.findByText("1 selected on this page")).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: "Select beta.txt" })).toBeNull();
+
+  const requestsAfterRefresh = fetchMock.mock.calls.length;
+  const gamma = screen.getByRole("checkbox", { name: "Select gamma.txt" });
+  gamma.focus();
+  await fireEvent.click(gamma, { shiftKey: true });
+  expect(screen.getByText("2 selected on this page")).toBeTruthy();
+  expect(document.activeElement).toBe(gamma);
+  expect(fetchMock.mock.calls).toHaveLength(requestsAfterRefresh);
+  await fireEvent.click(gamma);
+
+  expect(screen.getByText("1 selected on this page")).toBeTruthy();
+});
+
+it("clears page selection across folder, Back, query, tag-filter, and session transitions", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+
+  await screen.findByRole("checkbox", { name: "Select readme.txt" });
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select readme.txt" }),
+  );
+  expect(screen.getByText("1 selected on this page")).toBeTruthy();
+
+  await fireEvent.dblClick(screen.getByRole("cell", { name: "Reports" }));
+  await screen.findByRole("checkbox", { name: "Select alpha.txt" });
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select alpha.txt" }),
+  );
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Back to previous directory" }),
+  );
+  await screen.findByRole("checkbox", { name: "Select readme.txt" });
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select readme.txt" }),
+  );
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.submit(search.closest("form")!);
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+
+  await fireEvent.click(
+    await screen.findByRole("checkbox", { name: "Select /Reports/alpha.txt" }),
+  );
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await waitFor(() => expect(screen.queryByText(/selected on this page/)).toBeNull());
+
+  await fireEvent.click(
+    await screen.findByRole("checkbox", { name: "Select /Reports/alpha.txt" }),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
+  expect(await screen.findByText("Open your Docbank")).toBeTruthy();
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+});
+
+it("restores the tag view sort when returning from a tagged folder", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  await fireEvent.click(within(screen.getByRole("columnheader", { name: "Size" })).getByRole("button"));
+  expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe("descending");
+  await fireEvent.dblClick(screen.getByRole("cell", { name: "/Reports" }));
+  await screen.findByRole("cell", { name: "alpha.txt" });
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe("descending");
+});
+
+it("disables select-all in a folder containing only folders", async () => {
+  prepareSelectionApp();
+  installSelectionBackend(false);
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  const checkbox = screen.getByRole("checkbox", { name: "Select visible documents" }) as HTMLInputElement;
+  checkbox.click();
+  expect(checkbox.checked).toBe(false);
+  expect(checkbox.disabled).toBe(true);
+});
+
+it.each(["folder", "query", "tag"])("keeps selection when loading a new %s fails", async (destination) => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+  const backend = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/nodes/2/children?") || url.startsWith("/api/v1/search?") || url.endsWith("&live_only=true")) {
+      return new Response(JSON.stringify({ detail: "temporarily unavailable" }), { status: 503 });
+    }
+    return backend(input, init);
+  });
+  if (destination === "folder") {
+    await fireEvent.dblClick(screen.getByRole("cell", { name: "Reports" }));
+  } else if (destination === "query") {
+    const search = screen.getByRole("searchbox", { name: "Search documents" });
+    await fireEvent.input(search, { target: { value: "alpha" } });
+    await fireEvent.submit(search.closest("form")!);
+  } else {
+    await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+    await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  }
+  await screen.findByText("temporarily unavailable");
+  expect((screen.getByRole("checkbox", { name: "Select readme.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByText("1 selected on this page")).toBeTruthy();
+});
+
+it("does not carry Shift from an abandoned gesture into a later toggle", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select alpha.txt" }));
+  const gamma = screen.getByRole("checkbox", { name: "Select gamma.txt" });
+  await fireEvent.pointerDown(gamma, { shiftKey: true });
+  await fireEvent.pointerUp(gamma.closest("td")!);
+  await fireEvent.click(gamma);
+  expect((screen.getByRole("checkbox", { name: "Select beta.txt" }) as HTMLInputElement).checked).toBe(false);
+  expect(screen.getByText("2 selected on this page")).toBeTruthy();
+});
+
+it("retains tag selection on refresh and clears it when the tag disappears", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select /readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await screen.findByRole("checkbox", { name: "Select /readme.txt" });
+  expect(screen.getByText("1 selected on this page")).toBeTruthy();
+
+  const backend = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/tags?limit=1000&offset=0") {
+      return new Response(JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0 }));
+    }
+    return backend(input, init);
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await screen.findByRole("cell", { name: "readme.txt" });
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+});

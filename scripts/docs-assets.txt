@@ -1,6 +1,8 @@
 tui-multi-store-storage.png
 web-audit-evidence.png
 web-multi-store-storage.png
+web-page-selection-mobile.png
+web-page-selection.png
 web-retained-version-download.png
 web-search-results.png
 web-storage-status.png
