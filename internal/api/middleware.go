@@ -46,6 +46,9 @@ func timeoutExempt(path string) bool {
 		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
 		return true
 	}
+	if strings.HasPrefix(path, "/api/v1/exports/jobs/") && strings.HasSuffix(path, "/download") {
+		return true
+	}
 	return strings.HasPrefix(path, "/api/v1/renditions/") ||
 		(strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content")) ||
 		isEmailPartPath(path)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"go.kenn.io/kit/pack"
 )
 
 // RunPackSchedule performs one bounded pack immediately and then once per
@@ -98,7 +100,9 @@ func classifyCancellation(err error) (cancelled, independent bool) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true, false
 	}
-	if errors.Is(err, sql.ErrTxDone) {
+	// These accompany canceled transactions or streams; neither alone
+	// establishes cancellation or excuses an independent failure.
+	if errors.Is(err, sql.ErrTxDone) || errors.Is(err, pack.ErrVerificationIncomplete) {
 		return false, false
 	}
 	return false, true

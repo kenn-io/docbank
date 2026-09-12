@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -168,7 +169,7 @@ func TestRunPackSchedulePreservesJoinedRunFailure(t *testing.T) {
 				func(runCtx context.Context) (PackReport, error) {
 					calls.Add(1)
 					<-runCtx.Done()
-					return PackReport{}, errors.Join(runCtx.Err(), sentinel)
+					return PackReport{}, errors.Join(runCtx.Err(), pack.ErrVerificationIncomplete, sentinel)
 				}, nil)
 		}()
 
@@ -179,6 +180,42 @@ func TestRunPackSchedulePreservesJoinedRunFailure(t *testing.T) {
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.ErrorContains(t, err, "automatic packing")
 		assert.Equal(t, int32(1), calls.Load())
+	})
+}
+
+func TestRunPackScheduleRetriesCanceledStreamVerification(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		calls := 0
+		err := RunPackSchedule(ctx, time.Second, func(runCtx context.Context) (PackReport, error) {
+			calls++
+			if calls == 1 {
+				<-runCtx.Done()
+				// Kit joins this close result when the deadline interrupts
+				// a loose stream before verified EOF.
+				return PackReport{}, errors.Join(runCtx.Err(), pack.ErrVerificationIncomplete)
+			}
+			cancel()
+			return PackReport{}, nil
+		}, slog.New(slog.DiscardHandler))
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 2, calls)
+	})
+
+	// An incomplete read alone is terminal even when the deadline elapsed.
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		err := RunPackSchedule(t.Context(), time.Second, func(runCtx context.Context) (PackReport, error) {
+			calls++
+			if calls > 1 {
+				return PackReport{}, context.Canceled
+			}
+			<-runCtx.Done()
+			return PackReport{}, pack.ErrVerificationIncomplete
+		}, nil)
+		require.ErrorIs(t, err, pack.ErrVerificationIncomplete)
+		require.Equal(t, 1, calls)
 	})
 }
 

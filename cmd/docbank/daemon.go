@@ -216,6 +216,10 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
+	exportWorker, err := startExportWorker(jobSupervisor, s, blobs, layout.Root, operationGate)
+	if err != nil {
+		return err
+	}
 	pageRuntime, err := startPageRuntime(sigCtx, cfg, jobSupervisor, s, blobs, operationGate, logger)
 	if err != nil {
 		return err
@@ -402,6 +406,7 @@ func runServe(ctx context.Context) (retErr error) {
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
+		Exports:               exportWorker,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {

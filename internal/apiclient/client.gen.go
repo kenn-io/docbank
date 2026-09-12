@@ -11,7 +11,9 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	document "go.kenn.io/docbank/document"
+	bundle "go.kenn.io/docbank/document/bundle"
 	api "go.kenn.io/docbank/internal/api"
+	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 )
 
@@ -2020,6 +2022,455 @@ func (c *Client) ListEmailDocumentRelations(ctx context.Context, options *ListEm
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-relations")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateExportJob Admit a durable verified export job
+func (c *Client) CreateExportJob(ctx context.Context, options *CreateExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/jobs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateExportJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateExportJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateExportJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateExportJobErrorResponse](resp, "CreateExportJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetExportJob Read current durable export progress and receipt
+func (c *Client) GetExportJob(ctx context.Context, options *GetExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/jobs/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetExportJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportJobErrorResponse](resp, "GetExportJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelExportJob Cancel and fence a running export
+func (c *Client) CancelExportJob(ctx context.Context, options *CancelExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/jobs/{id}/cancel",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelExportJobErrorResponse](resp, "CancelExportJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs/{id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadExportArchive Issue a one-use ticket for a reverified archive
+func (c *Client) DownloadExportArchive(ctx context.Context, options *DownloadExportArchiveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadExportArchiveResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/jobs/{id}/download",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DownloadExportArchiveResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DownloadExportArchiveResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DownloadExportArchiveResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DownloadExportArchiveErrorResponse](resp, "DownloadExportArchiveErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs/{id}/download")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetExportJobEvents Stream current export progress for up to 30 seconds
+func (c *Client) GetExportJobEvents(ctx context.Context, options *GetExportJobEventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportJobEventsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/jobs/{id}/events",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportJobEventsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportJobEventsResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportJobEventsErrorResponse](resp, "GetExportJobEventsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs/{id}/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateExportPlan Freeze role availability and exact archive paths
+func (c *Client) CreateExportPlan(ctx context.Context, options *CreateExportPlanRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportPlanResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/plans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateExportPlanResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateExportPlanResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateExportPlanResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateExportPlanErrorResponse](resp, "CreateExportPlanErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetExportPlan Read an immutable export plan header
+func (c *Client) GetExportPlan(ctx context.Context, options *GetExportPlanRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportPlanResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/plans/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportPlanResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportPlanResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetExportPlanResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportPlanErrorResponse](resp, "GetExportPlanErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/plans/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateExportSource Freeze exact export membership or begin a chunk upload
+func (c *Client) CreateExportSource(ctx context.Context, options *CreateExportSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportSourceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/sources",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateExportSourceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateExportSourceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateExportSourceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateExportSourceErrorResponse](resp, "CreateExportSourceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/sources")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PutExportChunk Upload one idempotent exact-member chunk
+func (c *Client) PutExportChunk(ctx context.Context, options *PutExportChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/sources/{id}/chunks/{index}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PutExportChunkErrorResponse](resp, "PutExportChunkErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/sources/{id}/chunks/{index}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SealExportSource Verify and seal the complete uploaded membership
+func (c *Client) SealExportSource(ctx context.Context, options *SealExportSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SealExportSourceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/exports/sources/{id}/seal",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SealExportSourceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SealExportSourceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SealExportSourceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SealExportSourceErrorResponse](resp, "SealExportSourceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/sources/{id}/seal")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -8839,6 +9290,330 @@ func (o *ListEmailDocumentRelationsRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// CreateExportJobRequestOptions is the options needed to make a request to CreateExportJob.
+type CreateExportJobRequestOptions struct {
+	Body *CreateExportJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateExportJobRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateExportJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateExportJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateExportJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetExportJobRequestOptions is the options needed to make a request to GetExportJob.
+type GetExportJobRequestOptions struct {
+	PathParams *GetExportJobPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportJobRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CancelExportJobRequestOptions is the options needed to make a request to CancelExportJob.
+type CancelExportJobRequestOptions struct {
+	PathParams *CancelExportJobPath
+	Body       *CancelExportJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelExportJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelExportJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelExportJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelExportJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadExportArchiveRequestOptions is the options needed to make a request to DownloadExportArchive.
+type DownloadExportArchiveRequestOptions struct {
+	PathParams *DownloadExportArchivePath
+	Body       *DownloadExportArchiveBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadExportArchiveRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadExportArchiveRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadExportArchiveRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadExportArchiveRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetExportJobEventsRequestOptions is the options needed to make a request to GetExportJobEvents.
+type GetExportJobEventsRequestOptions struct {
+	PathParams *GetExportJobEventsPath
+	Query      *GetExportJobEventsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportJobEventsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportJobEventsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportJobEventsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportJobEventsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateExportPlanRequestOptions is the options needed to make a request to CreateExportPlan.
+type CreateExportPlanRequestOptions struct {
+	Body *CreateExportPlanBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateExportPlanRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateExportPlanRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateExportPlanRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateExportPlanRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetExportPlanRequestOptions is the options needed to make a request to GetExportPlan.
+type GetExportPlanRequestOptions struct {
+	PathParams *GetExportPlanPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportPlanRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportPlanRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportPlanRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportPlanRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateExportSourceRequestOptions is the options needed to make a request to CreateExportSource.
+type CreateExportSourceRequestOptions struct {
+	Body *CreateExportSourceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateExportSourceRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateExportSourceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateExportSourceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateExportSourceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PutExportChunkRequestOptions is the options needed to make a request to PutExportChunk.
+type PutExportChunkRequestOptions struct {
+	PathParams *PutExportChunkPath
+	Body       *PutExportChunkBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PutExportChunkRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PutExportChunkRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PutExportChunkRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PutExportChunkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SealExportSourceRequestOptions is the options needed to make a request to SealExportSource.
+type SealExportSourceRequestOptions struct {
+	PathParams *SealExportSourcePath
+	Body       *SealExportSourceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SealExportSourceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SealExportSourceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SealExportSourceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SealExportSourceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReadFormatCapabilitiesRequestOptions is the options needed to make a request to ReadFormatCapabilities.
 type ReadFormatCapabilitiesRequestOptions struct {
 	Query *ReadFormatCapabilitiesQuery
@@ -12429,8 +13204,8 @@ const (
 type ListSavedQueriesQueryKind string
 
 const (
-	HighlightSet ListSavedQueriesQueryKind = "highlight_set"
-	Query        ListSavedQueriesQueryKind = "query"
+	HighlightSet                   ListSavedQueriesQueryKind = "highlight_set"
+	ListSavedQueriesQueryKindQuery ListSavedQueriesQueryKind = "query"
 )
 
 type GetEmailPartPathRole string
@@ -12558,6 +13333,35 @@ type RemoveEmailDocumentPublicationPath struct {
 
 type GetEmailDocumentPublicationPath struct {
 	OperationID string `json:"operation_id"`
+}
+
+type GetExportJobPath struct {
+	ID string `json:"id"`
+}
+
+type CancelExportJobPath struct {
+	ID string `json:"id"`
+}
+
+type DownloadExportArchivePath struct {
+	ID string `json:"id"`
+}
+
+type GetExportJobEventsPath struct {
+	ID string `json:"id"`
+}
+
+type GetExportPlanPath struct {
+	ID string `json:"id"`
+}
+
+type PutExportChunkPath struct {
+	ID    string `json:"id"`
+	Index int64  `json:"index"`
+}
+
+type SealExportSourcePath struct {
+	ID string `json:"id"`
 }
 
 type GetStorageOperationPath struct {
@@ -12808,6 +13612,20 @@ type PublishEmailDocumentsBody = EmailDocumentPublicationRequest
 
 type RemoveEmailDocumentPublicationBody = RemoveRequest
 
+type CreateExportJobBody = JobRequest
+
+type CancelExportJobBody = CancelExportJobRequest
+
+type DownloadExportArchiveBody = DownloadExportArchiveRequest
+
+type CreateExportPlanBody = PlanRequest
+
+type CreateExportSourceBody = SourceRequest
+
+type PutExportChunkBody = PutExportChunkRequest
+
+type SealExportSourceBody = SealExportSourceRequest
+
 type GcBody = GcRequest
 
 type IngestBody = IngestRequest
@@ -13021,6 +13839,11 @@ type ListEmailDocumentRelationsQuery struct {
 	AfterOperationID *string `json:"after_operation_id,omitempty"`
 	AfterOrder       *int    `json:"after_order,omitempty"`
 	Limit            *int    `json:"limit,omitempty"`
+}
+
+type GetExportJobEventsQuery struct {
+	// After Last observed sequence; deliveries report current state, not replayed events
+	After *int64 `json:"after,omitempty"`
 }
 
 type ReadFormatCapabilitiesQuery struct {
@@ -13306,6 +14129,50 @@ type GetEmailDocumentPublicationErrorResponse = Error
 type ListEmailDocumentRelationsResponse = document.EmailDocumentRelationPage
 
 type ListEmailDocumentRelationsErrorResponse = Error
+
+type CreateExportJobResponse = bundle.ExportJob
+
+type CreateExportJobErrorResponse = Error
+
+type GetExportJobResponse = bundle.ExportJob
+
+type GetExportJobErrorResponse = Error
+
+type CancelExportJobErrorResponse = Error
+
+type DownloadExportArchiveResponse = TicketOutputBody
+
+type DownloadExportArchiveErrorResponse = Error
+
+type GetExportJobEventsResponse = []byte
+
+type GetExportJobEventsErrorResponse struct {
+	Code               *string        `json:"code,omitempty"`
+	Detail             *string        `json:"detail,omitempty"`
+	Errors             []string       `json:"errors,omitempty"`
+	ObservedScopeCount *int64         `json:"observed_scope_count,omitempty"`
+	Position           *ErrorPosition `json:"position,omitempty"`
+	Status             int64          `json:"status"`
+	Title              string         `json:"title"`
+}
+
+type CreateExportPlanResponse = bundle.Plan
+
+type CreateExportPlanErrorResponse = Error
+
+type GetExportPlanResponse = bundle.Plan
+
+type GetExportPlanErrorResponse = Error
+
+type CreateExportSourceResponse = bundle.Source
+
+type CreateExportSourceErrorResponse = Error
+
+type PutExportChunkErrorResponse = Error
+
+type SealExportSourceResponse = bundle.Source
+
+type SealExportSourceErrorResponse = Error
 
 type ReadFormatCapabilitiesResponse = api.FormatCoverageResponse
 
@@ -13921,6 +14788,11 @@ type BlobStore = api.BlobStore
 
 type BlobStorePreview = api.BlobStorePreview
 
+type CancelExportJobRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+}
+
 type CapabilityStateV1 = document.CapabilityStateV1
 
 type Collection = api.Collection
@@ -14018,6 +14890,11 @@ type DocumentSummary = api.DocumentSummary
 type DocumentSummaryResolveRequest = api.DocumentSummaryResolveRequest
 
 type DocumentSummaryResolveResponse = api.DocumentSummaryResolveResponse
+
+type DownloadExportArchiveRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+}
 
 type DuplicateCollection = api.DuplicateCollection
 
@@ -14125,6 +15002,10 @@ type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
 
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
 
+type ExportJob = bundle.ExportJob
+
+type Filters = query.Filters
+
 type FormatCapabilityV1 = document.FormatCapabilityV1
 
 type FormatCoverageResponse = api.FormatCoverageResponse
@@ -14181,6 +15062,8 @@ type Job = api.Job
 
 type JobList = api.JobList
 
+type JobRequest = bundle.JobRequest
+
 type MediaAcquisitionGrantBody = api.MediaAcquisitionGrantBody
 
 type MediaAcquisitionPlan = api.MediaAcquisitionPlan
@@ -14222,6 +15105,8 @@ type MediaSuppliedMetadata = api.MediaSuppliedMetadata
 type MediaTimeSpan = api.MediaTimeSpan
 
 type MediaTimestamp = api.MediaTimestamp
+
+type Member = bundle.Member
 
 type MkdirPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -14295,6 +15180,10 @@ type PageSelectionRequest = api.PageSelectionRequest
 type PageSource = document.PageSource
 
 type PendingFormatV1 = document.PendingFormatV1
+
+type Plan = bundle.Plan
+
+type PlanRequest = bundle.PlanRequest
 
 type PreviewAuditEnrollmentRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -14395,17 +15284,27 @@ type ProvenancePage = api.ProvenancePage
 
 type ProviderDescriptorV1 = document.ProviderDescriptorV1
 
+type PutExportChunkRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string  `json:"$schema,omitempty"`
+	Members []Member `json:"members"`
+}
+
 type QualityBucket = api.QualityBucket
 
 type QualityDimension = api.QualityDimension
 
 type QualitySpike = api.QualitySpike
 
+type Query = query.Query
+
 type QueryDependency = api.QueryDependency
 
 type QueryHighlightPreview = api.QueryHighlightPreview
 
 type QueryPreview = api.QueryPreview
+
+type Receipt = bundle.Receipt
 
 type RegisterBlobStoreRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -14506,6 +15405,8 @@ type RevertNodeContentRequest struct {
 	SourceVersionID uuid.UUID `json:"source_version_id"`
 }
 
+type RolePolicy = bundle.RolePolicy
+
 type SavedQuery = api.SavedQuery
 
 type SavedQueryCreateRequest = api.SavedQueryCreateRequest
@@ -14556,6 +15457,11 @@ type SavedQueryV1Schema struct {
 	V       *SavedQueryV1SchemaV      `json:"v,omitempty"`
 }
 
+type SealExportSourceRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+}
+
 type SearchHit = api.SearchHit
 
 type SearchReport = api.SearchReport
@@ -14565,6 +15471,10 @@ type SetCollectionLabelRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Label  *string `json:"label,omitempty"`
 }
+
+type Sort = query.Sort
+
+type Source = bundle.Source
 
 type SourceMetadata = api.SourceMetadata
 
@@ -14577,6 +15487,8 @@ type SourceMetadataTimestampV1 = document.SourceMetadataTimestampV1
 type SourceMetadataValueV1 = document.SourceMetadataValueV1
 
 type SourceMetadataWarningV1 = document.SourceMetadataWarningV1
+
+type SourceRequest = bundle.SourceRequest
 
 type StartProcessingRequest = api.StartProcessingRequest
 
@@ -14643,6 +15555,13 @@ type TagPage = api.TagPage
 type TaggedNode = api.TaggedNode
 
 type TaggedNodePage = api.TaggedNodePage
+
+type TicketOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Receipt Receipt `json:"receipt"`
+	URL     string  `json:"url"`
+}
 
 type TimelineBuild = api.TimelineBuild
 

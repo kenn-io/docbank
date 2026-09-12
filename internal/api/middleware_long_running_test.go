@@ -184,3 +184,32 @@ func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/packages/preflights", nil))
 }
+
+func TestExportDownloadOutlivesRequestTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const route = "/api/v1/exports/jobs/{id}/download"
+		operation := NewOfflineServer().API().OpenAPI().Paths[route].Post
+		mux := http.NewServeMux()
+		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
+		huma.Register(humaAPI, huma.Operation{
+			OperationID: "testExportDownload", Method: http.MethodPost, Path: route,
+			BodyReadTimeout: operation.BodyReadTimeout,
+		}, func(ctx context.Context, _ *struct{ Body struct{} }) (*struct{ Body string }, error) {
+			time.Sleep(61 * time.Second)
+			return &struct{ Body string }{Body: "verified"}, ctx.Err()
+		})
+		server := httptest.NewTestServer(t, timeoutMiddleware(mux))
+		response, err := server.Client().Post(server.URL+"/api/v1/exports/jobs/export-1/download", "application/json", strings.NewReader(`{}`))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, response.Body.Close()) }()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+		require.JSONEq(t, `"verified"`, string(body))
+	})
+}
+
+func TestExportContextErrorsRemainDistinct(t *testing.T) {
+	require.Equal(t, http.StatusGatewayTimeout, exportProblem(context.DeadlineExceeded).Status)
+	require.Equal(t, http.StatusRequestTimeout, exportProblem(context.Canceled).Status)
+}

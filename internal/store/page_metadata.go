@@ -24,8 +24,8 @@ type metadataPageRecord struct {
 	Checksum      string         `json:"checksum"`
 }
 
-func pageMetadataKeys(ctx context.Context, q metadataQuerier, query string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, query)
+func pageMetadataKeys(ctx context.Context, q metadataQuerier, query string, args ...any) ([]string, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

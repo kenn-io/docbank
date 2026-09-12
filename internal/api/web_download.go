@@ -48,15 +48,26 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
-	path      string
-	name      string
-	mediaType string
-	versionID string
-	blobHash  string
-	size      int64
-	owner     string
-	expiresAt time.Time
-	timer     *time.Timer
+	path            string
+	name            string
+	mediaType       string
+	versionID       string
+	blobHash        string
+	size            int64
+	owner           string
+	expiresAt       time.Time
+	timer           *time.Timer
+	archiveFile     *os.File
+	releaseArchive  func()
+	planFingerprint string
+}
+
+func (t webDownloadTicket) release() {
+	if t.releaseArchive != nil {
+		t.releaseArchive()
+		return
+	}
+	_ = os.Remove(t.path)
 }
 
 type webDownloadRequest struct {
@@ -144,7 +155,7 @@ func (r *webDownloadRegistry) consume(token string) (webDownloadTicket, bool) {
 	}
 	ticket.timer.Stop()
 	if time.Now().After(ticket.expiresAt) {
-		_ = os.Remove(ticket.path)
+		ticket.release()
 		return webDownloadTicket{}, false
 	}
 	return ticket, true
@@ -164,7 +175,7 @@ func (r *webDownloadRegistry) cancel(owner, token string) bool {
 		return false
 	}
 	ticket.timer.Stop()
-	_ = os.Remove(ticket.path)
+	ticket.release()
 	return true
 }
 
@@ -180,7 +191,7 @@ func (r *webDownloadRegistry) revokeOwner(owner string) {
 	r.mu.Unlock()
 	for _, ticket := range owned {
 		ticket.timer.Stop()
-		_ = os.Remove(ticket.path)
+		ticket.release()
 	}
 }
 
@@ -192,7 +203,7 @@ func (r *webDownloadRegistry) expire(key [sha256.Size]byte) {
 	}
 	r.mu.Unlock()
 	if ok {
-		_ = os.Remove(ticket.path)
+		ticket.release()
 	}
 }
 
@@ -380,9 +391,13 @@ func registerWebDownload(
 				"the browser download is missing, expired, or already used"))
 			return
 		}
-		defer func() { _ = os.Remove(ticket.path) }()
+		defer ticket.release()
 
-		file, err := os.Open(ticket.path)
+		file := ticket.archiveFile
+		var err error
+		if file == nil {
+			file, err = os.Open(ticket.path)
+		}
 		if err != nil {
 			writeError(w, NewError(http.StatusGone, "download_unavailable",
 				"the verified browser download is no longer available"))
@@ -406,7 +421,12 @@ func registerWebDownload(
 		w.Header().Set("Content-Type", mediaType)
 		w.Header().Set("Content-Length", strconv.FormatInt(ticket.size, 10))
 		w.Header().Set("Content-Digest", contentDigest(mustDecodeHash(ticket.blobHash)))
-		w.Header().Set(ContentVersionHeader, ticket.versionID)
+		if ticket.planFingerprint != "" {
+			w.Header().Set("Docbank-Plan-Fingerprint", ticket.planFingerprint)
+			w.Header().Set("Docbank-Archive-Sha256", ticket.blobHash)
+		} else {
+			w.Header().Set(ContentVersionHeader, ticket.versionID)
+		}
 		w.Header().Set(BlobHashHeader, ticket.blobHash)
 		w.Header().Set(BlobSizeHeader, strconv.FormatInt(ticket.size, 10))
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
