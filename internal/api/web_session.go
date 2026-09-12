@@ -228,7 +228,7 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
-	if emailNavigationBrowserReadAllowed(r) {
+	if emailNavigationBrowserReadAllowed(r) || emailViewerBrowserReadAllowed(r) {
 		return true
 	}
 	method, path := r.Method, r.URL.Path
