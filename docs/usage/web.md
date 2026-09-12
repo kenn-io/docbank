@@ -136,6 +136,37 @@ minutes total. Locking the browser session or stopping the daemon revokes them.
 If paging reports that the snapshot is gone, run the complete query again and
 use only the new snapshot and its cursors.
 
+## Read archived email
+
+Choose **Email** in the content inspector for an EML document whose exact
+selected version has retained decoded metadata. Read decoded headers, inspect
+the original ordered headers, and switch between HTML and plain-text body
+alternatives. Missing or invalid sender dates remain explicit. Pending decoding
+and incomplete MIME inventories do not appear as complete messages.
+
+HTML opens in an isolated frame. Sender scripts, forms, links, styles and remote
+resources are disabled before display; blocked or ambiguous images have visible
+placeholders. Only verified PNG and JPEG MIME parts in the body's nearest
+related group can display inline. Press **Escape** inside the frame to return
+to its entry button. Long messages scroll, and **Show quoted text** expands
+quoted content without changing the original or the full-body PDF source.
+
+The viewer accepts HTML bodies up to 16 MiB. Its additional display limits are
+100,000 markup candidates before parsing, 100,000 HTML nodes, 128 nesting
+levels, and 32 MiB of serialized output. Literal `<` characters also count
+toward the conservative markup limit.
+Inline images are limited to 128 occurrences, 5 MiB and 8 million pixels per
+image, 8,192 pixels per side, and 16 MiB and 32 million pixels in aggregate.
+PNG/JPEG limits and unsupported image formats produce explicit placeholders;
+body limits report an unavailable operation, never a silently truncated body.
+
+**Inspect attachment documents** opens the attachment navigation described
+below. Inline display and attachment document publication remain separate.
+**Download verified original** preserves the exact EML version. The existing
+PDF action downloads retained PDFs or uses the configured renderer, including
+the complete chosen body and quoted text. New rendering requires the pinned
+local Chromium/font configuration; an unavailable renderer reports its reason.
+
 ## Follow email attachments
 
 Choose **Attachments** in the content inspector to see published attachment
@@ -734,6 +765,7 @@ accepts that credential for the following operations:
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
 | Plan, preview, run, cancel, and download exports | Owns exact sources, frozen plans, jobs, and verified tickets within this browser session. Download naming cannot select a server destination. |
 | Read verified text and exact-content duplicate context | Revalidates the selected source and rendition identities; duplicate context is bounded to 16 live-current references. |
+| Read retained email metadata and MIME parts | Exact source version, decoder generation, part, role, byte size and SHA-256 are checked before display. Browser reads cannot start decoding. |
 | Read page geometry and images, request or cancel page rendering | Binds the exact source revision, version, page, frame, and renderer recipe; the inspector requests one page at a time. |
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |

@@ -1,0 +1,10 @@
+:root { color-scheme: light; font: 15px/1.6 system-ui, sans-serif; color: var(--text-primary, CanvasText); background: var(--bg-primary, Canvas); }
+body { margin: 20px; overflow-wrap: anywhere; }
+img { max-width: 100%; height: auto; }
+table { border-collapse: collapse; max-width: 100%; }
+td, th { border: 1px solid var(--border-default, GrayText); padding: 6px 10px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+blockquote { margin: 12px 0; padding: 0 16px; border-left: 3px solid var(--border-default, GrayText); color: var(--text-muted, GrayText); }
+details { margin: 12px 0; }
+summary { cursor: pointer; color: var(--text-link, LinkText); }
+summary:focus-visible { outline: 2px solid var(--text-link, LinkText); outline-offset: 3px; }

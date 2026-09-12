@@ -61,6 +61,20 @@ function body(selected: SelectedSource, bytes: Uint8Array): Response {
   });
 }
 
+it("falls back to verified Preview when an Email tab survives non-email selection", async () => {
+  const bytes = new TextEncoder().encode("Selected ordinary document");
+  const selected = source(bytes,"11111111-1111-4111-8111-111111111111");
+  vi.spyOn(globalThis,"fetch").mockImplementation(async (input,init) => {
+    if (init?.method === "POST") return ready(selected,"ordinary");
+    if (String(input).endsWith("ticket=ordinary")) return body(selected,bytes);
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  render(VerifiedPreview,{ session:"session",source:selected,authorizationRevision:8,activeTab:"email",onauthfailure:vi.fn() });
+  expect(await screen.findByText("Selected ordinary document")).toBeTruthy();
+  expect(screen.getByRole("tab",{ name:"Preview" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.queryByRole("tab",{ name:"Email" })).toBeNull();
+});
+
 it("shows only the newly selected exact version when source and session change", async () => {
   const oldBytes = new TextEncoder().encode("old frozen text");
   const newBytes = new TextEncoder().encode("new selected text");

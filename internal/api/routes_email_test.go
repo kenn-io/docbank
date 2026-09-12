@@ -189,7 +189,7 @@ func TestEmailPartCorruptPhysicalBytesReturnIntegrityError(t *testing.T) {
 	assert.Contains(t, body, `"code":"content_corrupt"`)
 }
 
-func TestEmailRoutesRemainOutsideBrowserSessionCapability(t *testing.T) {
+func TestEmailBrowserSessionReadsRetainedMetadataWithoutDecoding(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	version := createEmailVersion(t, s, "mail.eml", "Bcc: hidden@example.test\r\nContent-Type: text/plain\r\n\r\nbody")
 	path := "/api/v1/versions/" + version.ID + "/email"
@@ -200,9 +200,29 @@ func TestEmailRoutesRemainOutsideBrowserSessionCapability(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &issued))
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		response, body = do(t, ts, method, path, headers, struct{}{})
-		assert.Equal(t, http.StatusForbidden, response.StatusCode, method+": "+body)
+	response, body = do(t, ts, http.MethodGet, path, headers, nil)
+	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	assert.Contains(t, body, `"state":"pending"`)
+	response, body = do(t, ts, http.MethodPost, path, headers, struct{}{})
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, path, headers, nil)
+	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	assert.Contains(t, body, `"state":"pending"`)
+
+	// Only the API-key processing surface creates the retained generation.
+	response, body = do(t, ts, http.MethodPost, path, nil, struct{}{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var metadata api.EmailMetadata
+	require.NoError(t, json.Unmarshal([]byte(body), &metadata))
+	for _, readPath := range []string{
+		path,
+		path + "/generations/" + metadata.GenerationID,
+		path + "/generations/" + metadata.GenerationID + "/parts/1/raw_headers",
+		path + "/generations/" + metadata.GenerationID + "/parts/1/body_utf8",
+		path + "/generations/" + metadata.GenerationID + "/parts/1/decoded_payload",
+	} {
+		response, body = do(t, ts, http.MethodGet, readPath, headers, nil)
+		assert.Equal(t, http.StatusOK, response.StatusCode, readPath+": "+body)
 	}
 }
 

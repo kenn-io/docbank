@@ -205,7 +205,7 @@
 	let inspectorHighlightSets = $state<{ id: string; name: string; terms: import("./query.js").HighlightTerm[] }[]>([]);
 	let snapshotQueryTerms = $state<string[]>([]);
 	let snapshotQueryHighlightError = $state("");
-	let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments">("preview");
+	let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments" | "email">("preview");
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshotState.status !== "idle");
