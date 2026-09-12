@@ -42,6 +42,10 @@ func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	second, err := planFingerprint(plan)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+	plan.ConsentRequired = false
+	granted, err := planFingerprint(plan)
+	require.NoError(t, err)
+	require.Equal(t, first, granted)
 	plan.Flow[0].TrustBoundary = "hosted_provider"
 	changed, err := planFingerprint(plan)
 	require.NoError(t, err)
@@ -91,7 +95,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 		embeddingRuntimes: map[string]*ProviderEmbeddingRuntime{request.BindingID: runtime}}
 	var clockOffset atomic.Int64
 	clockOffset.Store(int64(time.Second))
-	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: processingServiceTestGate{fake.gate},
+	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: fake.gate,
 		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
@@ -168,10 +172,4 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID, attachmentID: published.AttachmentID}, result)
 	_, err = service.renditionResult(t.Context(), rejected.ID)
 	require.ErrorIs(t, err, ErrConsentRequired)
-}
-
-type processingServiceTestGate struct{ *workerTestGate }
-
-func (gate processingServiceTestGate) PreserveContext(ctx context.Context, fn func() error) error {
-	return gate.MutateContext(ctx, fn)
 }

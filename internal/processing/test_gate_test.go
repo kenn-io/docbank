@@ -19,10 +19,6 @@ func (gate *workerTestGate) MutateContext(ctx context.Context, fn func() error) 
 	return fn()
 }
 
-func (gate *workerTestGate) PreserveContext(ctx context.Context, fn func() error) error {
-	return gate.MutateContext(ctx, fn)
-}
-
 func (gate *workerTestGate) MaintainContext(ctx context.Context, fn func() error) error {
 	return gate.MutateContext(ctx, fn)
 }

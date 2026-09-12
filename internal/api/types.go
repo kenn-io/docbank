@@ -90,8 +90,6 @@ type ProcessingConsentGrant struct {
 	ExpiresAt          string `json:"expires_at,omitzero" format:"date-time"`
 }
 
-type ProcessingConsentRevokeRequest struct{}
-
 type ProcessingConsentRevocation struct {
 	RevokedAt string `json:"revoked_at" format:"date-time"`
 }
@@ -122,6 +120,7 @@ type DerivativePurgeJobRequest struct {
 }
 
 type DerivativePurgeReceipt struct {
+	Outcome                          string `json:"outcome" enum:"completed,partial,deferred"`
 	ID                               string `json:"id" pattern:"^[0-9a-f]{64}$"`
 	PlanFingerprint                  string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
 	RemovedHeads                     int    `json:"removed_heads" minimum:"0"`
@@ -137,6 +136,7 @@ type DerivativePurgeReceipt struct {
 }
 
 type DerivativePurgeEvent struct {
+	Error    *Error                  `json:"error,omitzero"`
 	Sequence int                     `json:"sequence" minimum:"1" maximum:"1"`
 	Type     string                  `json:"type" enum:"result"`
 	Receipt  *DerivativePurgeReceipt `json:"receipt"`

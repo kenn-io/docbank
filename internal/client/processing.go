@@ -98,7 +98,7 @@ func (c *Client) GrantProcessingConsent(ctx context.Context,
 func (c *Client) RevokeProcessingConsent(ctx context.Context) (api.ProcessingConsentRevocation, error) {
 	var result api.ProcessingConsentRevocation
 	err := c.do(ctx, http.MethodPost, "/api/v1/processing/consent/revocations", nil,
-		api.ProcessingConsentRevokeRequest{}, &result)
+		nil, &result)
 	return result, err
 }
 
@@ -110,6 +110,8 @@ func (c *Client) PlanDerivativePurge(ctx context.Context,
 	return result, err
 }
 
+// RunDerivativePurge returns the committed catalog receipt even when physical
+// cleanup fails. A non-nil error with a receipt means cleanup remains pending.
 func (c *Client) RunDerivativePurge(ctx context.Context,
 	request api.DerivativePurgeJobRequest,
 ) (api.DerivativePurgeReceipt, error) {
@@ -150,6 +152,9 @@ func (c *Client) RunDerivativePurge(ctx context.Context,
 	var extra api.DerivativePurgeEvent
 	if err := json.UnmarshalDecode(decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
 		return api.DerivativePurgeReceipt{}, errors.New("derivative purge stream continued after its terminal receipt")
+	}
+	if event.Error != nil {
+		return *event.Receipt, apiProblemError(*event.Error)
 	}
 	return *event.Receipt, nil
 }

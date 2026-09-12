@@ -48,16 +48,6 @@ func (resolver environmentEmbeddingSecrets) ResolveSecret(_ context.Context, nam
 	return value, nil
 }
 
-func configureEmbeddingRuntimes(cfg config.Config, blobs embeddingRuntimeBlobStore,
-	spoolDirectory string,
-) (*processing.EmbeddingRuntimeRegistry, error) {
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, blobs, spoolDirectory)
-	if err != nil {
-		return nil, err
-	}
-	return bundle.registry, nil
-}
-
 type embeddingRuntimeBundle struct {
 	registry    *processing.EmbeddingRuntimeRegistry
 	providers   map[string]document.EmbeddingProvider

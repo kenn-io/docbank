@@ -339,10 +339,6 @@ func (gate embeddedMutationGate) MutateContext(ctx context.Context, fn func() er
 	return fn()
 }
 
-func (gate embeddedMutationGate) PreserveContext(ctx context.Context, fn func() error) error {
-	return gate.MutateContext(ctx, fn)
-}
-
 func (gate embeddedMutationGate) MaintainContext(ctx context.Context, fn func() error) error {
 	return gate.MutateContext(ctx, fn)
 }

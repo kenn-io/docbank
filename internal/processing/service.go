@@ -183,6 +183,7 @@ type DerivativePurgeJobRequest struct {
 }
 
 type DerivativePurgeReceipt struct {
+	Outcome                          string
 	ID                               string
 	PlanFingerprint                  string
 	RemovedHeads                     int
@@ -404,7 +405,22 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	return service.planForSource(selector, node, version, profile)
+	plan, err := service.planForSource(selector, node, version, profile)
+	if err != nil {
+		return Plan{}, err
+	}
+	// Current grants are advisory; execution checks them again. Grant changes
+	// do not change the reviewed source, disclosure, or plan fingerprint.
+	plan.ConsentRequired = false
+	for _, request := range service.profileConsentRequests(profile) {
+		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
+		if errors.Is(processingConsentBoundaryError(err), ErrConsentRequired) {
+			plan.ConsentRequired = true
+		} else if err != nil {
+			return Plan{}, err
+		}
+	}
+	return plan, nil
 }
 
 func (service *Service) planForSource(selector Selector, node store.Node,
@@ -484,6 +500,15 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 		var renditionRun renditionRun
 		renditionRun, err = service.runRendition(ctx, node, version, profile, principal, scope)
 		if err != nil {
+			if errors.Is(err, ErrConsentRequired) {
+				// Durable job failures record the consent category, not its original
+				// cause. Report this caller's current authority; a renewed grant must
+				// not turn previously denied work into a successful result.
+				_, consentErr := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
+				if consentErr != nil {
+					err = consentErr
+				}
+			}
 			return Job{}, processingConsentBoundaryError(err)
 		}
 		processingJobID, renditionJobID, attachmentID = renditionRun.waiterID, renditionRun.jobID, renditionRun.attachmentID
@@ -552,8 +577,10 @@ func (service *Service) PlanDerivativePurge(ctx context.Context,
 	if err != nil {
 		return DerivativePurgePlan{}, err
 	}
-	state := sha256.New()
-	if err := service.catalog.ExportMetadata(ctx, state); err != nil {
+	state, err := service.catalog.DerivativePurgeFingerprint(ctx, store.PurgeRequest{
+		ContentVersionIDs: normalized.ContentVersionIDs, AttachmentIDs: normalized.AttachmentIDs,
+		BuildIDs: normalized.BuildIDs, All: normalized.All})
+	if err != nil {
 		return DerivativePurgePlan{}, fmt.Errorf("fingerprinting derivative authority: %w", err)
 	}
 	payload := struct {
@@ -562,7 +589,7 @@ func (service *Service) PlanDerivativePurge(ctx context.Context,
 		State    string                 `json:"state"`
 		Request  DerivativePurgeRequest `json:"request"`
 	}{Contract: "docbank-derivative-purge-plan/v1", VaultUID: service.catalog.VaultID(),
-		State: hex.EncodeToString(state.Sum(nil)), Request: normalized}
+		State: state, Request: normalized}
 	canonical, err := json.Marshal(payload, json.Deterministic(true))
 	if err != nil {
 		return DerivativePurgePlan{}, err
@@ -584,13 +611,19 @@ func (service *Service) RunDerivativePurge(ctx context.Context,
 		if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
 			return ErrPurgePlanChanged
 		}
-		report, err := maintenance.PurgeDerivatives(ctx, service.catalog, service.blobs, store.PurgeRequest{
+		report, purgeErr := maintenance.PurgeDerivatives(ctx, service.catalog, service.blobs, store.PurgeRequest{
 			ContentVersionIDs: plan.Request.ContentVersionIDs, AttachmentIDs: plan.Request.AttachmentIDs,
 			BuildIDs: plan.Request.BuildIDs, All: plan.Request.All})
-		if err != nil {
-			return err
+		if !report.CatalogCommitted {
+			return purgeErr
 		}
-		receipt = DerivativePurgeReceipt{PlanFingerprint: plan.Fingerprint,
+		outcome := "completed"
+		if errors.Is(purgeErr, packstore.ErrPackRetirementDeferred) {
+			outcome = "deferred"
+		} else if purgeErr != nil {
+			outcome = "partial"
+		}
+		receipt = DerivativePurgeReceipt{Outcome: outcome, PlanFingerprint: plan.Fingerprint,
 			RemovedHeads: report.Purge.RemovedHeads, RemovedAttachments: report.Purge.RemovedAttachments,
 			RemovedBuilds: report.Purge.RemovedBuilds, RemovedArtifacts: report.Purge.RemovedArtifacts,
 			RemovedLexicalSegments:           report.Purge.RemovedLexicalSegments,
@@ -604,7 +637,7 @@ func (service *Service) RunDerivativePurge(ctx context.Context,
 			return err
 		}
 		receipt.ID = stableHash("docbank/derivative-purge-receipt/v1", string(encoded))
-		return nil
+		return purgeErr
 	})
 	return receipt, err
 }
@@ -653,30 +686,45 @@ func normalizeDerivativePurgeRequest(request DerivativePurgeRequest) (Derivative
 	return request, err
 }
 
+func (service *Service) renditionConsentRequest(profile configuredProfile) store.ProviderOperationAuthorizationRequest {
+	return store.ProviderOperationAuthorizationRequest{
+		Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
+		DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
+		InputClasses:            []string{string(document.RenditionInputOriginalFile)},
+		RetainedArtifactClasses: retainedRenditionClasses(profile.portable),
+	}
+}
+
+func (service *Service) profileConsentRequests(profile configuredProfile) []store.ProviderOperationAuthorizationRequest {
+	var requests []store.ProviderOperationAuthorizationRequest
+	if profile.portable.Rendition != nil {
+		requests = append(requests, service.renditionConsentRequest(profile))
+	}
+	for _, binding := range profile.portable.Embeddings {
+		request := store.ProviderOperationAuthorizationRequest{
+			Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
+			DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
+			RetainedArtifactClasses: []string{"embedding_vector_set"},
+		}
+		requests = append(requests, request)
+		if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+			request.InputClasses = []string{"query_text"}
+			request.RetainedArtifactClasses = nil
+			requests = append(requests, request)
+		}
+	}
+	return requests
+}
+
 func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
 	return service.gate.MutateContext(ctx, func() error {
-		grant := func(disclosure string, inputs, retained []string) error {
+		for _, request := range service.profileConsentRequests(profile) {
 			_, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
-				Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
-				DisclosureFingerprint: disclosure, InputClasses: inputs,
-				RetainedArtifactClasses: retained, ExpiresAt: expiresAt})
-			return err
-		}
-		if profile.portable.Rendition != nil {
-			if err := grant(profile.record.RenditionDisclosureFingerprint,
-				[]string{string(document.RenditionInputOriginalFile)}, retainedRenditionClasses(profile.portable)); err != nil {
+				Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
+				DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
+				RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt})
+			if err != nil {
 				return err
-			}
-		}
-		for _, binding := range profile.portable.Embeddings {
-			if err := grant(binding.DisclosureFingerprint, []string{string(binding.InputKind)},
-				[]string{"embedding_vector_set"}); err != nil {
-				return err
-			}
-			if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
-				if err := grant(binding.DisclosureFingerprint, []string{"query_text"}, []string{}); err != nil {
-					return err
-				}
 			}
 		}
 		return nil
@@ -757,6 +805,9 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		case store.RenditionJobCompleted:
 			return service.renditionResult(ctx, waiter.ID)
 		case store.RenditionJobFailed:
+			if current.FailureCode == store.RenditionFailureConsent {
+				return renditionRun{}, ErrConsentRequired
+			}
 			return renditionRun{}, fmt.Errorf("%w: %s", ErrRenditionFailed, current.FailureCode)
 		case store.RenditionJobOperatorRequired:
 			return renditionRun{}, ErrRenditionOperatorRequired
@@ -1606,6 +1657,7 @@ func normalizeFenceIDs(ids []string) ([]string, error) {
 
 func planFingerprint(plan Plan) (string, error) {
 	plan.Fingerprint = ""
+	plan.ConsentRequired = true // Grant availability is not part of the disclosure contract.
 	encoded, err := json.Marshal(plan, json.Deterministic(true))
 	if err != nil {
 		return "", err

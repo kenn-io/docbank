@@ -71,9 +71,10 @@ type GCReport struct {
 // the location-aware physical GC that follows it. Immutable backup repository
 // copies remain outside both mutation boundaries.
 type DerivativePurgeReport struct {
-	Purge    store.PurgeReport
-	Physical GCReport
-	Repack   RepackReport
+	CatalogCommitted bool
+	Purge            store.PurgeReport
+	Physical         GCReport
+	Repack           RepackReport
 }
 
 type VerifyOptions struct{ Budget Budget }
@@ -371,6 +372,7 @@ func PurgeDerivatives(
 		if err != nil {
 			return err
 		}
+		report.CatalogCommitted = true
 		physical, err := collectExactUnreachableBlobs(
 			ctx, metadata, blobs, purged.PhysicalDerivativeBlobsPendingGC)
 		physical.ReclaimedFiles += report.Physical.ReclaimedFiles

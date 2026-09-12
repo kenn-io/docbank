@@ -1,14 +1,20 @@
 package api_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestProcessingPlanRouteIsAuthenticatedAndReturnsReviewedDisclosure(t *testing.T) {
@@ -104,6 +111,9 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	require.Equal(t, http.StatusPartialContent, clampedResponse.StatusCode, clampedBody)
 	assert.Equal(t, renditionBody, clampedBody)
 
+	invalidRange, invalidBody := get(t, ts, "/api/v1/renditions/"+job.AttachmentID, map[string]string{"Range": "bytes=999999999-"})
+	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, invalidRange.StatusCode, invalidBody)
+
 	coverageResponse, coverageBody := get(t, ts, "/api/v1/coverage?profile=private&vault_uid="+
 		catalog.VaultID()+"&content_version_id="+node.CurrentVersionID, nil)
 	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageBody)
@@ -136,6 +146,11 @@ func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *t
 	var plan api.ProcessingPlan
 	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
 
+	requiredResponse, requiredBody := do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
+		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": false})
+	require.Equal(t, http.StatusPreconditionRequired, requiredResponse.StatusCode, requiredBody)
+	require.Contains(t, requiredBody, `"code":"processing_consent_required"`)
+
 	staleResponse, staleBody := do(t, ts, http.MethodPost, "/api/v1/processing/consent/grants", nil,
 		map[string]any{"selector": selector, "plan_fingerprint": processingTestHash("stale")})
 	assert.Equal(t, http.StatusConflict, staleResponse.StatusCode, staleBody)
@@ -146,12 +161,19 @@ func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *t
 	require.Equal(t, http.StatusOK, grantResponse.StatusCode, grantBody)
 	assert.Contains(t, grantBody, `"profile_fingerprint":"`+plan.ProfileFingerprint+`"`)
 
+	grantedResponse, grantedBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, grantedResponse.StatusCode, grantedBody)
+	var grantedPlan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(grantedBody), &grantedPlan))
+	assert.False(t, grantedPlan.ConsentRequired)
+	assert.Equal(t, plan.Fingerprint, grantedPlan.Fingerprint)
+
 	jobResponse, jobBody := do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
 		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": false})
 	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
 
-	revokeResponse, revokeBody := do(t, ts, http.MethodPost, "/api/v1/processing/consent/revocations", nil,
-		map[string]any{})
+	revokeResponse, revokeBody := do(t, ts, http.MethodPost, "/api/v1/processing/consent/revocations", nil, nil)
 	require.Equal(t, http.StatusOK, revokeResponse.StatusCode, revokeBody)
 	assert.Contains(t, revokeBody, `"revoked_at":`)
 
@@ -190,6 +212,8 @@ func TestDerivativePurgeRequiresExactPreviewAndRemovesLiveRendition(t *testing.T
 	var purgePlan api.DerivativePurgePlan
 	require.NoError(t, json.Unmarshal([]byte(purgePlanBody), &purgePlan))
 	assert.True(t, purgePlan.ImmutableBackupCopiesUntouched)
+
+	createFileWithContent(t, ts, catalog, "/unrelated.txt", "unrelated ingest must not invalidate the preview\n")
 
 	staleResponse, staleBody := do(t, ts, http.MethodPost, "/api/v1/derivatives/purge-jobs", nil,
 		map[string]any{"attachment_ids": []string{job.AttachmentID},
@@ -291,4 +315,172 @@ func processingTestProfile(descriptor document.RenditionDescriptor) document.Pro
 func processingTestHash(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
+}
+
+type slowRenditionWriter struct {
+	*httptest.ResponseRecorder
+
+	slept bool
+}
+
+func (w *slowRenditionWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseRecorder.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("recording slow rendition: %w", err)
+	}
+	if !w.slept {
+		w.slept = true
+		time.Sleep(61 * time.Second)
+	}
+	return n, nil
+}
+func TestRenditionDownloadOutlivesRequestTimeout(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/synthetic.txt", strings.Repeat("synthetic transfer evidence\n", 3000))
+	selector := map[string]any{"node_id": node.ID, "content_version_id": node.CurrentVersionID, "profile": "private"}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil, map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	job := processingJobFromStream(t, body)
+	_, full := get(t, ts, "/api/v1/renditions/"+job.AttachmentID, nil)
+	synctest.Test(t, func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/renditions/"+job.AttachmentID, nil)
+		req.Header.Set("X-Api-Key", testAPIKey)
+		writer := &slowRenditionWriter{ResponseRecorder: httptest.NewRecorder()}
+		catalog.Server.Handler().ServeHTTP(writer, req)
+		require.Equal(t, full, writer.Body.String())
+		require.NotEmpty(t, writer.Result().Trailer.Get("Content-Digest"))
+	})
+}
+
+type consentChangeProvider struct {
+	document.RenditionProvider
+
+	afterRender func()
+}
+
+func (p *consentChangeProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
+	auth document.RenditionAuthorization) (document.RenditionResult, error) {
+	result, err := p.RenditionProvider.Render(ctx, upload, auth)
+	if err == nil {
+		p.afterRender()
+	}
+	return result, err
+}
+
+func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
+	base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &consentChangeProvider{RenditionProvider: base}
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		gate := api.NewOperationGate()
+		deps.Gate = gate
+		deps.Processing, err = processing.NewService(processing.ServiceConfig{
+			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
+			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
+			Profiles: map[string]processing.ProfileConfig{"private": {
+				Profile: processingTestProfile(provider.Descriptor()), RenditionProvider: provider}},
+		})
+		require.NoError(t, err)
+	})
+	node := createFileWithContent(t, ts, catalog, "/consent-change.txt", "synthetic consent evidence\n")
+	c := client.New(ts.URL, testAPIKey)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	grant := api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}
+	expires := time.Now().UTC().Add(2 * time.Second)
+	grant.ExpiresAt = expires.Format(time.RFC3339Nano)
+	provider.afterRender = func() { time.Sleep(time.Until(expires) + time.Millisecond) }
+
+	_, err = c.GrantProcessingConsent(t.Context(), grant)
+	require.NoError(t, err)
+	for range 2 {
+		_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
+			PlanFingerprint: plan.Fingerprint})
+		require.ErrorIs(t, err, client.ErrProcessingConsent)
+		code, ok := client.ProblemCode(err)
+		require.True(t, ok)
+		require.Equal(t, "processing_consent_expired", code)
+	}
+}
+
+func TestDerivativePurgeReturnsCommittedReceiptWhenCleanupFails(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/purge-partial.txt", "synthetic partial purge evidence\n")
+	c := client.New(ts.URL, testAPIKey)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
+		PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	purgePlan, err := c.PlanDerivativePurge(t.Context(), api.DerivativePurgePlanRequest{AttachmentIDs: []string{job.AttachmentID}})
+	require.NoError(t, err)
+	view, err := catalog.ActiveRenditionByAttachment(t.Context(), job.AttachmentID)
+	require.NoError(t, err)
+	// A nonempty directory at a loose object path makes physical removal fail
+	// after the catalog purge, on every supported platform.
+	hash := view.Build.Artifacts[0].BlobHash
+	path := filepath.Join(catalog.BlobsDir, hash[:2], hash)
+	require.FileExists(t, path)
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.Mkdir(path, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(path, "locked"), []byte("synthetic obstruction"), 0o600))
+	receipt, err := c.RunDerivativePurge(t.Context(), api.DerivativePurgeJobRequest{
+		AttachmentIDs: []string{job.AttachmentID}, PlanFingerprint: purgePlan.Fingerprint})
+	require.Error(t, err)
+	require.NotEmpty(t, receipt.ID)
+	assert.Equal(t, "partial", receipt.Outcome)
+	assert.Equal(t, 1, receipt.RemovedAttachments)
+	_, err = catalog.ActiveRenditionByAttachment(t.Context(), job.AttachmentID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	// Cleanup failure must leave the original readable.
+	response, _ := get(t, ts, "/api/v1/versions/"+node.CurrentVersionID+"/content", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+}
+
+func TestDerivativePurgePreviewTracksOnlySelectedDerivatives(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	c := client.New(ts.URL, testAPIKey)
+	first := createFileWithContent(t, ts, catalog, "/first.txt", "first synthetic source\n")
+	selector := api.ProcessingSelector{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Profile: "private"}
+	versionRequest := api.DerivativePurgePlanRequest{ContentVersionIDs: []string{first.CurrentVersionID}}
+	before, err := c.PlanDerivativePurge(t.Context(), versionRequest)
+	require.NoError(t, err)
+	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
+		PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	_, err = c.RunDerivativePurge(t.Context(), api.DerivativePurgeJobRequest{
+		ContentVersionIDs: versionRequest.ContentVersionIDs, PlanFingerprint: before.Fingerprint})
+	require.ErrorIs(t, err, client.ErrProcessingPlanChanged)
+	view, err := catalog.ActiveRenditionByAttachment(t.Context(), job.AttachmentID)
+	require.NoError(t, err)
+	requests := []api.DerivativePurgePlanRequest{versionRequest,
+		{AttachmentIDs: []string{job.AttachmentID}}, {BuildIDs: []string{view.Build.ID}}, {All: true}}
+	previews := make([]api.DerivativePurgePlan, len(requests))
+	for index, request := range requests {
+		previews[index], err = c.PlanDerivativePurge(t.Context(), request)
+		require.NoError(t, err)
+	}
+	second := createFileWithContent(t, ts, catalog, "/second.txt", "second unrelated synthetic source\n")
+	selector = api.ProcessingSelector{NodeID: second.ID, ContentVersionID: second.CurrentVersionID, Profile: "private"}
+	plan, err = c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	for index, request := range requests {
+		after, err := c.PlanDerivativePurge(t.Context(), request)
+		require.NoError(t, err)
+		if request.All {
+			assert.NotEqual(t, previews[index].Fingerprint, after.Fingerprint)
+		} else {
+			assert.Equal(t, previews[index].Fingerprint, after.Fingerprint)
+		}
+	}
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -45,8 +44,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Path: "/api/v1/processing/plans", Summary: "Preview provider disclosure for one document version",
 	}, func(ctx context.Context, input *planInput) (*planOutput, error) {
 		if d.Processing == nil {
-			return nil, NewError(http.StatusServiceUnavailable, "processing_unavailable",
-				"document processing is not configured")
+			return nil, processingUnavailable()
 		}
 		plan, err := d.Processing.Plan(ctx, processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
@@ -128,14 +126,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		return &grantConsentOutput{Body: result}, nil
 	})
 
-	type revokeConsentInput struct {
-		Body ProcessingConsentRevokeRequest
-	}
 	type revokeConsentOutput struct{ Body ProcessingConsentRevocation }
 	huma.Register(api, huma.Operation{
 		OperationID: "revokeDocumentProcessingConsent", Method: http.MethodPost,
 		Path: "/api/v1/processing/consent/revocations", Summary: "Revoke current operator processing consent",
-	}, func(ctx context.Context, _ *revokeConsentInput) (*revokeConsentOutput, error) {
+	}, func(ctx context.Context, _ *struct{}) (*revokeConsentOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
@@ -174,7 +169,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "runDerivativePurge", Method: http.MethodPost,
 		Path: "/api/v1/derivatives/purge-jobs", Summary: "Run one exact reviewed live derivative purge",
-		Description: "Returns exactly one terminal receipt as newline-delimited JSON.",
+		Description: "Returns exactly one terminal receipt as newline-delimited JSON after the catalog purge commits. Partial or deferred cleanup includes an error alongside the receipt.",
 		Responses: map[string]*huma.Response{"200": {Description: "Terminal bounded purge receipt",
 			Content: map[string]*huma.MediaType{"application/x-ndjson": {Schema: purgeEventSchema}}}},
 	}, func(ctx context.Context, input *purgeJobInput) (*huma.StreamResponse, error) {
@@ -185,10 +180,17 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			ContentVersionIDs: input.Body.ContentVersionIDs, AttachmentIDs: input.Body.AttachmentIDs,
 			BuildIDs: input.Body.BuildIDs, All: input.Body.All,
 			PlanFingerprint: input.Body.PlanFingerprint})
-		if err != nil {
-			return nil, fromProcessingError(err)
+		if err != nil && receipt.ID == "" {
+			if errors.Is(err, processing.ErrPurgePlanChanged) || errors.Is(err, processing.ErrInvalidPurgeRequest) {
+				return nil, fromProcessingError(err)
+			}
+			return nil, FromMaintenanceError(err)
 		}
-		wireReceipt := DerivativePurgeReceipt{ID: receipt.ID,
+		var problem *Error
+		if err != nil {
+			errors.As(FromMaintenanceError(err), &problem)
+		}
+		wireReceipt := DerivativePurgeReceipt{ID: receipt.ID, Outcome: receipt.Outcome,
 			PlanFingerprint: receipt.PlanFingerprint, RemovedHeads: receipt.RemovedHeads,
 			RemovedAttachments: receipt.RemovedAttachments, RemovedBuilds: receipt.RemovedBuilds,
 			RemovedArtifacts: receipt.RemovedArtifacts, RemovedLexicalSegments: receipt.RemovedLexicalSegments,
@@ -200,7 +202,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
 			hctx.SetHeader("Cache-Control", "no-store")
 			stream := newEventStreamWriter[DerivativePurgeEvent](hctx.BodyWriter(), func() {})
-			stream.send(DerivativePurgeEvent{Sequence: 1, Type: "result", Receipt: &wireReceipt, Terminal: true})
+			stream.send(DerivativePurgeEvent{Sequence: 1, Type: "result", Receipt: &wireReceipt, Error: problem, Terminal: true})
 		}}, nil
 	})
 
@@ -318,7 +320,7 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 		return nil, NewError(http.StatusRequestedRangeNotSatisfiable, "invalid_rendition_range",
 			"rendition byte range is invalid or unsatisfiable")
 	}
-	selected := bytes.Clone(data[start:end])
+	selected := data[start:end]
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
 		ctx.SetHeader("Accept-Ranges", "bytes")

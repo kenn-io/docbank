@@ -176,3 +176,20 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestDerivativePurgeClientPreservesDeferredReceipt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = json.MarshalWrite(w, api.DerivativePurgeEvent{Sequence: 1, Type: "result", Terminal: true,
+			Receipt: &api.DerivativePurgeReceipt{ID: strings.Repeat("a", 64), Outcome: "deferred", RemovedAttachments: 1},
+			Error:   api.NewError(http.StatusServiceUnavailable, "pack_retirement_deferred", "source-file cleanup was deferred")})
+	}))
+	t.Cleanup(server.Close)
+	receipt, err := client.New(server.URL, serverKey).RunDerivativePurge(t.Context(), api.DerivativePurgeJobRequest{})
+	require.Error(t, err)
+	code, ok := client.ProblemCode(err)
+	require.True(t, ok)
+	assert.Equal(t, "pack_retirement_deferred", code)
+	assert.Equal(t, "deferred", receipt.Outcome)
+	assert.Equal(t, 1, receipt.RemovedAttachments)
+}

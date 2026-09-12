@@ -438,7 +438,7 @@ func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID st
 	}
 	var contentVersionID, profileFingerprint string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT content_version_id,profile_fingerprint FROM rendition_heads
+		SELECT content_version_id,profile_fingerprint FROM rendition_attachments
 		WHERE attachment_id=?`, attachmentID).Scan(&contentVersionID, &profileFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionView{}, ErrNotFound
