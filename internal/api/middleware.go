@@ -32,7 +32,7 @@ func browserSessionRequest(ctx context.Context) bool {
 
 // timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
 // export preparation.
-func timeoutExempt(path string) bool {
+func timeoutExempt(method, path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
@@ -44,11 +44,15 @@ func timeoutExempt(path string) bool {
 		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
+	if method == http.MethodPost {
+		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
+			if id, ok := strings.CutSuffix(id, "/download"); ok && (id == "{id}" || validPageJobPathID(id)) {
+				return true
+			}
+		}
+	}
 	if strings.HasPrefix(path, "/api/v1/nodes/") &&
 		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
-		return true
-	}
-	if strings.HasPrefix(path, "/api/v1/exports/jobs/") && strings.HasSuffix(path, "/download") {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/exports/sources/") && strings.HasSuffix(path, "/seal") {
@@ -60,7 +64,7 @@ func timeoutExempt(path string) bool {
 }
 
 func timeoutExemptRequest(r *http.Request) bool {
-	if timeoutExempt(r.URL.Path) {
+	if timeoutExempt(r.Method, r.URL.Path) {
 		return true
 	}
 	if r.Method != http.MethodPost {
@@ -98,14 +102,11 @@ func isEmailPartPath(path string) bool {
 // work.
 func clearLongRunningBodyReadDeadlines(api huma.API) {
 	for path, item := range api.OpenAPI().Paths {
-		if !timeoutExempt(path) {
-			continue
-		}
 		for _, operation := range []*huma.Operation{
 			item.Get, item.Put, item.Post, item.Delete,
 			item.Options, item.Head, item.Patch, item.Trace,
 		} {
-			if operation != nil {
+			if operation != nil && timeoutExempt(operation.Method, path) {
 				operation.BodyReadTimeout = -1
 			}
 		}
