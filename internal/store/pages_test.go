@@ -92,9 +92,87 @@ func TestPageJobRestartCannotPublishAnOldClaim(t *testing.T) {
 	current, err := s.ClaimPageJob(t.Context())
 	require.NoError(t, err)
 	require.Greater(t, current.Epoch, old.Epoch)
+	require.ErrorIs(t, s.FinishPageJob(t.Context(), old, "completed", ""), ErrPageFenced)
+	require.NoError(t, s.CheckPageClaim(t.Context(), current), "obsolete completion cannot retire the replacement claim")
 	require.ErrorIs(t, s.PublishPageFrames(t.Context(), old, pageStoreFrames(t, request)), ErrPageFenced)
 	require.NoError(t, s.PublishPageFrames(t.Context(), current, pageStoreFrames(t, request)))
 	require.Error(t, s.FinishPageJob(t.Context(), current, "completed", ""), "completion requires every requested receipt")
+}
+
+func TestPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T) {
+	for _, change := range []string{"revision", "head", "trash"} {
+		t.Run(change, func(t *testing.T) {
+			s := newTestStore(t)
+			request := pageStoreRequest(t, s)
+			job, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+			require.NoError(t, err)
+			claim, err := s.ClaimPageJob(t.Context())
+			require.NoError(t, err)
+			frames := pageStoreFrames(t, request)
+			require.NoError(t, s.PublishPageFrames(t.Context(), claim, frames))
+			recipe := pageStoreRecipe()
+			for _, frame := range frames {
+				require.NoError(t, s.PublishPageImage(t.Context(), claim, pageStoreImage(t, frame, recipe), recipe, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10}))
+			}
+			switch change {
+			case "revision":
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=?`, request.NodeID)
+			case "head":
+				_, _, err = s.ReplaceContent(t.Context(), request.NodeID, request.Revision, fakeHash("d1"), 124, "application/pdf")
+			case "trash":
+				_, _, err = s.Trash(t.Context(), request.NodeID, request.Revision)
+			}
+			require.NoError(t, err)
+			require.ErrorIs(t, s.FinishPageJob(t.Context(), claim, "completed", ""), ErrPageFenced)
+			retired, err := loadPageJob(t.Context(), s.db, `id=?`, job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", retired.State)
+			require.Equal(t, "stale_source", retired.FailureCode)
+			require.Len(t, retired.Results, 2)
+			var token string
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT token FROM page_render_jobs WHERE id=?`, job.ID).Scan(&token))
+			require.Empty(t, token)
+			var active int
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM page_render_jobs WHERE state IN ('queued','running')`).Scan(&active))
+			require.Zero(t, active)
+			for _, receipt := range retired.Results {
+				stored, err := loadPageImage(t.Context(), s.db, request.Source.VersionID, receipt.RecipeSHA256, receipt.Page)
+				require.NoError(t, err)
+				require.Equal(t, receipt, stored.Image)
+			}
+		})
+	}
+}
+
+func TestPageJobCompletionDoesNotHideSourceDatabaseFailure(t *testing.T) {
+	s := newTestStore(t)
+	request := pageStoreRequest(t, s)
+	_, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+	require.NoError(t, err)
+	claim, err := s.ClaimPageJob(t.Context())
+	require.NoError(t, err)
+	frames := pageStoreFrames(t, request)
+	require.NoError(t, s.PublishPageFrames(t.Context(), claim, frames))
+	recipe := pageStoreRecipe()
+	for _, frame := range frames {
+		require.NoError(t, s.PublishPageImage(t.Context(), claim, pageStoreImage(t, frame, recipe), recipe, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10}))
+	}
+	// A real SQLite source-query failure must not be mislabeled as staleness.
+	_, err = s.db.ExecContext(t.Context(), `ALTER TABLE nodes RENAME TO unavailable_nodes`)
+	require.NoError(t, err)
+	defer func() {
+		_, err := s.db.ExecContext(t.Context(), `ALTER TABLE unavailable_nodes RENAME TO nodes`)
+		require.NoError(t, err)
+	}()
+	err = s.FinishPageJob(t.Context(), claim, "completed", "")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrPageFenced)
+	job, err := loadPageJob(t.Context(), s.db, `id=?`, claim.Job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", job.State)
+	var token string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT token FROM page_render_jobs WHERE id=?`, job.ID).Scan(&token))
+	require.Equal(t, claim.Token, token)
 }
 
 func TestPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T) {

@@ -17,18 +17,64 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
+	const download = "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/download"
+	for _, test := range []struct {
+		method, path string
+		deadline     bool
+	}{
+		{http.MethodPost, download, false},
+		{http.MethodGet, download, true},
+		{http.MethodPost, "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/cancel", true},
+		{http.MethodPost, "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/extra/download", true},
+		{http.MethodPost, "/api/v1/exports/jobs/not-a-job/download", true},
+		{http.MethodPost, download + "/", true},
+	} {
+		t.Run(test.method+test.path, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			called := false
+			handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				called = true
+				_, hasDeadline := r.Context().Deadline()
+				assert.Equal(t, test.deadline, hasDeadline)
+				cancel()
+				assert.ErrorIs(t, r.Context().Err(), context.Canceled)
+			}))
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, test.method, test.path, nil))
+			require.True(t, called)
+		})
+	}
+	parent, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	want, _ := parent.Deadline()
+	timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, ok := r.Context().Deadline()
+		assert.True(t, ok)
+		assert.Equal(t, want, got, "ticket verification must preserve the caller's own deadline")
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, download, nil))
+}
+
+func TestExportTicketOperationClearsBodyDeadlineWithoutRelaxingBounds(t *testing.T) {
+	doc := NewOfflineServer().API().OpenAPI()
+	operation := doc.Paths["/api/v1/exports/jobs/{id}/download"].Post
+	require.NotNil(t, operation.RequestBody)
+	require.Negative(t, operation.BodyReadTimeout)
+	require.EqualValues(t, 1024, operation.MaxBodyBytes)
+	for _, path := range []string{"/api/v1/exports/sources", "/api/v1/exports/jobs/{id}/cancel"} {
+		require.GreaterOrEqual(t, doc.Paths[path].Post.BodyReadTimeout, time.Duration(0), path)
+	}
+}
+
 func TestTimeoutExemptOperationsClearBodyReadDeadline(t *testing.T) {
 	doc := NewOfflineServer().API().OpenAPI()
 	marked := 0
 	for path, item := range doc.Paths {
-		if !timeoutExempt(path) {
-			continue
-		}
 		for _, operation := range []*huma.Operation{
 			item.Get, item.Put, item.Post, item.Delete,
 			item.Options, item.Head, item.Patch, item.Trace,
 		} {
-			if operation == nil || operation.RequestBody == nil {
+			if operation == nil || operation.RequestBody == nil || !timeoutExempt(operation.Method, path) {
 				continue
 			}
 			marked++

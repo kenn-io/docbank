@@ -20,6 +20,8 @@ var (
 	ErrPageLimit    = errors.New("page request exceeds limits")
 )
 
+const pageFailedState = "failed"
+
 // PageBinding is the exact selected-source revision fence used for every read
 // and mutation. Historical versions remain explicit; current head is irrelevant.
 type PageBinding struct {
@@ -196,7 +198,7 @@ func validatePageJob(j PageRenderJob) error {
 		return ErrPageConflict
 	}
 	switch j.State {
-	case "queued", "running", "completed", "canceled", "failed":
+	case "queued", "running", "completed", "canceled", pageFailedState:
 	default:
 		return ErrPageConflict
 	}
@@ -205,7 +207,7 @@ func validatePageJob(j PageRenderJob) error {
 	default:
 		return ErrPageConflict
 	}
-	if (j.State == "failed") != (j.FailureCode != "") {
+	if (j.State == pageFailedState) != (j.FailureCode != "") {
 		return ErrPageConflict
 	}
 	if len(j.Results) > len(j.Request.Pages) {
@@ -315,13 +317,17 @@ func (s *Store) CancelPageJob(ctx context.Context, id string, binding PageBindin
 }
 
 func (s *Store) FinishPageJob(ctx context.Context, claim PageJobClaim, state, failure string) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	staleSource := false
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		// A stale source still permits retiring this exact claim, but never output.
 		job, err := loadPageJob(ctx, tx, `id=? AND epoch=? AND token=? AND state='running'`, claim.Job.ID, claim.Epoch, claim.Token)
 		if err != nil {
-			return ErrPageFenced
+			if errors.Is(err, ErrNotFound) {
+				return ErrPageFenced
+			}
+			return err
 		}
-		if state != "completed" && state != "failed" {
+		if state != "completed" && state != pageFailedState {
 			return ErrPageConflict
 		}
 		job.State = state
@@ -331,15 +337,26 @@ func (s *Store) FinishPageJob(ctx context.Context, claim PageJobClaim, state, fa
 		}
 		if state == "completed" {
 			if err := pageSourceTx(ctx, tx, job.Request.Binding()); err != nil {
-				return ErrPageFenced
-			}
-			if err := validatePageJobClosure(ctx, tx, job); err != nil {
+				if !errors.Is(err, ErrPageFenced) && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				state, failure = pageFailedState, "stale_source"
+				staleSource = true
+			} else if err := validatePageJobClosure(ctx, tx, job); err != nil {
 				return err
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE page_render_jobs SET state=?,failure_code=?,token='',updated_at=? WHERE id=?`, state, failure, nowRFC3339(), job.ID)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if staleSource {
+		// Report the lost source fence only after committing retirement.
+		return ErrPageFenced
+	}
+	return nil
 }
 
 func appendPageJobResult(ctx context.Context, tx *sql.Tx, job PageRenderJob, image document.PageImageV1) error {

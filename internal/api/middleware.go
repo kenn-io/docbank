@@ -31,7 +31,7 @@ func browserSessionRequest(ctx context.Context) bool {
 }
 
 // timeout-exempt: long-running maintenance, integrity reads, and bulk ingest.
-func timeoutExempt(path string) bool {
+func timeoutExempt(method, path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
@@ -40,6 +40,13 @@ func timeoutExempt(path string) bool {
 		"/api/v1/backup/restore", "/api/v1/backup/restore/stream",
 		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:
 		return true
+	}
+	if method == http.MethodPost {
+		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
+			if id, ok := strings.CutSuffix(id, "/download"); ok && (id == "{id}" || validPageJobPathID(id)) {
+				return true
+			}
+		}
 	}
 	if strings.HasPrefix(path, "/api/v1/nodes/") &&
 		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
@@ -54,14 +61,11 @@ func timeoutExempt(path string) bool {
 // work.
 func clearLongRunningBodyReadDeadlines(api huma.API) {
 	for path, item := range api.OpenAPI().Paths {
-		if !timeoutExempt(path) {
-			continue
-		}
 		for _, operation := range []*huma.Operation{
 			item.Get, item.Put, item.Post, item.Delete,
 			item.Options, item.Head, item.Patch, item.Trace,
 		} {
-			if operation != nil {
+			if operation != nil && timeoutExempt(operation.Method, path) {
 				operation.BodyReadTimeout = -1
 			}
 		}
@@ -161,7 +165,7 @@ func isLoopbackRemote(remoteAddr string) bool {
 
 func timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if timeoutExempt(r.URL.Path) {
+		if timeoutExempt(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
