@@ -144,12 +144,12 @@ func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
 	assert.Equal(t, wantTargets, targets)
 	assert.Equal(t, tag.Revision+1, receipt.TagRevision)
 	assert.Equal(t, 2, receipt.AssignmentCount)
-	assert.Equal(t, []BatchTagNodeResult{
+	assert.Equal(t, []BatchTagNodeResultV1{
 		{NodeID: first.ID, ExpectedRevision: first.Revision, Revision: first.Revision, Changed: false},
 		{NodeID: second.ID, ExpectedRevision: second.Revision, Revision: second.Revision + 1, Changed: true},
 	}, receipt.Nodes)
 	require.NoError(t, validateMetadataTime("completed_at", receipt.CompletedAt))
-	canonical, err := canonicalBatchTagReceiptJSON(receipt)
+	canonical, err := canonicalBatchTagReceiptV1JSON(receipt)
 	require.NoError(t, err)
 	var stored []byte
 	require.NoError(t, s.db.QueryRow(`SELECT receipt_json FROM batch_tag_receipts
@@ -187,7 +187,16 @@ func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
 				assert.Equal(t, nodes[i].ID, result.NodeID)
 				assert.True(t, result.Changed)
 				assert.Equal(t, nodes[i].Revision+1, result.Revision)
+				targets[i] = BatchTagTarget{NodeID: result.NodeID, Revision: result.Revision}
 			}
+			removed, err := s.BatchTags(t.Context(), BatchTagRequest{
+				OperationID: fmt.Sprintf("34343434-3434-4343-8343-%012d", count),
+				TagID:       tag.ID, Assign: false, Nodes: targets,
+			})
+			require.NoError(t, err)
+			assert.Zero(t, removed.AssignmentCount)
+			assert.Equal(t, tag.Revision+2*int64(count), removed.TagRevision)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
 		})
 	}
 }
@@ -305,7 +314,7 @@ func TestBatchTagsConcurrentSameOperationReturnsOneReceipt(t *testing.T) {
 		Nodes: []BatchTagTarget{{NodeID: node.ID, Revision: node.Revision}},
 	}
 	stores := []*Store{firstStore, secondStore}
-	receipts := make([]BatchTagReceipt, len(stores))
+	receipts := make([]BatchTagReceiptV1, len(stores))
 	errs := make([]error, len(stores))
 	var wg sync.WaitGroup
 	for i := range stores {

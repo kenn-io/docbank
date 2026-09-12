@@ -61,7 +61,7 @@ func validateBatchTagMetadataRecord(record metadataBatchTagReceipt) error {
 	if err := validateUUIDv4(record.OperationID); err != nil {
 		return fmt.Errorf("invalid batch tag receipt operation ID: %w", err)
 	}
-	receipt, err := decodeBatchTagReceipt(record.ReceiptJSON)
+	receipt, err := decodeBatchTagReceiptV1(record.ReceiptJSON)
 	if err != nil {
 		return err
 	}

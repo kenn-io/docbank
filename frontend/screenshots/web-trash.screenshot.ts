@@ -27,7 +27,6 @@ const tuiStorageScreenshotPath = screenshotPathFor("tui-multi-store-storage.png"
 const vaultBrowserScreenshotPath = screenshotPathFor("web-vault-browser.png");
 const pageSelectionScreenshotPath = screenshotPathFor("web-page-selection.png");
 const pageSelectionMobileScreenshotPath = screenshotPathFor("web-page-selection-mobile.png");
-const batchTagsScreenshotPath = screenshotPathFor("web-batch-tags.png");
 const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
 const retainedVersionScreenshotPath = screenshotPathFor(
   "web-retained-version-download.png",
@@ -139,7 +138,6 @@ test.describe("Docbank web screenshots", () => {
     await rm(vaultBrowserScreenshotPath, { force: true });
     await rm(pageSelectionScreenshotPath, { force: true });
     await rm(pageSelectionMobileScreenshotPath, { force: true });
-    await rm(batchTagsScreenshotPath, { force: true });
     await rm(searchResultsScreenshotPath, { force: true });
     await rm(retainedVersionScreenshotPath, { force: true });
     await rm(packedStorageScreenshotPath, { force: true });
@@ -393,12 +391,11 @@ test.describe("Docbank web screenshots", () => {
       fullPage: false,
       animations: "disabled",
     });
-    await selectionDock.getByRole("button", { name: "Add tags" }).click();
+    await selectionDock.getByRole("button", { name: "Edit tags" }).click();
     const batchTags = page.getByRole("dialog", { name: "Tag selected documents" });
     await batchTags.getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" }).click();
     await page.getByRole("option", { name: "tax", exact: true }).click();
     await expect(batchTags.getByText("1 of 2 selected documents have this tag.")).toBeVisible();
-    await page.screenshot({ path: batchTagsScreenshotPath, fullPage: false, animations: "disabled" });
     await batchTags.getByRole("button", { name: "Done" }).click();
     await selectionDock
       .getByRole("button", { name: "Clear selection" })

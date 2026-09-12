@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -59,14 +58,14 @@ func registerBatchTagRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "changeBatchTags", Method: http.MethodPost, Path: "/api/v1/batch/tags",
 		Summary: "Assign or remove one tag across an atomic selected set", MaxBodyBytes: 1 << 20,
 	}, func(ctx context.Context, in *struct{ Body BatchTagRequest }) (*struct{ Body BatchTagReceipt }, error) {
-		var receipt store.BatchTagReceipt
+		var receipt store.BatchTagReceiptV1
 		err := g.mutate(func() error {
 			var err error
 			receipt, err = d.Store.BatchTags(ctx, store.BatchTagRequest{
 				OperationID: in.Body.OperationID, TagID: in.Body.TagID, Assign: in.Body.Assign,
 				Nodes: batchTagStoreTargets(in.Body.Nodes),
 			})
-			return batchTagError(err)
+			return FromStoreError(err)
 		})
 		if err != nil {
 			return nil, err
@@ -94,7 +93,7 @@ func registerBatchTagRoutes(api huma.API, d Deps, g *gate) {
 	}) (*struct{ Body BatchTagPreview }, error) {
 		preview, err := d.Store.PreviewBatchTags(ctx, in.Body.TagID, batchTagStoreTargets(in.Body.Nodes))
 		if err != nil {
-			return nil, batchTagError(err)
+			return nil, FromStoreError(err)
 		}
 		out := BatchTagPreview{TagID: preview.TagID, TagRevision: preview.TagRevision,
 			Nodes: make([]BatchTagPreviewNode, 0, len(preview.Nodes))}
@@ -111,11 +110,4 @@ func batchTagStoreTargets(nodes []BatchTagTarget) []store.BatchTagTarget {
 		targets[i] = store.BatchTagTarget{NodeID: node.NodeID, Revision: node.Revision}
 	}
 	return targets
-}
-
-func batchTagError(err error) error {
-	if errors.Is(err, store.ErrStaleRevision) {
-		return NewError(http.StatusConflict, "stale_revision", err.Error())
-	}
-	return FromStoreError(err)
 }

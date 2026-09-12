@@ -305,9 +305,11 @@ normalization and validation and returns `422` for an invalid path.
 The body is limited to 1 MiB and 1–1,000 unique live file or directory IDs with
 positive exact revisions. No query, subtree expansion, or `If-Match` header is
 used. Invalid structure returns 422, missing or trashed targets return 404,
-and a stale target returns 409. Every target, including assignment no-ops,
+and a stale target returns 412 (`stale_revision`). Every target, including assignment no-ops,
 is validated in the same transaction as all changes and receipt persistence.
-Actual changes use the existing canonical audit events.
+Actual changes use the existing canonical audit events, with a separate audit
+operation for each changed node. The receipt's operation ID identifies the
+batch retry; it is not an audit operation ID.
 
 Success returns 200 with `version: 1`, `operation_id`, `request_digest`,
 `tag_id`, `assign`, final `tag_revision`, final `assignment_count`,

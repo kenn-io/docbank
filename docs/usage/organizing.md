@@ -124,7 +124,7 @@ those assignments are removed.
 
 ## Tag a selected set atomically
 
-In the web app, select document checkboxes and choose **Add tags**. Pick one
+In the web app, select document checkboxes and choose **Edit tags**. Pick one
 tag to see how many selected documents have it, then choose **Add to all** or
 **Remove from all**. Each operation accepts at most 1,000 explicit documents.
 If any target is missing, trashed, or has changed since selection, the whole

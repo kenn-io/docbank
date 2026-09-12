@@ -2,11 +2,12 @@
   import { onDestroy, untrack } from "svelte";
   import { Button, Checkbox, Modal, SelectDropdown, Spinner, type SelectDropdownOption } from "@kenn-io/kit-ui";
   import { APIError, type Tag } from "./api.js";
-  import { changeBatchTags, previewBatchTags, type BatchTagTarget, type BatchTagRequest, type BatchTagReceipt, type BatchTagPreview } from "./batch-tags.js";
+  import type { SelectionTarget } from "./selection.js";
+  import { changeBatchTags, previewBatchTags, type BatchTagRequest, type BatchTagReceipt, type BatchTagPreview } from "./batch-tags.js";
 
   interface Props {
     session: string;
-    targets: readonly BatchTagTarget[];
+    targets: readonly SelectionTarget[];
     catalog: Tag[];
     catalogTotal: number;
     disabled: boolean;
@@ -55,7 +56,7 @@
     } catch (cause) {
       if (!alive || requestGeneration !== generation) return;
       if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
-      stale = cause instanceof APIError && cause.status === 409;
+      stale = cause instanceof APIError && (cause.code === "stale_revision" || cause.code === "not_found");
       failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (alive && requestGeneration === generation) loading = false;
@@ -85,7 +86,7 @@
       if (!alive) return;
       if (cause instanceof APIError && cause.status >= 400 && cause.status < 500) {
         uncertain = undefined;
-        stale = cause.status === 409;
+        stale = cause.code === "stale_revision" || cause.code === "not_found";
         if (cause.status === 401) { onauthfailure(cause); return; }
       } else {
         uncertain = request;

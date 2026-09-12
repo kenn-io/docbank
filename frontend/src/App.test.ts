@@ -1045,7 +1045,7 @@ it("opens bounded tag assignment for the exact page selection", async () => {
   installSelectionBackend();
   render(App);
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
   const dialog = await screen.findByRole("dialog", { name: "Tag selected documents" });
   expect(within(dialog).getByText(/1 selected document\./)).toBeTruthy();
   expect((within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled).toBe(true);

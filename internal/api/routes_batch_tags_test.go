@@ -21,7 +21,12 @@ func TestBatchTagsHTTPReplayAndStaleAtomicity(t *testing.T) {
 	targets := []map[string]any{{"node_id": one.ID, "revision": one.Revision}, {"node_id": two.ID, "revision": two.Revision + 1}}
 	request := map[string]any{"operation_id": "11111111-1111-4111-8111-111111111111", "tag_id": tag.ID, "assign": true, "nodes": targets}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/batch/tags", nil, request)
-	require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	require.Contains(t, body, `"code":"stale_revision"`)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/batch/tags/preview", nil,
+		map[string]any{"tag_id": tag.ID, "nodes": targets})
+	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	require.Contains(t, body, `"code":"stale_revision"`)
 	after, err := s.NodeByID(ctx, one.ID)
 	require.NoError(t, err)
 	require.Equal(t, one.Revision, after.Revision)

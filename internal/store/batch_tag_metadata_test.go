@@ -11,20 +11,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBatchTagReceiptV1WireFormat(t *testing.T) {
+	// Persisted receipt bytes are immutable and must outlive API response changes.
+	const stored = `{"version":1,"operation_id":"11111111-1111-4111-8111-111111111111","request_digest":"9d29429ce1a103db51351b4d136306a00fb8dc77ae392b506ba09e625073c725","tag_id":"22222222-2222-4222-8222-222222222222","assign":true,"tag_revision":3,"assignment_count":2,"completed_at":"2026-09-11T12:00:00.000000000Z","nodes":[{"node_id":7,"expected_revision":3,"revision":4,"changed":true},{"node_id":9,"expected_revision":4,"revision":5,"changed":true}]}`
+	receipt, err := decodeBatchTagReceiptV1([]byte(stored))
+	require.NoError(t, err)
+	require.Equal(t, validBatchTagReceiptForTest(), receipt)
+}
+
 func TestDecodeBatchTagReceiptRejectsOversizedInput(t *testing.T) {
-	_, err := decodeBatchTagReceipt(bytes.Repeat([]byte{' '}, maxBatchTagReceiptJSONBytes+1))
+	_, err := decodeBatchTagReceiptV1(bytes.Repeat([]byte{' '}, maxBatchTagReceiptJSONBytes+1))
 	require.ErrorIs(t, err, ErrInvalidBatchTag)
 }
 
 func TestBatchTagReceiptRejectsImpossibleFinalTagState(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		mutate func(*BatchTagReceipt)
+		mutate func(*BatchTagReceiptV1)
 	}{
-		{name: "tag revision does not exceed change count", mutate: func(r *BatchTagReceipt) {
+		{name: "tag revision does not exceed change count", mutate: func(r *BatchTagReceiptV1) {
 			r.TagRevision = 2
 		}},
-		{name: "assign count omits a target", mutate: func(r *BatchTagReceipt) {
+		{name: "assign count omits a target", mutate: func(r *BatchTagReceiptV1) {
 			r.AssignmentCount = 1
 		}},
 	} {
@@ -33,7 +41,7 @@ func TestBatchTagReceiptRejectsImpossibleFinalTagState(t *testing.T) {
 			test.mutate(&receipt)
 			encoded, err := json.Marshal(receipt, json.Deterministic(true))
 			require.NoError(t, err)
-			_, err = decodeBatchTagReceipt(encoded)
+			_, err = decodeBatchTagReceiptV1(encoded)
 			require.ErrorIs(t, err, ErrInvalidBatchTag)
 		})
 	}
@@ -72,7 +80,7 @@ func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
 		record.ReceiptJSON = append(record.ReceiptJSON, '\n')
 	})
 	invalidTransition := mutateBatchTagMetadata(t, exported.Bytes(), func(record *metadataBatchTagReceipt) {
-		var receipt BatchTagReceipt
+		var receipt BatchTagReceiptV1
 		require.NoError(t, json.Unmarshal(record.ReceiptJSON, &receipt))
 		receipt.Nodes[0].Revision++
 		record.ReceiptJSON, err = json.Marshal(receipt, json.Deterministic(true))
@@ -208,14 +216,14 @@ func TestAuditedBatchTagReceiptSurvivesBackupMetadataSnapshot(t *testing.T) {
 	assert.Equal(t, backup.Bytes(), roundTrip.Bytes())
 }
 
-func validBatchTagReceiptForTest() BatchTagReceipt {
-	return BatchTagReceipt{
+func validBatchTagReceiptForTest() BatchTagReceiptV1 {
+	return BatchTagReceiptV1{
 		Version: 1, OperationID: "11111111-1111-4111-8111-111111111111",
 		RequestDigest: "9d29429ce1a103db51351b4d136306a00fb8dc77ae392b506ba09e625073c725",
 		TagID:         "22222222-2222-4222-8222-222222222222", Assign: true,
 		TagRevision: 3, AssignmentCount: 2,
 		CompletedAt: "2026-09-11T12:00:00.000000000Z",
-		Nodes: []BatchTagNodeResult{
+		Nodes: []BatchTagNodeResultV1{
 			{NodeID: 7, ExpectedRevision: 3, Revision: 4, Changed: true},
 			{NodeID: 9, ExpectedRevision: 4, Revision: 5, Changed: true},
 		},

@@ -41,9 +41,10 @@
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import BatchTagsModal from "./BatchTagsModal.svelte";
-  import type { BatchTagReceipt, BatchTagTarget } from "./batch-tags.js";
+  import type { BatchTagReceipt } from "./batch-tags.js";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
+  import type { SelectionTarget } from "./selection.js";
   import StorageDrawer from "./StorageDrawer.svelte";
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
   import { parseQuery, type Query } from "./query.js";
@@ -151,7 +152,7 @@
   let queryURLError = $state("");
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
-  let batchTagsTargets = $state<BatchTagTarget[] | null>(null);
+  let batchTagsTargets = $state<SelectionTarget[] | null>(null);
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
@@ -644,8 +645,8 @@
     else void loadRoot();
   }
 
-  function openBatchTags(targets: readonly BatchTagTarget[]): void {
-    if (loading || targets.length === 0 || targets.length > 1000) return;
+  function openBatchTags(targets: readonly SelectionTarget[]): void {
+    if (loading) return;
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
@@ -1554,6 +1555,7 @@
         onclear={clearBulkSelection}
         onselectvisible={() => selectAllVisibleDocuments()}
         ontags={() => openBatchTags(bulkTargets)}
+        tagsDisabled={loading}
       />
     {/if}
     {#if historyOpen && selected && membership?.protected}

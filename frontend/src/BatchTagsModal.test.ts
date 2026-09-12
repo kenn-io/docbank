@@ -55,7 +55,7 @@ it("shows exact mixed membership and retries the same uncertain operation", asyn
 });
 
 it("requires explicit reselection after a stale preview", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail: "Selection is stale", code: "stale_revision" }), { status: 409 }));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail: "Selection is stale", code: "stale_revision" }), { status: 412 }));
   const onclose = vi.fn();
   render(BatchTagsModal, { session: "session", targets, catalog: [tag], catalogTotal: 3,
     disabled: false, onclose, onchanged: vi.fn(), onauthfailure: vi.fn() });
@@ -64,4 +64,30 @@ it("requires explicit reselection after a stale preview", async () => {
   expect((screen.getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
   expect(onclose).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { status: 412, code: "stale_revision", refresh: true },
+  { status: 404, code: "not_found", refresh: true },
+  { status: 409, code: "audit_mutation_unsupported", refresh: false },
+  { status: 409, code: "batch_tag_operation_conflict", refresh: false },
+])("handles $code after a successful preview", async ({ status, code, refresh }) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+    if (String(url).endsWith("/preview")) {
+      return new Response(JSON.stringify({ tag_id: tag.id, tag_revision: 2,
+        nodes: targets.map((target, index) => ({ ...target, assigned: index === 0 })),
+      }));
+    }
+    return new Response(JSON.stringify({ detail: code, code }), { status });
+  });
+  render(BatchTagsModal, { session: "session", targets, catalog: [tag], catalogTotal: 1,
+    disabled: false, onclose: vi.fn(), onchanged: vi.fn(), onauthfailure: vi.fn() });
+  await chooseTag();
+  await screen.findByText("1 of 2 selected documents have this tag.");
+  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  expect((await screen.findByRole("alert")).textContent).toBe(code);
+  expect(screen.queryByText(/Close and refresh your selection/) !== null).toBe(refresh);
+  expect((screen.getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled).toBe(refresh);
+  expect((screen.getByRole("button", { name: "Remove from all" }) as HTMLButtonElement).disabled).toBe(refresh);
+  expect(screen.queryByRole("button", { name: "Retry same operation" })).toBeNull();
 });

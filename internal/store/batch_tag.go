@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -18,7 +19,7 @@ import (
 const (
 	maxBatchTagTargets          = 1000
 	maxBatchTagReceiptJSONBytes = 1 << 20
-	batchTagReceiptVersion      = 1
+	batchTagReceiptV1Version    = 1
 )
 
 var (
@@ -44,25 +45,26 @@ type BatchTagRequest struct {
 	Nodes       []BatchTagTarget `json:"nodes"`
 }
 
-// BatchTagNodeResult records one target's original fence and committed result.
-type BatchTagNodeResult struct {
+// BatchTagNodeResultV1 records one target's original fence and committed result.
+type BatchTagNodeResultV1 struct {
 	NodeID           int64 `json:"node_id"`
 	ExpectedRevision int64 `json:"expected_revision"`
 	Revision         int64 `json:"revision"`
 	Changed          bool  `json:"changed"`
 }
 
-// BatchTagReceipt is immutable replay authority for one committed operation.
-type BatchTagReceipt struct {
-	Version         int                  `json:"version"`
-	OperationID     string               `json:"operation_id"`
-	RequestDigest   string               `json:"request_digest"`
-	TagID           string               `json:"tag_id"`
-	Assign          bool                 `json:"assign"`
-	TagRevision     int64                `json:"tag_revision"`
-	AssignmentCount int                  `json:"assignment_count"`
-	CompletedAt     string               `json:"completed_at"`
-	Nodes           []BatchTagNodeResult `json:"nodes"`
+// BatchTagReceiptV1 is the frozen persisted v1 wire format. Keep its fields and
+// their order unchanged; future receipt formats need their own encoder and decoder.
+type BatchTagReceiptV1 struct {
+	Version         int                    `json:"version"`
+	OperationID     string                 `json:"operation_id"`
+	RequestDigest   string                 `json:"request_digest"`
+	TagID           string                 `json:"tag_id"`
+	Assign          bool                   `json:"assign"`
+	TagRevision     int64                  `json:"tag_revision"`
+	AssignmentCount int                    `json:"assignment_count"`
+	CompletedAt     string                 `json:"completed_at"`
+	Nodes           []BatchTagNodeResultV1 `json:"nodes"`
 }
 
 // BatchTagPreviewNode is one exact membership observation.
@@ -79,22 +81,21 @@ type BatchTagPreview struct {
 	Nodes       []BatchTagPreviewNode `json:"nodes"`
 }
 
-type plannedBatchTagTarget struct {
-	target  BatchTagTarget
-	node    Node
-	changed bool
+type batchTagTargetState struct {
+	node     Node
+	assigned bool
 }
 
 // BatchTags atomically applies one tag assignment choice to an exact bounded
 // set of live, revision-fenced nodes. A committed operation ID replays its
 // original immutable receipt without consulting current node or tag state.
-func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTagReceipt, error) {
+func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTagReceiptV1, error) {
 	targets, digest, err := validateBatchTagRequest(request)
 	if err != nil {
-		return BatchTagReceipt{}, err
+		return BatchTagReceiptV1{}, err
 	}
 
-	var receipt BatchTagReceipt
+	var receipt BatchTagReceiptV1
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		stored, found, err := loadBatchTagReceiptTx(ctx, tx, request.OperationID)
 		if err != nil {
@@ -112,78 +113,25 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		if err != nil {
 			return err
 		}
-		planned := make([]plannedBatchTagTarget, len(targets))
-		changedCount := int64(0)
-		for i, target := range targets {
-			node, err := nodeByIDTx(tx, target.NodeID)
-			if err != nil {
-				return err
-			}
-			if node.TrashedAt != nil {
-				return fmt.Errorf("node %d is trashed: %w", node.ID, ErrNotFound)
-			}
-			if node.Revision != target.Revision {
-				return fmt.Errorf("node %d revision is %d, expected %d: %w",
-					node.ID, node.Revision, target.Revision, ErrStaleRevision)
-			}
-			assigned, err := batchTagAssignedTx(ctx, tx, request.TagID, node.ID)
-			if err != nil {
-				return err
-			}
-			changed := assigned != request.Assign
-			if changed && node.Revision == math.MaxInt64 {
-				return fmt.Errorf("node %d revision cannot advance beyond %d: %w",
-					node.ID, node.Revision, ErrInvalidBatchTag)
-			}
-			planned[i] = plannedBatchTagTarget{target: target, node: node, changed: changed}
-			if changed {
-				changedCount++
-			}
-		}
-		if changedCount > 0 && tag.Revision > math.MaxInt64-changedCount {
-			return fmt.Errorf("tag %s revision cannot advance by %d beyond %d: %w",
-				tag.ID, changedCount, math.MaxInt64, ErrInvalidBatchTag)
-		}
-
-		active, err := auditAuthorityActiveTx(ctx, tx)
+		states, err := loadBatchTagTargetsTx(ctx, tx, request.TagID, targets)
 		if err != nil {
 			return err
 		}
-		results := make([]BatchTagNodeResult, len(planned))
-		recordedAt := nowRFC3339()
-		for i, item := range planned {
-			var change TagAssignmentChange
-			if active {
-				change, err = s.changeAuditedTagAssignmentTx(
-					ctx, tx, request.TagID, item.node, item.target.Revision, request.Assign,
-				)
-			} else {
-				change, err = changeTagAssignmentTx(
-					ctx, tx, request.TagID, item.node, item.target.Revision, request.Assign, recordedAt,
-				)
-			}
-			if err != nil {
-				return err
-			}
-			if change.Changed != item.changed {
-				return fmt.Errorf("node %d assignment changed after batch validation", item.node.ID)
-			}
-			results[i] = BatchTagNodeResult{
-				NodeID: item.node.ID, ExpectedRevision: item.target.Revision,
-				Revision: change.Node.Revision, Changed: change.Changed,
-			}
+		results, err := s.applyBatchTagsTx(ctx, tx, request, tag, states, nowRFC3339())
+		if err != nil {
+			return err
 		}
 		finalTag, err := tagByIDTx(tx, request.TagID)
 		if err != nil {
 			return err
 		}
-		receipt = BatchTagReceipt{
-			Version: batchTagReceiptVersion, OperationID: request.OperationID,
+		receipt = BatchTagReceiptV1{
+			Version: batchTagReceiptV1Version, OperationID: request.OperationID,
 			RequestDigest: digest, TagID: request.TagID, Assign: request.Assign,
 			TagRevision: finalTag.Revision, AssignmentCount: finalTag.AssignmentCount,
 			CompletedAt: nowRFC3339(), Nodes: results,
 		}
-		receiptJSON, err := canonicalBatchTagReceiptJSON(receipt)
+		receiptJSON, err := canonicalBatchTagReceiptV1JSON(receipt)
 		if err != nil {
 			return fmt.Errorf("encoding batch tag receipt: %w", err)
 		}
@@ -195,7 +143,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		return nil
 	})
 	if err != nil {
-		return BatchTagReceipt{}, err
+		return BatchTagReceiptV1{}, err
 	}
 	return receipt, nil
 }
@@ -222,24 +170,13 @@ func (s *Store) PreviewBatchTags(
 		TagID: tag.ID, TagRevision: tag.Revision,
 		Nodes: make([]BatchTagPreviewNode, len(targets)),
 	}
-	for i, target := range targets {
-		node, err := nodeByIDTx(tx, target.NodeID)
-		if err != nil {
-			return BatchTagPreview{}, err
-		}
-		if node.TrashedAt != nil {
-			return BatchTagPreview{}, fmt.Errorf("node %d is trashed: %w", node.ID, ErrNotFound)
-		}
-		if node.Revision != target.Revision {
-			return BatchTagPreview{}, fmt.Errorf("node %d revision is %d, expected %d: %w",
-				node.ID, node.Revision, target.Revision, ErrStaleRevision)
-		}
-		assigned, err := batchTagAssignedTx(ctx, tx, tagID, node.ID)
-		if err != nil {
-			return BatchTagPreview{}, err
-		}
+	states, err := loadBatchTagTargetsTx(ctx, tx, tagID, targets)
+	if err != nil {
+		return BatchTagPreview{}, err
+	}
+	for i, state := range states {
 		preview.Nodes[i] = BatchTagPreviewNode{
-			NodeID: node.ID, Revision: node.Revision, Assigned: assigned,
+			NodeID: state.node.ID, Revision: state.node.Revision, Assigned: state.assigned,
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -267,7 +204,7 @@ func validateBatchTagTargets(
 	}
 	targets := slices.Clone(nodes)
 	slices.SortFunc(targets, func(a, b BatchTagTarget) int {
-		return intCompare(a.NodeID, b.NodeID)
+		return cmp.Compare(a.NodeID, b.NodeID)
 	})
 	for i, target := range targets {
 		if target.NodeID < 1 || target.Revision < 1 {
@@ -280,16 +217,6 @@ func validateBatchTagTargets(
 		}
 	}
 	return targets, batchTagDigest(tagID, assign, targets), nil
-}
-
-func intCompare(a, b int64) int {
-	if a < b {
-		return -1
-	}
-	if a > b {
-		return 1
-	}
-	return 0
 }
 
 func batchTagDigest(tagID string, assign bool, targets []BatchTagTarget) string {
@@ -312,68 +239,177 @@ func batchTagDigest(tagID string, assign bool, targets []BatchTagTarget) string 
 	return hex.EncodeToString(digest[:])
 }
 
-func batchTagAssignedTx(ctx context.Context, tx *sql.Tx, tagID string, nodeID int64) (bool, error) {
-	var assigned bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM node_tags WHERE tag_id=? AND node_id=?)`,
-		tagID, nodeID,
-	).Scan(&assigned); err != nil {
-		return false, fmt.Errorf("checking tag %s assignment to node %d: %w", tagID, nodeID, err)
+func loadBatchTagTargetsTx(
+	ctx context.Context, tx *sql.Tx, tagID string, targets []BatchTagTarget,
+) ([]batchTagTargetState, error) {
+	args := make([]any, 1, len(targets)+1)
+	args[0] = tagID
+	for _, target := range targets {
+		args = append(args, target.NodeID)
 	}
-	return assigned, nil
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(targets)), ",")
+	rows, err := tx.QueryContext(ctx, `SELECT `+nodeCols+`, nt.node_id IS NOT NULL
+		FROM `+nodeFrom+` LEFT JOIN node_tags nt ON nt.node_id=n.id AND nt.tag_id=?
+		WHERE n.id IN (`+placeholders+`) ORDER BY n.id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading batch tag targets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	states := make([]batchTagTargetState, 0, len(targets))
+	for rows.Next() {
+		var state batchTagTargetState
+		n := &state.node
+		if err := rows.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind,
+			&n.CurrentVersionID, &n.BlobHash, &n.MD5, &n.Size, &n.MimeType,
+			&n.Revision, &n.CreatedAt, &n.ModifiedAt, &n.TrashedAt, &state.assigned); err != nil {
+			return nil, fmt.Errorf("scanning batch tag target: %w", err)
+		}
+		target := targets[len(states)]
+		if n.ID != target.NodeID || n.TrashedAt != nil {
+			return nil, fmt.Errorf("batch tag target %d is missing or trashed: %w", target.NodeID, ErrNotFound)
+		}
+		if n.Revision != target.Revision {
+			return nil, fmt.Errorf("node %d revision is %d, expected %d: %w",
+				n.ID, n.Revision, target.Revision, ErrStaleRevision)
+		}
+		states = append(states, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading batch tag targets: %w", err)
+	}
+	if len(states) != len(targets) {
+		return nil, fmt.Errorf("batch tag target %d: %w", targets[len(states)].NodeID, ErrNotFound)
+	}
+	return states, nil
+}
+
+func (s *Store) applyBatchTagsTx(
+	ctx context.Context, tx *sql.Tx, request BatchTagRequest, tag Tag,
+	states []batchTagTargetState, recordedAt string,
+) ([]BatchTagNodeResultV1, error) {
+	results := make([]BatchTagNodeResultV1, len(states))
+	changedIDs := make([]any, 0, len(states))
+	for i, state := range states {
+		node := state.node
+		changed := state.assigned != request.Assign
+		results[i] = BatchTagNodeResultV1{
+			NodeID: node.ID, ExpectedRevision: node.Revision, Revision: node.Revision, Changed: changed,
+		}
+		if changed {
+			if node.Revision == math.MaxInt64 {
+				return nil, fmt.Errorf("node %d revision cannot advance: %w", node.ID, ErrInvalidBatchTag)
+			}
+			results[i].Revision++
+			changedIDs = append(changedIDs, node.ID)
+		}
+	}
+	if len(changedIDs) == 0 {
+		return results, nil
+	}
+	if tag.Revision > math.MaxInt64-int64(len(changedIDs)) {
+		return nil, fmt.Errorf("tag %s revision cannot advance by %d: %w", tag.ID, len(changedIDs), ErrInvalidBatchTag)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(changedIDs)), ",")
+	assignmentSQL := `DELETE FROM node_tags WHERE tag_id=? AND node_id IN (` + placeholders + `)`
+	if request.Assign {
+		assignmentSQL = `INSERT INTO node_tags(node_id,tag_id) SELECT id,? FROM nodes WHERE id IN (` + placeholders + `)`
+	}
+	if _, err := tx.ExecContext(ctx, assignmentSQL, append([]any{tag.ID}, changedIDs...)...); err != nil {
+		return nil, fmt.Errorf("changing batch tag assignments: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=?
+		WHERE id IN (`+placeholders+`)`, append([]any{recordedAt}, changedIDs...)...); err != nil {
+		return nil, fmt.Errorf("advancing batch tag nodes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+? WHERE id=?`, len(changedIDs), tag.ID); err != nil {
+		return nil, fmt.Errorf("advancing batch tag: %w", err)
+	}
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if active {
+		for _, state := range states {
+			if state.assigned == request.Assign {
+				continue
+			}
+			if err := s.persistBatchTagAuditTx(ctx, tx, tag.ID, state.node, request.Assign, recordedAt); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return results, nil
+}
+
+func (s *Store) persistBatchTagAuditTx(
+	ctx context.Context, tx *sql.Tx, tagID string, prior Node, assign bool, recordedAt string,
+) error {
+	operationID, err := newUUIDv4()
+	if err != nil {
+		return err
+	}
+	authority, scopes, nodeSequence, err := loadAuditedNodeAuthority(ctx, tx, prior.ID)
+	if err != nil {
+		return err
+	}
+	result := prior
+	result.Revision++
+	result.ModifiedAt = recordedAt
+	return persistAuditedTagAssignment(ctx, tx, s.vaultID, operationID, recordedAt, nodeSequence,
+		authority, scopes, prior, result, tagID, assign)
 }
 
 func loadBatchTagReceiptTx(
 	ctx context.Context, tx *sql.Tx, operationID string,
-) (BatchTagReceipt, bool, error) {
+) (BatchTagReceiptV1, bool, error) {
 	var requestDigest string
 	var receiptJSON []byte
 	err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json
 		FROM batch_tag_receipts WHERE operation_id=?`, operationID).Scan(&requestDigest, &receiptJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		return BatchTagReceipt{}, false, nil
+		return BatchTagReceiptV1{}, false, nil
 	}
 	if err != nil {
-		return BatchTagReceipt{}, false, fmt.Errorf("loading batch tag receipt %s: %w", operationID, err)
+		return BatchTagReceiptV1{}, false, fmt.Errorf("loading batch tag receipt %s: %w", operationID, err)
 	}
-	receipt, err := decodeBatchTagReceipt(receiptJSON)
+	receipt, err := decodeBatchTagReceiptV1(receiptJSON)
 	if err != nil {
-		return BatchTagReceipt{}, false, fmt.Errorf("validating batch tag receipt %s: %w", operationID, err)
+		return BatchTagReceiptV1{}, false, fmt.Errorf("validating batch tag receipt %s: %w", operationID, err)
 	}
 	if receipt.OperationID != operationID || receipt.RequestDigest != requestDigest {
-		return BatchTagReceipt{}, false, fmt.Errorf("batch tag receipt %s identity does not match its row", operationID)
+		return BatchTagReceiptV1{}, false, fmt.Errorf("batch tag receipt %s identity does not match its row", operationID)
 	}
 	return receipt, true, nil
 }
 
-func canonicalBatchTagReceiptJSON(receipt BatchTagReceipt) ([]byte, error) {
-	if err := validateBatchTagReceipt(receipt); err != nil {
+func canonicalBatchTagReceiptV1JSON(receipt BatchTagReceiptV1) ([]byte, error) {
+	if err := validateBatchTagReceiptV1(receipt); err != nil {
 		return nil, err
 	}
 	return json.Marshal(receipt, json.Deterministic(true))
 }
 
-func decodeBatchTagReceipt(data []byte) (BatchTagReceipt, error) {
+func decodeBatchTagReceiptV1(data []byte) (BatchTagReceiptV1, error) {
 	if len(data) == 0 || len(data) > maxBatchTagReceiptJSONBytes {
-		return BatchTagReceipt{}, fmt.Errorf("receipt JSON must be 1-%d bytes: %w",
+		return BatchTagReceiptV1{}, fmt.Errorf("receipt JSON must be 1-%d bytes: %w",
 			maxBatchTagReceiptJSONBytes, ErrInvalidBatchTag)
 	}
-	var receipt BatchTagReceipt
+	var receipt BatchTagReceiptV1
 	if err := json.Unmarshal(data, &receipt, json.RejectUnknownMembers(true)); err != nil {
-		return BatchTagReceipt{}, fmt.Errorf("decoding receipt: %w", err)
+		return BatchTagReceiptV1{}, fmt.Errorf("decoding receipt: %w", err)
 	}
-	canonical, err := canonicalBatchTagReceiptJSON(receipt)
+	canonical, err := canonicalBatchTagReceiptV1JSON(receipt)
 	if err != nil {
-		return BatchTagReceipt{}, err
+		return BatchTagReceiptV1{}, err
 	}
 	if !bytes.Equal(data, canonical) {
-		return BatchTagReceipt{}, errors.New("receipt JSON is not canonical")
+		return BatchTagReceiptV1{}, errors.New("receipt JSON is not canonical")
 	}
 	return receipt, nil
 }
 
-func validateBatchTagReceipt(receipt BatchTagReceipt) error {
-	if receipt.Version != batchTagReceiptVersion {
+func validateBatchTagReceiptV1(receipt BatchTagReceiptV1) error {
+	if receipt.Version != batchTagReceiptV1Version {
 		return fmt.Errorf("unsupported receipt version %d: %w", receipt.Version, ErrInvalidBatchTag)
 	}
 	if err := validateUUIDv4(receipt.OperationID); err != nil {

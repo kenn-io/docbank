@@ -8,6 +8,7 @@
     onclear: () => void;
     onselectvisible: () => void;
     ontags?: () => void;
+    tagsDisabled?: boolean;
   }
 
   let {
@@ -17,6 +18,7 @@
     onclear,
     onselectvisible,
     ontags,
+    tagsDisabled = false,
   }: Props = $props();
 </script>
 
@@ -46,7 +48,7 @@
     >Select visible documents</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
     {#if ontags}
-      <Button size="sm" onclick={ontags}>Add tags</Button>
+      <Button size="sm" disabled={tagsDisabled} onclick={ontags}>Edit tags</Button>
     {/if}
   </div>
 </BottomDock>

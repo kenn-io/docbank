@@ -106,7 +106,7 @@ applying it to newer state.
 ### Tag selected documents
 
 Use the document checkboxes to select files on the displayed page, then choose
-**Add tags** in the selection dock. The picker shows whether all, some, or none
+**Edit tags** in the selection dock. The picker shows whether all, some, or none
 of the selected documents have the chosen tag. **Add to all** and **Remove from
 all** apply one atomic, revision-fenced operation to at most 1,000 documents.
 Folders and undisplayed query results are not included in page selection.
