@@ -297,6 +297,12 @@ var codeToTypedErr = map[string]error{
 	"backup_restore_target_active": home.ErrVaultLocked,
 	"pack_retirement_deferred":     packstore.ErrPackRetirementDeferred,
 	"maintenance_busy":             ErrMaintenanceBusy,
+	"snapshot_gone":                store.ErrSnapshotGone,
+	"invalid_cursor":               store.ErrSnapshotCursor,
+	"snapshot_capacity":            store.ErrSnapshotAdmission,
+	"snapshot_busy":                store.ErrSnapshotBusy,
+	"snapshot_too_large":           store.ErrQuerySnapshotTooLarge,
+	"invalid_saved_query_run":      store.ErrInvalidSavedQueryRun,
 }
 
 func decodeError(resp *http.Response) error {

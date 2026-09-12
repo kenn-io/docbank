@@ -6,22 +6,30 @@
   import { APIError, type ContentVersion, type Node } from "./api.js";
   import {
     offerPreparedDownload,
+    cancelPreparedDownload,
     prepareCurrentDownload,
+    prepareExactDownload,
     prepareVersionDownload,
+    type PreparedDownload,
     type DownloadProgress,
   } from "./download.js";
   import { formatBytes } from "./format.js";
+  import type { SelectedSource } from "./selectedSource.js";
 
   let {
     session,
     node,
     version,
+    source,
+    authorizationRevision,
     label = "Download",
     onauthfailure,
   }: {
     session: string;
-    node: Node;
+    node?: Node;
     version?: ContentVersion;
+    source?: SelectedSource;
+    authorizationRevision?: number;
     label?: string;
     onauthfailure: (cause: unknown) => void;
   } = $props();
@@ -33,24 +41,53 @@
 
   onDestroy(() => controller?.abort());
 
+  const sourceIdentity = $derived(
+    source?.key ?? `${node?.id ?? 0}:${version?.id ?? node?.current_version_id ?? ""}`,
+  );
+
+  $effect(() => {
+    const identity = `${session}:${sourceIdentity}:${authorizationRevision ?? node?.revision ?? 0}`;
+    return () => {
+      void identity;
+      const active = controller;
+      controller = null;
+      active?.abort();
+      progress = null;
+      outcome = "";
+      failed = false;
+    };
+  });
+
   async function download(): Promise<void> {
     if (controller) {
       controller.abort();
       return;
     }
     const active = new AbortController();
+    const activeSession = session;
     controller = active;
-    progress = { received: 0, total: version?.size ?? node.size };
+    progress = { received: 0, total: source?.size ?? version?.size ?? node?.size ?? 0 };
     outcome = "";
     failed = false;
+    let prepared: PreparedDownload | undefined;
     try {
       const report = (next: DownloadProgress) => {
         if (controller === active) progress = next;
       };
-      const prepared = version
-        ? await prepareVersionDownload(session, node, version, active.signal, report)
-        : await prepareCurrentDownload(session, node, active.signal, report);
-      if (controller !== active) return;
+      prepared = source
+        ? await prepareExactDownload(
+            activeSession, source, authorizationRevision ?? source.mutationRevision,
+            "native", active.signal, report,
+          )
+        : version && node
+          ? await prepareVersionDownload(activeSession, node, version, active.signal, report)
+          : node
+            ? await prepareCurrentDownload(activeSession, node, active.signal, report)
+            : (() => { throw new Error("The selected document does not have download authority."); })();
+      if (controller !== active) {
+        await cancelPreparedDownload(activeSession, prepared).catch(() => undefined);
+        return;
+      }
       offerPreparedDownload(prepared);
       outcome = `Verified ${formatBytes(prepared.size)}; browser save started.`;
     } catch (cause) {
