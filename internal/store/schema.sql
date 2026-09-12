@@ -1386,3 +1386,22 @@ CREATE TABLE IF NOT EXISTS email_body_results (
     reason TEXT
 );
 CREATE INDEX IF NOT EXISTS email_body_results_rendition ON email_body_results(rendition_attachment_id);
+
+-- Operational receipts retain exact MIME and ordinary document authority.
+CREATE TABLE IF NOT EXISTS email_document_publications (
+    operation_id TEXT PRIMARY KEY,
+    request_digest TEXT NOT NULL,
+    parent_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    email_attachment_id TEXT NOT NULL REFERENCES email_attachments(attachment_id),
+    request_json TEXT NOT NULL,
+    receipt_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS email_document_publications_parent ON email_document_publications(parent_version_id);
+CREATE INDEX IF NOT EXISTS email_document_publications_attachment ON email_document_publications(email_attachment_id);
+CREATE TABLE IF NOT EXISTS email_document_relations (
+    operation_id TEXT NOT NULL REFERENCES email_document_publications(operation_id) ON DELETE CASCADE,
+    occurrence_order INTEGER NOT NULL,
+    child_version_id TEXT REFERENCES content_versions(version_id),
+    PRIMARY KEY(operation_id, occurrence_order)
+);
+CREATE INDEX IF NOT EXISTS email_document_relations_child ON email_document_relations(child_version_id);

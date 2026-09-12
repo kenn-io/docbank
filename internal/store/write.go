@@ -414,6 +414,20 @@ func (s *Store) CreateFileWithReceipt(
 	}
 	var receipt ContentWriteReceipt
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		receipt, err = s.createFileWithReceiptTx(ctx, tx, parentID, name, blobHash, size, mimeType, physical...)
+		return err
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	return receipt, nil
+}
+
+// createFileWithReceiptTx preserves ordinary audited creation when a domain
+// operation publishes several files in one transaction.
+func (s *Store) createFileWithReceiptTx(ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash string, size int64, mimeType string, physical ...BlobPhysical) (ContentWriteReceipt, error) {
+	var receipt ContentWriteReceipt
+	err := func() error {
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -457,7 +471,7 @@ func (s *Store) CreateFileWithReceipt(
 		}
 		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 		return err
-	})
+	}()
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}

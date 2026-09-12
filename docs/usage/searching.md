@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-10
+last_edited: 2026-09-12
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -208,6 +208,12 @@ another stored media type is never reclassified from its filename. An embedded
 or master-API caller may explicitly ensure its email metadata without changing
 the original media type, hash, or bytes.
 
+Applications can explicitly [publish email attachments as ordinary documents](../embedding.md#publish-email-attachment-documents).
+Each attachment keeps a relation to its exact parent version and MIME part.
+Published CSV and other supported text files enter normal text extraction;
+other formats require an explicitly configured processing provider and consent.
+Attachment text matches the child document. It never becomes a parent-body hit.
+
 Extraction is bounded to 16 MiB per blob. Larger documents, invalid UTF-8, and
 text containing NUL bytes remain stored and readable but are not body-indexed.
 Newly ingested or replaced content may take a few seconds to appear while the
@@ -218,7 +224,7 @@ extraction failure. `docbank jobs` shows whether that worker is running.
 ## Which text is not searched?
 
 The daemon does not automatically extract PDF text layers, office-document
-text, email attachments, or text from images through optical character recognition (OCR). You
+text, unpublished email attachments, or text from images through optical character recognition (OCR). You
 can still find these files by name and read their stored bytes. The
 [document processing libraries](../document-understanding.md) provide additional
 processing options for applications; adding a file does not start them.

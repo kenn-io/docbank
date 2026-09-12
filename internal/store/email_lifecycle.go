@@ -33,6 +33,13 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			if _, ok := selected[id]; !request.All && !ok {
 				continue
 			}
+			var retained bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_document_publications WHERE parent_version_id=?)`, id).Scan(&retained); err != nil {
+				return nil, nil, err
+			}
+			if retained {
+				return nil, nil, ErrEmailDocumentConflict
+			}
 			v, err := emailVersion(ctx, tx, id)
 			if err != nil {
 				return nil, nil, err
@@ -108,6 +115,13 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 
 func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions []string) error {
 	for _, id := range versions {
+		var retained bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_document_publications WHERE parent_version_id=?) OR EXISTS(SELECT 1 FROM email_document_relations WHERE child_version_id=?)`, id, id).Scan(&retained); err != nil {
+			return err
+		}
+		if retained {
+			return ErrEmailDocumentConflict
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=?`, id); err != nil {
 			return err
 		}

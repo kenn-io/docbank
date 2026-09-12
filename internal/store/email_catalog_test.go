@@ -27,6 +27,11 @@ type emailFixture struct {
 
 func newEmailFixture(t *testing.T, s *Store, name string) emailFixture {
 	t.Helper()
+	return newEmailSourceFixture(t, s, name, catalogEmailSource)
+}
+
+func newEmailSourceFixture(t *testing.T, s *Store, name, raw string) emailFixture {
+	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	layout, err := packstore.NewLayout(filepath.Join(root, "blobs"), packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"})
@@ -34,7 +39,7 @@ func newEmailFixture(t *testing.T, s *Store, name string) emailFixture {
 	bs, err := packstore.NewLooseStore(layout)
 	require.NoError(t, err)
 	f := emailFixture{s: s, blobs: bs, bytes: make(map[string][]byte)}
-	source := []byte(catalogEmailSource)
+	source := []byte(raw)
 	sum := sha256.Sum256(source)
 	hash := hex.EncodeToString(sum[:])
 	decoded, err := emailmime.Decode(t.Context(), hash, int64(len(source)), bytes.NewReader(source), root)
@@ -184,7 +189,7 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	changed := first.Evidence
-	changed.Recipe.GoVersion = "go1.27.1"
+	changed.Recipe.GoVersion += "-synthetic-reprocess"
 	p := f.publication
 	p.CanonicalJSON, _, err = document.MarshalEmailV1(changed)
 	require.NoError(t, err)

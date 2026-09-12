@@ -68,7 +68,7 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	t.Cleanup(func() { _ = blobs.Close() })
 	d := api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(),
-		WebURL: testWebURL, EnsureEmail: processing.EnsureEmailTarget,
+		WebURL: testWebURL, EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
 	}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {

@@ -347,7 +347,7 @@ func TestEmailStoreChangedInventoryRetiresOnlyItsServingBody(t *testing.T) {
 	_, err := f.publisher(t, nil).PublishRendition(t.Context(), f.bodyStage(t))
 	require.NoError(t, err)
 	changed := f.email.Evidence
-	changed.Recipe.GoVersion = "go1.27.1"
+	changed.Recipe.GoVersion += "-synthetic-reprocess"
 	p := f.inventory
 	p.CanonicalJSON, _, err = document.MarshalEmailV1(changed)
 	require.NoError(t, err)

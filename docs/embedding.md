@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-12
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
@@ -186,6 +187,81 @@ If Docbank cannot open or verify the source bytes, it returns
 Use `SourceMetadata` for a read-only lookup. It returns `ErrNotFound` when no
 result has been published. Both methods return all local fields, including
 sensitive fields. Your application decides which fields it may disclose.
+
+## Publish email attachment documents
+
+Use `EnsureEmailMetadata` to retain the MIME inventory for an exact email
+version. Then call `PublishEmailDocuments` with a
+`document.EmailDocumentPublicationRequest`: an operation ID, the exact parent
+node/version/hash/size, the returned generation and attachment IDs, and a
+destination directory ID with its current revision. No host filesystem path
+is accepted. This explicit operation does not run automatically on import.
+
+Publication verifies retained payload bytes and creates ordinary file documents
+for the full known attachment inventory in one transaction. Inline resources
+are included; body alternatives and multipart containers are excluded. An
+attached email becomes a child email, whose own attachments can be published
+separately. The receipt says whether the MIME inventory is `complete` or
+`partial`, and records unavailable, unsupported, failed, or encrypted parts
+without inventing empty files.
+
+Equal bytes share storage but get separate document occurrences. Filenames use
+the safe MIME name plus operation and occurrence identifiers. An explicit
+`reuse` selection may instead identify an existing child version with matching
+bytes and its node revision. Raw filenames remain in the MIME inventory.
+Renames, later content versions, and decoder reprocessing never move an old
+relation to a different version.
+
+Keep the operation ID and request unchanged when retrying. The same request
+returns the original receipt, including after backup and restore; a changed
+request conflicts. `EmailDocumentPublication` reads that receipt.
+`EmailDocumentRelations` selects either an exact parent version or an exact
+child version and returns current processing status with each relation. Pages
+default to 100 rows, accept at most 250, include a total, and return the next
+operation/order pair when another page exists. Publication accepts at most
+1,000 MIME parts, 128 MiB per payload, and 256 MiB of decoded payloads. HTTP
+request and response bodies are bounded to 2 MiB.
+
+Publication itself does not prove indexing or authorize provider disclosure.
+`RequestEmailDocumentProcessing` submits one receipt occurrence to the ordinary
+rendition scheduler with an explicit processing profile, execution identity,
+artifact policy, principal, scope, and consent classes. Existing consent must
+authorize those exact inputs and retained outputs. `GrantProcessingConsent`
+explicitly grants that authority; `RevokeProcessingConsent` advances the
+principal/scope revocation fence. Publication and processing requests never
+grant consent or inherit it from a parent email. A configured runtime must
+execute that profile; an unconfigured provider remains pending. The worker
+checks consent again before provider access and publication. Relation status
+reports `indexed` only for a complete active lexical rendition of that exact
+child version. Other states include `decoded`, `pending`, `failed`,
+`unsupported`, `encrypted`, and `unavailable`. Ordinary search returns child
+matches; QueryV1 does not add an email-family traversal predicate.
+
+Trash and restore keep relations and do not cascade to children. A referenced
+version cannot be permanently deleted or pruned, and a referenced MIME
+inventory cannot be purged. To release those references, call
+`RemoveEmailDocumentPublication` with the operation ID and exact request digest.
+This removes that receipt and its relations, preserves ordinary children, and
+relinquishes the operation's retry guarantee. Other receipts retain their own
+references. Ordinary audit and content-retention rules still apply.
+
+The authenticated HTTP and typed client surfaces expose the same operations:
+
+| Operation | HTTP route |
+| --- | --- |
+| Publish | `POST /api/v1/email-document-publications` |
+| Read receipt | `GET /api/v1/email-document-publications/{operation_id}` |
+| Release receipt | `DELETE /api/v1/email-document-publications/{operation_id}` with `request_digest` |
+| Read relations | `GET /api/v1/email-document-relations` with `parent_version_id` or `child_version_id` |
+| Request processing | `POST /api/v1/email-document-processing` |
+| Grant processing consent | `POST /api/v1/processing/consents` |
+| Revoke processing consent | `POST /api/v1/processing/consents/revoke` |
+
+These routes require the master API key and are outside the current browser
+session capability. All relation and receipt DTOs live in
+`go.kenn.io/docbank/document`. Consumers
+can use the same exact identities for navigation and downloads without
+inferring parentage from names or hashes.
 
 ## Read canonical visual previews
 

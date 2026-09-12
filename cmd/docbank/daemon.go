@@ -356,7 +356,7 @@ func runServe(ctx context.Context) (retErr error) {
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
-		Jobs: jobSupervisor, Gate: operationGate, EnsureEmail: processing.EnsureEmailTarget,
+		Jobs: jobSupervisor, Gate: operationGate, EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
 		WebURL: webURL, BlobRegistry: blobRegistry,
 	})
 	defer srv.Close()

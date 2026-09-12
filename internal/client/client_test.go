@@ -93,7 +93,7 @@ func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 	t.Cleanup(func() { _ = blobs.Close() })
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg,
-		EnsureEmail: processing.EnsureEmailTarget,
+		EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

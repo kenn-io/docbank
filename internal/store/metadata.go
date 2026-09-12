@@ -448,6 +448,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 10 {
+		if err := exportEmailDocumentMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
 
@@ -984,6 +989,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM email_attachments)
 		    + (SELECT COUNT(*) FROM email_heads)
 		    + (SELECT COUNT(*) FROM email_body_results)
+		    + (SELECT COUNT(*) FROM email_document_publications)
+		    + (SELECT COUNT(*) FROM email_document_relations)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
@@ -1422,6 +1429,7 @@ var metadataRequiredFields = map[string][]string{
 	"email_attachment":                     {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
 	"email_part_artifact":                  {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
 	"email_generation":                     {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
+	"email_document_publication":           {"type", "request", "receipt"},
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
@@ -1855,6 +1863,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
 			return err
+		}
+		if layout.schemaVersion >= 10 {
+			if err := exportEmailDocumentMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+				return err
+			}
 		}
 	}
 	topology, err := loadAuditTopologyRows(ctx, tx)

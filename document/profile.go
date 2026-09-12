@@ -496,9 +496,9 @@ func validateRenditionBinding(binding RenditionBindingV1) error {
 	if binding.MaxUnits <= 0 || binding.MaxUnits > maxRenditionUnits {
 		return fmt.Errorf("rendition max units must be between 1 and %d", maxRenditionUnits)
 	}
-	if len(binding.RequestedArtifacts) == 0 {
-		return errors.New("rendition requested artifacts must not be empty")
-	}
+	// Structured evidence is the provider's core result. A provider may expose
+	// no optional sidecar artifacts; its descriptor and execution seal still
+	// enforce every requested capability.
 	if len(binding.RequestedArtifacts) > maxRequestedArtifacts {
 		return fmt.Errorf("too many requested artifacts: maximum is %d", maxRequestedArtifacts)
 	}
