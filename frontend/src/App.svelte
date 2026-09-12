@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
@@ -15,6 +15,7 @@
   import TagIcon from "@lucide/svelte/icons/tag";
   import TagsIcon from "@lucide/svelte/icons/tags";
   import HistoryIcon from "@lucide/svelte/icons/history";
+  import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import UploadIcon from "@lucide/svelte/icons/upload";
   import {
@@ -32,6 +33,8 @@
     TableHeaderCell,
     ThemeToggle,
     TopBar,
+    createShortcutManager,
+    formatShortcutKeys,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
@@ -42,6 +45,7 @@
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
+  import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
   import { parseQuery, type Query } from "./query.js";
@@ -58,6 +62,7 @@
   import {
     APIError,
     auditStatusForNode,
+    changeNodeTag,
     children,
     liveTaggedNodes,
     nodeTags,
@@ -76,6 +81,7 @@
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
+  import { isAppShortcutSuppressed, moveInspection } from "./shortcuts.js";
   import {
     clearSelection,
     reconcileSelection,
@@ -83,6 +89,14 @@
     toggleDocumentSelection,
     type SelectionState,
   } from "./selection.js";
+  import {
+    TAG_HOTKEYS,
+    isTagHotkeyVaultID,
+    loadTagHotkeys,
+    saveTagHotkeys,
+    type TagHotkey,
+    type TagHotkeyBindings,
+  } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
 
   type Row = { node: Node; path: string; match?: "name" | "content" };
@@ -122,6 +136,13 @@
   let tagCatalogListed = $state(0);
   let tagCatalogLoading = $state(false);
   let tagCatalogError = $state("");
+  let vaultID = $state("");
+  let tagHotkeys = $state<TagHotkeyBindings>({});
+  let pendingTagHotkey = $state<TagHotkey | "">("");
+  let shortcutNotice = $state("");
+  let shortcutError = $state("");
+  let shortcutHelpOpen = $state(false);
+  let searchInputEl = $state<HTMLInputElement>();
   let selectedTags = $state<Tag[]>([]);
   let selectedTagsTotal = $state(0);
   let selectedTagsLoading = $state(false);
@@ -155,6 +176,7 @@
   let auditGeneration = 0;
   let tagGeneration = 0;
   let tagCatalogGeneration = 0;
+  let tagHotkeyGeneration = 0;
   let pendingSelectionRange = false;
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
@@ -182,6 +204,54 @@
   onMount(() => {
     try { savedQueryDraft = queryFromFragment(location.hash); }
     catch (cause) { queryURLError = cause instanceof Error ? cause.message : String(cause); }
+    const shortcutManager = createShortcutManager();
+    const unregister = [
+      shortcutManager.register("/", focusSearch, {
+        description: "Focus search",
+      }),
+      shortcutManager.register("j", () => void inspectRelative(1), {
+        description: "Inspect next loaded row",
+      }),
+      shortcutManager.register("k", () => void inspectRelative(-1), {
+        description: "Inspect previous loaded row",
+      }),
+      shortcutManager.register("space", toggleInspectedSelection, {
+        description: "Toggle inspected file selection",
+      }),
+      shortcutManager.register("enter", activateInspected, {
+        description: "Open inspected row",
+      }),
+      shortcutManager.register("escape", clearShortcutSelection, {
+        description: "Clear page selection",
+      }),
+      shortcutManager.register("shift+/", openShortcutHelp, {
+        description: "Show keyboard shortcuts",
+      }),
+      ...TAG_HOTKEYS.map((key) =>
+        shortcutManager.register(
+          key,
+          (event) => void toggleInspectedTag(key, event),
+          { description: `Toggle configured tag ${key}` },
+        ),
+      ),
+    ];
+    const handleShortcut = (event: KeyboardEvent): void => {
+      if (
+        isAppShortcutSuppressed(
+          event,
+          !webSession || loading || searchPending,
+        )
+      ) {
+        return;
+      }
+      shortcutManager.handleKeydown(event);
+    };
+    window.addEventListener("keydown", handleShortcut);
+    const detachShortcuts = (): void => {
+      window.removeEventListener("keydown", handleShortcut);
+      unregister.forEach((remove) => remove());
+    };
+
     const session = takeFragmentSession();
     if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
     if (session) {
@@ -204,13 +274,200 @@
           uploadChannelError = cause instanceof Error ? cause.message : String(cause);
         },
       );
-      return () => channel.close();
+      return () => {
+        channel.close();
+        detachShortcuts();
+      };
     }
+    return detachShortcuts;
   });
 
   function clearBulkSelection(): void {
     bulkSelection = clearSelection();
     pendingSelectionRange = false;
+  }
+
+  function invalidateTagHotkeyMutation(): void {
+    tagHotkeyGeneration += 1;
+    pendingTagHotkey = "";
+  }
+
+  function localPreferenceStorage(): Storage | undefined {
+    try {
+      return globalThis.localStorage;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function clearShortcutFeedback(): void {
+    shortcutNotice = "";
+    shortcutError = "";
+  }
+
+  function focusSearch(): void {
+    clearShortcutFeedback();
+    searchInputEl?.focus();
+  }
+
+  async function revealInspectedRow(nodeID: number): Promise<void> {
+    await tick();
+    const row = document.querySelector<HTMLElement>(`tr[data-node-id="${nodeID}"]`);
+    if (!row) return;
+    row.focus({ preventScroll: true });
+    row.scrollIntoView({ block: "nearest" });
+    const dock = document.querySelector<HTMLElement>(".selection-dock");
+    const scroller = row.closest<HTMLElement>(".kit-table-wrapper");
+    if (!dock || !scroller) return;
+    const rowBounds = row.getBoundingClientRect();
+    const dockBounds = dock.getBoundingClientRect();
+    const overlap = rowBounds.bottom - dockBounds.top;
+    if (overlap > 0) scroller.scrollBy({ top: overlap + 8, behavior: "auto" });
+  }
+
+  async function inspectRelative(direction: -1 | 1): Promise<void> {
+    clearShortcutFeedback();
+    const move = moveInspection(
+      sortedRows.map((row) => ({ id: row.node.id })),
+      selectedID,
+      direction,
+    );
+    if (move.boundary === "empty") {
+      shortcutNotice = "No rows are loaded.";
+      return;
+    }
+    if (move.id !== undefined && move.id !== selectedID) selectNode(move.id);
+    if (move.id !== undefined) await revealInspectedRow(move.id);
+    if (move.boundary === "first") shortcutNotice = "First loaded row reached.";
+    else if (move.boundary === "last") shortcutNotice = "Last loaded row reached.";
+  }
+
+  function toggleInspectedSelection(): void {
+    clearShortcutFeedback();
+    if (!selected) {
+      shortcutNotice = "No row is inspected.";
+      return;
+    }
+    if (selected.node.kind !== "file") {
+      shortcutNotice = "The inspected row is a folder; only files can be selected.";
+      return;
+    }
+    toggleBulkSelection(
+      selected,
+      !bulkSelection.selectedIDs.has(selected.node.id),
+    );
+  }
+
+  function activateInspected(): void {
+    clearShortcutFeedback();
+    if (!selected) {
+      shortcutNotice = "No row is inspected.";
+      return;
+    }
+    activate(selected);
+  }
+
+  function clearShortcutSelection(): void {
+    clearShortcutFeedback();
+    clearBulkSelection();
+    shortcutNotice = "Page selection cleared.";
+  }
+
+  function openShortcutHelp(): void {
+    clearShortcutFeedback();
+    shortcutHelpOpen = true;
+  }
+
+  function changeTagHotkeyBinding(key: TagHotkey, tagID: string): void {
+    if (!vaultID) return;
+    const next = { ...tagHotkeys };
+    if (tagID) next[key] = tagID;
+    else delete next[key];
+    const storage = localPreferenceStorage();
+    if (!storage || !saveTagHotkeys(storage, vaultID, next)) {
+      shortcutError = "This browser blocked saving tag shortcut preferences.";
+      return;
+    }
+    tagHotkeys = next;
+    clearShortcutFeedback();
+    shortcutNotice = tagID
+      ? `Tag shortcut ${key} saved for this vault.`
+      : `Tag shortcut ${key} cleared for this vault.`;
+  }
+
+  async function toggleInspectedTag(
+    key: TagHotkey,
+    event: KeyboardEvent,
+  ): Promise<void> {
+    if (event.repeat || pendingTagHotkey) return;
+    clearShortcutFeedback();
+    const tagID = tagHotkeys[key];
+    if (!tagID) {
+      shortcutNotice = `No tag is assigned to shortcut ${key}.`;
+      return;
+    }
+    const target = selected;
+    if (!target || target.node.kind !== "file") {
+      shortcutNotice = "Inspect a file before using a tag shortcut.";
+      return;
+    }
+    const tag = tagCatalog.find((item) => item.id === tagID);
+    if (!tag) {
+      shortcutNotice = `Tag shortcut ${key} is unavailable because its saved tag is not in the loaded catalog.`;
+      return;
+    }
+    if (
+      selectedTagsLoading ||
+      Boolean(selectedTagsError) ||
+      selectedTagsTotal !== selectedTags.length
+    ) {
+      shortcutNotice = "Tag shortcuts are unavailable until all assigned tags for this file are known.";
+      return;
+    }
+
+    const session = webSession;
+    const expectedNodeID = target.node.id;
+    const expectedRevision = target.node.revision;
+    const assigned = selectedTags.some((item) => item.id === tagID);
+    const request = ++tagHotkeyGeneration;
+    pendingTagHotkey = key;
+    try {
+      const receipt = await changeNodeTag(
+        session,
+        expectedNodeID,
+        expectedRevision,
+        tagID,
+        !assigned,
+      );
+      const current = rows.find((row) => row.node.id === expectedNodeID);
+      if (
+        request !== tagHotkeyGeneration ||
+        session !== webSession ||
+        selectedID !== expectedNodeID ||
+        current?.node.revision !== expectedRevision
+      ) {
+        return;
+      }
+      handleTagChanged(receipt, !assigned);
+      shortcutNotice = assigned
+        ? `Removed ${receipt.tag.name} from ${target.node.name}.`
+        : `Added ${receipt.tag.name} to ${target.node.name}.`;
+    } catch (cause) {
+      if (
+        request !== tagHotkeyGeneration ||
+        session !== webSession ||
+        selectedID !== expectedNodeID
+      ) {
+        return;
+      }
+      if (cause instanceof APIError && cause.status === 401) {
+        handleFailure(cause);
+        return;
+      }
+      shortcutError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (request === tagHotkeyGeneration) pendingTagHotkey = "";
+    }
   }
 
   function replaceRows(nextRows: Row[], reconcile: boolean): void {
@@ -256,11 +513,15 @@
       backupsOpen = false;
       trashOpen = false;
       tagCatalogOpen = false;
+      shortcutHelpOpen = false;
       uploadTarget = null;
       trashTarget = null;
       tagCatalog = [];
       tagCatalogListed = 0;
       tagCatalogLoading = false;
+      vaultID = "";
+      tagHotkeys = {};
+      invalidateTagHotkeyMutation();
       selectedTags = [];
       selectedTagsTotal = 0;
       searchPending = false;
@@ -272,6 +533,7 @@
   }
 
   async function loadRoot(): Promise<void> {
+    invalidateTagHotkeyMutation();
     clearBulkSelection();
     const request = ++generation;
     const session = webSession;
@@ -294,6 +556,7 @@
     preferredSelectedID?: number,
     preserveSort = false,
   ): Promise<void> {
+    invalidateTagHotkeyMutation();
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
     searchPending = false;
@@ -360,6 +623,7 @@
   }
 
   async function runSearch(preferredSelectedID = selectedID): Promise<void> {
+    invalidateTagHotkeyMutation();
     const query = searchQuery.trim();
     if (!query) {
       if (tagFilterID) await loadTaggedNodes(tagFilterID);
@@ -415,6 +679,7 @@
     tagID: string,
     preferredSelectedID?: number,
   ): Promise<void> {
+    invalidateTagHotkeyMutation();
     if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
@@ -453,6 +718,7 @@
   }
 
   function goBack(): void {
+    invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
     const previous = stack.at(-1);
@@ -506,7 +772,9 @@
   }
 
   function selectNode(nodeID: number | undefined): void {
+    if (selectedID === nodeID && pendingTagHotkey) return;
     if (selectedID !== nodeID) {
+      invalidateTagHotkeyMutation();
       historyOpen = false;
       versionsOpen = false;
       provenanceOpen = false;
@@ -610,6 +878,16 @@
       const status = await auditStatusForNode(session, nodeID);
       if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
       selectedAudit = status;
+      if (isTagHotkeyVaultID(status.vault_id)) {
+        if (vaultID !== status.vault_id) {
+          vaultID = status.vault_id;
+          const storage = localPreferenceStorage();
+          tagHotkeys = storage ? loadTagHotkeys(storage, vaultID) : {};
+        }
+      } else {
+        vaultID = "";
+        tagHotkeys = {};
+      }
     } catch (cause) {
       if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -833,6 +1111,7 @@
     auditGeneration += 1;
     tagGeneration += 1;
     tagCatalogGeneration += 1;
+    invalidateTagHotkeyMutation();
     const session = webSession;
     uploadChannel?.close();
     uploadChannel = null;
@@ -851,6 +1130,10 @@
     tagCatalogListed = 0;
     tagCatalogLoading = false;
     tagCatalogError = "";
+    vaultID = "";
+    tagHotkeys = {};
+    shortcutNotice = "";
+    shortcutError = "";
     auditLoading = false;
     auditError = "";
     historyOpen = false;
@@ -863,6 +1146,7 @@
     trashOpen = false;
     manageTagsTarget = null;
     tagCatalogOpen = false;
+    shortcutHelpOpen = false;
     uploadTarget = null;
     trashTarget = null;
     activeQuery = "";
@@ -940,8 +1224,10 @@
         >
           <SearchInput
             bind:value={searchQuery}
+            bind:inputEl={searchInputEl}
             placeholder="Search names and extracted text"
             ariaLabel="Search documents"
+            keys={formatShortcutKeys("/")}
             block
             onclear={clearSearch}
           />
@@ -1037,6 +1323,14 @@
           }}
         >
           <ShieldCheckIcon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          ariaLabel="Keyboard shortcuts and tag hotkeys"
+          title="Keyboard shortcuts and tag hotkeys (?)"
+          onclick={openShortcutHelp}
+        >
+          <KeyboardIcon size="14" aria-hidden="true" />
         </IconButton>
         <ThemeToggle size="sm" />
         <IconButton size="sm" ariaLabel="Lock web session" onclick={() => void lock()}>
@@ -1162,6 +1456,21 @@
         {#if error}
           <div class="banner error" role="alert">{error}</div>
         {/if}
+        {#if shortcutError}
+          <div class="banner error" role="alert" aria-label="Keyboard shortcut error">
+            {shortcutError}
+          </div>
+        {/if}
+        {#if shortcutNotice}
+          <div
+            class="banner shortcut-notice"
+            role="status"
+            aria-live="polite"
+            aria-label="Keyboard shortcut status"
+          >
+            {shortcutNotice}
+          </div>
+        {/if}
         {#if loading}
           <div class="loading"><Spinner size={16} /> Loading vault…</div>
         {:else if rows.length === 0}
@@ -1227,12 +1536,17 @@
               {#each sortedRows as row (row.node.id)}
                 <tr
                   class:selected={row.node.id === selectedID}
+                  data-node-id={row.node.id}
                   tabindex="0"
                   aria-selected={row.node.id === selectedID}
                   ondblclick={() => activate(row)}
                   onclick={() => selectNode(row.node.id)}
                   onkeydown={(event) => {
-                    if (event.key === "Enter") activate(row);
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      activate(row);
+                    }
                   }}
                 >
                   <td
@@ -1537,6 +1851,16 @@
         onselectvisible={() => selectAllVisibleDocuments()}
       />
     {/if}
+    {#if shortcutHelpOpen}
+      <ShortcutHelpModal
+        vaultReady={vaultID !== ""}
+        catalog={tagCatalog}
+        catalogTotal={tagCatalogTotal}
+        bindings={tagHotkeys}
+        onbindingchange={changeTagHotkeyBinding}
+        onclose={() => (shortcutHelpOpen = false)}
+      />
+    {/if}
     {#if historyOpen && selected && membership?.protected}
       <AuditHistoryDrawer
         session={webSession}
@@ -1672,5 +1996,10 @@
   :global(.browser th.selection-column) {
     background: var(--bg-inset);
     border-bottom: 1px solid var(--border-default);
+  }
+
+  .shortcut-notice {
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-inset);
   }
 </style>

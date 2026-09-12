@@ -1230,3 +1230,395 @@ it("retains tag selection on refresh and clears it when the tag disappears", asy
   await screen.findByRole("cell", { name: "readme.txt" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 });
+
+const keyboardVaultID = "11111111-1111-4111-8111-111111111111";
+const keyboardTagID = "33333333-3333-4333-8333-333333333333";
+const keyboardReviewedTagID = "44444444-4444-4444-8444-444444444444";
+
+function prepareKeyboardApp(): Storage {
+  prepareSelectionApp();
+  const entries = new Map<string, string>();
+  const storage: Storage = {
+    get length() {
+      return entries.size;
+    },
+    clear: () => entries.clear(),
+    getItem: (key) => entries.get(key) ?? null,
+    key: (index) => [...entries.keys()][index] ?? null,
+    removeItem: (key) => entries.delete(key),
+    setItem: (key, value) => entries.set(key, value),
+  };
+  vi.stubGlobal("localStorage", storage);
+  return storage;
+}
+
+function installKeyboardBackend(
+  mutation: "success" | "stale" | "pending" | "same-node-race" = "success",
+) {
+  const root = selectionNode(1, "", "dir", undefined);
+  const reports = selectionNode(20, "Reports", "dir", 1);
+  const zeta = selectionNode(10, "zeta.txt", "file", 1, 3);
+  const alpha = selectionNode(30, "alpha.txt", "file", 1, 5);
+  const tax = {
+    id: keyboardTagID,
+    name: "tax",
+    revision: 2,
+    assignment_count: 0,
+  };
+  const reviewed = {
+    id: keyboardReviewedTagID,
+    name: "reviewed",
+    revision: 1,
+    assignment_count: 1,
+  };
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: {
+        "Content-Type": status >= 400 ? "application/problem+json" : "application/json",
+      },
+    });
+  let reportsReads = 0;
+  let rootReads = 0;
+  let tagReads = 0;
+  const writes: Array<{ url: string; method: string; revision: string | null }> = [];
+  let resolveMutation: ((response: Response) => void) | undefined;
+  const delayedMutation = new Promise<Response>((resolve) => {
+    resolveMutation = resolve;
+  });
+  let resolveTagReload: ((response: Response) => void) | undefined;
+  const delayedTagReload = new Promise<Response>((resolve) => {
+    resolveTagReload = resolve;
+  });
+
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+      rootReads += 1;
+      return json({
+        directory: root,
+        items: [zeta, reports, alpha],
+        total: 4,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/nodes/20/children?limit=1000&offset=0") {
+      reportsReads += 1;
+      return json({
+        directory: reports,
+        items: [],
+        total: 0,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      const items = mutation === "same-node-race" ? [tax, reviewed] : [tax];
+      return json({ items, total: items.length, limit: 1000, offset: 0 });
+    }
+    if (url.startsWith("/api/v1/audit/status?node_id=")) {
+      return json({
+        enabled: false,
+        vault_id: keyboardVaultID,
+        operation_sequence_high_water: 0,
+        allocation_entry_count: 0,
+        scopes: [],
+      });
+    }
+    if (/^\/api\/v1\/nodes\/\d+\/tags\?limit=1000&offset=0$/.test(url)) {
+      tagReads += 1;
+      if (mutation === "same-node-race") {
+        if (tagReads === 1) {
+          return json({ items: [reviewed], total: 1, limit: 1000, offset: 0 });
+        }
+        return delayedTagReload;
+      }
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (
+      url === `/api/v1/nodes/10/tags/${keyboardTagID}` &&
+      init?.method === "PUT"
+    ) {
+      writes.push({
+        url,
+        method: init.method,
+        revision: new Headers(init.headers).get("If-Match"),
+      });
+      if (mutation === "pending" || mutation === "same-node-race") {
+        return delayedMutation;
+      }
+      if (mutation === "stale") {
+        return json(
+          {
+            status: 412,
+            code: "stale_revision",
+            detail: "node changed; refresh before using this tag shortcut",
+          },
+          412,
+        );
+      }
+      return json({
+        tag: { ...tax, revision: 3, assignment_count: 1 },
+        node: {
+          ...zeta,
+          revision: 4,
+          path: "/zeta.txt",
+          modified_at: "2026-09-09T00:01:00Z",
+        },
+        changed: true,
+      });
+    }
+    if (
+      mutation === "same-node-race" &&
+      url === `/api/v1/nodes/10/tags/${keyboardReviewedTagID}`
+    ) {
+      writes.push({
+        url,
+        method: init?.method ?? "",
+        revision: new Headers(init?.headers).get("If-Match"),
+      });
+      return json({
+        tag: { ...reviewed, revision: 2, assignment_count: 0 },
+        node: {
+          ...zeta,
+          revision: 5,
+          path: "/zeta.txt",
+          modified_at: "2026-09-09T00:02:00Z",
+        },
+        changed: true,
+      });
+    }
+    if (url === "/api/daemon/web-session" && init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  return {
+    alpha,
+    tax,
+    writes,
+    getRootReads: () => rootReads,
+    getReportsReads: () => reportsReads,
+    getTagReads: () => tagReads,
+    resolveMutation: () =>
+      resolveMutation?.(
+        json({
+          tag: { ...tax, revision: 3, assignment_count: 1 },
+          node: {
+            ...zeta,
+            revision: 4,
+            path: "/zeta.txt",
+            modified_at: "2026-09-09T00:01:00Z",
+          },
+          changed: true,
+        }),
+      ),
+    resolveTagReload: () =>
+      resolveTagReload?.(
+        json({
+          items: [reviewed, { ...tax, revision: 3, assignment_count: 1 }],
+          total: 2,
+          limit: 1000,
+          offset: 0,
+        }),
+      ),
+  };
+}
+
+async function configureFirstTagHotkey(): Promise<void> {
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
+  );
+  const slot = screen.getByRole("combobox", {
+    name: "Tag shortcut 1: Unassigned",
+  });
+  await waitFor(() => expect(slot.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(slot);
+  await fireEvent.click(screen.getByRole("option", { name: "tax" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+}
+
+it("navigates the displayed page, keeps checkbox selection independent, and activates a row once", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend();
+  render(App);
+
+  await screen.findByRole("cell", { name: "alpha.txt" });
+  await screen.findByLabelText("Document authority for zeta.txt");
+  const requestsAtBoundary = backend.getRootReads();
+
+  await fireEvent.keyDown(window, { key: "k" });
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  await fireEvent.keyDown(window, { key: " " });
+  expect(
+    (screen.getByRole("checkbox", {
+      name: "Select alpha.txt",
+    }) as HTMLInputElement).checked,
+  ).toBe(true);
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+
+  await fireEvent.keyDown(window, { key: "k" });
+  expect(screen.getByLabelText("Folder for Reports")).toBeTruthy();
+  await fireEvent.keyDown(window, { key: "k" });
+  expect(
+    (await screen.findByRole("status", {
+      name: "Keyboard shortcut status",
+    })).textContent,
+  ).toContain(
+    "First loaded row reached.",
+  );
+  expect(backend.getRootReads()).toBe(requestsAtBoundary);
+
+  await fireEvent.keyDown(window, { key: "j" });
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  await fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByText(/selected on this page/)).toBeNull();
+
+  await fireEvent.keyDown(window, { key: "/", shiftKey: true });
+  expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+  await fireEvent.keyDown(window, { key: "?", shiftKey: true });
+  expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+  await fireEvent.keyDown(window, { key: "/" });
+  expect(document.activeElement).toBe(
+    screen.getByRole("searchbox", { name: "Search documents" }),
+  );
+  await fireEvent.keyDown(document.activeElement!, { key: "j" });
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+
+  const reportsRow = screen.getByRole("cell", { name: "Reports" }).closest("tr")!;
+  reportsRow.focus();
+  await fireEvent.keyDown(reportsRow, { key: "Enter" });
+  await waitFor(() => expect(backend.getReportsReads()).toBe(1));
+});
+
+it("persists a vault-scoped tag binding and applies it only to the inspected file", async () => {
+  const storage = prepareKeyboardApp();
+  const backend = installKeyboardBackend();
+  render(App);
+
+  await screen.findByRole("cell", { name: "zeta.txt" });
+  await configureFirstTagHotkey();
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select alpha.txt" }));
+  await fireEvent.keyDown(window, { key: "1" });
+
+  await waitFor(() => expect(backend.writes).toHaveLength(1));
+  expect(backend.writes[0]).toEqual({
+    url: `/api/v1/nodes/10/tags/${keyboardTagID}`,
+    method: "PUT",
+    revision: "3",
+  });
+  expect(await screen.findByText("Added tax to zeta.txt.")).toBeTruthy();
+  expect(screen.getByText("1 selected on this page")).toBeTruthy();
+  expect(storage.getItem(`docbank:tag-hotkeys:v1:${keyboardVaultID}`)).toBe(
+    JSON.stringify({ version: 1, bindings: { "1": keyboardTagID } }),
+  );
+});
+
+it("shows stale tag conflicts without retrying", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend("stale");
+  render(App);
+
+  await screen.findByRole("cell", { name: "zeta.txt" });
+  await configureFirstTagHotkey();
+  await fireEvent.keyDown(window, { key: "1" });
+
+  expect(
+    await screen.findByText("node changed; refresh before using this tag shortcut"),
+  ).toBeTruthy();
+  expect(backend.writes).toHaveLength(1);
+});
+
+it("suppresses repeated pending tag writes and discards completion after selection changes", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend("pending");
+  render(App);
+
+  await screen.findByRole("cell", { name: "zeta.txt" });
+  await configureFirstTagHotkey();
+  await fireEvent.keyDown(window, { key: "1" });
+  await fireEvent.keyDown(window, { key: "1", repeat: true });
+  await fireEvent.keyDown(window, { key: "1" });
+  expect(backend.writes).toHaveLength(1);
+
+  await fireEvent.keyDown(window, { key: "k" });
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+  backend.resolveMutation();
+  await Promise.resolve();
+  expect(screen.queryByText("Added tax to zeta.txt.")).toBeNull();
+  expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
+});
+
+it("discards pending tag completion after the session is locked", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend("pending");
+  render(App);
+
+  await screen.findByRole("cell", { name: "zeta.txt" });
+  await configureFirstTagHotkey();
+  await fireEvent.keyDown(window, { key: "1" });
+  await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
+  expect(await screen.findByText("Open your Docbank")).toBeTruthy();
+  backend.resolveMutation();
+  await Promise.resolve();
+  expect(screen.queryByText("Added tax to zeta.txt.")).toBeNull();
+  expect(backend.writes).toHaveLength(1);
+});
+
+it.each(["click", "Enter"] as const)(
+  "keeps complete tag observations when %s reactivates the inspected row during a pending tag write",
+  async (interaction) => {
+    const storage = prepareKeyboardApp();
+    storage.setItem(
+      `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
+      JSON.stringify({
+        version: 1,
+        bindings: {
+          "1": keyboardTagID,
+          "2": keyboardReviewedTagID,
+        },
+      }),
+    );
+    const backend = installKeyboardBackend("same-node-race");
+    render(App);
+
+    const nameCell = await screen.findByRole("cell", { name: "zeta.txt" });
+    await waitFor(() =>
+      expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain(
+        "reviewed",
+      ),
+    );
+    await fireEvent.keyDown(window, { key: "1" });
+    expect(backend.writes).toEqual([
+      {
+        url: `/api/v1/nodes/10/tags/${keyboardTagID}`,
+        method: "PUT",
+        revision: "3",
+      },
+    ]);
+
+    const row = nameCell.closest("tr")!;
+    if (interaction === "click") await fireEvent.click(nameCell);
+    else await fireEvent.keyDown(row, { key: "Enter" });
+    backend.resolveMutation();
+    await screen.findByText("Added tax to zeta.txt.");
+    backend.resolveTagReload();
+    await Promise.resolve();
+
+    await fireEvent.keyDown(window, { key: "2" });
+    await waitFor(() => expect(backend.writes).toHaveLength(2));
+    expect(backend.writes[1]).toEqual({
+      url: `/api/v1/nodes/10/tags/${keyboardReviewedTagID}`,
+      method: "DELETE",
+      revision: "4",
+    });
+    expect(backend.getTagReads()).toBe(1);
+  },
+  );
