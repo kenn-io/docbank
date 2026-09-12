@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-10
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -84,6 +84,15 @@ view keeps only checked documents that are still visible. Back navigation and
 ending the browser session also clear the selection.
 
 ![Two documents selected on the current page while the authority card shows one document's details.](https://docbank.ai/assets/generated/web-page-selection.png)
+
+## Export selected rows as CSV
+
+Check file rows and choose **Export page CSV**. The download preserves their
+displayed order and includes the metadata already loaded, such as document IDs,
+versions, paths, sizes, timestamps, and hashes. Unavailable fields stay blank.
+It does not download document contents, fetch additional metadata, or include
+results beyond the loaded page. Formula-leading text is escaped for spreadsheet
+imports, and international filenames are preserved.
 
 ## Assign and remove tags
 

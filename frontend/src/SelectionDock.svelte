@@ -7,6 +7,7 @@
     truncated: boolean;
     onclear: () => void;
     onselectvisible: () => void;
+    oncsv: () => void;
   }
 
   let {
@@ -15,6 +16,7 @@
     truncated,
     onclear,
     onselectvisible,
+    oncsv,
   }: Props = $props();
 </script>
 
@@ -43,6 +45,7 @@
       onclick={onselectvisible}
     >Select visible documents</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
+    <Button size="sm" onclick={oncsv}>Export page CSV</Button>
   </div>
 </BottomDock>
 

@@ -73,6 +73,7 @@
     type Tag,
     type TagAssignmentReceipt,
   } from "./api.js";
+  import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
@@ -237,6 +238,11 @@
       ? selectVisibleDocuments(sortedRows)
       : clearSelection();
     pendingSelectionRange = false;
+  }
+
+  function exportPageCSV(): void {
+    const selectedRows = selectedVisibleCSVRows(sortedRows, bulkSelection.selectedIDs);
+    if (selectedRows.length > 0) downloadVisiblePageCSV(selectedRows);
   }
 
   function handleFailure(cause: unknown): void {
@@ -1535,6 +1541,7 @@
         {truncated}
         onclear={clearBulkSelection}
         onselectvisible={() => selectAllVisibleDocuments()}
+        oncsv={exportPageCSV}
       />
     {/if}
     {#if historyOpen && selected && membership?.protected}

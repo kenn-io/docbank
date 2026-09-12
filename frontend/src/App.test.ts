@@ -1087,6 +1087,74 @@ it("selects displayed files without requests or changing the inspector, then rec
   expect(screen.getByText("1 selected on this page")).toBeTruthy();
 });
 
+it("downloads the selected visible subset in displayed order without another request", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const downloaded: Blob[] = [];
+  const clicked: Array<{ download: string; href: string }> = [];
+  const createObjectURL = vi
+    .spyOn(URL, "createObjectURL")
+    .mockImplementation((blob) => {
+      downloaded.push(blob as Blob);
+      return `blob:visible-page-${downloaded.length}`;
+    });
+  const revokeObjectURL = vi
+    .spyOn(URL, "revokeObjectURL")
+    .mockImplementation(() => {});
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+    function (this: HTMLAnchorElement) {
+      clicked.push({ download: this.download, href: this.href });
+    },
+  );
+  render(App);
+
+  await fireEvent.dblClick(
+    await screen.findByRole("cell", { name: "Reports" }),
+  );
+  await screen.findByRole("checkbox", { name: "Select alpha.txt" });
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select alpha.txt" }),
+  );
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select gamma.txt" }),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Size" }));
+  const requestsBeforeExport = fetchMock.mock.calls.length;
+
+  const exportButton = screen.getByRole("button", { name: "Export page CSV" });
+  await fireEvent.click(exportButton);
+  await fireEvent.click(exportButton);
+
+  expect(fetchMock.mock.calls).toHaveLength(requestsBeforeExport);
+  expect(createObjectURL).toHaveBeenCalledTimes(2);
+  expect(revokeObjectURL.mock.calls).toEqual([
+    ["blob:visible-page-1"],
+    ["blob:visible-page-2"],
+  ]);
+  expect(clicked).toHaveLength(2);
+  expect(clicked[0]?.href).toBe("blob:visible-page-1");
+  expect(clicked[0]?.download).toMatch(
+    /^docbank-visible-page-\d{4}-\d{2}-\d{2}\.csv$/,
+  );
+  expect(downloaded[0]?.type).toBe("text/csv;charset=utf-8");
+
+  const bytes = new Uint8Array(await downloaded[0]!.arrayBuffer());
+  expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
+
+  const records = (await downloaded[0]!.text())
+    .split("\r\n")
+    .filter((record) => record !== "");
+  expect(records).toHaveLength(3);
+  expect(records[1]).toContain(
+    '12,"00000012-1111-4111-8111-111111111111",1,"/Reports/gamma.txt"',
+  );
+  expect(records[1]).toContain(`"${"c".repeat(64)}"`);
+  expect(records[2]).toContain(
+    '10,"00000010-1111-4111-8111-111111111111",1,"/Reports/alpha.txt"',
+  );
+  expect(records[2]).toContain(`"${"a".repeat(64)}"`);
+});
+
 it("clears page selection across folder, Back, query, tag-filter, and session transitions", async () => {
   prepareSelectionApp();
   installSelectionBackend();
