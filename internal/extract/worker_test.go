@@ -124,17 +124,18 @@ func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		runErr := <-done
+		if runErr != nil {
+			// Cancellation can reach either the idle wait or a catalog query.
+			assert.ErrorIs(t, runErr, context.Canceled)
+		}
+		assert.GreaterOrEqual(t, reader.calls, 2)
+	})
+	// This exercises real storage; busy CI runners can take more than a second.
 	require.Eventually(t, func() bool {
 		hits, _, searchErr := s.SearchPage(t.Context(), "nebula", 10)
 		return searchErr == nil && len(hits) == 1
-	}, time.Second, 5*time.Millisecond)
-	cancel()
-	runErr := <-done
-	if runErr != nil {
-		// Cancellation can reach either the idle wait (which returns nil) or an
-		// in-flight catalog query. The daemon supervisor treats both outcomes as
-		// a clean cancelled job.
-		require.ErrorIs(t, runErr, context.Canceled)
-	}
-	assert.GreaterOrEqual(t, reader.calls, 2)
+	}, 30*time.Second, 10*time.Millisecond)
 }

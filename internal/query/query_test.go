@@ -62,11 +62,9 @@ func TestQueryIdentityVectors(t *testing.T) {
 		t.Run(vector.Name, func(t *testing.T) {
 			value, err := Parse([]byte(vector.InputJSON))
 			require.NoError(t, err)
-			encoded, err := Canonical(value)
+			encoded, fingerprint, err := CanonicalWithFingerprint(value)
 			require.NoError(t, err)
 			assert.Equal(t, vector.CanonicalUTF8, string(encoded))
-			fingerprint, err := Fingerprint(value)
-			require.NoError(t, err)
 			assert.Equal(t, vector.Fingerprint, fingerprint)
 		})
 	}

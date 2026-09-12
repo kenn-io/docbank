@@ -340,11 +340,7 @@ func canonicalizeSavedQueryPayload(kind string, payload []byte) ([]byte, string,
 		if err != nil {
 			return nil, "", fmt.Errorf("%w: query payload: %w", ErrInvalidSavedQuery, err)
 		}
-		canonical, err := query.Canonical(value)
-		if err != nil {
-			return nil, "", fmt.Errorf("%w: query payload: %w", ErrInvalidSavedQuery, err)
-		}
-		fingerprint, err := query.Fingerprint(value)
+		canonical, fingerprint, err := query.CanonicalWithFingerprint(value)
 		if err != nil {
 			return nil, "", fmt.Errorf("%w: query payload: %w", ErrInvalidSavedQuery, err)
 		}

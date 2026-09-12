@@ -214,6 +214,70 @@ and delete return `409 audit_mutation_unsupported`. Listing and reading still
 work. See [Permanent audited history](audited-history.md) before enabling it
 in a vault that needs editable saved definitions.
 
+## Preview a field-aware query
+
+`POST /api/v1/queries/parse` validates a QueryV1 expression and resolves its
+references. It returns `query`, `query_fingerprint`, and `dependencies`, each
+with a `kind`, stable `id`, and observed `revision`. It does not return search
+results, change saved definitions, or expose SQL. The CLI and `/search` retain
+the simple search behavior described above.
+
+For example, submit this JSON to preview a name expression with a separate
+size filter:
+
+```json
+{
+  "text": "name:(budget OR forecast) AND NOT extension:tmp",
+  "syntax": "advanced",
+  "filters": {"size_min": 100}
+}
+```
+
+The response retains the complete entered text. Expression fields are not
+removed from it or copied into hidden filters.
+
+Advanced syntax supports exact terms, quoted phrases, a trailing `*` for
+prefix matching, parentheses, and uppercase `AND`, `OR`, and `NOT`. Whitespace
+between operands means `AND`. Precedence is `NOT`, then `NEAR`, then `AND`,
+then `OR`. A backslash escapes the next character: `note\:draft` is literal
+text, and `\AND` is not an operator. Simple syntax treats these operators as
+literal prefix terms, as the CLI does.
+
+`alpha NEAR/5 beta` requires the two terms or phrases to occur within five
+tokens in the same indexed source. Bare `NEAR` uses ten; distances range from
+zero to 1,000. Chained NEAR expressions and Boolean operands inside NEAR are
+rejected. `name:(alpha NEAR/0 beta)` restricts the match to the filename.
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Filename text, including phrases and prefixes |
+| `path` | Exact case-sensitive virtual path or its descendants; quote paths containing spaces |
+| `tag`, `collection`, `saved` | Exact name or stable UUID; grouped Boolean choices are supported, prefixes and NEAR are not |
+| `mime`, `extension`, `media_family` | Current MIME essence, filename extension, or shared media family |
+| `modified_after`, `modified_before` | Inclusive lower and exclusive upper RFC3339 time bounds; quote timestamps |
+| `size_min`, `size_max` | Inclusive nonnegative byte bounds |
+
+Reference names are case-sensitive and Unicode-normalized. A canonical UUID
+selects an ID, without falling back to a name. Unknown references fail even
+under `NOT`. A saved reference expands as a grouped expression with its own
+filters, so `name:budget OR saved:Review` does not apply Review's filters to
+the name branch. Nested field overrides such as `name:(tag:urgent)` are not
+supported.
+
+Structured filter dimensions combine with `AND`. Values within one include
+list combine with `OR`; an exclude list removes that union. Paths are subtree
+constraints, not wildcard patterns. Collection unions do not duplicate files.
+Time comparisons retain nanosecond precision. Preview supports lexical mode;
+semantic/hybrid mode, relevance ordering, duplicate constraints, and text
+coverage constraints return explicit errors instead of being ignored.
+
+Expression errors return `422 invalid_query` with `position.offset` and
+`position.end`: a half-open UTF-8 byte span in the submitted text. Database
+failures remain server errors. Preview limits include 8,192 text code points,
+512 parsed nodes, 32 levels of syntactic nesting, and 16 nested saved
+references. Larger expansions and compiled predicates have additional bounds.
+Dependency revisions describe this preview, not a permanent result snapshot.
+
 ## Text extraction
 
 The daemon's `extract:plain-text` background job indexes UTF-8 content whose

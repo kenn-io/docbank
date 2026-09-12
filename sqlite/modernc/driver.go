@@ -3,6 +3,7 @@ package modernc
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
@@ -12,8 +13,21 @@ import (
 
 	modernsqlite "modernc.org/sqlite"
 
+	"go.kenn.io/docbank/internal/query"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
+
+func init() {
+	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_media_family_v1", 2,
+		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			mediaType, mimeOK := args[0].(string)
+			filename, nameOK := args[1].(string)
+			if !mimeOK || !nameOK {
+				return nil, errors.New("media family requires text MIME type and filename")
+			}
+			return query.ClassifyMedia(mediaType, filename), nil
+		})
+}
 
 const (
 	sqliteBusy             = 5

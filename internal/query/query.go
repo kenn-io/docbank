@@ -157,40 +157,46 @@ func Parse(raw []byte) (Query, error) {
 			value.Sort.Direction = *input.Sort.Direction
 		}
 	}
-	normalized, err := normalizeQuery(value)
-	if err != nil {
-		return Query{}, err
-	}
-	if _, err := Canonical(normalized); err != nil {
-		return Query{}, err
-	}
-	return normalized, nil
+	normalized, _, err := normalizeCanonical(value)
+	return normalized, err
 }
 
 // Canonical validates value and returns its one canonical QueryV1 encoding.
 func Canonical(value Query) ([]byte, error) {
+	_, encoded, err := normalizeCanonical(value)
+	return encoded, err
+}
+
+// normalizeCanonical owns validation, defensive copying, and the encoded size bound.
+func normalizeCanonical(value Query) (Query, []byte, error) {
 	normalized, err := normalizeQuery(value)
 	if err != nil {
-		return nil, err
+		return Query{}, nil, err
 	}
 	encoded, err := canonical.Marshal(normalized)
 	if err != nil {
-		return nil, fmt.Errorf("encode query: %w", err)
+		return Query{}, nil, fmt.Errorf("encode query: %w", err)
 	}
 	if len(encoded) > maxCanonicalBytes {
-		return nil, errors.New("canonical query exceeds 64 KiB")
+		return Query{}, nil, errors.New("canonical query exceeds 64 KiB")
 	}
-	return encoded, nil
+	return normalized, encoded, nil
+}
+
+// CanonicalWithFingerprint returns canonical QueryV1 bytes and their SHA-256 identity.
+func CanonicalWithFingerprint(value Query) ([]byte, string, error) {
+	encoded, err := Canonical(value)
+	if err != nil {
+		return nil, "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return encoded, "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 // Fingerprint returns the domain-neutral SHA-256 identity of canonical query bytes.
 func Fingerprint(value Query) (string, error) {
-	encoded, err := Canonical(value)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
+	_, fingerprint, err := CanonicalWithFingerprint(value)
+	return fingerprint, err
 }
 
 func (input filtersInput) value() Filters {
@@ -322,12 +328,14 @@ func normalizeFilters(value Filters) (Filters, error) {
 			return Filters{}, errors.New("modified_after must precede modified_before")
 		}
 	}
-	if value.SizeMin < 0 || value.SizeMin > maxSafeInteger ||
-		(value.SizeMax != nil && (*value.SizeMax < 0 || *value.SizeMax > maxSafeInteger)) {
+	if !validSizeBound(value.SizeMin) || (value.SizeMax != nil && !validSizeBound(*value.SizeMax)) {
 		return Filters{}, errors.New("query size bounds must be safe nonnegative integers")
 	}
-	if value.SizeMax != nil && value.SizeMin > *value.SizeMax {
-		return Filters{}, errors.New("size_min exceeds size_max")
+	if value.SizeMax != nil {
+		if value.SizeMin > *value.SizeMax {
+			return Filters{}, errors.New("size_min exceeds size_max")
+		}
+		value.SizeMax = new(*value.SizeMax)
 	}
 	return value, nil
 }
@@ -405,26 +413,34 @@ func normalizeTimestamp(value, field string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
+	parsed, err := parseTimestamp(value, field)
+	if err != nil {
+		return "", err
+	}
+	return parsed.Format(time.RFC3339Nano), nil
+}
+
+func parseTimestamp(value, field string) (time.Time, error) {
 	if !rfc3339NanoPattern.MatchString(value) {
-		return "", fmt.Errorf("%s is not strict RFC3339Nano", field)
+		return time.Time{}, fmt.Errorf("%s is not strict RFC3339Nano", field)
 	}
 	if value[len(value)-1] != 'Z' {
 		zone := value[len(value)-6:]
 		zoneHour := int(zone[1]-'0')*10 + int(zone[2]-'0')
 		zoneMinute := int(zone[4]-'0')*10 + int(zone[5]-'0')
 		if zoneHour > 23 || zoneMinute > 59 {
-			return "", fmt.Errorf("%s has an invalid RFC3339 offset", field)
+			return time.Time{}, fmt.Errorf("%s has an invalid RFC3339 offset", field)
 		}
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
-		return "", fmt.Errorf("%s is not RFC3339: %w", field, err)
+		return time.Time{}, fmt.Errorf("%s is not RFC3339: %w", field, err)
 	}
 	utc := parsed.UTC()
 	if utc.Year() < 0 || utc.Year() > 9999 {
-		return "", fmt.Errorf("%s normalizes outside RFC3339", field)
+		return time.Time{}, fmt.Errorf("%s normalizes outside RFC3339", field)
 	}
-	return utc.Format(time.RFC3339Nano), nil
+	return utc, nil
 }
 
 func oneOf(value string, allowed ...string) bool { return slices.Contains(allowed, value) }

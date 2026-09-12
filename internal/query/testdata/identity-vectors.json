@@ -104,6 +104,10 @@
     "oversized_highlight_astral_scalars": 254
   },
   "media_cases": [
+    {"name": "bare_dotfile_generic_mime", "media_type": "application/octet-stream", "filename": ".pdf", "family": "unknown"},
+    {"name": "bare_dotfile_missing_mime", "media_type": "", "filename": ".PDF", "family": "unknown"},
+    {"name": "hidden_file_with_extension", "media_type": "application/octet-stream", "filename": ".report.PDF", "family": "document"},
+    {"name": "bare_dotfile_declared_mime", "media_type": "application/pdf", "filename": ".pdf", "family": "document"},
     {"name": "extended_parameter", "media_type": "image/png; name*=utf-8''synthetic.png", "filename": "message.eml", "family": "image"},
     {"name": "apostrophe_parameter_value", "media_type": "image/png; name=a'b", "filename": "message.eml", "family": "image"},
     {"name": "wildcard_is_not_concrete", "media_type": "image/*", "filename": "scan.png", "family": "unknown"},

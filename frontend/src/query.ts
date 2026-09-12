@@ -527,7 +527,7 @@ export function classifyMedia(mediaType: string, filename: string): MediaFamily 
   }
   const base = filename.slice(Math.max(filename.lastIndexOf("/"), filename.lastIndexOf("\\")) + 1);
   const dot = base.lastIndexOf(".");
-  if (dot < 0 || dot === base.length - 1) return "unknown";
+  if (dot <= 0 || dot === base.length - 1) return "unknown";
   const extension = lowerASCII(base.slice(dot + 1));
   return extension === null ? "unknown" : queryFamilyByExtension.get(extension) ?? "unknown";
 }
