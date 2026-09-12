@@ -215,11 +215,12 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
-	TagID          string
-	MIMEType       string
-	UnderNodeID    int64
-	ModifiedSince  string
-	ModifiedBefore string
+	TagID             string
+	MIMEType          string
+	UnderNodeID       int64
+	ModifiedSince     string
+	ModifiedBefore    string
+	ContentVersionIDs []string
 }
 
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS
@@ -1969,6 +1970,22 @@ func (s *Store) SearchPageWithOptions(
 
 // NormalizeSearchOptions validates scope identities and returns canonical filters.
 func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
+	if len(opts.ContentVersionIDs) > 4096 {
+		return SearchOptions{}, errors.New("search source fence exceeds 4096 content versions")
+	}
+	if len(opts.ContentVersionIDs) != 0 {
+		ids := slices.Clone(opts.ContentVersionIDs)
+		sort.Strings(ids)
+		for index, id := range ids {
+			if err := validateUUIDv4(id); err != nil {
+				return SearchOptions{}, errors.New("search source fence contains an invalid content version ID")
+			}
+			if index > 0 && ids[index-1] == id {
+				return SearchOptions{}, errors.New("search source fence contains a duplicate content version ID")
+			}
+		}
+		opts.ContentVersionIDs = ids
+	}
 	if opts.TagID != "" {
 		if _, err := s.TagByID(ctx, opts.TagID); err != nil {
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)
@@ -2063,6 +2080,16 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if len(opts.ContentVersionIDs) != 0 {
+		encoded, err := json.Marshal(opts.ContentVersionIDs)
+		if err != nil {
+			panic(err)
+		}
+		clauses = append(clauses, `AND cv.version_id IN (
+			SELECT value FROM json_each(?)
+		)`)
+		args = append(args, string(encoded))
+	}
 	if opts.TagID != "" {
 		clauses = append(clauses, `AND n.id IN (
 			SELECT node_id FROM node_tags WHERE tag_id=?

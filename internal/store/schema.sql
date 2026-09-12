@@ -587,9 +587,9 @@ CREATE TABLE IF NOT EXISTS processing_profiles (
     trust_boundary                    TEXT NOT NULL
 );
 
--- A completed rendition build is vault-local immutable authority. The unique
--- identity contains exactly the source, rendition request, evidence/lexical
--- policy, and captured-artifact policy; attachments carry the full profile.
+-- A completed rendition build is vault-local immutable authority. Shared build
+-- IDs cover source bytes, policies, and the exact rendition execution identity;
+-- attachments carry the full profile.
 CREATE TABLE IF NOT EXISTS rendition_builds (
     build_id                             TEXT PRIMARY KEY,
     vault_uid                            TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
@@ -615,11 +615,7 @@ CREATE TABLE IF NOT EXISTS rendition_builds (
         CHECK (unit_count >= 0),
     lexical_segment_count                INTEGER NOT NULL
         CHECK (lexical_segment_count >= 0),
-    UNIQUE (vault_uid, build_id),
-    UNIQUE (
-        vault_uid, source_sha256, rendition_request_fingerprint,
-        evidence_lexical_fingerprint, captured_artifact_policy_fingerprint
-    )
+    UNIQUE (vault_uid, build_id)
 );
 
 CREATE INDEX IF NOT EXISTS rendition_builds_source
@@ -1062,6 +1058,7 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
     input_classes_json       TEXT NOT NULL,
     retained_classes_json    TEXT NOT NULL,
     state                    TEXT NOT NULL,
+    failure_code             TEXT,
     attachment_id            TEXT NOT NULL,
     created_at               TEXT NOT NULL,
     updated_at               TEXT NOT NULL

@@ -177,7 +177,7 @@ func newTestClient(t *testing.T, server *httptest.Server, root string, authorize
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 	client, err := New(Profile{ID: "qmd-test", CompatibilityEpoch: "qmd-current", SecretBinding: "secret:qmd",
-		EndpointPath: "/query", RequestTimeout: time.Second, MaxResponseBytes: responseBytes,
+		EndpointPath: "/query", MaxResponseBytes: responseBytes,
 		EgressPolicy: providerhttp.EgressPolicy{Scheme: "http", Host: "qmd.test", Port: uint16(port),
 			AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, ProxyMode: providerhttp.ProxyDisabled}},
 		secretStub{}, authorizer, authority, root, resolverStub{}, &http.Client{})

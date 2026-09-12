@@ -29,6 +29,19 @@ type EmbeddingJobRequest struct {
 
 type EmbeddingJob struct{ ID string }
 
+// EmbeddingJobStatus is the bounded provider-neutral state exposed to an
+// aggregate processing service. It deliberately excludes receipts, consent
+// identities, source names, and provider payloads.
+type EmbeddingJobStatus struct {
+	ID                 string
+	ContentVersionID   string
+	ProfileFingerprint string
+	BindingID          string
+	Activation         document.EmbeddingActivation
+	State              string
+	FailureCode        EmbeddingFailureCode
+}
+
 type EmbeddingJobClaim struct {
 	AttemptID      string
 	Owner          string
@@ -182,7 +195,101 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 	return EmbeddingJob{ID: jobID}, err
 }
 
-func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
+func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobStatus, error) {
+	if err := validateCatalogSHA256(id, "embedding job ID"); err != nil {
+		return EmbeddingJobStatus{}, fmt.Errorf("embedding job: %w", ErrNotFound)
+	}
+	var status EmbeddingJobStatus
+	var failure sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code
+		FROM embedding_jobs WHERE job_id=?`, id).Scan(&status.ID, &status.ContentVersionID,
+		&status.ProfileFingerprint, &status.BindingID, &status.State, &failure)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EmbeddingJobStatus{}, ErrNotFound
+	}
+	if err != nil {
+		return EmbeddingJobStatus{}, fmt.Errorf("reading embedding job status: %w", err)
+	}
+	if failure.Valid {
+		status.FailureCode = EmbeddingFailureCode(failure.String)
+	}
+	profile, err := loadProcessingProfile(ctx, s.db, status.ProfileFingerprint)
+	if err != nil {
+		return EmbeddingJobStatus{}, err
+	}
+	binding, _, err := embeddingBindingFromProfile(profile, status.BindingID)
+	if err != nil {
+		return EmbeddingJobStatus{}, err
+	}
+	status.Activation = binding.Activation
+	return status, nil
+}
+
+// EmbeddingJobsForVersionProfile excludes chunk jobs for superseded renditions.
+func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
+	profileFingerprint string,
+) ([]EmbeddingJobStatus, error) {
+	if err := validateUUIDv4(versionID); err != nil {
+		return nil, ErrNotFound
+	}
+	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
+		return nil, ErrNotFound
+	}
+	profile, err := loadProcessingProfile(ctx, s.db, profileFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code
+		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+		WHERE j.content_version_id=? AND j.profile_fingerprint=?
+		AND (j.input_kind='original_file' OR EXISTS (
+			SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
+			AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id
+		)) ORDER BY j.binding_id,j.job_id`,
+		versionID, profileFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var result []EmbeddingJobStatus
+	for rows.Next() {
+		var status EmbeddingJobStatus
+		var failure sql.NullString
+		if err := rows.Scan(&status.ID, &status.ContentVersionID, &status.ProfileFingerprint,
+			&status.BindingID, &status.State, &failure); err != nil {
+			return nil, err
+		}
+		if failure.Valid {
+			status.FailureCode = EmbeddingFailureCode(failure.String)
+		}
+		binding, _, err := embeddingBindingFromProfile(profile, status.BindingID)
+		if err != nil {
+			return nil, err
+		}
+		status.Activation = binding.Activation
+		result = append(result, status)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time,
+	lease time.Duration, fingerprints []string,
+) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
+	return s.claimEmbeddingWork(ctx, "", owner, at, lease, fingerprints)
+}
+
+// ClaimEmbeddingWork claims only the requested job using the queue's runtime,
+// lease, retry, and publication fences.
+func (s *Store) ClaimEmbeddingWork(ctx context.Context, jobID, owner string, at time.Time,
+	lease time.Duration, fingerprints []string,
+) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
+	if err := validateCatalogSHA256(jobID, "embedding job ID"); err != nil {
+		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, err
+	}
+	return s.claimEmbeddingWork(ctx, jobID, owner, at, lease, fingerprints)
+}
+
+func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingJobClaim, EmbeddingJobWork, bool, error) {
 	if !validRenditionWorkerOwner(owner) || at.IsZero() || lease <= 0 || len(fingerprints) == 0 {
 		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, errors.New("embedding claim is invalid")
 	}
@@ -190,12 +297,12 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
 	var work EmbeddingJobWork
 	found := false
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var jobID string
-		args := make([]any, 0, len(fingerprints)+3)
+		var claimedID string
+		args := make([]any, 0, len(fingerprints)+5)
 		for _, fingerprint := range fingerprints {
 			args = append(args, fingerprint)
 		}
-		args = append(args, at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout))
+		args = append(args, jobID, jobID, at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout))
 		for {
 			var state string
 			var count int
@@ -203,6 +310,7 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
 			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch FROM embedding_jobs j
 			JOIN embedding_vector_spaces vs ON vs.vector_space_id=j.vector_space_id
 			WHERE vs.descriptor_fingerprint IN (`+placeholders(len(fingerprints))+`)
+			AND (?='' OR j.job_id=?)
 			AND j.state IN ('queued','retry_wait','running') AND j.available_at<=?
 			AND (j.state<>'running' OR j.lease_expires_at<=?)
 			  AND NOT EXISTS(SELECT 1 FROM embedding_heads h
@@ -212,7 +320,7 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
 			    AND r.active=1 AND r.expires_at>?)
-			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&jobID, &state, &count, &expiredEpoch)
+			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -228,11 +336,11 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
 			if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
 				SET state='failed',failure_code=?,claim_owner=NULL,lease_expires_at=NULL,updated_at=?
 				WHERE job_id=? AND state='running' AND claim_epoch=?`,
-				EmbeddingFailureProviderUnavailable, at.UTC().Format(timestampLayout), jobID, expiredEpoch); err != nil {
+				EmbeddingFailureProviderUnavailable, at.UTC().Format(timestampLayout), claimedID, expiredEpoch); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
-				WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), jobID, expiredEpoch); err != nil {
+				WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), claimedID, expiredEpoch); err != nil {
 				return err
 			}
 		}
@@ -242,26 +350,26 @@ func (s *Store) ClaimNextEmbeddingWork(ctx context.Context, owner string, at tim
             COALESCE((SELECT max(claim_epoch) FROM embedding_jobs WHERE content_version_id=j.content_version_id AND profile_fingerprint=j.profile_fingerprint AND binding_id=j.binding_id AND input_kind=j.input_kind),0),
             COALESCE((SELECT fencing_token FROM embedding_heads WHERE content_version_id=j.content_version_id AND profile_fingerprint=j.profile_fingerprint AND binding_id=j.binding_id AND input_kind=j.input_kind),0),
             COALESCE((SELECT fencing_token FROM embedding_failures WHERE content_version_id=j.content_version_id AND profile_fingerprint=j.profile_fingerprint AND binding_id=j.binding_id AND input_kind=j.input_kind),0))
-            FROM embedding_jobs j WHERE job_id=?`, jobID).Scan(&epoch); err != nil {
+            FROM embedding_jobs j WHERE job_id=?`, claimedID).Scan(&epoch); err != nil {
 			return err
 		}
 		expires := at.UTC().Add(lease)
 		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='running',claim_count=claim_count+1,claim_owner=?,claim_epoch=?,lease_expires_at=?,updated_at=? WHERE job_id=?`,
-			owner, epoch, expires.Format(timestampLayout), at.UTC().Format(timestampLayout), jobID); err != nil {
+			owner, epoch, expires.Format(timestampLayout), at.UTC().Format(timestampLayout), claimedID); err != nil {
 			return err
 		}
 		var err error
-		work, err = loadEmbeddingJobWorkTx(ctx, tx, s.vaultID, jobID)
+		work, err = loadEmbeddingJobWorkTx(ctx, tx, s.vaultID, claimedID)
 		if err != nil {
 			return err
 		}
-		root := CurrentRenditionRoot{ID: jobID, Kind: RenditionRootWorkerLease,
+		root := CurrentRenditionRoot{ID: claimedID, Kind: RenditionRootWorkerLease,
 			TargetKind: RenditionRootEmbeddingGeneration, TargetID: work.InputGeneration.ID,
 			FencingToken: epoch, RecordedAt: at.UTC().Format(timestampLayout), ExpiresAt: expires.Format(timestampLayout)}
 		if err := putCurrentRenditionRootTx(ctx, tx, root); err != nil {
 			return err
 		}
-		claim = EmbeddingJobClaim{AttemptID: jobID, Owner: owner, Epoch: epoch, LeaseExpiresAt: expires}
+		claim = EmbeddingJobClaim{AttemptID: claimedID, Owner: owner, Epoch: epoch, LeaseExpiresAt: expires}
 		found = true
 		return nil
 	})
@@ -537,7 +645,12 @@ func embeddingBindingFromProfile(profile ProcessingProfileRecord, name string) (
 
 func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding document.EmbeddingBindingV1, generation EmbeddingInputGenerationRecord) error {
 	var sourceHash string
-	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, generation.SourceVersionID).Scan(&sourceHash); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT v.blob_hash FROM content_versions v
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
+		WHERE v.version_id=?`, generation.SourceVersionID).Scan(&sourceHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEmbeddingJobFenced
+		}
 		return err
 	}
 	if binding.InputKind == document.EmbeddingInputOriginalFile {

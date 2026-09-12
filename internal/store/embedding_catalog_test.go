@@ -223,6 +223,26 @@ func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
 	assert.False(t, found, "the unexpired resumed lease must survive daemon restart")
 }
 
+func TestEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	firstRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-first")
+	secondRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-second")
+	first, err := s.EnqueueEmbeddingJob(t.Context(), firstRequest)
+	require.NoError(t, err)
+	second, err := s.EnqueueEmbeddingJob(t.Context(), secondRequest)
+	require.NoError(t, err)
+
+	claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), second.ID,
+		"target-worker", time.Now().UTC(), 5*time.Minute, []string{secondRequest.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, second.ID, claim.AttemptID)
+	require.Equal(t, secondRequest.InputGeneration.ID, work.InputGeneration.ID)
+	firstStatus, err := s.EmbeddingJobByID(t.Context(), first.ID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", firstStatus.State)
+}
+
 func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testing.T) {
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
@@ -1526,6 +1546,29 @@ func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
 	}
 }
 
+func TestEmbeddingJobEnqueueRejectsStaleSource(t *testing.T) {
+	for _, mutation := range []string{"replace", "trash"} {
+		t.Run(mutation, func(t *testing.T) {
+			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			request := embeddingJobTestRequest(t, s, versionID, profile, "stale-enqueue")
+			var nodeID, revision int64
+			require.NoError(t, s.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
+			var err error
+			if mutation == "trash" {
+				_, _, err = s.Trash(t.Context(), nodeID, revision)
+			} else {
+				_, _, err = s.ReplaceContent(t.Context(), nodeID, revision, fakeHash("b2"), 4, "text/plain")
+			}
+			require.NoError(t, err)
+			_, err = s.EnqueueEmbeddingJob(t.Context(), request)
+			require.ErrorIs(t, err, ErrEmbeddingJobFenced)
+			var count int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=?`, versionID).Scan(&count))
+			require.Zero(t, count)
+		})
+	}
+}
+
 func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "restore-abandoned")
@@ -1541,6 +1584,8 @@ func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at), ErrEmbeddingJobFenced)
 	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), claim, at))
+	_, err = s.EnqueueEmbeddingJob(t.Context(), request)
+	require.ErrorIs(t, err, ErrEmbeddingJobFenced)
 	reconciled, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{Mutate: embeddingTestMutation, At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
 	require.NoError(t, err)
 	require.Zero(t, reconciled.Enqueued, "trashed sources must not reopen jobs")

@@ -52,12 +52,12 @@ func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 	)
 }
 
-func TestRenditionJobsRejectExecutionIdentityThatConflictsWithBuildIdentity(t *testing.T) {
+func TestRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	baseRequest := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, baseRequest)
-	_, _, err := s.EnqueueRenditionJob(t.Context(), baseRequest)
+	first, _, err := s.EnqueueRenditionJob(t.Context(), baseRequest)
 	require.NoError(t, err)
 
 	mutations := map[string]func(*document.RenditionExecutionIdentityV1){
@@ -78,8 +78,9 @@ func TestRenditionJobsRejectExecutionIdentityThatConflictsWithBuildIdentity(t *t
 				[]document.EvidenceArtifactRole(nil),
 				baseRequest.ExecutionIdentity.Authorization.AllowedArtifactRoles...)
 			mutate(&request.ExecutionIdentity)
-			_, _, err := s.EnqueueRenditionJob(t.Context(), request)
-			require.ErrorContains(t, err, "incompatible execution identity")
+			second, _, err := s.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			require.NotEqual(t, first.ID, second.ID)
 		})
 	}
 }
@@ -237,9 +238,11 @@ func TestEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
+	_, executionFingerprint, err := document.CanonicalRenditionExecutionIdentityV1(request.ExecutionIdentity)
+	require.NoError(t, err)
 	jobID := renditionSharedBuildID(
 		s.VaultID(), catalogSourceHash, profile.RenditionRequestFingerprint,
-		profile.EvidenceLexicalFingerprint, digestCatalogJSON(request.CapturedArtifactPolicy),
+		profile.EvidenceLexicalFingerprint, digestCatalogJSON(request.CapturedArtifactPolicy), executionFingerprint,
 	)
 	build := catalogRenditionBuild(s, profile)
 	build.ID = jobID
@@ -745,7 +748,7 @@ func TestRenditionJobMetadataRestoreRejectsCapturedPolicyOutsideProfile(t *testi
 			job.CapturedArtifactPolicyFingerprint = digestCatalogJSON(policy.canonical)
 			job.ID = renditionSharedBuildID(job.VaultID, job.SourceSHA256,
 				job.RenditionRequestFingerprint, job.EvidenceLexicalFingerprint,
-				job.CapturedArtifactPolicyFingerprint)
+				job.CapturedArtifactPolicyFingerprint, job.ExecutionIdentityFingerprint)
 			replacementJobID = job.ID
 			line, err = json.Marshal(job, json.Deterministic(true))
 			require.NoError(t, err)
@@ -1586,7 +1589,7 @@ func TestPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t *testing.
 	grantRenditionJobConsent(t, s, secondRequest)
 	job, firstWaiter, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
 	require.NoError(t, err)
-	_, _, err = s.EnqueueRenditionJob(t.Context(), secondRequest)
+	_, secondWaiter, err := s.EnqueueRenditionJob(t.Context(), secondRequest)
 	require.NoError(t, err)
 	now := time.Now().UTC().Add(time.Second)
 	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
@@ -1614,6 +1617,14 @@ func TestPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t *testing.
 	require.NoError(t, err)
 	_, err = s.ActiveRendition(t.Context(), versions[1], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
+	publishedWaiter, err := s.RenditionJobWaiterByID(t.Context(), firstWaiter.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "published", publishedWaiter.State)
+	assert.Empty(t, publishedWaiter.FailureCode)
+	rejectedWaiter, err := s.RenditionJobWaiterByID(t.Context(), secondWaiter.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "rejected", rejectedWaiter.State)
+	assert.Equal(t, RenditionFailureConsent, rejectedWaiter.FailureCode)
 }
 
 func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T) {
@@ -1626,7 +1637,7 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	grantRenditionJobConsent(t, s, secondRequest)
 	job, firstWaiter, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
 	require.NoError(t, err)
-	_, _, err = s.EnqueueRenditionJob(t.Context(), secondRequest)
+	_, secondWaiter, err := s.EnqueueRenditionJob(t.Context(), secondRequest)
 	require.NoError(t, err)
 	now := time.Now().UTC().Add(time.Second)
 	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-a", now, time.Minute)
@@ -1659,4 +1670,137 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	require.NoError(t, err)
 	_, err = s.ActiveRendition(t.Context(), versions[1], profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
+	publishedWaiter, err := s.RenditionJobWaiterByID(t.Context(), firstWaiter.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "published", publishedWaiter.State)
+	assert.Empty(t, publishedWaiter.FailureCode)
+	rejectedWaiter, err := s.RenditionJobWaiterByID(t.Context(), secondWaiter.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "rejected", rejectedWaiter.State)
+	assert.Equal(t, RenditionFailureStaleAuthority, rejectedWaiter.FailureCode)
+}
+
+func TestRenditionJobFencesDisclosedFilenameAfterRename(t *testing.T) {
+	for _, disclose := range []bool{false, true} {
+		t.Run(map[bool]string{false: "hidden", true: "disclosed"}[disclose], func(t *testing.T) {
+			s, versions := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) { p.Rendition.DiscloseFilename = disclose })
+			version, err := s.ContentVersionByID(t.Context(), versions[0])
+			require.NoError(t, err)
+			node, err := s.NodeByID(t.Context(), version.NodeID)
+			require.NoError(t, err)
+			request := renditionJobTestRequest(version.ID, profile)
+			if disclose {
+				request.ExecutionIdentity.Authorization.DiscloseFilename = true
+				request.ExecutionIdentity.Upload.Filename = node.Name
+			}
+			grantRenditionJobConsent(t, s, request)
+			job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "rename-fence-test", now, time.Minute)
+			require.NoError(t, err)
+			_, err = s.RenditionJobWorkByClaim(t.Context(), claim, now)
+			require.NoError(t, err)
+			_, _, err = s.Move(t.Context(), node.ID, *node.ParentID, "renamed.pdf", UnconditionalRev)
+			require.NoError(t, err)
+			_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID, now.Add(time.Second), renditionJobTestSnapshot(request))
+			if disclose {
+				require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
+				rejected, err := s.RenditionJobWaiterByID(t.Context(), waiter.ID)
+				require.NoError(t, err)
+				require.Equal(t, "rejected", rejected.State)
+				_, _, err = s.EnqueueRenditionJob(t.Context(), request)
+				require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T) {
+	for _, mutation := range []string{"selected-trash", "selected-consent", "selected-regrant", "all-reopened"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx := t.Context()
+			s, versions := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfile(t, false)
+			first := renditionJobTestRequest(versions[0], profile)
+			second := renditionJobTestRequest(versions[1], profile)
+			second.Authorization.Principal = "operator:secondary"
+			grantRenditionJobConsent(t, s, first)
+			grantRenditionJobConsent(t, s, second)
+			job, firstWaiter, err := s.EnqueueRenditionJob(ctx, first)
+			require.NoError(t, err)
+			_, secondWaiter, err := s.EnqueueRenditionJob(ctx, second)
+			require.NoError(t, err)
+			now := time.Now().UTC().Add(time.Second)
+			claim, err := s.ClaimRenditionJob(ctx, job.ID, "publication-test", now, time.Minute)
+			require.NoError(t, err)
+			_, err = s.BeginRenditionProvider(ctx, claim, firstWaiter.ID, now.Add(time.Second), renditionJobTestSnapshot(first))
+			require.NoError(t, err)
+			build := catalogRenditionBuild(s, profile)
+			build.ID = job.ID
+			require.NoError(t, s.StageRenditionJobBuild(ctx, claim, build, now.Add(2*time.Second)))
+			if mutation == "all-reopened" {
+				_, err = s.StageRenditionJobGeneration(ctx, claim, testSHA256([]byte("initial-generation")), now.Add(3*time.Second))
+				require.NoError(t, err)
+				_, err = s.RevokeConsent(ctx, ProcessingConsentRevocationRequest{Principal: first.Authorization.Principal, Scope: first.Authorization.Scope})
+				require.NoError(t, err)
+				_, err = s.PublishRenditionJob(ctx, claim, now.Add(4*time.Second))
+				require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+				require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureConsent, now.Add(5*time.Second)))
+				grantRenditionJobConsent(t, s, first)
+				_, _, err = s.EnqueueRenditionJob(ctx, first)
+				require.NoError(t, err)
+				now = now.Add(2 * time.Minute)
+				claim, err = s.ClaimRenditionJob(ctx, job.ID, "reopened-publication-test", now, time.Minute)
+				require.NoError(t, err)
+				_, err = s.RenditionJobWorkByClaim(ctx, claim, now)
+				require.NoError(t, err)
+			}
+			_, err = s.StageRenditionJobGeneration(ctx, claim, testSHA256([]byte("publication-generation")), now.Add(3*time.Second))
+			require.NoError(t, err)
+			wantErr, wantCode := ErrProcessingConsentRevoked, RenditionFailureConsent
+			if mutation == "selected-trash" {
+				version, err := s.ContentVersionByID(ctx, versions[0])
+				require.NoError(t, err)
+				_, _, err = s.Trash(ctx, version.NodeID, UnconditionalRev)
+				require.NoError(t, err)
+				wantErr, wantCode = ErrRenditionJobStaleAuthority, RenditionFailureStaleAuthority
+			} else {
+				_, err = s.RevokeConsent(ctx, ProcessingConsentRevocationRequest{Principal: first.Authorization.Principal, Scope: first.Authorization.Scope})
+				require.NoError(t, err)
+				if mutation == "selected-regrant" {
+					grantRenditionJobConsent(t, s, first)
+				}
+				if mutation == "all-reopened" {
+					version, err := s.ContentVersionByID(ctx, versions[1])
+					require.NoError(t, err)
+					_, _, err = s.Trash(ctx, version.NodeID, UnconditionalRev)
+					require.NoError(t, err)
+					wantErr = ErrProcessingConsentRequired
+				}
+			}
+			_, err = s.PublishRenditionJob(ctx, claim, now.Add(4*time.Second))
+			require.ErrorIs(t, err, wantErr)
+			rejected, err := s.RenditionJobWaiterByID(ctx, firstWaiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, "rejected", rejected.State)
+			require.Equal(t, wantCode, rejected.FailureCode)
+			other, err := s.RenditionJobWaiterByID(ctx, secondWaiter.ID)
+			require.NoError(t, err)
+			if mutation == "all-reopened" {
+				require.Equal(t, "rejected", other.State)
+				require.Equal(t, RenditionFailureStaleAuthority, other.FailureCode)
+			} else {
+				require.Equal(t, "waiting", other.State, "a valid request must remain available for a later authorized publication")
+			}
+			require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, wantCode, now.Add(5*time.Second)))
+			for _, version := range versions {
+				_, err = s.ActiveRendition(ctx, version, profile.Fingerprint)
+				require.ErrorIs(t, err, ErrNotFound, "failed publication must not change rendition heads")
+			}
+		})
+	}
 }

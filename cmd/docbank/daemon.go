@@ -190,7 +190,12 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	defer func() { _ = blobs.Close() }()
-	// Exclusive lock holder: any stale tmp file is provably abandoned.
+	// Embedded vaults can select this upload directory without owning our root.
+	spoolLock, err := home.TryLockProcessingSpool(layout.BlobTmpDir())
+	if err != nil {
+		return fmt.Errorf("owning processing upload directory: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, spoolLock.Release()) }()
 	if err := recoverEmbeddingRuntimeSpool(sigCtx, layout.BlobTmpDir()); err != nil {
 		return err
 	}

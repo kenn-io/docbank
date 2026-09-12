@@ -231,20 +231,21 @@ type metadataRenditionJob struct {
 }
 
 type metadataRenditionJobWaiter struct {
-	Type                  string   `json:"type"`
-	ID                    string   `json:"waiter_id"`
-	JobID                 string   `json:"job_id"`
-	ContentVersionID      string   `json:"content_version_id"`
-	ProfileFingerprint    string   `json:"profile_fingerprint"`
-	Principal             string   `json:"principal"`
-	Scope                 string   `json:"scope"`
-	DisclosureFingerprint string   `json:"disclosure_fingerprint"`
-	InputClasses          []string `json:"input_classes"`
-	RetainedClasses       []string `json:"retained_classes"`
-	State                 string   `json:"state"`
-	AttachmentID          string   `json:"attachment_id"`
-	CreatedAt             string   `json:"created_at"`
-	UpdatedAt             string   `json:"updated_at"`
+	Type                  string                `json:"type"`
+	ID                    string                `json:"waiter_id"`
+	JobID                 string                `json:"job_id"`
+	ContentVersionID      string                `json:"content_version_id"`
+	ProfileFingerprint    string                `json:"profile_fingerprint"`
+	Principal             string                `json:"principal"`
+	Scope                 string                `json:"scope"`
+	DisclosureFingerprint string                `json:"disclosure_fingerprint"`
+	InputClasses          []string              `json:"input_classes"`
+	RetainedClasses       []string              `json:"retained_classes"`
+	State                 string                `json:"state"`
+	FailureCode           *RenditionFailureCode `json:"failure_code,omitempty"`
+	AttachmentID          string                `json:"attachment_id"`
+	CreatedAt             string                `json:"created_at"`
+	UpdatedAt             string                `json:"updated_at"`
 }
 
 var processingMetadataRequiredFields = map[string][]string{
@@ -431,7 +432,7 @@ func exportRenditionJobWaiters(
 ) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
 		       attachment_id,created_at,updated_at
 		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
 	if err != nil {
@@ -441,9 +442,10 @@ func exportRenditionJobWaiters(
 	for rows.Next() {
 		record := metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}
 		var inputs, retained string
+		var failure sql.NullString
 		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
 			&record.ProfileFingerprint, &record.Principal, &record.Scope,
-			&record.DisclosureFingerprint, &inputs, &retained, &record.State,
+			&record.DisclosureFingerprint, &inputs, &retained, &record.State, &failure,
 			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
 		}
@@ -452,6 +454,10 @@ func exportRenditionJobWaiters(
 		}
 		if err := json.Unmarshal([]byte(retained), &record.RetainedClasses); err != nil {
 			return fmt.Errorf("decoding rendition job waiter retained classes: %w", err)
+		}
+		if failure.Valid {
+			code := RenditionFailureCode(failure.String)
+			record.FailureCode = &code
 		}
 		if _, err := validateMetadataRenditionJobWaiter(record); err != nil {
 			return fmt.Errorf("validating rendition job waiter metadata: %w", err)
@@ -1154,12 +1160,12 @@ func (s *Store) importProcessingMetadataRecord(
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
 			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-			disclosure_fingerprint,input_classes_json,retained_classes_json,state,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
 			attachment_id,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
 			value.ProfileFingerprint, authority.principal, authority.scope,
 			authority.disclosure, authority.inputsJSON, authority.retainedJSON, value.State,
-			value.AttachmentID, value.CreatedAt, value.UpdatedAt)
+			value.FailureCode, value.AttachmentID, value.CreatedAt, value.UpdatedAt)
 		return err
 	case metadataCurrentRenditionRootType:
 		var value metadataCurrentRenditionRoot
@@ -1336,7 +1342,7 @@ func validateMetadataRenditionJob(value metadataRenditionJob) error {
 	}
 	if renditionSharedBuildID(value.VaultID, value.SourceSHA256,
 		value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
-		value.CapturedArtifactPolicyFingerprint) != value.ID {
+		value.CapturedArtifactPolicyFingerprint, value.ExecutionIdentityFingerprint) != value.ID {
 		return errors.New("rendition job ID does not match immutable shared-build identity")
 	}
 	if value.ExecutionSnapshot != nil {
@@ -1433,6 +1439,12 @@ func validateMetadataRenditionJobWaiter(
 ) (normalizedConsentAuthority, error) {
 	if value.Type != metadataRenditionJobWaiterType || !validRenditionWaiterState(value.State) {
 		return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter metadata")
+	}
+	if value.FailureCode != nil {
+		if value.State != "rejected" || (*value.FailureCode != RenditionFailureConsent &&
+			*value.FailureCode != RenditionFailureStaleAuthority) {
+			return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter failure")
+		}
 	}
 	for subject, digest := range map[string]string{
 		"rendition waiter ID": value.ID, "rendition waiter job ID": value.JobID,

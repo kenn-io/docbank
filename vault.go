@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
@@ -33,6 +34,8 @@ import (
 var (
 	// ErrClosed means an operation targeted a closed embedded vault.
 	ErrClosed = errors.New("docbank vault is closed")
+	// ErrProcessingSpoolLocked means another open vault owns the upload directory.
+	ErrProcessingSpoolLocked = home.ErrProcessingSpoolLocked
 	// ErrContentUnavailable means catalog-authorized content could not be
 	// opened or its physical size disagreed with the metadata authority.
 	ErrContentUnavailable = errors.New("docbank content is unavailable")
@@ -95,6 +98,7 @@ type Config struct {
 	SQLite           docsqlite.Driver
 	LooseCompression LooseCompressionOptions
 	StoreBindings    map[string]StoreBinding
+	Processing       ProcessingOptions
 }
 
 // StoreBinding configures one embedded secondary namespace without exposing
@@ -112,12 +116,15 @@ type StoreBinding struct {
 }
 
 // Vault is one independently locked Docbank namespace. Separate Vault values
-// may be open concurrently when their roots do not overlap.
+// may be open concurrently when their roots do not overlap and their processing
+// upload directories are distinct.
 type Vault struct {
-	root     *os.Root
-	lock     *home.Lock
-	metadata *store.Store
-	blobs    *blob.Store
+	root       *os.Root
+	lock       *home.Lock
+	spoolLock  *home.Lock
+	metadata   *store.Store
+	blobs      *blob.Store
+	processing *internalprocessing.Service
 
 	lifecycle    sync.RWMutex
 	mutation     sync.Mutex
@@ -268,14 +275,76 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, blobs.Close())
 		}
 	}()
+	spoolDirectory := config.Processing.SpoolDirectory
+	if spoolDirectory == "" {
+		spoolDirectory = layout.BlobTmpDir()
+	}
+	spoolLock, err := home.TryLockProcessingSpool(spoolDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("owning processing upload directory: %w", err)
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, spoolLock.Release())
+		}
+	}()
+	if _, err := upload.RecoverStale(context.Background(), spoolDirectory); err != nil {
+		return nil, fmt.Errorf("recovering processing uploads: %w", err)
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return nil, err
 	}
-	return &Vault{root: root, lock: lock, metadata: metadata, blobs: blobs}, nil
+	vault := &Vault{root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs}
+	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
+	for name, profile := range config.Processing.Profiles {
+		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),
+			len(profile.EmbeddingClassifiers))
+		for binding, classifier := range profile.EmbeddingClassifiers {
+			if classifier == nil {
+				continue
+			}
+			classifiers[binding] = func(err error) (internalprocessing.EmbeddingProviderFailure, time.Duration) {
+				class, delay := classifier(err)
+				return internalprocessing.EmbeddingProviderFailure(class), delay
+			}
+		}
+		profiles[name] = internalprocessing.ProfileConfig{Profile: profile.Profile,
+			RenditionProvider:    profile.RenditionProvider,
+			EmbeddingProviders:   profile.EmbeddingProviders,
+			EmbeddingClassifiers: classifiers,
+			Tokenizers:           profile.Tokenizers}
+	}
+	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
+		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
+		Profiles: profiles, SpoolDirectory: spoolDirectory,
+	})
+	if err != nil {
+		return nil, err
+	}
+	vault.processing = processingService
+	return vault, nil
+}
+
+type embeddedMutationGate struct{ vault *Vault }
+
+func (gate embeddedMutationGate) MutateContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	gate.vault.mutation.Lock()
+	defer gate.vault.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
+}
+
+func (gate embeddedMutationGate) PreserveContext(ctx context.Context, fn func() error) error {
+	return gate.MutateContext(ctx, fn)
 }
 
 // Close waits for active operations and readers, then releases storage and
-// the vault hierarchy lock. It is safe to call more than once.
+// the upload directory and vault hierarchy locks. It is safe to call more than once.
 func (v *Vault) Close() error {
 	if v == nil {
 		return nil
@@ -286,7 +355,7 @@ func (v *Vault) Close() error {
 		return nil
 	}
 	v.closed = true
-	return errors.Join(v.blobs.Close(), v.metadata.Close(), v.lock.Release(), v.root.Close())
+	return errors.Join(v.blobs.Close(), v.metadata.Close(), v.spoolLock.Release(), v.lock.Release(), v.root.Close())
 }
 
 // SQLiteDriver reports the adapter selected for this vault.

@@ -15,6 +15,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/packstore"
 
+	docbank "go.kenn.io/docbank"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
@@ -77,6 +78,26 @@ func TestServeLocksBeforeInitializingVault(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, "vault.lock", entries[0].Name(),
 		"daemon startup must not initialize a restore-owned target")
+}
+
+func TestServeRejectsOwnedProcessingSpoolBeforeCleanup(t *testing.T) {
+	layout := home.Layout{Root: t.TempDir()}
+	require.NoError(t, os.MkdirAll(layout.BlobTmpDir(), 0o700))
+	embedded, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{SpoolDirectory: layout.BlobTmpDir()}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, embedded.Close()) })
+	active := filepath.Join(layout.BlobTmpDir(), ".docbank-upload-active")
+	require.NoError(t, os.Mkdir(active, 0o700))
+	source := filepath.Join(active, "source")
+	require.NoError(t, os.WriteFile(source, []byte("active upload"), 0o600))
+	t.Setenv("DOCBANK_HOME", layout.Root)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.ErrorIs(t, runServe(ctx), docbank.ErrProcessingSpoolLocked)
+	content, err := os.ReadFile(source)
+	require.NoError(t, err)
+	require.Equal(t, "active upload", string(content))
 }
 
 func TestServeRecoversInterruptedRestoreBeforeInitializingVault(t *testing.T) {
@@ -195,6 +216,14 @@ func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	err := runServe(context.Background())
 	require.Error(t, err)
 
+	embeddedConfig := docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{SpoolDirectory: filepath.Join(dir, "blobs", "tmp")}}
+	embedded, err := docbank.New(t.Context(), embeddedConfig)
+	if embedded != nil {
+		t.Cleanup(func() { require.NoError(t, embedded.Close()) })
+	}
+	require.ErrorIs(t, err, docbank.ErrProcessingSpoolLocked)
+
 	cancel()
 	select {
 	case err := <-done:
@@ -206,6 +235,9 @@ func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	assert.Empty(t, recs)
+	embedded, err = docbank.New(t.Context(), embeddedConfig)
+	require.NoError(t, err)
+	require.NoError(t, embedded.Close())
 }
 
 // TestServeRequiresKeyEvenWhenConfigIsKeyless is the regression test for the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +162,44 @@ func TestSearcherHybridUsesRRFWithoutComparingRawScores(t *testing.T) {
 	assert.Equal(t, 1, report.Results[0].LexicalRank)
 	assert.Equal(t, 1, report.Results[0].SemanticRank)
 	assert.InDelta(t, 2.0/61.0, report.Results[0].Score, 1e-12)
+}
+
+func TestSearcherAppliesIndependentLaneAndResponseLimits(t *testing.T) {
+	for _, mode := range []Mode{ModeAuto, ModeLexical, ModeSemantic, ModeHybrid} {
+		for _, limit := range []int{1, 10} {
+			t.Run(fmt.Sprintf("%s/%d", mode, limit), func(t *testing.T) {
+				searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+				backend.lexical = []store.ExplainedLexicalCandidate{
+					{Node: store.Node{ID: 5, CurrentVersionID: "lexical-first"}},
+					{Node: store.Node{ID: 6, CurrentVersionID: "lexical-second"}},
+				}
+				for index := range 2 {
+					candidate := backend.semantic[0]
+					candidate.NodeID = int64(9 + index)
+					candidate.ContentVersionID = fmt.Sprintf("semantic-%d", index)
+					backend.semantic = append(backend.semantic, candidate)
+				}
+				report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: mode, Limit: limit,
+					LexicalLimit: 1, VectorLimit: 2, Authorization: retrievalAuthorization(descriptor)})
+				require.NoError(t, err)
+				want := 1
+				if mode == ModeSemantic {
+					want = 2
+				}
+				if mode == ModeHybrid {
+					want = 3
+				}
+				require.Len(t, report.Results, min(limit, want))
+				require.True(t, report.Truncated)
+				if mode != ModeSemantic {
+					require.Equal(t, 1, backend.lexicalLimit)
+				}
+				if mode == ModeSemantic || mode == ModeHybrid {
+					require.Equal(t, 2, backend.vectorLimit)
+				}
+			})
+		}
+	}
 }
 
 func TestSearcherExplicitSemanticModesReportProviderFailureAndCoverage(t *testing.T) {
@@ -326,6 +365,8 @@ type retrievalBackendStub struct {
 	acquiredAt             time.Time
 	releasedAt             time.Time
 	lexicalCalls           int
+	lexicalLimit           int
+	vectorLimit            int
 	releaseErr             error
 	releaseContextErr      error
 	finalScopedDocuments   int
@@ -342,8 +383,9 @@ func (backend *retrievalBackendStub) AcquireSemanticSearchAuthority(_ context.Co
 
 func (backend *retrievalBackendStub) ResolveSemanticCandidates(_ context.Context, _, _ string,
 	_ document.EmbeddingInputKind, _, sourceManifest string, neighbors []vectorindex.Neighbor,
-	_ int, _ store.SearchOptions,
+	limit int, _ store.SearchOptions,
 ) (store.SemanticSearchResolution, error) {
+	backend.vectorLimit = limit
 	backend.neighborCount = len(neighbors)
 	backend.sourceManifest = sourceManifest
 	scoped, complete := backend.finalScopedDocuments, backend.finalCompleteDocuments
@@ -448,10 +490,11 @@ func retrievalVectorFixture(t *testing.T) (document.EmbeddingDescriptor, *vector
 
 func (backend *retrievalBackendStub) VaultID() string { return backend.vaultID }
 
-func (backend *retrievalBackendStub) SearchExplainedLexicalCandidates(context.Context, string, int,
-	store.SearchOptions,
+func (backend *retrievalBackendStub) SearchExplainedLexicalCandidates(_ context.Context, _ string, limit int,
+	_ store.SearchOptions,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
 	backend.lexicalCalls++
+	backend.lexicalLimit = limit
 	return append([]store.ExplainedLexicalCandidate(nil), backend.lexical...), backend.lexicalTruncated, nil
 }
 

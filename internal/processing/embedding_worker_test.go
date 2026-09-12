@@ -1343,6 +1343,27 @@ func (runtime afterEmbeddingPrepare) Prepare(ctx context.Context, work Embedding
 	return execution, runtime.after()
 }
 
+func TestEmbeddingWorkerTargetReportsSourceFence(t *testing.T) {
+	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+	require.NoError(t, err)
+	node, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	worker.runtime = afterEmbeddingPrepare{EmbeddingRuntime: worker.runtime, after: func() error {
+		_, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
+		return err
+	}}
+	job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	processed, err := worker.RunJob(t.Context(), job.ID)
+	require.True(t, processed)
+	require.ErrorIs(t, err, ErrEmbeddingWorkFenced)
+	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "abandoned", status.State)
+	require.Zero(t, fake.runtime.calls())
+}
+
 func TestEmbeddingWorkerAbandonsReplacedRendition(t *testing.T) {
 	for _, duringProvider := range []bool{false, true} {
 		t.Run(fmt.Sprintf("during-provider=%t", duringProvider), func(t *testing.T) {
