@@ -152,7 +152,9 @@ test.describe("Docbank web screenshots", () => {
       { mode: 0o600 },
     );
     const reports = path.join(workspace, "synthetic", "Reports");
+    const longReports = path.join(workspace, "synthetic", "Long Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
+    await mkdir(longReports, { recursive: true, mode: 0o700 });
     await writeFile(
       path.join(reports, "quarterly-tax-report.txt"),
       "Synthetic quarterly tax report for screenshot validation.\n",
@@ -168,6 +170,15 @@ test.describe("Docbank web screenshots", () => {
       "category,amount\nSynthetic revenue,125000\nSynthetic expense,42000\n",
       { mode: 0o600 },
     );
+    await Promise.all(
+      Array.from({ length: 100 }, (_, index) =>
+        writeFile(
+          path.join(longReports, `document-${String(index).padStart(3, "0")}.txt`),
+          `Extended listing fixture document ${index}.\n`,
+          { mode: 0o600 },
+        ),
+      ),
+    );
     const archiveReference = path.join(
       workspace,
       "synthetic",
@@ -180,6 +191,7 @@ test.describe("Docbank web screenshots", () => {
     );
 
     await runDocbank(["add", reports, "--dest", "/", "--progress", "plain"]);
+    await runDocbank(["add", longReports, "--dest", "/", "--progress", "plain"]);
     await runDocbank([
       "add",
       archiveReference,
@@ -379,6 +391,12 @@ test.describe("Docbank web screenshots", () => {
       fullPage: false,
       animations: "disabled",
     });
+    await selectionDock.getByRole("button", { name: "Edit tags" }).click();
+    const batchTags = page.getByRole("dialog", { name: "Tag selected documents" });
+    await batchTags.getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" }).click();
+    await page.getByRole("option", { name: "tax", exact: true }).click();
+    await expect(batchTags.getByText("1 of 2 selected documents have this tag.")).toBeVisible();
+    await batchTags.getByRole("button", { name: "Done" }).click();
     await selectionDock
       .getByRole("button", { name: "Clear selection" })
       .click();

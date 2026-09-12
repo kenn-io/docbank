@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-10
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -103,6 +103,22 @@ status. If another person, agent, or CLI command changed the node first, the
 dialog keeps the failed decision visible and asks you to refresh rather than
 applying it to newer state.
 
+### Tag selected documents
+
+Use the document checkboxes to select files on the displayed page, then choose
+**Edit tags** in the selection dock. The picker shows whether all, some, or none
+of the selected documents have the chosen tag. **Add to all** and **Remove from
+all** apply one atomic, revision-fenced operation to at most 1,000 documents.
+Folders and undisplayed query results are not included in page selection.
+
+Keep the dialog open if the result is uncertain: **Retry same operation**
+reuses its original identity and revisions. A stale selection requires an
+explicit refresh rather than an automatic retry against newer documents.
+After confirmation, the browser reloads current observations; the retained
+receipt may describe an earlier successful operation. See
+[selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
+and backup behavior.
+
 ## Manage tag definitions
 
 Choose the tag-catalog button beside the toolbar selector to create, rename,
@@ -126,7 +142,7 @@ change assignment rules.
 
 The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
-for exhaustive definition management and bulk assignment.
+for exhaustive definition management and assignments outside the displayed selection.
 
 ## Saved queries and highlights
 

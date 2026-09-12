@@ -76,6 +76,8 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidCollectionLabel, http.StatusUnprocessableEntity, "invalid_collection_label"},
 	{store.ErrInvalidDuplicatePage, http.StatusUnprocessableEntity, "invalid_duplicate_page"},
 	{store.ErrInvalidBatchMove, http.StatusUnprocessableEntity, "invalid_batch_move"},
+	{store.ErrInvalidBatchTag, http.StatusUnprocessableEntity, "invalid_batch_tag"},
+	{store.ErrBatchTagOperationConflict, http.StatusConflict, "batch_tag_operation_conflict"},
 	{store.ErrNotTrashed, http.StatusUnprocessableEntity, "not_trashed"},
 	{store.ErrIsRoot, http.StatusUnprocessableEntity, "is_root"},
 	{store.ErrVersionNodeMismatch, http.StatusUnprocessableEntity, "version_node_mismatch"},

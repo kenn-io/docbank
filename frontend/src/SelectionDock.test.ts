@@ -63,3 +63,21 @@ it("uses the dock close control to clear selection", async () => {
   );
   expect(onclear).toHaveBeenCalledOnce();
 });
+
+it("offers the bounded tag action when supplied", async () => {
+  const ontags = vi.fn();
+  const { rerender } = render(SelectionDock, {
+    selectedCount: 2,
+    visibleDocumentCount: 3,
+    truncated: false,
+    onclear: vi.fn(),
+    onselectvisible: vi.fn(),
+    ontags,
+    tagsDisabled: true,
+  });
+
+  expect((screen.getByRole("button", { name: "Edit tags" }) as HTMLButtonElement).disabled).toBe(true);
+  await rerender({ tagsDisabled: false });
+  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
+  expect(ontags).toHaveBeenCalledOnce();
+});

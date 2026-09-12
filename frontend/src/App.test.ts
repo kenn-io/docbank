@@ -1040,6 +1040,19 @@ function prepareSelectionApp(): void {
   });
 }
 
+it("opens bounded tag assignment for the exact page selection", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
+  const dialog = await screen.findByRole("dialog", { name: "Tag selected documents" });
+  expect(within(dialog).getByText(/1 selected document\./)).toBeTruthy();
+  expect((within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled).toBe(true);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
+});
+
 it("selects displayed files without requests or changing the inspector, then reconciles a refresh", async () => {
   prepareSelectionApp();
   const { fetchMock, getReportsReads } = installSelectionBackend();

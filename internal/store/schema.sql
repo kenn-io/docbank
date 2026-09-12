@@ -1183,6 +1183,24 @@ CREATE TABLE IF NOT EXISTS node_tags (
 
 CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
+-- Immutable protocol replay authority deliberately has no tag or node foreign
+-- keys: a committed operation identity survives later deletion and purge.
+CREATE TABLE IF NOT EXISTS batch_tag_receipts (
+    operation_id  TEXT PRIMARY KEY,
+    request_digest TEXT NOT NULL,
+    receipt_json  BLOB NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS batch_tag_receipts_immutable_update
+BEFORE UPDATE ON batch_tag_receipts BEGIN
+    SELECT RAISE(ABORT, 'batch tag receipts are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS batch_tag_receipts_immutable_delete
+BEFORE DELETE ON batch_tag_receipts BEGIN
+    SELECT RAISE(ABORT, 'batch tag receipts are immutable');
+END;
+
 -- Saved definitions are mutable intent, fenced by revision. Their canonical
 -- payload and fingerprint are validated in Go before they enter authority.
 CREATE TABLE IF NOT EXISTS saved_queries (

@@ -60,6 +60,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /batch/move` | validate and apply up to 1,000 moves as one final-state transaction | Implemented |
+| `POST /batch/tags` · `POST /batch/tags/preview` | atomically assign/remove one tag on a revision-fenced selected set, or inspect its exact membership | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list (optionally paginated) / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
@@ -296,6 +297,50 @@ wildcard segment makes a route ambiguous for names containing
 encoding instead. The path must be absolute (leading `/`); `?path=/`
 resolves the root. The server applies the store's existing NFC name
 normalization and validation and returns `422` for an invalid path.
+
+## Batch tag assignment
+
+`POST /api/v1/batch/tags` accepts a canonical UUIDv4 `operation_id`, a tag UUID
+`tag_id`, required boolean `assign`, and `nodes: [{node_id, revision}]`.
+The body is limited to 1 MiB and 1–1,000 unique live file or directory IDs with
+positive exact revisions. No query, subtree expansion, or `If-Match` header is
+used. Invalid structure returns 422, missing or trashed targets return 404,
+and a stale target returns 412 (`stale_revision`). Every target, including assignment no-ops,
+is validated in the same transaction as all changes and receipt persistence.
+Actual changes use the existing canonical audit events, with a separate audit
+operation for each changed node. The receipt's operation ID identifies the
+batch retry; it is not an audit operation ID.
+
+Success returns 200 with `version: 1`, `operation_id`, `request_digest`,
+`tag_id`, `assign`, final `tag_revision`, final `assignment_count`,
+`completed_at`, and numerically sorted
+`nodes: [{node_id, expected_revision, revision, changed}]`. Every requested
+identity appears exactly once. Changed nodes advance by one revision;
+unchanged nodes retain their expected revision.
+
+Request order is not semantic. The lowercase SHA-256 request digest covers
+UTF-8 text: `docbank-tag-batch-v1` followed by newline, the canonical tag UUID
+followed by newline, `1` for assignment or `0` for removal followed by newline,
+then one `node_id:revision` line per target in ascending numeric node-ID order.
+Every line, including the last, ends in newline; integers use unpadded decimal.
+The operation UUID is a separate lookup identity, not part of that digest.
+
+Repeating an operation with the same canonical request returns its original
+receipt, even after later edits or deletion. Reusing the operation UUID with
+different input returns 409 `batch_tag_operation_conflict`. Receipts are
+retained indefinitely without node/tag cascade deletion and contain no names,
+paths, or document bodies. Metadata and physical backup/restore retain receipts
+present at the backup checkpoint; an earlier backup cannot know later
+operations. A historical success does not assert current membership or
+recreate a deleted entity. Clients must validate complete receipt identity and
+revision outcomes before accepting success.
+
+`POST /api/v1/batch/tags/preview` takes only `tag_id` and the same bounded,
+revision-fenced `nodes`. One read snapshot returns `tag_id`, `tag_revision`,
+and sorted `nodes: [{node_id, revision, assigned}]`, with no durable changes.
+This provides exact selected-set membership without interpreting omissions
+from a truncated tag listing. Both routes require authentication. Browser
+sessions permit only these exact POST paths without query arguments.
 
 ## Concurrency: resource revisions and `If-Match`
 

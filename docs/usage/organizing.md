@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-11
 title: Organizing & Tagging
 description: Browsing, moving, renaming, and tagging in the virtual tree.
 ---
@@ -120,6 +121,28 @@ retain their tag assignments and appear as `trashed` in `tag nodes`; path-based
 assignment commands intentionally address live nodes only. When `trash empty`
 permanently deletes tagged nodes, each affected tag revision advances before
 those assignments are removed.
+
+## Tag a selected set atomically
+
+In the web app, select document checkboxes and choose **Edit tags**. Pick one
+tag to see how many selected documents have it, then choose **Add to all** or
+**Remove from all**. Each operation accepts at most 1,000 explicit documents.
+If any target is missing, trashed, or has changed since selection, the whole
+operation fails without changing assignments. Already-correct assignments
+keep their node revisions; actual changes retain the normal audit events.
+
+If the response is lost, keep the dialog open and choose **Retry same
+operation**. The daemon returns the original receipt without applying the
+change twice. A conflict requires closing the dialog and explicitly refreshing
+the selection. Closing an uncertain operation discards the browser's retry
+request, not any change already committed by the daemon.
+
+API clients use `POST /api/v1/batch/tags` with one tag ID, an operation UUID,
+an assignment choice, and exact node/revision pairs. Receipts are retained
+indefinitely, including after tag or node deletion, and survive backup/restore
+when included in that backup checkpoint. They contain identities and revisions,
+not filenames or tag names. A replay confirms the original outcome, not current
+membership. See the [batch tag contract](../architecture/http-api.md#batch-tag-assignment).
 
 ## Atomic bulk reorganization
 
