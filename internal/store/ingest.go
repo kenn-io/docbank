@@ -382,6 +382,22 @@ func (s *Store) ingestFile(
 	size int64, mimeType, originalPath, originalMtime string, options ingestFileOptions,
 	physical ...BlobPhysical,
 ) (ContentWriteReceipt, bool, IngestDirectoryResolution, error) {
+	var result ContentWriteReceipt
+	var added bool
+	var resolution IngestDirectoryResolution
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, added, resolution, err = s.ingestFileTx(ctx, tx, run, parentID, name, blobHash, size, mimeType, originalPath, originalMtime, options, physical...)
+		return err
+	})
+	return result, added, resolution, err
+}
+
+func (s *Store) ingestFileTx(
+	ctx context.Context, tx *sql.Tx, run IngestRun, parentID int64, name, blobHash string,
+	size int64, mimeType, originalPath, originalMtime string, options ingestFileOptions,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, bool, IngestDirectoryResolution, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -410,7 +426,7 @@ func (s *Store) ingestFile(
 		added      bool
 		resolution IngestDirectoryResolution
 	)
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		ingestAdded := false
 		if options.directoryPlan != nil || options.observeMembership {
 			ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
@@ -575,7 +591,7 @@ func (s *Store) ingestFile(
 		}
 		added = true
 		return nil
-	})
+	}()
 	if err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 	}

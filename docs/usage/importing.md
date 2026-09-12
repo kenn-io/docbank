@@ -1,7 +1,7 @@
 ---
 title: Importing Documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-last_edited: 2026-09-10
+last_edited: 2026-09-12
 ---
 
 # Importing Documents
@@ -10,7 +10,71 @@ Use `docbank add` to copy files or entire folders into the vault. Docbank leaves
 the originals unchanged. Repeat the same command after an interruption: it
 skips matching content already imported under a destination name.
 
-## What an import does
+## Mailbox archives
+
+For mailbox exports, use `docbank mailbox import` or **Import mailbox** in the
+web app. These retain the original archive and give each message occurrence
+its own document, including repeated content and repeated Message-IDs.
+Decoded attachment documents are published with the message and its receipt.
+
+```bash
+docbank mailbox import ./All-mail.mbox --dest /mail --id mail-export --preview
+docbank mailbox import ./All-mail.mbox --dest /mail --id mail-export
+docbank mailbox watch mail-export
+docbank mailbox receipts mail-export --after 0 --limit 100
+```
+
+Use the same `--id`, source bytes and settings to retry an interrupted upload.
+The default interpretation is explicitly `mboxrd`; use `--dialect mboxo` for
+that format. The preview does not guess the dialect. Google Takeout ZIPs are
+checked completely before messages are published: unsafe paths, symlinks,
+bad CRCs and excessive expanded data are refused without extracting files to
+a caller-selected directory.
+
+Jobs survive daemon restart. `mailbox cancel <id>` stops a job;
+`mailbox resume <id>` resumes a canceled or failed job. After each 100,000
+messages, `mailbox continue <id>` explicitly scans the next segment of the
+same source into the same collection. Reports separate imported, rejected,
+retry, pending and canceled occurrences. A partial report with an unscanned
+tail is not a completed import. For another receipts page, pass the last
+returned ordinal as `--after`.
+
+Source labels stay in occurrence provenance. To assign existing Docbank tags,
+opt in with `--label-tag 'Project=existing-tag-id'`; mappings are immutable job
+settings. Importing does not grant remote-processing consent. Attachment
+documents may remain pending processing until a suitable profile and consent
+are configured. Mailbox import does not provide PDF email export.
+
+Containers are retained as ordered, verified 64 MiB chunks, up to 256 GiB.
+Each MBOX or ZIP entry is limited to 50 GiB; ZIPs are limited to 1,000 entries
+and 200 GiB expanded data. Individual emitted EML messages are limited to
+128 MiB, with malformed or oversized messages recorded as rejected. There
+are at most two active uploads per owner and eight globally. Incomplete
+uploads expire 24 hours after creation; sealed sources have no expiry. Jobs
+allow two running globally and eight queued/running globally, at most two
+queued/running per owner. Limits bound work; they are not throughput claims.
+
+### Explicit EML transfers
+
+An exporter can register an archive and supply its own stable occurrence
+reference without connecting Docbank to the source application:
+
+```bash
+docbank mailbox register synthetic-export 'Explicit exported messages'
+docbank mailbox transfer ./message.eml --archive synthetic-export --reference item-1
+```
+
+Equal retries return the original receipt. Changed source bytes require
+`--if-rev` with the receipt's target revision and preserve the earlier content
+version. Editing or remapping the target causes a conflict; trashing it returns
+an explicit tombstone and does not resurrect it. Source mappings, exact
+versions, attachment relations and sealed container bytes survive portable
+backup and restore and have no silent retention deadline. There is no release
+command for these retry guarantees; referenced versions and relations cannot
+be silently pruned. Ordinary `docbank add message.eml` does not invent an
+external transfer identity.
+
+## Ordinary file imports
 
 For each regular file, Docbank performs two steps:
 

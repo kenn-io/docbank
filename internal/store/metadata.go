@@ -453,6 +453,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 11 {
+		if err := exportMailboxMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
 
@@ -991,6 +996,13 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM email_body_results)
 		    + (SELECT COUNT(*) FROM email_document_publications)
 		    + (SELECT COUNT(*) FROM email_document_relations)
+		    + (SELECT COUNT(*) FROM mailbox_containers)
+		    + (SELECT COUNT(*) FROM mailbox_chunks)
+		    + (SELECT COUNT(*) FROM mailbox_archives)
+		    + (SELECT COUNT(*) FROM mailbox_transfer_receipts)
+		    + (SELECT COUNT(*) FROM mailbox_transfer_heads)
+		    + (SELECT COUNT(*) FROM mailbox_jobs)
+		    + (SELECT COUNT(*) FROM mailbox_occurrences)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
@@ -1136,6 +1148,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if strings.HasPrefix(kind, "email_") {
 		return importEmailMetadataRecord(ctx, tx, kind, raw)
+	}
+	if strings.HasPrefix(kind, "mailbox_") {
+		return importMailboxMetadataRecord(ctx, tx, kind, raw)
 	}
 	if isProcessingMetadataType(kind) {
 		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
@@ -1424,12 +1439,18 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"email_body_result":                    {"type", "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
-	"email_head":                           {"type", "content_version_id", metadataAttachmentIDField, "published_at"},
-	"email_attachment":                     {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
-	"email_part_artifact":                  {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
-	"email_generation":                     {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
-	"email_document_publication":           {"type", "request", "receipt"},
+	"mailbox_job":                          {metadataTypeField, "job"},
+	"mailbox_occurrence":                   {metadataTypeField, "occurrence"},
+	"mailbox_container":                    {metadataTypeField, "container"},
+	"mailbox_archive":                      {metadataTypeField, "archive"},
+	"mailbox_transfer_receipt":             {metadataTypeField, "receipt"},
+	"mailbox_transfer_head":                {metadataTypeField, "archive_id", "reference", "receipt_id"},
+	"email_body_result":                    {metadataTypeField, "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
+	"email_head":                           {metadataTypeField, "content_version_id", metadataAttachmentIDField, "published_at"},
+	"email_attachment":                     {metadataTypeField, metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
+	"email_part_artifact":                  {metadataTypeField, "generation_id", "part_path", "role", "blob_hash", "size"},
+	"email_generation":                     {metadataTypeField, "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
+	"email_document_publication":           {metadataTypeField, "request", "receipt"},
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
@@ -1866,6 +1887,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.schemaVersion >= 10 {
 			if err := exportEmailDocumentMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= 11 {
+			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 				return err
 			}
 		}

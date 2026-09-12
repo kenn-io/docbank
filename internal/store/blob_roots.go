@@ -32,6 +32,7 @@ func (reference blobReference) conditionSQL() string {
 var blobRootReferences = []blobReference{
 	{table: "content_versions", column: columnBlobHash},
 	{table: "email_part_artifacts", column: columnBlobHash},
+	{table: "mailbox_chunks", column: columnBlobHash, condition: "EXISTS (SELECT 1 FROM mailbox_containers c WHERE c.id=r.container_id AND c.state='sealed')"},
 	{table: "rendition_builds", column: columnSourceSHA256},
 	{table: "rendition_jobs", column: columnSourceSHA256},
 	{table: "rendition_artifacts", column: columnBlobHash},
@@ -45,6 +46,7 @@ var blobRootReferences = []blobReference{
 // it reachable: rendition bytes staged before a manifest owns them, and
 // exact-erasure targets that the derivative purge path retires itself.
 var blobGCHolds = []blobReference{
+	{table: "mailbox_chunks", column: columnBlobHash},
 	{table: "rendition_blob_staging", column: columnBlobHash},
 	{table: "derivative_blob_purge_pending", column: columnBlobHash},
 }

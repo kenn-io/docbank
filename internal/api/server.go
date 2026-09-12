@@ -148,6 +148,7 @@ func NewServer(d Deps) *Server {
 	registerJobRoutes(humaAPI, d)
 	registerWatchRoutes(humaAPI, d)
 	registerUploadRoute(mux, humaAPI, d, g)
+	registerMailboxRoutes(mux, humaAPI, d, g)
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)

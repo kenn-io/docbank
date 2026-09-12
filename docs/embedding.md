@@ -14,6 +14,21 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
 
+## Transfer explicitly exported email
+
+Call `Vault.RegisterMailboxArchive(ctx, id, description)` once for a stable
+source archive identity. Then call `Vault.TransferEML(ctx, request, reader)`
+with a `docbank.MailboxTransferRequest`: archive ID, stable occurrence
+reference, SHA-256, byte size, settings identity, destination directory ID
+and document name. Only the supplied reader is consumed; Docbank does not
+discover source applications, accounts or host paths.
+
+The returned receipt binds the ordinary message, decoded attachment documents
+and exact retained versions. Equal retries return that receipt. Changing the
+source requires `ExpectedRevision`; a changed target conflicts, and a trashed
+target returns a tombstone. These calls use the vault's existing lifecycle and
+mutation ownership. See [Explicit EML transfers](usage/importing.md#explicit-eml-transfers).
+
 ## Create a vault service
 
 Each root is an independent archive. One process may open several

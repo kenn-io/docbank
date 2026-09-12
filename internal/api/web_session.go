@@ -171,6 +171,9 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
+	if mailboxBrowserRequestAllowed(r) {
+		return true
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")

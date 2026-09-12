@@ -87,6 +87,9 @@ export function validateUploadReceipt(
 }
 
 interface UploadMessage {
+	container_id?: string;
+	chunk_index?: number;
+	chunk_receipt?: { index: number; sha256: string; size: number };
   type: string;
   nonce?: string;
   proof?: string;
@@ -268,6 +271,46 @@ export class VerifiedUploadChannel implements UploadTransport {
       throw this.channelError();
     }
     this.socket.send(JSON.stringify(message));
+  }
+
+  async uploadMailboxChunk(
+    containerID: string, index: number, data: Blob, expectedHash: string,
+    signal: AbortSignal, onprogress: (progress: TransferProgress) => void,
+  ): Promise<void> {
+    if (this.busy) throw new Error("Another browser upload is already active.");
+    throwIfAborted(signal);
+    this.busy = true;
+    const requestID = crypto.randomUUID();
+    let readyForBytes = false;
+    try {
+      this.send({ type: "begin_mailbox_chunk", request_id: requestID,
+        container_id: containerID, chunk_index: index,
+        expected_hash: expectedHash, expected_size: data.size });
+      const ready = await this.nextMessage(signal);
+      this.requireMessage(ready, requestID);
+      this.throwProblem(ready);
+      if (ready.type !== "ready") throw this.protocolError();
+      readyForBytes = true;
+      for (let offset = 0; offset < data.size; offset += hashChunkBytes) {
+        if (signal.aborted) await this.cancelUpload(requestID);
+        await this.waitForWritable(signal);
+        const end = Math.min(data.size, offset + hashChunkBytes);
+        this.sendBinary(await data.slice(offset, end).arrayBuffer());
+        onprogress({ processed: end, total: data.size });
+      }
+      if (signal.aborted) await this.cancelUpload(requestID);
+      this.send({ type: "end", request_id: requestID });
+      const terminal = await this.nextMessage(signal);
+      this.requireMessage(terminal, requestID);
+      this.throwProblem(terminal);
+      if (terminal.type !== "mailbox_chunk_receipt" ||
+          terminal.chunk_receipt?.index !== index ||
+          terminal.chunk_receipt?.sha256 !== expectedHash ||
+          terminal.chunk_receipt?.size !== data.size) throw this.protocolError();
+    } catch (cause) {
+      if (readyForBytes && !(cause instanceof APIError)) this.fail();
+      throw cause;
+    } finally { this.busy = false; }
   }
 
   private sendBinary(bytes: ArrayBuffer): void {

@@ -37,20 +37,23 @@ var (
 )
 
 type webUploadMessage struct {
-	Type         string         `json:"type"`
-	Token        string         `json:"token,omitzero"`
-	Nonce        string         `json:"nonce,omitzero"`
-	Proof        string         `json:"proof,omitzero"`
-	RequestID    string         `json:"request_id,omitzero"`
-	ParentID     int64          `json:"parent_id,omitzero"`
-	Name         string         `json:"name,omitzero"`
-	MIMEType     string         `json:"mime_type,omitzero"`
-	ExpectedHash string         `json:"expected_hash,omitzero"`
-	ExpectedSize int64          `json:"expected_size,omitzero"`
-	Receipt      *UploadReceipt `json:"receipt,omitempty"`
-	Status       int            `json:"status,omitzero"`
-	Code         string         `json:"code,omitzero"`
-	Detail       string         `json:"detail,omitzero"`
+	ContainerID  string              `json:"container_id,omitzero"`
+	ChunkIndex   int                 `json:"chunk_index"`
+	ChunkReceipt *store.MailboxChunk `json:"chunk_receipt,omitempty"`
+	Type         string              `json:"type"`
+	Token        string              `json:"token,omitzero"`
+	Nonce        string              `json:"nonce,omitzero"`
+	Proof        string              `json:"proof,omitzero"`
+	RequestID    string              `json:"request_id,omitzero"`
+	ParentID     int64               `json:"parent_id,omitzero"`
+	Name         string              `json:"name,omitzero"`
+	MIMEType     string              `json:"mime_type,omitzero"`
+	ExpectedHash string              `json:"expected_hash,omitzero"`
+	ExpectedSize int64               `json:"expected_size,omitzero"`
+	Receipt      *UploadReceipt      `json:"receipt,omitempty"`
+	Status       int                 `json:"status,omitzero"`
+	Code         string              `json:"code,omitzero"`
+	Detail       string              `json:"detail,omitzero"`
 }
 
 type webUploadRequest struct {
@@ -136,6 +139,12 @@ func handleWebUploadConnection(
 		var begin webUploadMessage
 		if err := wsjson.Read(ctx, conn, &begin); err != nil {
 			return
+		}
+		if begin.Type == "begin_mailbox_chunk" {
+			if !handleWebMailboxChunk(ctx, conn, d, g, begin) {
+				return
+			}
+			continue
 		}
 		request, problem := validateWebUploadBegin(begin)
 		if problem != nil {

@@ -19,12 +19,22 @@ var ErrInvalidEmailDocumentRequest = errors.New("invalid email attachment docume
 // files. External callers use processing.PublishEmailDocuments to verify bytes
 // while holding the blob mutation lease.
 func (s *Store) PublishEmailDocuments(ctx context.Context, request document.EmailDocumentPublicationRequest) (document.EmailDocumentPublicationReceipt, error) {
+	var result document.EmailDocumentPublicationReceipt
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = s.publishEmailDocumentsTx(ctx, tx, request)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) publishEmailDocumentsTx(ctx context.Context, tx *sql.Tx, request document.EmailDocumentPublicationRequest) (document.EmailDocumentPublicationReceipt, error) {
 	digest, err := document.EmailDocumentRequestDigest(request)
 	if err != nil {
 		return document.EmailDocumentPublicationReceipt{}, fmt.Errorf("%w: %w", ErrInvalidEmailDocumentRequest, err)
 	}
 	var receipt document.EmailDocumentPublicationReceipt
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		old, err := loadEmailDocumentPublication(ctx, tx, request.OperationID)
 		if err == nil {
 			if old.Receipt.RequestDigest != digest {
@@ -105,7 +115,7 @@ func (s *Store) PublishEmailDocuments(ctx context.Context, request document.Emai
 			return ErrEmailDocumentConflict
 		}
 		return insertEmailDocumentPublication(ctx, tx, request, receipt)
-	})
+	}()
 	if err != nil {
 		return document.EmailDocumentPublicationReceipt{}, err
 	}
@@ -247,6 +257,13 @@ func (s *Store) RemoveEmailDocumentPublication(ctx context.Context, operationID,
 		}
 		if v.Receipt.RequestDigest != digest {
 			return ErrEmailDocumentConflict
+		}
+		var retained bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=?)`, operationID).Scan(&retained); err != nil {
+			return err
+		}
+		if retained {
+			return ErrMailboxConflict
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM email_document_publications WHERE operation_id=?`, operationID)
 		return err

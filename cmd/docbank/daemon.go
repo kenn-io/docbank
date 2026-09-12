@@ -211,6 +211,9 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
+	if err := startMailboxJobs(ctx, jobSupervisor, s, blobs, layout.BlobTmpDir(), operationGate); err != nil {
+		return err
+	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
 	if err := startProcessingJobs(
 		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
