@@ -216,9 +216,21 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := startProcessingJobs(jobSupervisor, s, blobs, runtimeRegistry, operationGate, logger); err != nil {
 		return err
 	}
-	embeddingRuntimeRegistry, err := configureEmbeddingRuntimes(cfg, blobs, layout.BlobTmpDir())
+	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
 	if err != nil {
 		return fmt.Errorf("configuring embedding runtimes: %w", err)
+	}
+	embeddingRuntimeRegistry := embeddingRuntimes.registry
+	processingProfiles, err := executableProcessingProfiles(cfg, embeddingRuntimes)
+	if err != nil {
+		return fmt.Errorf("configuring executable processing profiles: %w", err)
+	}
+	processingService, err := processing.NewService(processing.ServiceConfig{
+		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
+		Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
+	})
+	if err != nil {
+		return fmt.Errorf("configuring processing service: %w", err)
 	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {
@@ -356,6 +368,7 @@ func runServe(ctx context.Context) (retErr error) {
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
+		Processing: processingService,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {

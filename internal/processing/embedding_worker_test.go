@@ -22,7 +22,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -499,7 +498,7 @@ type embeddingWorkerFixture struct {
 	blobs           *embeddingWorkerFakeBlobs
 	runtime         *embeddingWorkerFakeRuntime
 	runtimeRegistry EmbeddingRuntime
-	gate            *api.OperationGate
+	gate            *workerTestGate
 	totalWait       time.Duration
 }
 
@@ -511,7 +510,7 @@ func newEmbeddingWorkerFixture(t *testing.T) *embeddingWorkerFixture {
 		t: t, now: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC), descriptor: descriptor,
 		profile: profile, catalog: newEmbeddingWorkerFakeCatalog(), blobs: &embeddingWorkerFakeBlobs{},
 		runtime: &embeddingWorkerFakeRuntime{failures: map[string][]error{}, capacityAbove: map[string]int{}, mutate: map[string]func(document.EmbeddingResult) document.EmbeddingResult{}, callsByBinding: map[string]int{}, preparesByBinding: map[string]int{}, batchesByBinding: map[string][]int{}},
-		gate:    api.NewOperationGate(),
+		gate:    newWorkerTestGate(),
 	}
 	fixture.runtimeRegistry = fixture.runtime
 	return fixture
@@ -1234,7 +1233,7 @@ func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, addi
 	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), fake.runtime.Classify)
 	require.NoError(t, err)
 	worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: fixture.catalog, Authority: fixture.catalog,
-		Blobs: fixture.blobs, GenerationBlobs: fixture.blobs, Runtime: runtime, Gate: api.NewOperationGate(), Owner: "integration-worker",
+		Blobs: fixture.blobs, GenerationBlobs: fixture.blobs, Runtime: runtime, Gate: newWorkerTestGate(), Owner: "integration-worker",
 		LeaseDuration: 3 * time.Second, IdleDelay: time.Millisecond, RetryLimit: 3, MaxRetryDelay: time.Second,
 		AttemptLifetime: time.Minute, MaxRows: 100, MaxDimensions: 8, MaxVectorBlobBytes: 1 << 20,
 		DescriptorFingerprints: []string{fake.descriptor.Fingerprint},

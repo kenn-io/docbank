@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -29,4 +30,18 @@ func TestFromStoreErrorMapsUnsupportedAuditMutation(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, http.StatusConflict, mapped.Status)
 	assert.Equal(t, "audit_mutation_unsupported", mapped.Code)
+}
+
+func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{processing.ErrRenditionFailed, "rendition_failed"},
+		{processing.ErrRenditionOperatorRequired, "rendition_operator_required"},
+	} {
+		mapped := &Error{}
+		require.ErrorAs(t, fromProcessingError(test.err), &mapped)
+		assert.Equal(t, test.code, mapped.Code)
+	}
 }
