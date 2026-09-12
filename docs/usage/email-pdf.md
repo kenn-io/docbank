@@ -26,6 +26,11 @@ offers rendering with the configured recipe. Retained downloads work after
 restore even when the renderer is not installed. Different recipes remain
 separate; requesting the same source and recipe reuses its retained receipt.
 
+For multiple messages, use [verified export bundles](export-bundles.md).
+The export drawer can include retained body PDFs, original attachments and
+qualified separately retained nested-email PDFs, with explicit partial and
+duplicate policies. It keeps each PDF separate and records every occurrence.
+
 ## What is included
 
 The PDF includes Subject, From, To, Cc, available Bcc, original Date with its

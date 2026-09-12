@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/bundle"
 )
 
 var ErrEmailDocumentConflict = errors.New("email attachment document authority is retained or conflicts")
@@ -288,6 +289,12 @@ func (s *Store) RemoveEmailDocumentPublication(ctx context.Context, operationID,
 		}
 		if retained {
 			return ErrMailboxConflict
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_documents WHERE json_extract(canonical_json,'$.attachment_inventory.operation_id')=?)`, operationID).Scan(&retained); err != nil {
+			return err
+		}
+		if retained {
+			return bundle.ErrRetained
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM email_document_publications WHERE operation_id=?`, operationID)
 		return err

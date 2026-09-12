@@ -28,6 +28,18 @@ it("disables empty sources and fences work when closed", async () => {
   expect(close).toHaveBeenCalledOnce();
 });
 
+it("offers body PDFs with explicit partial, attachment, duplicate and bounded packaging choices", async () => {
+  render(ExportDrawer, { session: "s", input, open: true, onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(await screen.findByRole("combobox", { name: /^Email body PDF/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Include retained body PDFs" }));
+  expect(screen.getByRole("button", { name: "Find retained PDF recipes" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: /^Email attachment outputs/ })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: /^Partial email export/ }).textContent).toContain("Fail if any output is unavailable");
+  expect(screen.getByRole("combobox", { name: /^Duplicate outputs/ }).textContent).toContain("Preserve every occurrence");
+  expect(screen.getByRole("button", { name: "Preview export" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByText(/Only qualified nested-email PDFs/)).toBeTruthy();
+});
+
 it("routes an expired browser session to the app authentication handler", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail: "Session ended", code: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/problem+json" } }));
   const onauthfailure = vi.fn(), onclose = vi.fn();

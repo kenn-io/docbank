@@ -50,6 +50,36 @@ it.each(["source", "roles"])("invalidates a reviewed plan when %s changes and fe
   h.session.dispose();
 });
 
+it("keeps sealed membership when only policies change", async () => {
+  const h = await harness();
+  await h.session.preview();
+  const frozen = h.state().reviewed?.plan.source;
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  expect(h.state().reviewed?.plan.source).toEqual(frozen);
+  expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/sources"))).toHaveLength(1);
+  h.session.dispose();
+});
+
+it("discovers recipes against the same sealed source later used by preview", async () => {
+  const h = await harness();
+  const underlying = h.fetcher.getMockImplementation()!;
+  const memberHash = await exportMemberHash(members);
+  h.fetcher.mockImplementation((url, init) => {
+    if (String(url).endsWith("/email-pdf-recipes")) return Promise.resolve(response({ source_id: String(url).split("/").at(-2), member_hash: memberHash, total: 1, recipes: [{ recipe_sha256: hash, paper: "A4", renderer_version: "151.0.7922.34", messages: 1, ambiguous: 0 }] }));
+    return underlying(url, init);
+  });
+  await h.session.discoverRecipes();
+  expect(h.state().recipes?.[0]?.paper).toBe("A4");
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+  expect(h.state().recipes).toHaveLength(1);
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/sources"))).toHaveLength(1);
+  h.session.dispose();
+});
+
 it("recovers a lost start with the same UUID, retains the handle on close, and confirms cancellation", async () => {
   const h = await harness();
   await h.session.preview();

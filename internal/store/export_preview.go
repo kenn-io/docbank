@@ -6,10 +6,11 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 )
 
+const roleAvailable = "available"
+
 // ExportPlanPreview reads only immutable receipts in bounded pages; current
 // heads and rendition providers have no role in this projection.
 func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle.PlanPreview, error) {
-	const roleAvailable = "available"
 	var out bundle.PlanPreview
 	if owner == "" || validateUUIDv4(id) != nil {
 		return out, bundle.ErrConflict
@@ -28,12 +29,46 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 		out.Roles = append(out.Roles, bundle.RoleSummary{Role: policy.Role})
 	}
 	members, files, bytes := 0, 0, int64(0)
+	validator := bundle.RowValidator{Plan: p}
+	available, unavailable := map[string]bool{}, map[string]bool{}
+	finish := func() {
+		if members == 0 {
+			return
+		}
+		for i := range out.Roles {
+			r := &out.Roles[i]
+			if available[r.Role] {
+				r.AvailableMembers++
+			}
+			if unavailable[r.Role] {
+				r.UnavailableMembers++
+			}
+		}
+	}
 	err = s.WalkExportDocuments(ctx, id, func(d bundle.Document) error {
-		members++
+		if err := validator.Add(d); err != nil {
+			return err
+		}
+		if d.Attachment == nil {
+			finish()
+			members++
+			available, unavailable = map[string]bool{}, map[string]bool{}
+			if d.Inventory != nil {
+				for _, policy := range p.Roles {
+					if policy.Role != "attachment_original" && policy.Role != "attachment_pdf" {
+						continue
+					}
+					if d.Inventory.State != exportInventoryComplete {
+						unavailable[policy.Role] = true
+					} else if d.Inventory.Total == 0 {
+						available[policy.Role] = true
+					}
+				}
+			}
+		}
 		if members > p.Total || members > bundle.MaxMembers {
 			return bundle.ErrConflict
 		}
-		available, unavailable := map[string]bool{}, map[string]bool{}
 		for _, r := range d.Roles {
 			i, ok := indices[r.Role]
 			if !ok {
@@ -41,6 +76,9 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 			}
 			summary := &out.Roles[i]
 			switch r.Status {
+			case "collapsed":
+				available[r.Role] = true
+				summary.CollapsedFiles++
 			case roleAvailable:
 				if r.Size < 0 || r.Size > bundle.MaxRoleBytes-bytes || files >= bundle.MaxRoles {
 					return bundle.ErrLimit
@@ -51,7 +89,7 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 				files++
 				bytes += r.Size
 			case mediaCoverageUnavailable:
-				if unavailable[r.Role] || !p.Roles[i].AllowUnavailable {
+				if !p.Roles[i].AllowUnavailable {
 					return bundle.ErrConflict
 				}
 				unavailable[r.Role] = true
@@ -59,23 +97,13 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 				return bundle.ErrConflict
 			}
 		}
-		for i := range out.Roles {
-			r := &out.Roles[i]
-			if available[r.Role] == unavailable[r.Role] {
-				return bundle.ErrConflict
-			}
-			if available[r.Role] {
-				r.AvailableMembers++
-			} else {
-				r.UnavailableMembers++
-			}
-		}
 		return nil
 	})
 	if err != nil {
 		return bundle.PlanPreview{}, err
 	}
-	if members != p.Total || files != p.RoleEntries || bytes != p.RoleBytes {
+	finish()
+	if validator.Finish() != nil || members != p.Total || files != p.RoleEntries || bytes != p.RoleBytes {
 		return bundle.PlanPreview{}, bundle.ErrConflict
 	}
 	for i := range out.Roles {

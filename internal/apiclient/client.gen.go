@@ -2618,6 +2618,57 @@ func (c *Client) GetExportPlanPreview(ctx context.Context, options *GetExportPla
 	return responseParser(ctx, resp)
 }
 
+// GetExportOutputProblems Read one bounded page of frozen unavailable output details
+func (c *Client) GetExportOutputProblems(ctx context.Context, options *GetExportOutputProblemsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportOutputProblemsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/exports/plans/{id}/problems",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportOutputProblemsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportOutputProblemsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetExportOutputProblemsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportOutputProblemsErrorResponse](resp, "GetExportOutputProblemsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/plans/{id}/problems")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateExportSource Freeze exact export membership or begin a chunk upload
 func (c *Client) CreateExportSource(ctx context.Context, options *CreateExportSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportSourceResponse, error) {
 	var err error
@@ -2702,6 +2753,52 @@ func (c *Client) PutExportChunk(ctx context.Context, options *PutExportChunkRequ
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetExportEmailPDFRecipes Discover qualified retained body PDF recipes for a sealed source
+func (c *Client) GetExportEmailPDFRecipes(ctx context.Context, options *GetExportEmailPDFRecipesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportEmailPDFRecipesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/sources/{id}/email-pdf-recipes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportEmailPDFRecipesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportEmailPDFRecipesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetExportEmailPDFRecipesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportEmailPDFRecipesErrorResponse](resp, "GetExportEmailPDFRecipesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/sources/{id}/email-pdf-recipes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -11202,6 +11299,44 @@ func (o *GetExportPlanPreviewRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// GetExportOutputProblemsRequestOptions is the options needed to make a request to GetExportOutputProblems.
+type GetExportOutputProblemsRequestOptions struct {
+	PathParams *GetExportOutputProblemsPath
+	Query      *GetExportOutputProblemsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportOutputProblemsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportOutputProblemsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportOutputProblemsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportOutputProblemsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateExportSourceRequestOptions is the options needed to make a request to CreateExportSource.
 type CreateExportSourceRequestOptions struct {
 	Body *CreateExportSourceBody
@@ -11262,6 +11397,37 @@ func (o *PutExportChunkRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *PutExportChunkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetExportEmailPDFRecipesRequestOptions is the options needed to make a request to GetExportEmailPDFRecipes.
+type GetExportEmailPDFRecipesRequestOptions struct {
+	PathParams *GetExportEmailPDFRecipesPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportEmailPDFRecipesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportEmailPDFRecipesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportEmailPDFRecipesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportEmailPDFRecipesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -15910,9 +16076,17 @@ type GetExportPlanPreviewPath struct {
 	ID string `json:"id"`
 }
 
+type GetExportOutputProblemsPath struct {
+	ID string `json:"id"`
+}
+
 type PutExportChunkPath struct {
 	ID    string `json:"id"`
 	Index int64  `json:"index"`
+}
+
+type GetExportEmailPDFRecipesPath struct {
+	ID string `json:"id"`
 }
 
 type SealExportSourcePath struct {
@@ -16500,6 +16674,10 @@ type GetExportJobEventsQuery struct {
 	After *int64 `json:"after,omitempty"`
 }
 
+type GetExportOutputProblemsQuery struct {
+	After *int64 `json:"after,omitempty"`
+}
+
 type ReadFormatCapabilitiesQuery struct {
 	Family    *string `json:"family,omitempty"`
 	Format    *string `json:"format,omitempty"`
@@ -16849,11 +17027,19 @@ type GetExportPlanPreviewResponse = bundle.PlanPreview
 
 type GetExportPlanPreviewErrorResponse = Error
 
+type GetExportOutputProblemsResponse = bundle.OutputProblems
+
+type GetExportOutputProblemsErrorResponse = Error
+
 type CreateExportSourceResponse = bundle.Source
 
 type CreateExportSourceErrorResponse = Error
 
 type PutExportChunkErrorResponse = Error
+
+type GetExportEmailPDFRecipesResponse = bundle.EmailPDFRecipes
+
+type GetExportEmailPDFRecipesErrorResponse = Error
 
 type SealExportSourceResponse = bundle.Source
 
@@ -17790,7 +17976,11 @@ type EmailPDFOutputV1 = document.EmailPDFOutputV1
 
 type EmailPDFReceiptV1 = document.EmailPDFReceiptV1
 
+type EmailPDFRecipeChoice = bundle.EmailPDFRecipeChoice
+
 type EmailPDFRecipeV1 = document.EmailPDFRecipeV1
+
+type EmailPDFRecipes = bundle.EmailPDFRecipes
 
 type EmailPDFRequest = document.EmailPDFRequest
 
@@ -18021,6 +18211,12 @@ type Node = api.Node
 
 type NodePage = api.NodePage
 
+type OutputCounts = bundle.OutputCounts
+
+type OutputProblem = bundle.OutputProblem
+
+type OutputProblems = bundle.OutputProblems
+
 type PackageDiagnostic = api.PackageDiagnostic
 
 type PackageDiagnosticPage = api.PackageDiagnosticPage
@@ -18183,6 +18379,8 @@ type ProvenanceFact = api.ProvenanceFact
 type ProvenancePage = api.ProvenancePage
 
 type ProviderDescriptorV1 = document.ProviderDescriptorV1
+
+type PublicationSelection = bundle.PublicationSelection
 
 type PutExportChunkRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -18514,6 +18712,8 @@ type VerifyReport = api.VerifyReport
 type VersionPruneReport = api.VersionPruneReport
 
 type VersionPruneRequest = api.VersionPruneRequest
+
+type VolumeLimits = bundle.VolumeLimits
 
 type WatchedInbox = api.WatchedInbox
 

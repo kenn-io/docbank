@@ -41,6 +41,7 @@ export default defineConfig({
           importMediaArtifact: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           ...Object.fromEntries([
           "createExportSource", "sealExportSource", "createExportPlan",
+          "getExportEmailPDFRecipes", "getExportOutputProblems",
           "getExportPlanPreview", "createExportJob", "getExportJob", "downloadExportArchive",
           "downloadTermReportcsv", "downloadTermReportbundle",
           "startDocumentProcessing", "getDocumentRendition",
