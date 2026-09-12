@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -167,8 +168,17 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &job))
 	require.Equal(t, "completed", job.State)
-	for range 2 {
-		response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs/"+job.ID+"/download", nil, struct{}{})
+	// Invalid names fail before leasing, so a bad request cannot consume or
+	// damage the retained archive. Unknown destination fields are rejected too.
+	for _, tc := range []struct {
+		request any
+		status  int
+	}{{bundle.DownloadRequest{Basename: "../unsafe.zip"}, http.StatusBadRequest}, {map[string]string{"destination": "/unsafe.zip"}, http.StatusUnprocessableEntity}} {
+		response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs/"+job.ID+"/download", nil, tc.request)
+		require.Equal(t, tc.status, response.StatusCode, body)
+	}
+	for _, name := range []string{"", "Review 2026.zip"} {
+		response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs/"+job.ID+"/download", nil, bundle.DownloadRequest{Basename: name})
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var ticket struct {
 			URL     string         `json:"url"`
@@ -178,6 +188,12 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		require.Equal(t, job.Receipt, &ticket.Receipt)
 		resp, err := ts.Client().Get(ts.URL + ticket.URL)
 		require.NoError(t, err)
+		_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
+		require.NoError(t, err)
+		if name == "" {
+			name = "docbank-bundle.zip"
+		}
+		require.Equal(t, name, params["filename"])
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		archive, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)

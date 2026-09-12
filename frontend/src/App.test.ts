@@ -1042,6 +1042,29 @@ function prepareSelectionApp(): void {
   });
 }
 
+it("opens an export for the exact page selection without mutation revisions or unselected folders", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const original = fetchMock.getMockImplementation()!;
+  let exported: unknown;
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/exports/sources") {
+      exported = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ detail: "Synthetic boundary stop", code: "export_role_unavailable" }), { status: 422, headers: { "Content-Type": "application/problem+json" } });
+    }
+    return original(input, init);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  const drawer = await screen.findByRole("dialog", { name: "Verified export" });
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Preview export" }));
+  await within(drawer).findByText("Synthetic boundary stop");
+  expect(exported).toEqual({ operation_id: expect.any(String), kind: "explicit", members: [{ node_id: 3, version_id: "00000003-1111-4111-8111-111111111111", sha256: "3".repeat(64), size: 30 }] });
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Close export" }));
+  expect(screen.getByText("1 selected on this page")).toBeTruthy();
+});
+
 it("opens bounded tag assignment for the exact page selection", async () => {
   prepareSelectionApp();
   installSelectionBackend();

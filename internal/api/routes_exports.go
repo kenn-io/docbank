@@ -177,6 +177,20 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		return &planOutput{Body: p}, nil
 	})
 	type jobOutput struct{ Body bundle.Job }
+	type previewOutput struct{ Body bundle.PlanPreview }
+	huma.Register(api, huma.Operation{OperationID: "getExportPlanPreview", Method: http.MethodGet, Path: "/api/v1/exports/plans/{id}/preview", Summary: "Summarize frozen export role availability"}, func(ctx context.Context, in *struct {
+		ID string `path:"id"`
+	}) (*previewOutput, error) {
+		owner, err := exportOwner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p, err := d.Store.ExportPlanPreview(ctx, owner, in.ID)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
+		return &previewOutput{Body: p}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "createExportJob", Method: http.MethodPost, Path: "/api/v1/exports/jobs", Summary: "Admit a durable verified export job", MaxBodyBytes: 4096}, func(ctx context.Context, in *struct {
 		Body    bundle.JobRequest
 		RawBody []byte
@@ -242,8 +256,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 	}
 	huma.Register(api, huma.Operation{OperationID: "downloadExportArchive", Method: http.MethodPost, Path: "/api/v1/exports/jobs/{id}/download", Summary: "Issue a one-use ticket for a reverified archive", MaxBodyBytes: 1024}, func(ctx context.Context, in *struct {
-		ID   string `path:"id"`
-		Body struct{}
+		ID      string `path:"id"`
+		Body    bundle.DownloadRequest
+		RawBody []byte
 	}) (*ticketOutput, error) {
 		if d.Exports == nil {
 			return nil, NewError(503, "export_unavailable", "export worker unavailable")
@@ -252,11 +267,18 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		if err != nil {
 			return nil, err
 		}
+		if err = json.Unmarshal(in.RawBody, &in.Body, json.RejectUnknownMembers(true)); err != nil {
+			return nil, NewError(400, "validation", "invalid export download fields")
+		}
+		name, err := bundle.DownloadBasename(in.Body.Basename)
+		if err != nil {
+			return nil, NewError(400, "validation", err.Error())
+		}
 		file, receipt, release, err := d.Exports.Lease(ctx, owner, in.ID)
 		if err != nil {
 			return nil, exportProblem(err)
 		}
-		ticket := webDownloadTicket{name: "docbank-bundle.zip", mediaType: "application/zip", blobHash: receipt.SHA256, size: receipt.Size, owner: owner, archiveFile: file, releaseArchive: release, planFingerprint: receipt.PlanFingerprint}
+		ticket := webDownloadTicket{name: name, mediaType: "application/zip", blobHash: receipt.SHA256, size: receipt.Size, owner: owner, archiveFile: file, releaseArchive: release, planFingerprint: receipt.PlanFingerprint}
 		var token string
 		if browserSessionRequest(ctx) {
 			active, e := sessions.withActiveOwner(owner, func() error { var e error; token, e = downloads.issue(ticket); return e })
@@ -355,6 +377,9 @@ func exportBrowserRouteAllowed(r *http.Request) bool {
 		return r.URL.RawQuery == "" && r.Method == http.MethodGet && (parts[0] == "plans" || parts[0] == "jobs")
 	}
 	if len(parts) == 3 {
+		if parts[0] == "plans" && parts[2] == "preview" {
+			return r.Method == http.MethodGet && r.URL.RawQuery == ""
+		}
 		if parts[0] == "sources" && parts[2] == "seal" {
 			return r.Method == http.MethodPost && r.URL.RawQuery == ""
 		}

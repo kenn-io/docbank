@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-11
+last_edited: 2026-09-12
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -26,6 +26,7 @@ Choose a task:
 - [Upload files](#upload-verified-documents) or [download content](#download-verified-content).
 - [Manage tags](#manage-tag-definitions) and [search text](#browse-tags-and-search-text).
 - [Run complete queries](#work-with-a-frozen-query) with exact paging and facets.
+- [Export a verified ZIP](#export-a-verified-zip) from selected documents or a frozen query.
 - [Move documents to trash](#move-a-node-to-recoverable-trash) or [restore them](#restore-from-recoverable-trash).
 - [Inspect versions](#inspect-immutable-versions) and [source records](#understand-where-a-document-came-from).
 - [Read permanent history](#read-permanent-audited-history) or [verify its evidence](#verify-permanent-audit-evidence).
@@ -134,6 +135,39 @@ Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.
 If paging reports that the snapshot is gone, run the complete query again and
 use only the new snapshot and its cursors.
+
+## Export a verified ZIP
+
+Choose **Export selection** in the selection dock for the checked documents.
+The toolbar's **Export** opens the whole frozen query when one is active, or
+the documents on the current page otherwise. Folders are not export members.
+Exports support up to 100,000 exact documents and 50 GiB of role payloads.
+
+Choose whether original files, retained text, and page images are required,
+optional, or excluded. A missing required role stops planning. An optional
+role records its unavailable status in the bundle. **Preview export** copies
+and checks every frozen page, then stores the exact versions and available
+role files. Later edits to the live query, tags, or current content do not
+substitute new members or bytes.
+
+Review the document count, member hash, role availability, plan fingerprint,
+and expiry before choosing **Start reviewed export**. Role bytes estimate
+payload only; the final ZIP also contains metadata and archive overhead.
+Changing the source, role choices, or download filename requires another
+preview. The filename applies only to the browser download; bundle paths stay
+deterministic. Originals are not redacted or sanitized by annotation overlays.
+
+The drawer offers **Download verified ZIP** only after it receives the exact
+job's verified archive receipt. It displays the final size and SHA-256 so you
+can check the downloaded file independently. The browser saves the archive
+directly; Docbank does not load the entire ZIP into browser memory. Check your
+browser's download list for local completion.
+
+Closing the drawer stops its progress reader, not the server job. Reopen
+**Export** in the same browser session to reconnect to that job, or choose
+**Cancel export** to cancel it explicitly. A disconnected stream is not a
+completed export. Expired authority requires a fresh preview; reloading or
+ending the browser session does not preserve the drawer's job handle.
 
 ## Assign and remove tags
 
@@ -671,6 +705,7 @@ accepts that credential for the following operations:
 | List backup snapshots | Uses only the repository already configured for this daemon. |
 | List trash | Returns a bounded list of restorable roots. |
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
+| Plan, preview, run, cancel, and download exports | Owns exact sources, frozen plans, jobs, and verified tickets within this browser session. Download naming cannot select a server destination. |
 | Read verified text and exact-content duplicate context | Revalidates the selected source and rendition identities; duplicate context is bounded to 16 live-current references. |
 | Read page geometry and images, request or cancel page rendering | Binds the exact source revision, version, page, frame, and renderer recipe; the inspector requests one page at a time. |
 | Move to trash or restore | Requires the selected stable node ID and its current revision. |

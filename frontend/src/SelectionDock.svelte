@@ -11,6 +11,8 @@
     context?: "live" | "snapshot";
     wholeQueryCount?: number;
     onwholequerytags?: () => void;
+    onexport?: () => void;
+    onexportquery?: () => void;
   }
 
   let {
@@ -23,6 +25,8 @@
     context = "live",
     wholeQueryCount = 0,
     onwholequerytags,
+    onexport,
+    onexportquery,
   }: Props = $props();
 </script>
 
@@ -59,6 +63,8 @@
     {#if context === "snapshot" && onwholequerytags}
       <Button size="sm" tone="info" onclick={onwholequerytags}>Tag whole query</Button>
     {/if}
+    {#if onexport}<Button size="sm" onclick={onexport}>Export selection</Button>{/if}
+    {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}>Export frozen query</Button>{/if}
   </div>
 </BottomDock>
 
