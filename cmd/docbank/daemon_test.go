@@ -41,7 +41,7 @@ func TestDocumentEventBackfillIsRegisteredOnce(t *testing.T) {
 	})
 
 	require.NoError(t, startProcessingJobs(
-		supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(),
+		supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(), 1,
 		api.NewOperationGate(), logger,
 	))
 	registered := 0

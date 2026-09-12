@@ -97,10 +97,11 @@ func rawPathParent(path string) (string, string) {
 	return volume + parentRest, component
 }
 
-func (l Layout) DBPath() string     { return filepath.Join(l.Root, "docbank.db") }
-func (l Layout) BlobsDir() string   { return filepath.Join(l.Root, "blobs") }
-func (l Layout) BlobTmpDir() string { return filepath.Join(l.Root, "blobs", "tmp") }
-func (l Layout) LogsDir() string    { return filepath.Join(l.Root, "logs") }
+func (l Layout) DBPath() string           { return filepath.Join(l.Root, "docbank.db") }
+func (l Layout) BlobsDir() string         { return filepath.Join(l.Root, "blobs") }
+func (l Layout) BlobTmpDir() string       { return filepath.Join(l.Root, "blobs", "tmp") }
+func (l Layout) EmailPDFSpoolDir() string { return filepath.Join(l.Root, "email-pdf-spool") }
+func (l Layout) LogsDir() string          { return filepath.Join(l.Root, "logs") }
 
 // Ensure creates the directory layout if missing and enforces owner-private
 // storage: Unix uses 0700 directories and a 0600 database; Windows applies an
@@ -108,7 +109,7 @@ func (l Layout) LogsDir() string    { return filepath.Join(l.Root, "logs") }
 // Pre-creating the private database also makes SQLite's WAL and SHM siblings
 // inherit the vault's protection.
 func (l Layout) Ensure() error {
-	for _, dir := range []string{l.Root, l.BlobsDir(), l.BlobTmpDir(), l.LogsDir()} {
+	for _, dir := range []string{l.Root, l.BlobsDir(), l.BlobTmpDir(), l.EmailPDFSpoolDir(), l.LogsDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("creating %s: %w", dir, err)
 		}

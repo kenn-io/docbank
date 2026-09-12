@@ -41,7 +41,7 @@ func TestStartProcessingJobsRegistersEmailWithoutRenditionRuntime(t *testing.T) 
 	})
 	err = startProcessingJobs(
 		supervisor, catalog, blobs, layout.BlobTmpDir(),
-		processing.NewRenditionRuntimeRegistry(), api.NewOperationGate(), slog.Default(),
+		processing.NewRenditionRuntimeRegistry(), 1, api.NewOperationGate(), slog.Default(),
 	)
 	require.NoError(t, err)
 	var names []string

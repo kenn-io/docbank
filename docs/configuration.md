@@ -1,10 +1,13 @@
 ---
-last_edited: 2026-09-14
+last_edited: 2026-09-20
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
 
 # Configuration
+
+For optional pinned local email rendering, see
+[Email PDF configuration](usage/email-pdf.md#configure-the-renderer).
 
 Docbank uses `~/.docbank/` with default settings unless you choose another
 vault. Use `DOCBANK_HOME` to select its location. Add `config.toml` when you need
@@ -47,6 +50,7 @@ The directory layout is created on first use:
 │   ├── <aa>/<sha256>    # raw content-addressed document bytes
 │   ├── <aa>/<sha256>.zst # managed compressed loose representation
 │   └── tmp/             # staging for in-flight writes
+├── email-pdf-spool/     # isolated email PDF input/output staging
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads

@@ -249,6 +249,19 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if path == "/api/v1/queries/parse" || path == "/api/v1/queries/highlights" || path == "/api/v1/renditions/text" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if r.URL.RawQuery == "" {
+		if method == http.MethodPost && path == "/api/v1/email-pdfs" {
+			return true
+		}
+		if method == http.MethodGet {
+			if after, ok := strings.CutPrefix(path, "/api/v1/email-pdfs/"); ok && after != "" && len(strings.Split(after, "/")) <= 2 {
+				return true
+			}
+			if after, ok := strings.CutPrefix(path, "/api/v1/email-pdf-jobs/"); ok && after != "" && !strings.Contains(after, "/") {
+				return true
+			}
+		}
+	}
 	if mailboxBrowserRequestAllowed(r) {
 		return true
 	}

@@ -69,8 +69,6 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 func TestWorkerRetriesCatalogContention(t *testing.T) {
 	for _, phase := range []string{"startup", "cleanup", "claim", "progress", "finish"} {
 		t.Run(phase, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
 			gate := api.NewOperationGate()
 			var locker *sql.DB
 			var catalog *store.Store
@@ -97,6 +95,8 @@ func TestWorkerRetriesCatalogContention(t *testing.T) {
 			locker, err = driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
 			defer func() { require.NoError(t, locker.Close()) }()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
 			done := make(chan error, 1)
 			go func() {
 				switch phase {
@@ -152,8 +152,6 @@ func TestWorkerRetriesCatalogContention(t *testing.T) {
 }
 
 func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
 	opening, resume := make(chan struct{}), make(chan struct{})
 	gate := api.NewOperationGate()
 	calls := 0
@@ -175,8 +173,10 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, locker.Close()) }()
 	locker.SetMaxOpenConns(1)
-	_, err = locker.ExecContext(ctx, "PRAGMA locking_mode=EXCLUSIVE")
+	_, err = locker.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
 	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := worker.RunOne(ctx); done <- err }()
 	select {

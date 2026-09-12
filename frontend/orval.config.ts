@@ -45,7 +45,7 @@ export default defineConfig({
           "startDocumentProcessing", "getDocumentRendition",
           "streamBackupSnapshotRestore", "streamBackupSnapshotCreation",
           "streamBackupRepositoryVerification", "runDerivativePurge", "streamIngest",
-          "getNodeContent", "getContentVersionBytes", "getEmailPart",
+          "getNodeContent", "getContentVersionBytes", "getEmailPart", "downloadEmailPDF",
           "readDocumentRenditionBySelector", "readRenditionText",
           "getSavedQuery", "createSavedQuery", "updateSavedQuery", "deleteSavedQuery",
           "getCollectionLabel", "setCollectionLabel", "prepareWebDownload",

@@ -72,7 +72,11 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
+
+	EmailPDFUnavailableReason string
+
 	// DocumentCursorKey and DocumentCursorNow are
 	// deterministic-test seams. Production leaves them unset for process-private
 	// randomness and the wall clock.

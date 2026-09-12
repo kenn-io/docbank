@@ -62,6 +62,7 @@ type ProviderDescriptorV1 struct {
 // RenditionBindingV1 binds rendition request, disclosure, and bounded
 // transport policy. CredentialBinding is a credential:<name> reference only.
 type RenditionBindingV1 struct {
+	EmailPDF                 *EmailPDFBindingV1     `json:"email_pdf,omitempty"`
 	AdapterContract          string                 `json:"adapter_contract"`
 	AuthorizationFingerprint string                 `json:"authorization_fingerprint"`
 	CredentialBinding        string                 `json:"credential_binding"`
@@ -196,6 +197,7 @@ type fingerprintEnvelope[T any] struct {
 }
 
 type renditionRequestIdentity struct {
+	EmailPDF                 *EmailPDFBindingV1     `json:"email_pdf,omitempty"`
 	AdapterContract          string                 `json:"adapter_contract"`
 	DeploymentFingerprint    string                 `json:"deployment_fingerprint"`
 	Descriptor               ProviderDescriptorV1   `json:"descriptor"`
@@ -267,6 +269,7 @@ func CanonicalProfile(profile ProcessingProfileV1) ([]byte, FingerprintSet, erro
 	var renditionIdentity *renditionRequestIdentity
 	if canonicalProfile.Rendition != nil {
 		renditionIdentity = &renditionRequestIdentity{
+			EmailPDF:              canonicalProfile.Rendition.EmailPDF,
 			AdapterContract:       canonicalProfile.Rendition.AdapterContract,
 			DeploymentFingerprint: canonicalProfile.Rendition.DeploymentFingerprint, Descriptor: canonicalProfile.Rendition.Descriptor,
 			DiscloseFilename: canonicalProfile.Rendition.DiscloseFilename, DisclosureFingerprint: canonicalProfile.Rendition.DisclosureFingerprint,
@@ -332,6 +335,10 @@ func canonicalProcessingProfile(profile ProcessingProfileV1) (ProcessingProfileV
 	if profile.Rendition != nil {
 		rendition := *profile.Rendition
 		rendition.RequestedArtifacts = slices.Clone(profile.Rendition.RequestedArtifacts)
+		if rendition.EmailPDF != nil {
+			binding := *rendition.EmailPDF
+			rendition.EmailPDF = &binding
+		}
 		canonicalProfile.Rendition = &rendition
 	}
 	for index := range canonicalProfile.Embeddings {
@@ -484,6 +491,14 @@ func validateRenditionBinding(binding RenditionBindingV1) error {
 		"rendition disclosure fingerprint": binding.DisclosureFingerprint, "rendition upload options fingerprint": binding.UploadOptionsFingerprint,
 	} {
 		if err := validateFingerprint(value, subject); err != nil {
+			return err
+		}
+	}
+	if binding.EmailPDF != nil {
+		if binding.AdapterContract != EmailPDFContract {
+			return errors.New("email PDF binding requires email-pdf-v1 adapter")
+		}
+		if err := ValidateEmailPDFBinding(*binding.EmailPDF); err != nil {
 			return err
 		}
 	}
@@ -713,7 +728,7 @@ func retentionFingerprint(profile ProcessingProfileV1) (string, error) {
 
 func validProfileArtifactRole(role EvidenceArtifactRole) bool {
 	switch role {
-	case EvidenceArtifactImage, EvidenceArtifactMarkdown, EvidenceArtifactStructured, EvidenceArtifactTranscript:
+	case EvidenceArtifactImage, EvidenceArtifactMarkdown, EvidenceArtifactStructured, EvidenceArtifactTranscript, EvidenceArtifactPDF:
 		return true
 	default:
 		return false

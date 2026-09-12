@@ -2032,6 +2032,231 @@ func (c *Client) ListEmailDocumentRelations(ctx context.Context, options *ListEm
 	return responseParser(ctx, resp)
 }
 
+// GetEmailPDFJob Read retained PDF job state
+func (c *Client) GetEmailPDFJob(ctx context.Context, options *GetEmailPDFJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailPDFJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/email-pdf-jobs/{job_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetEmailPDFJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetEmailPDFJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailPDFJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-pdf-jobs/{job_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RenderEmailPDF Render one exact email version as a retained verified PDF
+func (c *Client) RenderEmailPDF(ctx context.Context, options *RenderEmailPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenderEmailPDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/email-pdfs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RenderEmailPDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RenderEmailPDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RenderEmailPDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-pdfs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListEmailPDFs List verified retained PDFs for one original email version
+func (c *Client) ListEmailPDFs(ctx context.Context, options *ListEmailPDFsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailPDFsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/email-pdfs/{version_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListEmailPDFsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListEmailPDFsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListEmailPDFsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-pdfs/{version_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetEmailPDF Read an exact retained PDF receipt
+func (c *Client) GetEmailPDF(ctx context.Context, options *GetEmailPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailPDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/email-pdfs/{version_id}/{profile}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetEmailPDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetEmailPDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailPDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-pdfs/{version_id}/{profile}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadEmailPDF Download independently verified retained PDF bytes
+func (c *Client) DownloadEmailPDF(ctx context.Context, options *DownloadEmailPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/email-pdfs/{version_id}/{profile}/content",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-pdfs/{version_id}/{profile}/content")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateExportJob Admit a durable verified export job
 func (c *Client) CreateExportJob(ctx context.Context, options *CreateExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportJobResponse, error) {
 	var err error
@@ -10016,6 +10241,158 @@ func (o *ListEmailDocumentRelationsRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// GetEmailPDFJobRequestOptions is the options needed to make a request to GetEmailPDFJob.
+type GetEmailPDFJobRequestOptions struct {
+	PathParams *GetEmailPDFJobPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetEmailPDFJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetEmailPDFJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetEmailPDFJobRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetEmailPDFJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RenderEmailPDFRequestOptions is the options needed to make a request to RenderEmailPDF.
+type RenderEmailPDFRequestOptions struct {
+	Body *RenderEmailPDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RenderEmailPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RenderEmailPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RenderEmailPDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RenderEmailPDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListEmailPDFsRequestOptions is the options needed to make a request to ListEmailPDFs.
+type ListEmailPDFsRequestOptions struct {
+	PathParams *ListEmailPDFsPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListEmailPDFsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListEmailPDFsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListEmailPDFsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListEmailPDFsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetEmailPDFRequestOptions is the options needed to make a request to GetEmailPDF.
+type GetEmailPDFRequestOptions struct {
+	PathParams *GetEmailPDFPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetEmailPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetEmailPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetEmailPDFRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetEmailPDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadEmailPDFRequestOptions is the options needed to make a request to DownloadEmailPDF.
+type DownloadEmailPDFRequestOptions struct {
+	PathParams *DownloadEmailPDFPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadEmailPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadEmailPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadEmailPDFRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadEmailPDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateExportJobRequestOptions is the options needed to make a request to CreateExportJob.
 type CreateExportJobRequestOptions struct {
 	Body *CreateExportJobBody
@@ -14588,6 +14965,24 @@ type GetEmailDocumentPublicationPath struct {
 	OperationID string `json:"operation_id"`
 }
 
+type GetEmailPDFJobPath struct {
+	JobID string `json:"job_id"`
+}
+
+type ListEmailPDFsPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+}
+
+type GetEmailPDFPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+	Profile   string    `json:"profile"`
+}
+
+type DownloadEmailPDFPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+	Profile   string    `json:"profile"`
+}
+
 type GetExportJobPath struct {
 	ID string `json:"id"`
 }
@@ -14862,12 +15257,14 @@ type ReadWorkspaceQueryPagePath struct {
 }
 
 type PrepareWebDownloadBody struct {
-	BlobHash  string  `json:"blob_hash"`
-	NodeID    int64   `json:"node_id"`
-	Purpose   *string `json:"purpose,omitempty"`
-	Revision  int64   `json:"revision"`
-	Size      int64   `json:"size"`
-	VersionID string  `json:"version_id"`
+	BlobHash           string  `json:"blob_hash"`
+	EmailPdfAttachment *string `json:"email_pdf_attachment,omitempty"`
+	EmailPdfProfile    *string `json:"email_pdf_profile,omitempty"`
+	NodeID             int64   `json:"node_id"`
+	Purpose            *string `json:"purpose,omitempty"`
+	Revision           int64   `json:"revision"`
+	Size               int64   `json:"size"`
+	VersionID          string  `json:"version_id"`
 }
 
 type EnableAuditBody = EnableAuditRequest
@@ -14909,6 +15306,8 @@ type RequestEmailDocumentProcessingBody = EmailDocumentProcessingRequest
 type PublishEmailDocumentsBody = EmailDocumentPublicationRequest
 
 type RemoveEmailDocumentPublicationBody = RemoveRequest
+
+type RenderEmailPDFBody = EmailPDFRequest
 
 type CreateExportJobBody = JobRequest
 
@@ -15455,6 +15854,14 @@ type GetEmailDocumentPublicationErrorResponse = Error
 type ListEmailDocumentRelationsResponse = document.EmailDocumentRelationPage
 
 type ListEmailDocumentRelationsErrorResponse = Error
+
+type GetEmailPDFJobResponse = EmailPDFJobState
+
+type RenderEmailPDFResponse = document.EmailPDFJob
+
+type ListEmailPDFsResponse []EmailPDFReceiptV1
+
+type GetEmailPDFResponse = document.EmailPDFReceiptV1
 
 type CreateExportJobResponse = bundle.ExportJob
 
@@ -16342,6 +16749,24 @@ type EmailMediaV1 = document.EmailMediaV1
 type EmailMessageV1 = document.EmailMessageV1
 
 type EmailMetadata = api.EmailMetadata
+
+type EmailPDFBindingV1 = document.EmailPDFBindingV1
+
+type EmailPDFJob = document.EmailPDFJob
+
+type EmailPDFJobState struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	State  string  `json:"state"`
+}
+
+type EmailPDFOutputV1 = document.EmailPDFOutputV1
+
+type EmailPDFReceiptV1 = document.EmailPDFReceiptV1
+
+type EmailPDFRecipeV1 = document.EmailPDFRecipeV1
+
+type EmailPDFRequest = document.EmailPDFRequest
 
 type EmailPartV1 = document.EmailPartV1
 

@@ -1804,6 +1804,22 @@ export interface EvidenceLexicalPolicyV1 {
   source_evidence_contract: string;
 }
 
+export interface EmailPDFRecipeV1 {
+  bubblewrap_sha256: string;
+  contract: string;
+  fonts_sha256: string;
+  paper: string;
+  renderer_sha256: string;
+  renderer_version: string;
+  worker_sha256: string;
+}
+
+export interface EmailPDFBindingV1 {
+  generation_checksum: string;
+  generation_id: string;
+  recipe: EmailPDFRecipeV1;
+}
+
 export interface RenditionBindingV1 {
   adapter_contract: string;
   authorization_fingerprint: string;
@@ -1812,6 +1828,7 @@ export interface RenditionBindingV1 {
   descriptor: ProviderDescriptorV1;
   disclose_filename: boolean;
   disclosure_fingerprint: string;
+  email_pdf?: EmailPDFBindingV1;
   max_document_bytes: number;
   max_response_bytes: number;
   max_units: number;
@@ -2090,6 +2107,50 @@ export interface EmailMetadata {
   published_at: string;
   recipe_fingerprint: string;
   version: ContentVersion;
+}
+
+export interface EmailPDFOutputV1 {
+  body_path: string;
+  body_sha256: string;
+  body_size: number;
+  pages: number;
+  pdf_sha256: string;
+  pdf_size: number;
+}
+
+export interface EmailPDFReceiptV1 {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  attachment_id: string;
+  binding: EmailPDFBindingV1;
+  build_id: string;
+  output: EmailPDFOutputV1;
+  profile_fingerprint: string;
+  source: EmailDocumentIdentity;
+}
+
+export interface EmailPDFJob {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  job_id: string;
+  profile_fingerprint: string;
+  receipt?: EmailPDFReceiptV1;
+  state: string;
+  version_id: string;
+}
+
+export interface EmailPDFJobState {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  state: string;
+}
+
+export interface EmailPDFRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  generation_id: string;
+  paper: string;
+  version_id: string;
 }
 
 export interface EmailPending {
@@ -4701,6 +4762,8 @@ ticket: string;
 
 export type PrepareWebDownloadBody = {
   blob_hash: string;
+  email_pdf_attachment?: string;
+  email_pdf_profile?: string;
   node_id: number;
   purpose?: string;
   revision: number;
@@ -6805,6 +6868,144 @@ export const getListEmailDocumentRelationsUrl = (params?: ListEmailDocumentRelat
 export const listEmailDocumentRelations = async (params?: ListEmailDocumentRelationsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailDocumentRelationPage> => {
 
   return sessionJSON<EmailDocumentRelationPage>(getListEmailDocumentRelationsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetEmailPDFJobUrl = (jobId: string,) => {
+
+
+
+
+  return `/api/v1/email-pdf-jobs/${encodeURIComponent(String(jobId))}`
+}
+
+/**
+ * @summary Read retained PDF job state
+ */
+export const getEmailPDFJob = async (jobId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailPDFJobState> => {
+
+  return sessionJSON<EmailPDFJobState>(getGetEmailPDFJobUrl(jobId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRenderEmailPDFUrl = () => {
+
+
+
+
+  return `/api/v1/email-pdfs`
+}
+
+/**
+ * @summary Render one exact email version as a retained verified PDF
+ */
+export const renderEmailPDF = async (emailPDFRequest: NonReadonly<EmailPDFRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailPDFJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<EmailPDFJob>(getRenderEmailPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(emailPDFRequest)
+  }
+);}
+
+
+
+export const getListEmailPDFsUrl = (versionId: string,) => {
+
+
+
+
+  return `/api/v1/email-pdfs/${encodeURIComponent(String(versionId))}`
+}
+
+/**
+ * @summary List verified retained PDFs for one original email version
+ */
+export const listEmailPDFs = async (versionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailPDFReceiptV1[]> => {
+
+  return sessionJSON<EmailPDFReceiptV1[]>(getListEmailPDFsUrl(versionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetEmailPDFUrl = (versionId: string,
+    profile: string,) => {
+
+
+
+
+  return `/api/v1/email-pdfs/${encodeURIComponent(String(versionId))}/${encodeURIComponent(String(profile))}`
+}
+
+/**
+ * @summary Read an exact retained PDF receipt
+ */
+export const getEmailPDF = async (versionId: string,
+    profile: string, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailPDFReceiptV1> => {
+
+  return sessionJSON<EmailPDFReceiptV1>(getGetEmailPDFUrl(versionId,profile),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadEmailPDFUrl = (versionId: string,
+    profile: string,) => {
+
+
+
+
+  return `/api/v1/email-pdfs/${encodeURIComponent(String(versionId))}/${encodeURIComponent(String(profile))}/content`
+}
+
+/**
+ * @summary Download independently verified retained PDF bytes
+ */
+export const downloadEmailPDF = (versionId: string,
+    profile: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getDownloadEmailPDFUrl(versionId,profile),
   {
     ...options,
     method: 'GET'
