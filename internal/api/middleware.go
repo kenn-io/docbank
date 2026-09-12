@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,6 +45,9 @@ func timeoutExempt(method, path string) bool {
 		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
+	if strings.HasPrefix(path, "/api/v1/mailbox/") {
+		return mailboxTimeoutExempt(method, path)
+	}
 	if method == http.MethodPost {
 		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
 			if id, ok := strings.CutSuffix(id, "/download"); ok && (id == "{id}" || validPageJobPathID(id)) {
@@ -63,7 +67,38 @@ func timeoutExempt(method, path string) bool {
 		isEmailPartPath(path)
 }
 
+// Split before unescaping so IDs containing an encoded slash remain one segment,
+// as they do in ServeMux routing. OpenAPI template paths use the same matcher.
+func mailboxTimeoutExempt(method, path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for i, part := range parts {
+		var err error
+		parts[i], err = url.PathUnescape(part)
+		if err != nil {
+			return false
+		}
+	}
+	if len(parts) < 4 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "mailbox" {
+		return false
+	}
+	parts = parts[3:]
+	switch len(parts) {
+	case 1:
+		return method == http.MethodPost && parts[0] == "transfers"
+	case 3:
+		return parts[1] != "" &&
+			((method == http.MethodPost && parts[0] == "containers" && parts[2] == "seal") ||
+				(method == http.MethodGet && parts[0] == "jobs" && parts[2] == "events"))
+	case 4:
+		return method == http.MethodPut && parts[0] == "containers" && parts[1] != "" && parts[2] == "chunks" && parts[3] != ""
+	}
+	return false
+}
+
 func timeoutExemptRequest(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/mailbox/") {
+		return mailboxTimeoutExempt(r.Method, r.URL.EscapedPath())
+	}
 	if timeoutExempt(r.Method, r.URL.Path) {
 		return true
 	}

@@ -23,6 +23,40 @@ starting point.
 | Which credentials does a request need? | [Authentication](#auth) |
 | How do I handle a failed request? | [Error mapping](#error-mapping) |
 
+## Mailbox imports and explicit EML transfers
+
+Mailbox routes live under `/api/v1/mailbox`. Owner identity comes from the
+authenticated vault principal, never from a supplied owner field.
+
+| Route | Contract |
+| --- | --- |
+| `POST /containers` | Declare stable `id`, `sha256`, `size`, and `format` (`mbox` or `zip`); JSON is bounded to 1 MiB. |
+| `PUT /containers/{id}/chunks/{index}` | Stream one ordered 64 MiB chunk (short final chunk allowed), declaring `X-Docbank-Blob-Hash` and `X-Docbank-Blob-Size`; response repeats the verified identity. |
+| `GET /containers/{id}` · `POST /containers/{id}/seal` · `DELETE /containers/{id}` | Inspect, verify the complete source and seal it, or abort an incomplete upload. Sealed sources cannot be aborted. |
+| `POST /containers/{id}/preview` | Supply explicit `dialect`; inspect up to three messages, reading at most 16 MiB of expanded message data, and 100 entry descriptors, with total `entry_count` and `has_more`. |
+| `POST /jobs` | Supply `id`, `container_id`, `container_sha256` and `settings.destination_id`. Dialect defaults to `mboxrd`; recipe and label-to-tag mappings are optional. The response includes normalized settings and the parser/MIME recipe identity. |
+| `GET /jobs` · `GET /jobs/{id}` | Inspect durable work; lists return newest first and use `after` job ID and `limit` (maximum 100). |
+| `GET /jobs/{id}/occurrences` | Read up to 100 receipts after the `after` ordinal. |
+| `GET /jobs/{id}/events` | NDJSON `progress`, `result` or `error` events; disconnecting does not cancel the job. |
+| `POST /jobs/{id}/cancel` · `POST /jobs/{id}/resume` | Cancel, or supply the exact prior `request` and boolean `continuation` to resume/continue. |
+| `POST /archives` | Register `id` and `description` for an application-independent source archive. |
+| `POST /transfers` | Stream EML bytes; `X-Docbank-Transfer` is base64url-encoded JSON containing archive ID, stable reference, hash, size, settings, destination ID, name and optional expected revision. |
+
+Container manifests hash the canonical JSON object with ordered fields
+`sha256`, `size`, `chunks`; each chunk has `index`, `sha256`, `size` in that
+order. Clients can independently verify the sealed `manifest_sha256` against
+their source and ordered chunks. Browser byte uploads use the existing
+ownership-proved WebSocket channel, not raw HTTP chunk writes. Browser
+credentials cannot register external archives or transfer explicitly identified
+EML. No mailbox endpoint accepts an arbitrary daemon-host path.
+
+Conflicting immutable declarations, changed resume settings and changed
+targets return 409; invalid input and capacity limits return 422; oversized
+request bodies return 413; unexpected server failures return 500.
+Preview samples messages; the background job verifies all ZIP entries before
+publishing and retains their hashes for resume. See [Mailbox archives](../usage/importing.md#mailbox-archives)
+for exact retention, capacity and retry guarantees.
+
 ## Shape
 
 Served by `docbank daemon run`: [Huma v2](https://huma.rocks) with the

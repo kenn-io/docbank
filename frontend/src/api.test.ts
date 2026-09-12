@@ -124,6 +124,19 @@ describe("browser authentication", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
   });
 
+  it("leaves mailbox event streams available to the caller", async () => {
+    const events = '{"type":"progress"}\n{"type":"done"}\n';
+    const response = new Response(events, {
+      headers: { "Content-Type": "application/x-ndjson" },
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const stream = await generated.mailboxEvents("synthetic-job", { session: "session" });
+    expect(stream).toBe(response);
+    expect(stream.bodyUsed).toBe(false);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe("application/x-ndjson");
+    expect(await stream.text()).toBe(events);
+  });
+
   it("reads physical storage authority through the browser session", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ loose_blobs: 0, packs: 0 }), {

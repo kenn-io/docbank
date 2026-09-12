@@ -19,6 +19,30 @@ if needed. They never open the vault directly. `docbank daemon status` and
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership & Concurrency](architecture/locking.md).
 
+## docbank mailbox
+
+```text
+docbank mailbox import <mbox-or-zip> [--dest /] [--dialect mboxrd|mboxo] [--id ID] [--job-id ID] [--preview] [--label-tag LABEL=TAG-ID]
+docbank mailbox status|watch|cancel|resume|continue <job-id>
+docbank mailbox receipts <job-id> [--after ORDINAL] [--limit 100]
+docbank mailbox register <archive-id> <description>
+docbank mailbox transfer <message.eml> --archive ID --reference REF [--dest /] [--settings ID] [--if-rev REV]
+```
+
+Imports stream caller-selected files to the daemon. Output is JSON; `watch`
+prints newline-delimited job snapshots until a terminal state. Upload progress
+goes to stderr. Canceling `watch` only closes the observer, not the durable job.
+Use `cancel` to stop the import itself. `--preview` retains a verified source
+without importing messages. Receipt pages contain at most 100 occurrences;
+pass the final ordinal as `--after` to read the next page.
+
+`--id` identifies the source upload and, by default, the import job. Repeat it
+to retry without resending verified chunks. Use a distinct `--job-id` to import
+the same sealed source with different settings or a different destination.
+
+See [Mailbox archives](usage/importing.md#mailbox-archives) for retention,
+limits, explicit continuation and the EML transfer retry contract.
+
 ## docbank info
 
 ```

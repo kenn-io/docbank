@@ -43,7 +43,7 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 				if request.All {
 					continue
 				}
-				return nil, nil, emailDocumentRetentionConflict(retained)
+				return nil, nil, emailDocumentRetentionConflict(ctx, tx, retained)
 			}
 			v, err := emailVersion(ctx, tx, id)
 			if err != nil {
@@ -125,7 +125,7 @@ func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions
 			return err
 		}
 		if len(retained) != 0 {
-			return emailDocumentRetentionConflict(retained)
+			return emailDocumentRetentionConflict(ctx, tx, retained)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=?`, id); err != nil {
 			return err
@@ -134,9 +134,16 @@ func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions
 	return nil
 }
 
-func emailDocumentRetentionConflict(operationIDs []string) error {
+func emailDocumentRetentionConflict(ctx context.Context, q metadataQuerier, operationIDs []string) error {
 	commands := make([]string, len(operationIDs))
 	for i, id := range operationIDs {
+		var mailbox bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_transfer_receipts WHERE document_publication_id=?)`, id).Scan(&mailbox); err != nil {
+			return err
+		}
+		if mailbox {
+			return fmt.Errorf("%w: operation %s is retained by a mailbox import receipt and cannot be released; inspect with docbank email-documents show %s", ErrEmailDocumentConflict, id, id)
+		}
 		commands[i] = "docbank email-documents show " + id
 	}
 	return fmt.Errorf("%w: retained by operations %s; inspect with %s; release each receipt with docbank email-documents release <operation-id> --request-digest <request-digest>", ErrEmailDocumentConflict, strings.Join(operationIDs, ", "), strings.Join(commands, "; "))

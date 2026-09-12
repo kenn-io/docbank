@@ -73,6 +73,9 @@ var (
 
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
+	"mailbox_containers", "mailbox_chunks",
+	"mailbox_archives", "mailbox_transfer_receipts", "mailbox_transfer_heads",
+	"mailbox_jobs", "mailbox_occurrences",
 	"email_document_publications", "email_document_relations",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",

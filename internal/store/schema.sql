@@ -1939,3 +1939,60 @@ CREATE INDEX IF NOT EXISTS persons_name_folded ON persons(display_name_folded, p
 CREATE INDEX IF NOT EXISTS person_identities_person ON person_identities(person_id, kind);
 CREATE INDEX IF NOT EXISTS person_external_person ON person_external_identities(person_id);
 CREATE INDEX IF NOT EXISTS custodian_assignments_person ON custodian_assignments(person_id, scope_kind);
+
+-- Mailbox containers retain ordered ordinary blobs without changing pack v1.
+CREATE TABLE IF NOT EXISTS mailbox_containers (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK(size > 0),
+    format TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    manifest_sha256 TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS mailbox_containers_owner ON mailbox_containers(owner,state);
+CREATE TABLE IF NOT EXISTS mailbox_chunks (
+    container_id TEXT NOT NULL REFERENCES mailbox_containers(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    size INTEGER NOT NULL CHECK(size > 0),
+    PRIMARY KEY(container_id,chunk_index)
+);
+CREATE INDEX IF NOT EXISTS mailbox_chunks_blob ON mailbox_chunks(blob_hash);
+CREATE TABLE IF NOT EXISTS mailbox_archives (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    description TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mailbox_transfer_receipts (
+    id TEXT PRIMARY KEY,
+    archive_id TEXT NOT NULL REFERENCES mailbox_archives(id),
+    source_ref TEXT NOT NULL,
+    target_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    document_publication_id TEXT NOT NULL REFERENCES email_document_publications(operation_id),
+    receipt_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_transfer_versions ON mailbox_transfer_receipts(target_version_id);
+CREATE TABLE IF NOT EXISTS mailbox_transfer_heads (
+    archive_id TEXT NOT NULL REFERENCES mailbox_archives(id),
+    source_ref TEXT NOT NULL,
+    receipt_id TEXT NOT NULL REFERENCES mailbox_transfer_receipts(id),
+    PRIMARY KEY(archive_id,source_ref)
+);
+CREATE TABLE IF NOT EXISTS mailbox_jobs (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    container_id TEXT NOT NULL REFERENCES mailbox_containers(id),
+    state TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    job_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_jobs_state ON mailbox_jobs(state,owner,id);
+CREATE TABLE IF NOT EXISTS mailbox_occurrences (
+    job_id TEXT NOT NULL REFERENCES mailbox_jobs(id),
+    ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+    receipt_id TEXT REFERENCES mailbox_transfer_receipts(id),
+    occurrence_json TEXT NOT NULL,
+    PRIMARY KEY(job_id,ordinal)
+);
