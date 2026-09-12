@@ -10,6 +10,7 @@
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import BookmarkIcon from "@lucide/svelte/icons/bookmark";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import TagIcon from "@lucide/svelte/icons/tag";
   import TagsIcon from "@lucide/svelte/icons/tags";
@@ -42,6 +43,9 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
+  import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
+  import { parseQuery, type Query } from "./query.js";
+  import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
   import TagCatalogModal, {
     type TagDefinitionChange,
   } from "./TagCatalogModal.svelte";
@@ -138,6 +142,10 @@
   let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let savedQueriesOpen = $state(false);
+  let savedQueryDraft = $state<Query | null>(null);
+  let queryEditorInitial = $state<Query>(parseQuery("{}"));
+  let queryURLError = $state("");
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
   let tagCatalogOpen = $state(false);
@@ -172,9 +180,13 @@
   );
 
   onMount(() => {
+    try { savedQueryDraft = queryFromFragment(location.hash); }
+    catch (cause) { queryURLError = cause instanceof Error ? cause.message : String(cause); }
     const session = takeFragmentSession();
+    if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
     if (session) {
       webSession = session.token;
+      if (savedQueryDraft) openSavedQueries();
       void loadRoot();
       void loadTagCatalog();
       const channel = new VerifiedUploadChannel(session, undefined, () => {
@@ -229,6 +241,9 @@
 
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
+      savedQueriesOpen = false;
+      savedQueryDraft = null;
+      replaceQueryURL(null);
       uploadChannel?.close();
       webSession = "";
       uploadChannel = null;
@@ -811,6 +826,9 @@
   }
 
   async function lock(): Promise<void> {
+    savedQueriesOpen = false;
+    savedQueryDraft = null;
+    replaceQueryURL(null);
     generation += 1;
     auditGeneration += 1;
     tagGeneration += 1;
@@ -863,6 +881,28 @@
       // in-memory session disappears with it.
     }
   }
+
+  function currentQueryDraft(): Query {
+    if (savedQueryDraft) return savedQueryDraft;
+    return {
+      ...parseQuery("{}"),
+      text: searchQuery,
+      filters: tagFilterID ? { tag_ids: [tagFilterID] } : {},
+      sort: { field: sortField === "modified" ? "modified_at" : sortField === "name" && (activeQuery !== "" || tagBrowse) ? "path" : sortField, direction: sortDirection },
+    };
+  }
+
+  function keepQueryDraft(query: Query): void {
+    replaceQueryURL(query);
+    savedQueryDraft = query;
+    queryEditorInitial = query;
+    queryURLError = "";
+  }
+
+  function openSavedQueries(): void {
+    queryEditorInitial = currentQueryDraft();
+    savedQueriesOpen = true;
+  }
 </script>
 
 {#if !webSession}
@@ -874,6 +914,7 @@
           The vault API key is never stored in the browser.
         </p>
         {#if error}<p class="error" role="alert">{error}</p>{/if}
+        {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
       </div>
     </Card>
   </main>
@@ -907,6 +948,9 @@
         </form>
       {/snippet}
       {#snippet right()}
+        <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
+          <BookmarkIcon size="14" aria-hidden="true" />
+        </IconButton>
         <IconButton
           size="sm"
           ariaLabel="Recoverable trash"
@@ -1000,6 +1044,15 @@
         </IconButton>
       {/snippet}
     </TopBar>
+
+    {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
+    {#if savedQueryDraft}
+      <div class="query-draft-notice">
+        <span>Query draft retained · not applied to live results</span>
+        <Button size="sm" onclick={openSavedQueries}>Edit query draft</Button>
+        <Button size="sm" onclick={() => { savedQueryDraft = null; replaceQueryURL(null); }}>Discard query draft</Button>
+      </div>
+    {/if}
 
     <main class="workspace">
       <Card class="browser" level="raised" padding="none" ariaLabel="Vault browser">
@@ -1522,6 +1575,15 @@
       <AuditEvidenceDrawer
         session={webSession}
         onclose={() => (auditEvidenceOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if savedQueriesOpen}
+      <SavedQueriesDrawer
+        session={webSession}
+        initialQuery={queryEditorInitial}
+        onload={keepQueryDraft}
+        onclose={() => (savedQueriesOpen = false)}
         onauthfailure={handleFailure}
       />
     {/if}

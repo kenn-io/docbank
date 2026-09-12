@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-10
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -126,6 +127,38 @@ change assignment rules.
 The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
 for exhaustive definition management and bulk assignment.
+
+## Saved queries and highlights
+
+Open the bookmark button in the top bar to manage saved queries and highlight
+sets. A new query starts with the current search text, selected tag and display
+sort. The complete query editor preserves the expression, filters, mode and sort
+together. Choose **Save as new** to name a definition, or **Edit** and **Save
+changes** to update one. The catalog is paginated in groups of 100.
+
+**Keep query draft** retains the complete query in the tab and URL fragment.
+The fragment contains query text and filters, so treat copied URLs as private.
+It does not contain browser-session credentials. Saving a definition does not
+replace the kept draft or change the URL. **Discard query draft**, locking the
+tab, or an expired or rejected session clears the draft and its URL fragment.
+Drafts do not carry over when you open a new session with `docbank web`; save a
+named definition before reloading or leaving the session if you need it later.
+
+Saved queries are definitions, not frozen result sets. Saved-query execution is
+unavailable because the live-search adapter cannot honor the complete query
+contract. Keeping or saving a draft does not run it or change the current live
+results. Unknown fields are rejected, not silently dropped.
+
+Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
+with lowercase `#rrggbb` colors. They cannot run as queries, and the document
+viewer does not apply them yet. Neither result rows nor document bodies are
+stored in browser preferences.
+
+Edits and deletions use the definition's inspected revision. A stale response
+remains visible without automatically retrying against newer state. Reload the
+definitions and reopen the item before deciding again. Deletion requires a
+separate confirmation naming the definition, ID and revision; it never deletes
+documents or discards the kept query draft.
 
 ## Move a node to recoverable trash
 
@@ -459,9 +492,7 @@ accepts that credential for the following operations:
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
 
-The API permits saved-definition management with a browser session, but the
-current application has no controls for it. See
-[Saved queries and highlight sets](searching.md#save-complete-query-intent-over-http).
+Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
 session. The browser must prove it holds the upload secret before sending any
