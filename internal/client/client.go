@@ -297,6 +297,12 @@ var codeToTypedErr = map[string]error{
 	"backup_restore_target_active": home.ErrVaultLocked,
 	"pack_retirement_deferred":     packstore.ErrPackRetirementDeferred,
 	"maintenance_busy":             ErrMaintenanceBusy,
+	"email_pending":                store.ErrEmailPending,
+	"email_not_supported":          store.ErrEmailNotSupported,
+	"email_derivative_suppressed":  store.ErrEmailDerivativeSuppressed,
+	"email_corrupt":                store.ErrEmailCorrupt,
+	"email_part_unavailable":       store.ErrEmailPartUnavailable,
+	"invalid_email_part":           store.ErrInvalidEmailPart,
 }
 
 func decodeError(resp *http.Response) error {

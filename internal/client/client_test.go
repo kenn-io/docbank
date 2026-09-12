@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -90,7 +91,10 @@ func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
-	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
+	srv := api.NewServer(api.Deps{
+		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg,
+		EnsureEmail: processing.EnsureEmailTarget,
+	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return client.New(ts.URL, clientKey), s

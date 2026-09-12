@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"mime"
-	"mime/multipart"
 	"net/mail"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +23,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	documentmedia "go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -49,18 +50,17 @@ const (
 )
 
 // sourceMetadataExtractorDescriptor names the local parser bundle. Bump the
-// trailing version whenever any parser changes what it extracts: every vault
-// then re-extracts every original, so the bump must be deliberate. A test
-// pins the resulting fingerprint so the bump cannot be forgotten or made by
-// accident.
+// trailing version whenever these parsers change what they extract: every
+// vault then re-extracts every original, so the bump must be deliberate. The
+// shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v16"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v17"
 
 var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
-	// parser bundle. Any semantic parser change must change the descriptor.
+	// parser bundle, including the shared email decoder recipe and Go version.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		sourceMetadataExtractorDescriptor)
+		sourceMetadataExtractorDescriptor, emailmime.Recipe())
 
 	// errSourceMetadataBMFFMalformed marks deterministic box structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -80,8 +80,12 @@ func IsSourceContentUnavailable(err error) bool {
 	return errors.Is(err, errSourceContentUnavailable)
 }
 
-func fingerprintSourceMetadataExtractor(descriptor string) string {
-	digest := sha256.Sum256([]byte(descriptor))
+func fingerprintSourceMetadataExtractor(descriptor string, recipe document.EmailRecipeV1) string {
+	emailFingerprint, err := document.EmailRecipeFingerprint(recipe)
+	if err != nil {
+		panic(fmt.Sprintf("fingerprint built-in email recipe: %v", err))
+	}
+	digest := sha256.Sum256([]byte(descriptor + ":" + emailFingerprint))
 	return hex.EncodeToString(digest[:])
 }
 
@@ -794,9 +798,7 @@ func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
 	case exifTIFFSignature(data):
 		collector.extractTIFFVisual(data)
 	default:
-		if message, err := mail.ReadMessage(bytes.NewReader(data)); err == nil {
-			collector.extractEmail(message)
-		} else {
+		if !collector.extractEmail(data) {
 			result.Warnings = append(result.Warnings, sourceWarning("unsupported_format", "container", "signature", "no supported embedded metadata container was recognized"))
 		}
 	}
@@ -983,6 +985,10 @@ func (c *metadataCollector) timestamp(key, namespace, source, raw string) {
 		c.warn("unparseable_timestamp", namespace, source, "embedded timestamp was not coerced")
 		return
 	}
+	c.addTimestamp(key, namespace, source, stamp)
+}
+
+func (c *metadataCollector) addTimestamp(key, namespace, source string, stamp document.SourceMetadataTimestampV1) {
 	if !c.reserveValueBytes(len(stamp.Raw)+len(stamp.Normalized)+len(stamp.Offset), namespace, source) {
 		return
 	}
@@ -1341,92 +1347,159 @@ func (c *metadataCollector) extractOfficeCustom(data []byte) {
 	}
 }
 
-func (c *metadataCollector) extractEmail(message *mail.Message) {
+func (c *metadataCollector) extractEmail(data []byte) bool {
+	spoolParent, err := os.MkdirTemp("", "docbank-source-email-")
+	if err != nil {
+		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
+		return true
+	}
+	defer func() {
+		if err := os.RemoveAll(spoolParent); err != nil {
+			c.warn("unparseable_metadata", "email", "message", "temporary email metadata could not be removed")
+		}
+	}()
+	// OS temporary directories can use a symlink (for example /var on macOS).
+	spoolRoot, err := filepath.EvalSymlinks(spoolParent)
+	if err != nil {
+		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
+		return true
+	}
+	digest := sha256.Sum256(data)
+	decoded, err := emailmime.Decode(context.Background(), hex.EncodeToString(digest[:]),
+		int64(len(data)), bytes.NewReader(data), spoolRoot)
+	if err != nil {
+		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
+		return true
+	}
+	defer func() {
+		if err := decoded.Close(); err != nil {
+			c.warn("unparseable_metadata", "email", "message", "temporary email metadata could not be removed")
+		}
+	}()
+	inventory := decoded.Evidence.Inventory
+	if inventory == nil || len(inventory.Parts) == 0 || len(inventory.Messages) == 0 {
+		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
+		return true
+	}
+	root := inventory.Parts[0]
+	recognized := false
+	for _, header := range root.Headers {
+		recognized = recognized || header.State == document.EmailHeaderValid
+	}
+	if !recognized {
+		return false
+	}
+	message := inventory.Messages[0]
 	for _, item := range []struct {
 		header, key string
+		fields      []document.EmailDecodedFieldV1
 		sensitive   bool
-	}{{"From", "email.from", false}, {"To", "email.to", false}, {"Cc", "email.cc", false}, {"Bcc", "email.bcc", true}, {"Subject", "email.subject", false}} {
-		if value := message.Header.Get(item.header); value != "" {
-			c.string(item.key, "email", item.header, value, item.sensitive)
+	}{
+		{"From", "email.from", message.Fields.From, false},
+		{"To", "email.to", message.Fields.To, false},
+		{"Cc", "email.cc", message.Fields.Cc, false},
+		{"Bcc", "email.bcc", message.Fields.Bcc, true},
+		{"Subject", "email.subject", message.Fields.Subject, false},
+	} {
+		if len(item.fields) == 0 {
+			continue
+		}
+		field := item.fields[0]
+		if field.State != document.EmailInterpretationDecoded {
+			c.warn("unparseable_metadata", "email", item.header, "email header could not be fully decoded")
+		}
+		if field.Text != nil {
+			c.string(item.key, "email", item.header, *field.Text, item.sensitive)
 		}
 	}
-	if date := message.Header.Get("Date"); date != "" {
-		c.timestamp("email.sent", "email", "Date", date)
+	var count int64
+	verified := inventory.State == document.EmailInventoryComplete
+	for _, part := range inventory.Parts {
+		verified = verified && len(part.Media.Diagnostics) == 0
+		for _, diagnostic := range part.Diagnostics {
+			if diagnostic.Operation == document.EmailOperationHeaders {
+				verified = false
+			}
+		}
+		if part.Disposition != nil && *part.Disposition == "attachment" {
+			count++
+		}
 	}
-	if values := message.Header["Received"]; len(values) > 0 {
-		c.strings("email.received", "email", "Received", values)
-	}
-	parts := 0
-	count, err := countEmailAttachments(message.Header, message.Body, 0, &parts)
-	if err != nil {
+	if !verified {
 		c.warn("unparseable_attachments", "email", "Content-Disposition", "MIME attachment structure could not be verified")
 	} else if count > 0 {
 		c.integer("attachment_count", "email", "Content-Disposition", count)
 	}
-}
-
-type emailMIMEHeader interface {
-	Get(key string) string
-}
-
-func countEmailAttachments(
-	header emailMIMEHeader, body io.Reader, depth int, parts *int,
-) (int64, error) {
-	const (
-		maxMIMEDepth = 8
-		maxMIMEParts = 4096
-	)
-	if depth > maxMIMEDepth {
-		return 0, errors.New("MIME nesting exceeds the supported bound")
-	}
-	contentType := header.Get("Content-Type")
-	mediaType, parameters, err := mime.ParseMediaType(contentType)
+	reader, err := decoded.OpenArtifact(context.Background(), root.Path, string(document.EmailArtifactRawHeaders))
 	if err != nil {
-		if strings.TrimSpace(contentType) == "" {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("parse MIME content type: %w", err)
+		c.warn("unparseable_metadata", "email", "headers", "email raw headers could not be read")
+		return true
 	}
-	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
-		return 0, nil
+	raw, readErr := io.ReadAll(io.LimitReader(reader, root.HeaderBlock.Size+1))
+	if err := errors.Join(readErr, reader.Close()); err != nil || int64(len(raw)) != root.HeaderBlock.Size {
+		c.warn("unparseable_metadata", "email", "headers", "email raw headers could not be read")
+		return true
 	}
-	boundary := parameters["boundary"]
-	if boundary == "" {
-		return 0, errors.New("multipart MIME content type has no boundary")
+	var received []string
+	for _, header := range root.Headers {
+		if header.Name == nil || (*header.Name != "date" && *header.Name != "received") {
+			continue
+		}
+		value, err := emailmime.HeaderValue(raw, header)
+		if err != nil {
+			c.warn("unparseable_metadata", "email", "headers", "email raw header could not be read")
+			continue
+		}
+		if *header.Name == "received" {
+			received = append(received, value)
+		} else if len(message.Date.Fields) == 1 {
+			c.emailTimestamp(message.Date, value)
+		}
 	}
-	reader := multipart.NewReader(body, boundary)
-	var count int64
-	for {
-		part, nextErr := reader.NextPart()
-		if errors.Is(nextErr, io.EOF) {
-			return count, nil
-		}
-		if nextErr != nil {
-			return 0, fmt.Errorf("read MIME part: %w", nextErr)
-		}
-		*parts++
-		if *parts > maxMIMEParts {
-			_ = part.Close()
-			return 0, errors.New("MIME part count exceeds the supported bound")
-		}
-		dispositionValue := part.Header.Get("Content-Disposition")
-		if dispositionValue != "" {
-			disposition, _, dispositionErr := mime.ParseMediaType(dispositionValue)
-			if dispositionErr != nil {
-				_ = part.Close()
-				return 0, fmt.Errorf("parse MIME content disposition: %w", dispositionErr)
-			}
-			if strings.EqualFold(disposition, "attachment") {
-				count++
-			}
-		}
-		nested, nestedErr := countEmailAttachments(part.Header, part, depth+1, parts)
-		closeErr := part.Close()
-		if err := errors.Join(nestedErr, closeErr); err != nil {
-			return 0, err
-		}
-		count += nested
+	c.strings("email.received", "email", "Received", received)
+	if message.Date.State == document.EmailDateInvalid && len(message.Date.Fields) > 1 {
+		c.warn("unparseable_timestamp", "email", "Date", "multiple Date fields prevented timestamp normalization")
 	}
+	return true
+}
+
+func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string) {
+	if len(raw) > document.MaxSourceMetadataValueBytes {
+		c.warn("value_too_large", "email", "Date", "embedded timestamp was omitted")
+		return
+	}
+	if date.TimezoneState == document.EmailTimezoneUnknownNamed {
+		c.string("email.sent.raw", "email", "Date", raw, false)
+		c.warn("unsupported_timezone", "email", "Date", "email timezone prevented timestamp normalization")
+		return
+	}
+	if date.State != document.EmailDateParsed || date.Civil == nil {
+		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+		return
+	}
+	civil, err := time.Parse("2006-01-02T15:04:05", *date.Civil)
+	if err != nil {
+		c.string("email.sent.raw", "email", "Date", raw, false)
+		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+		return
+	}
+	stamp := document.SourceMetadataTimestampV1{Raw: raw, Normalized: *date.Civil,
+		Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}
+	if date.UTC != nil {
+		instant, err := time.Parse(time.RFC3339, *date.UTC)
+		if err != nil {
+			c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+			return
+		}
+		offset := int(civil.Sub(instant) / time.Second)
+		stamp.Normalized = instant.In(time.FixedZone("", offset)).Format(time.RFC3339)
+		stamp.Timezone = document.SourceMetadataTimezoneUTC
+		if offset != 0 {
+			stamp.Timezone = document.SourceMetadataTimezoneOffset
+			stamp.Offset = stamp.Normalized[len(stamp.Normalized)-6:]
+		}
+	}
+	c.addTimestamp("email.sent", "email", "Date", stamp)
 }
 
 func (c *metadataCollector) extractCalendar(data []byte) {

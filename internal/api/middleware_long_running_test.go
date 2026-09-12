@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,4 +112,28 @@ func TestLongRunningHumaOperationOutlivesDefaultBodyDeadline(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("long-running request did not finish after release")
 	}
+}
+
+func TestEmailPartStreamAndEnsureHaveNoRequestDeadline(t *testing.T) {
+	deadline := make(chan bool, 1)
+	handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, present := r.Context().Deadline()
+		deadline <- present
+	}))
+
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email/generations/"+
+			strings.Repeat("a", 64)+"/parts/1.2/decoded_payload", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	assert.False(t, <-deadline)
+
+	request = httptest.NewRequest(http.MethodPost,
+		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	assert.False(t, <-deadline)
+
+	request = httptest.NewRequest(http.MethodGet,
+		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	assert.True(t, <-deadline)
 }
