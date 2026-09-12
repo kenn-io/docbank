@@ -1,3 +1,7 @@
+---
+last_edited: 2026-09-11
+---
+
 # Web screenshots
 
 This Playwright harness captures the actual daemon-served Docbank interface
@@ -40,4 +44,31 @@ cd frontend
 DOCBANK_SCREENSHOT_DIR="$(mktemp -d)" node node_modules/@playwright/test/cli.js test \
   --config screenshots/playwright.config.ts --project chromium \
   --grep "trash confirmation"
+```
+
+The collection case imports two synthetic documents and exercises label
+rename, a concurrent label conflict, clearing, and document navigation:
+
+```sh
+make build
+DOCBANK_SCREENSHOT_DIR="$PWD/.superpowers/collection-screenshots" \
+  node frontend/node_modules/@playwright/test/cli.js test \
+  --config frontend/screenshots/playwright.config.ts --project chromium \
+  --grep "import collections"
+```
+
+It captures the member browser and the preserved draft after a label conflict
+as `web-collections.png` and `web-collection-label-conflict.png`.
+
+The PR-only snapshot case seeds 1,001 synthetic documents and exercises the
+real daemon, browser IndexedDB, recovery checkpoint import, exact retry, and
+stale revision fence. Its dedicated output stays outside the strict
+documentation screenshot set:
+
+```sh
+make build
+DOCBANK_SNAPSHOT_SCREENSHOT_DIR="$PWD/.superpowers/snapshot-integrated-final" \
+  node frontend/node_modules/@playwright/test/cli.js test \
+  --config frontend/screenshots/playwright.config.ts --project chromium \
+  --grep "snapshot workspace"
 ```

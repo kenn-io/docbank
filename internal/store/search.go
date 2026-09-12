@@ -160,9 +160,6 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	err = s.withLexicalGenerationRead(ctx, func(queryer metadataQuerier, generation LexicalGeneration) error {
 		return queryContent(queryer, generation.ID)
 	})
-	if errors.Is(err, ErrNotFound) {
-		err = queryContent(s.db, "")
-	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -1389,10 +1386,23 @@ func (s *Store) withLexicalGenerationRead(
 	}
 	active = true
 	lease, err = s.acquireLexicalGeneration(ctx, conn)
-	if err != nil {
+	if errors.Is(err, ErrNotFound) {
+		generationID, generationErr := collectionGenerationTx(ctx, conn)
+		if generationErr != nil {
+			return generationErr
+		}
+		if generationID != "" {
+			return errors.New("lexical generation changed inside one read snapshot")
+		}
+		lease = nil
+	} else if err != nil {
 		return err
 	}
-	if err := fn(conn, lease.Generation); err != nil {
+	var generation LexicalGeneration
+	if lease != nil {
+		generation = lease.Generation
+	}
+	if err := fn(conn, generation); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
@@ -1938,9 +1948,6 @@ func (s *Store) SearchPageWithOptions(
 	) error {
 		return queryContent(queryer, generation.ID)
 	})
-	if errors.Is(err, ErrNotFound) {
-		err = queryContent(s.db, "")
-	}
 	if err != nil {
 		return nil, false, err
 	}

@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/document/bundle"
 	"net/http"
 	"strings"
 
@@ -16,11 +17,18 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
-	Title  string   `json:"title"`
-	Status int      `json:"status"`
-	Detail string   `json:"detail,omitzero"`
-	Code   string   `json:"code,omitzero"`
-	Errors []string `json:"errors,omitempty"`
+	Title    string         `json:"title"`
+	Status   int            `json:"status"`
+	Detail   string         `json:"detail,omitzero"`
+	Code     string         `json:"code,omitzero"`
+	Errors   []string       `json:"errors,omitempty"`
+	Position *ErrorPosition `json:"position,omitempty"`
+}
+
+// ErrorPosition is a half-open UTF-8 byte span in the submitted query text.
+type ErrorPosition struct {
+	Offset int `json:"offset"`
+	End    int `json:"end"`
 }
 
 func (e *Error) Error() string  { return e.Detail }
@@ -76,6 +84,8 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidCollectionLabel, http.StatusUnprocessableEntity, "invalid_collection_label"},
 	{store.ErrInvalidDuplicatePage, http.StatusUnprocessableEntity, "invalid_duplicate_page"},
 	{store.ErrInvalidBatchMove, http.StatusUnprocessableEntity, "invalid_batch_move"},
+	{store.ErrInvalidBatchTag, http.StatusUnprocessableEntity, "invalid_batch_tag"},
+	{store.ErrBatchTagOperationConflict, http.StatusConflict, "batch_tag_operation_conflict"},
 	{store.ErrNotTrashed, http.StatusUnprocessableEntity, "not_trashed"},
 	{store.ErrIsRoot, http.StatusUnprocessableEntity, "is_root"},
 	{store.ErrVersionNodeMismatch, http.StatusUnprocessableEntity, "version_node_mismatch"},
@@ -104,6 +114,9 @@ var storeErrCodes = []struct {
 func FromStoreError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, bundle.ErrRetained) {
+		return NewError(http.StatusConflict, "export_retained", err.Error())
 	}
 	var exhausted *packstore.ExhaustedError
 	if errors.As(err, &exhausted) && exhausted.Headline != nil {
