@@ -30,6 +30,8 @@ func (reference blobReference) conditionSQL() string {
 // Visual preview sources are omitted because the Go writer binds them to the
 // same hash as their content version, which is already listed.
 var blobRootReferences = []blobReference{
+	{table: "export_members", column: columnBlobHash},
+	{table: "export_role_roots", column: columnBlobHash},
 	{table: "content_versions", column: columnBlobHash},
 	{table: "email_part_artifacts", column: columnBlobHash},
 	{table: "mailbox_chunks", column: columnBlobHash, condition: "EXISTS (SELECT 1 FROM mailbox_containers c WHERE c.id=r.container_id AND c.state='sealed')"},
@@ -40,6 +42,7 @@ var blobRootReferences = []blobReference{
 	{table: "embedding_input_generations", column: "evidence_fingerprint", condition: "r.generation_blob_hash IS NOT NULL"},
 	{table: "embedding_vector_sets", column: "payload_blob_hash"},
 	{table: "visual_preview_generations", column: "output_blob_hash"},
+	{table: "page_images", column: columnBlobHash},
 }
 
 // blobGCHolds keep a blob out of ordinary garbage collection without making

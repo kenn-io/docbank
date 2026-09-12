@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,9 +18,11 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
@@ -66,8 +70,10 @@ type Deps struct {
 	EnsureEmail           EnsureEmailFunc  // required only by POST /versions/{id}/email
 	PublishEmailDocuments PublishEmailDocumentsFunc
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
-	WebURL                string         // fresh per-daemon loopback origin; empty disables browser sessions
-	BlobRegistry          *blob.Registry // nil keeps storage-registry routes read-only to the primary
+	WebURL                string              // fresh per-daemon loopback origin; empty disables browser sessions
+	BlobRegistry          *blob.Registry      // nil keeps storage-registry routes read-only to the primary
+	PageRuntime           *pagerender.Runtime // nil reports optional page rendering unavailable
+	Exports               *exporter.Worker
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -79,6 +85,8 @@ type Server struct {
 	auditPreviews *auditPreviewRegistry
 	webSessions   *webSessionRegistry
 	webDownloads  *webDownloadRegistry
+	snapshots     *store.QuerySnapshotService
+	masterOwner   string
 }
 
 // NewServer wires all routes and middleware onto a fresh mux. The handler
@@ -129,17 +137,42 @@ func NewServer(d Deps) *Server {
 	}
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
+	masterOwner := randomSnapshotOwner()
+	var snapshots *store.QuerySnapshotService
+	if d.Store != nil {
+		snapshots = store.NewQuerySnapshotService(d.Store)
+	}
 	s := &Server{
 		deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry(),
-		webSessions: newWebSessionRegistry(), webDownloads: newWebDownloadRegistry(d.VaultRoot),
+		snapshots: snapshots, masterOwner: masterOwner,
+		webDownloads: newWebDownloadRegistry(d.VaultRoot),
 	}
 	g := d.Gate
 	if g == nil {
 		g = NewOperationGate()
 	}
+	s.webSessions = newWebSessionRegistry(func(owner string) {
+		if d.Exports != nil {
+			d.Exports.CancelOwner(owner)
+		}
+		if s.snapshots != nil {
+			s.snapshots.Revoke(owner)
+		}
+		s.webDownloads.revokeOwner(owner)
+		if d.Store != nil {
+			// The credential is already revoked and active streams interrupted.
+			// Do not abandon its durable cancellation behind a maintenance barrier.
+			ctx := context.Background()
+			if err := g.MutateContext(ctx, func() error { return d.Store.RevokeExportOwner(ctx, owner) }); err != nil {
+				d.Logger.Error("cancel revoked browser exports", "error", err)
+			}
+		}
+	})
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
+	registerCollectionQualityRoutes(humaAPI, d)
+	registerDuplicateRoutes(humaAPI, d)
 	registerInfoRoute(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -155,7 +188,13 @@ func NewServer(d Deps) *Server {
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
-	registerSavedQueryRoutes(humaAPI, d, g)
+	registerBatchTagRoutes(humaAPI, d, g)
+	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
+	registerQueryCompileRoutes(humaAPI, d)
+	registerRenditionTextRoutes(humaAPI, d)
+	registerPageRoutes(humaAPI, d, g)
+	registerExportRoutes(mux, humaAPI, d, g, s.snapshots, s.webDownloads, s.webSessions)
+	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerEmailRoutes(mux, humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
@@ -169,10 +208,10 @@ func NewServer(d Deps) *Server {
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
-	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
+	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions)
 
 	h := http.Handler(mux)
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions)
+	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
@@ -180,6 +219,14 @@ func NewServer(d Deps) *Server {
 	h = trackMiddleware(h, d.Tracker)
 	s.handler = h
 	return s
+}
+
+func randomSnapshotOwner() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic("api: cannot generate query snapshot owner: " + err.Error())
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
@@ -200,7 +247,25 @@ func (s *Server) Close() {
 // Shutdown revokes browser credentials, closes every accepted upload
 // connection, and waits for its handler to return.
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.webSessions.closeAll(ctx)
+	if s.webDownloads != nil {
+		s.webDownloads.revokeOwner("master")
+		s.webDownloads.revokeOwner(s.masterOwner)
+	}
+	snapshotDone := make(chan error, 1)
+	go func() {
+		if s.snapshots == nil {
+			snapshotDone <- nil
+			return
+		}
+		snapshotDone <- s.snapshots.Close()
+	}()
+	sessionErr := s.webSessions.closeAll(ctx)
+	select {
+	case snapshotErr := <-snapshotDone:
+		return errors.Join(sessionErr, snapshotErr)
+	case <-ctx.Done():
+		return errors.Join(sessionErr, ctx.Err())
+	}
 }
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
@@ -222,6 +287,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/tags/{tag_id}", http.MethodDelete},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodPatch},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodDelete},
+		{"/api/v1/saved-queries/{saved_query_id}/runs", http.MethodPost},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

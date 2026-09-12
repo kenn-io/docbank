@@ -162,7 +162,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 				return
 			}
 			if scanErr != nil {
-				stream.send(IngestEvent{Type: "error", Error: ingestProblem(scanErr)})
+				stream.send(IngestEvent{Type: streamErrorEvent, Error: ingestProblem(scanErr)})
 				return
 			}
 			stream.send(IngestEvent{Type: "progress", Progress: &IngestProgress{
@@ -188,7 +188,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 				return
 			}
 			if ingestErr != nil {
-				stream.send(IngestEvent{Type: "error", Error: ingestProblem(ingestErr)})
+				stream.send(IngestEvent{Type: streamErrorEvent, Error: ingestProblem(ingestErr)})
 				return
 			}
 			stream.send(IngestEvent{Type: "result", Report: &report})

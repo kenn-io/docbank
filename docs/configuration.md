@@ -19,6 +19,10 @@ a primary store needs no configuration file. Each registered secondary store
 needs a matching connection profile after restart. Backup commands need either
 a configured repository or an explicit `--repo` flag.
 
+For optional bounded PDF and density-qualified PNG rendering, see
+[Verified page images](architecture/page-images.md#configure-the-optional-runtime).
+The `[page_runtime]` section is independent of text and embedding providers.
+
 ## Vault location
 
 All data defaults to `~/.docbank/`. Override with the `DOCBANK_HOME`

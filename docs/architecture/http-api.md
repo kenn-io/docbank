@@ -1,7 +1,7 @@
 ---
+last_edited: 2026-09-12
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
-last_edited: 2026-09-12
 ---
 
 # HTTP API
@@ -78,9 +78,14 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to the exact version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
+| `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
+| `POST /saved-queries/{saved_query_id}/runs` | execute one revision-fenced saved query and return its durable run receipt with the first snapshot page | Implemented |
+| `POST /queries/parse` | validate complete QueryV1 intent and resolve dependency revisions without executing a search | Implemented |
+| `POST /workspace/queries` | execute complete QueryV1 intent and return the first page of one exact bounded result snapshot | Implemented |
+| `POST /workspace/queries/{id}/pages` | read another page from an existing query snapshot with its opaque cursor | Implemented |
 | `POST /audit/preview` · `POST /audit/enable` · `GET /audit/status` | review permanent first-scope retention, enable the exact reviewed plan, and inspect authority or membership | Implemented |
 | `GET /audit/history?path=&node_id=&limit=&cursor=` | read one audited node's canonical newest-first event timeline with a stable continuation cursor | Implemented |
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
@@ -94,6 +99,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
 | `POST /batch/move` | validate and apply up to 1,000 moves as one final-state transaction | Implemented |
+| `POST /batch/tags` · `POST /batch/tags/preview` | atomically assign/remove one tag on a revision-fenced selected set, or inspect its exact membership | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
 | `GET /trash` · `POST /trash/empty` `{run, older_than}` | list (optionally paginated) / report or hard-delete trash roots | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
@@ -117,6 +123,87 @@ work before reaching `limit`. The normal `limit` and `truncated` contract
 remains in force, without a cursor. If `truncated` is true, the page is
 incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+### Query compilation preview
+
+`POST /queries/parse` accepts one QueryV1 object and returns its canonical
+`query`, `query_fingerprint`, and `dependencies` (`kind`, stable `id`, and
+observed `revision`). Definition reads share one read transaction. No result
+rows, membership snapshot, or executable SQL are returned. The endpoint is
+available to authenticated API clients and browser sessions; browser requests
+must use POST without query parameters.
+
+The compiler preserves expression scope and separate structured filters.
+Missing references, including negative tag and collection operands, fail with
+`422 invalid_query`; expression errors include a `position` object with
+half-open UTF-8 byte `offset` and `end`. Backend failures remain server errors.
+See [query grammar and limits](../usage/searching.md#preview-a-field-aware-query).
+Existing `/search` requests do not gain advanced syntax through this endpoint.
+
+### Exact query snapshots
+
+`POST /workspace/queries` executes one strict QueryV1 payload and returns HTTP
+200 with its first page. The request accepts `query`, an optional configured
+processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
+explicit subset of `collections`, `tags`, `media_family`, `extension`,
+`modified`, `size`, `text_coverage`, and `duplicates` facets.
+
+The response freezes the canonical query, dependency revisions, selected
+lexical generation and processing coverage, ordered row metadata, and exact
+node/content-version membership observed at creation. It also carries exact
+`total` and `total_bytes` values, `member_hash`, `snapshot_fingerprint`,
+`snapshot_id`, and creation and expiry times. Later edits, moves, tag changes,
+content replacements, or dependency changes do not rewrite an existing
+snapshot. Create another snapshot to observe them.
+
+`POST /workspace/queries/{id}/pages` accepts only the required `cursor`. Send
+the returned `next_cursor` or `previous_cursor` unchanged; it is bound to the
+snapshot, owner, ordering, direction, and page size. The response omits a
+directional cursor when no page exists in that direction. An empty snapshot
+therefore needs no page request.
+
+Requested facets use the same creation-time read snapshot. A facet omits only
+its matching outer structured filter so clients can see alternative values;
+expression operands and nested saved-query scope stay in force. `total` counts
+distinct documents in that self-excluded population, `missing` counts documents
+without a value, and `other` sums value counts omitted from the response. A
+document with several tags or collections contributes once to each value, so
+those value counts need not sum to `total`.
+
+Each available facet retains its leading 50 values plus selected QueryV1 values
+outside that set, including a selected value whose count is zero. Size uses the
+fixed `<1 MiB`, 1–10 MiB, 10–100 MiB, 100 MiB–1 GiB, and `>=1 GiB` buckets;
+modification time uses UTC calendar-month buckets. Fixed categorical facets
+include their defined zero-count buckets. A facet that cannot be computed
+within its coverage, member, or time budget returns `available: false` with a
+`reason` and omits count fields; it is not a successful zero.
+
+Materialization admits at most 250,000 rows and 64 KiB of serialized data per
+row. Across the daemon, the cache admits at most 1,000,000 rows and 512 MiB of
+serialized snapshot data, with at most eight handles per authenticated owner
+and two builders at once. A build has 30 seconds; all requested facets share a
+five-second facet budget. Handles expire after 15 minutes idle or 30 minutes
+absolute lifetime. These are cache-admission bounds, not a claim that the
+process uses at most 512 MiB of RSS.
+
+Snapshot ownership follows authentication. A browser token can read only its
+own handles, and revoking the browser session invalidates them. Master-key
+requests share the daemon's master owner. All handles are daemon-lifetime
+cache state and disappear on restart or shutdown.
+
+`POST /saved-queries/{saved_query_id}/runs` executes the saved query revision
+named by `If-Match`. Its body accepts only `profile`, `page_size`, and `facets`;
+it cannot replace the saved QueryV1 payload. The response is
+`{run,snapshot}`. `run` durably records the definition revision, fingerprints,
+exact totals, expiry, and comparison with the previous run. The accompanying
+snapshot rows remain ephemeral: backup and restore retain the receipt but do
+not reconstruct rows or silently rerun the query. Run the saved query again
+explicitly after `410 snapshot_gone`.
+
+Snapshot execution supports duplicate and text-coverage constraints.
+Text-coverage predicates require a configured processing profile. Semantic and
+hybrid modes and relevance ordering remain unsupported and return positioned
+`422 invalid_query` errors.
 
 ### Saved query and highlight definitions
 
@@ -187,11 +274,11 @@ returns `201`; update and delete return `200` with the resulting or deleted
 definition and its ETag. Saved definitions are included in metadata backup and
 restore.
 
-These endpoints store intent. They do not execute a query, translate QueryV1
-into the current `/search` query string, read document content, render
-highlights, or return result counts. Query text is preserved exactly, including
-quotes, parentheses, and Boolean operators, for an executor that understands
-the saved format.
+These definition endpoints store intent. They do not execute a query,
+translate QueryV1 into the current `/search` query string, read document content, render
+highlights, or return result counts. The separate `/runs` endpoint above
+executes a saved query. Query text is preserved exactly, including quotes,
+parentheses, and Boolean operators.
 
 Once audit authority is enabled for a vault, saved-definition reads remain
 available but create, update, and delete return `409
@@ -223,6 +310,16 @@ hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
 to one session, and never reconnects it. An ordinary browser token is
 explicitly forbidden from `POST /api/v1/uploads`.
+
+Attachment navigation additionally permits exact `GET /api/v1/versions/{id}`,
+`GET /api/v1/email-document-publications/{operation_id}`, and bounded
+`GET /api/v1/email-document-relations` reads. Relation queries require exactly
+one parent or child version, with an optional paired operation/order cursor
+and a page limit of at most 250. Unknown or repeated parameters are denied.
+These browser capabilities do not permit publication, removal, email
+processing, or consent mutations. The inspector validates relation and receipt
+agreement before presenting inventory authority and separately checks the
+related version's current node access before opening verified content.
 
 `GET /nodes/{id}/children` binds the live directory projection—including its
 current canonical path—and the requested child page to one read transaction.
@@ -331,6 +428,48 @@ encoding instead. The path must be absolute (leading `/`); `?path=/`
 resolves the root. The server applies the store's existing NFC name
 normalization and validation and returns `422` for an invalid path.
 
+## Batch tag assignment
+
+`POST /api/v1/batch/tags` accepts a canonical UUIDv4 `operation_id`, a tag UUID
+`tag_id`, required boolean `assign`, and `nodes: [{node_id, revision}]`.
+The body is limited to 1 MiB and 1–1,000 unique live file or directory IDs with
+positive exact revisions. No query, subtree expansion, or `If-Match` header is
+used. Invalid structure returns 422, missing or trashed targets return 404,
+and a stale target returns 409. Every target, including assignment no-ops,
+is validated in the same transaction as all changes and receipt persistence.
+Actual changes use the existing canonical audit events.
+
+Success returns 200 with `version: 1`, `operation_id`, `request_digest`,
+`tag_id`, `assign`, final `tag_revision`, final `assignment_count`,
+`completed_at`, and numerically sorted
+`nodes: [{node_id, expected_revision, revision, changed}]`. Every requested
+identity appears exactly once. Changed nodes advance by one revision;
+unchanged nodes retain their expected revision.
+
+Request order is not semantic. The lowercase SHA-256 request digest covers
+UTF-8 text: `docbank-tag-batch-v1` followed by newline, the canonical tag UUID
+followed by newline, `1` for assignment or `0` for removal followed by newline,
+then one `node_id:revision` line per target in ascending numeric node-ID order.
+Every line, including the last, ends in newline; integers use unpadded decimal.
+The operation UUID is a separate lookup identity, not part of that digest.
+
+Repeating an operation with the same canonical request returns its original
+receipt, even after later edits or deletion. Reusing the operation UUID with
+different input returns 409 `batch_tag_operation_conflict`. Receipts are
+retained indefinitely without node/tag cascade deletion and contain no names,
+paths, or document bodies. Metadata and physical backup/restore retain receipts
+present at the backup checkpoint; an earlier backup cannot know later
+operations. A historical success does not assert current membership or
+recreate a deleted entity. Clients must validate complete receipt identity and
+revision outcomes before accepting success.
+
+`POST /api/v1/batch/tags/preview` takes only `tag_id` and the same bounded,
+revision-fenced `nodes`. One read snapshot returns `tag_id`, `tag_revision`,
+and sorted `nodes: [{node_id, revision, assigned}]`, with no durable changes.
+This provides exact selected-set membership without interpreting omissions
+from a truncated tag listing. Both routes require authentication. Browser
+sessions permit only these exact POST paths without query arguments.
+
 ## Concurrency: resource revisions and `If-Match`
 
 Every node carries a `revision` that bumps on each mutation (directories
@@ -360,6 +499,7 @@ and maintenance are explicit exceptions:
 | `POST /nodes/{id}/verify` | required — binds the evidence to the exact node state the caller inspected |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required — tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required — saved-definition revision |
+| `POST /saved-queries/{saved_query_id}/runs` | required — executes exactly the saved definition revision the caller inspected |
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
@@ -479,6 +619,27 @@ version, its current node projection, whether that version is the node's
 current head, and a path only while the node is live. Results are bounded and
 deterministic: live current references, live history, then trashed references.
 
+`GET /duplicates` discovers hashes shared by at least two live current file
+nodes. Its `items`, `total`, and `total_references` describe that population;
+historical versions and trash are excluded. `limit` defaults to 50 and accepts
+1–100; `offset` is nonnegative. Groups sort by canonical SHA-256, and counts
+remain exact on an exhausted page. Counts, references, paths, and collection
+labels share one read transaction per request.
+
+Each group contains `sha256`, `size`, `reference_count`,
+`representative_node_id`, `references`, and `references_truncated`. At most
+16 references are displayed in earliest `(modified_at,node_id)` order. Each
+reference wraps the existing content-reference identity in `reference`, plus
+`collections` (up to 16 distinct eligible IDs and optional labels),
+`collection_count`, and `collections_truncated`. Collection identities sort
+by ID; multiple import memberships never multiply document counts. The read
+is available to API-key clients and browser sessions. Browser access permits
+only GET on the exact route, with optional singleton `limit` and `offset`
+parameters. There is no duplicate-deletion operation.
+
+See [duplicate discovery](../usage/searching.md#find-documents-with-identical-content)
+for pagination and historical-lookup guidance.
+
 `POST /nodes/{id}/verify` is the bounded server-side proof. It requires
 `If-Match` from a prior node response, reopens the blob through the same mixed
 loose/packed store used for downloads, and returns the recorded and computed
@@ -580,6 +741,31 @@ of backslash escaping.
 Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: ingest-run collections
+
+`GET /api/v1/collections/{id}/quality` returns a current aggregate receipt with
+the collection, `source_fingerprint`, dimensions, zero-byte and mismatch counts,
+duplicate-document counts, and descriptive concentrations. Optional `fields`
+accepts at most seven distinct comma-separated names: `extension`, `media_type`,
+`media_family`, `modified_month`, `size`, `text_coverage`, and `duplicates`.
+The default includes all seven. Unknown or repeated fields return 422.
+
+List, detail, members, and quality accept `profile=<configured name>` and include
+the same `coverage` object. One profile is selected automatically; no profiles
+returns `unconfigured`, and multiple without a choice returns `profile_required`.
+These unavailable states have null counts. An unknown name returns 422.
+Configured coverage includes the selected name and fingerprint, active generation,
+and complete, partial, failed, unprocessed, and none counts over current members.
+Selection identifies policy, not runtime readiness. Retained active output wins
+over a later failed attempt; source hashes alone cannot transfer profile authority.
+
+Quality uses one source snapshot, bounded to 250,000 members, 64 MiB of projected
+census data, and five seconds. Size bounds return 413 `quality_too_large`;
+interruption or timeout returns 503 `quality_unavailable`, not partial results.
+Frequency dimensions retain the top 50 values with missing and other counts.
+Duplicate membership is vault-wide current content, counted within this collection.
+Concentrations require at least ten members and 80% of the collection.
+The server caches at most 64 aggregate receipts and 8 MiB for ten seconds, checking
+a fresh source fingerprint before every hit. No document bodies enter the cache.
 
 A collection is an immutable ingest-run identity with live document
 membership. It is not a folder: moving or renaming a member leaves its run
@@ -849,8 +1035,9 @@ requires the key.
 
 ## Error mapping
 
-Errors are RFC 7807 problem-JSON with one extension member, `code`, a
-machine-readable string clients branch on instead of parsing `detail`:
+Errors are RFC 7807 problem-JSON with a `code` extension, a machine-readable
+string clients branch on instead of parsing `detail`. Query errors may also
+include a `position` span:
 
 ```json
 {
@@ -880,6 +1067,15 @@ machine-readable string clients branch on instead of parsing `detail`:
 | `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, is already superseded, or is an operational ingest fact |
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `invalid_saved_query` | 422 | saved name, description, kind, payload, or patch violates the saved-definition contract |
+| `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |
+| `invalid_cursor` | 400 | malformed, tampered, wrong-direction, or otherwise invalid snapshot cursor |
+| `snapshot_gone` | 410 | snapshot is missing, expired, revoked, owned by another session, or lost with its daemon |
+| `snapshot_capacity` | 429 | bounded snapshot cache admission could not reserve the requested rows or serialized bytes |
+| `snapshot_busy` | 429 | both bounded snapshot builders are already occupied |
+| `snapshot_too_large` | 413 | one materialization exceeded its row, per-row, or serialized-size bound |
+| `snapshot_unavailable` | 503 | snapshot materialization exceeded its build deadline |
+| `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
+| `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

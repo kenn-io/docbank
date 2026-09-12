@@ -95,6 +95,7 @@ func newClient(t *testing.T, clientKey string) (*client.Client, *store.Store) {
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg,
 		EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
 	})
+	t.Cleanup(srv.Close)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return client.New(ts.URL, clientKey), s

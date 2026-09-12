@@ -46,7 +46,7 @@ func registerMailboxEvents(mux *http.ServeMux, d Deps) {
 			}
 			job, err = d.Store.MailboxJob(ctx, mailboxOwner(d), job.ID)
 			if err != nil {
-				stream.send(MailboxEvent{Type: "error", Error: err.Error()})
+				stream.send(MailboxEvent{Type: streamErrorEvent, Error: err.Error()})
 				return
 			}
 		}

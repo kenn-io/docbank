@@ -27,6 +27,7 @@ const tuiStorageScreenshotPath = screenshotPathFor("tui-multi-store-storage.png"
 const vaultBrowserScreenshotPath = screenshotPathFor("web-vault-browser.png");
 const pageSelectionScreenshotPath = screenshotPathFor("web-page-selection.png");
 const pageSelectionMobileScreenshotPath = screenshotPathFor("web-page-selection-mobile.png");
+const batchTagsScreenshotPath = screenshotPathFor("web-batch-tags.png");
 const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
 const retainedVersionScreenshotPath = screenshotPathFor(
   "web-retained-version-download.png",
@@ -138,6 +139,7 @@ test.describe("Docbank web screenshots", () => {
     await rm(vaultBrowserScreenshotPath, { force: true });
     await rm(pageSelectionScreenshotPath, { force: true });
     await rm(pageSelectionMobileScreenshotPath, { force: true });
+    await rm(batchTagsScreenshotPath, { force: true });
     await rm(searchResultsScreenshotPath, { force: true });
     await rm(retainedVersionScreenshotPath, { force: true });
     await rm(packedStorageScreenshotPath, { force: true });
@@ -152,7 +154,9 @@ test.describe("Docbank web screenshots", () => {
       { mode: 0o600 },
     );
     const reports = path.join(workspace, "synthetic", "Reports");
+    const longReports = path.join(workspace, "synthetic", "Long Reports");
     await mkdir(reports, { recursive: true, mode: 0o700 });
+    await mkdir(longReports, { recursive: true, mode: 0o700 });
     await writeFile(
       path.join(reports, "quarterly-tax-report.txt"),
       "Synthetic quarterly tax report for screenshot validation.\n",
@@ -168,6 +172,15 @@ test.describe("Docbank web screenshots", () => {
       "category,amount\nSynthetic revenue,125000\nSynthetic expense,42000\n",
       { mode: 0o600 },
     );
+    await Promise.all(
+      Array.from({ length: 100 }, (_, index) =>
+        writeFile(
+          path.join(longReports, `document-${String(index).padStart(3, "0")}.txt`),
+          `Extended listing fixture document ${index}.\n`,
+          { mode: 0o600 },
+        ),
+      ),
+    );
     const archiveReference = path.join(
       workspace,
       "synthetic",
@@ -180,6 +193,7 @@ test.describe("Docbank web screenshots", () => {
     );
 
     await runDocbank(["add", reports, "--dest", "/", "--progress", "plain"]);
+    await runDocbank(["add", longReports, "--dest", "/", "--progress", "plain"]);
     await runDocbank([
       "add",
       archiveReference,
@@ -379,6 +393,13 @@ test.describe("Docbank web screenshots", () => {
       fullPage: false,
       animations: "disabled",
     });
+    await selectionDock.getByRole("button", { name: "Add tags" }).click();
+    const batchTags = page.getByRole("dialog", { name: "Tag selected documents" });
+    await batchTags.getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" }).click();
+    await page.getByRole("option", { name: "tax", exact: true }).click();
+    await expect(batchTags.getByText("1 of 2 selected documents have this tag.")).toBeVisible();
+    await page.screenshot({ path: batchTagsScreenshotPath, fullPage: false, animations: "disabled" });
+    await batchTags.getByRole("button", { name: "Done" }).click();
     await selectionDock
       .getByRole("button", { name: "Clear selection" })
       .click();

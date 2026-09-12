@@ -307,6 +307,12 @@ var codeToTypedErr = map[string]error{
 	"email_corrupt":                store.ErrEmailCorrupt,
 	"email_part_unavailable":       store.ErrEmailPartUnavailable,
 	"invalid_email_part":           store.ErrInvalidEmailPart,
+	"snapshot_gone":                store.ErrSnapshotGone,
+	"invalid_cursor":               store.ErrSnapshotCursor,
+	"snapshot_capacity":            store.ErrSnapshotAdmission,
+	"snapshot_busy":                store.ErrSnapshotBusy,
+	"snapshot_too_large":           store.ErrQuerySnapshotTooLarge,
+	"invalid_saved_query_run":      store.ErrInvalidSavedQueryRun,
 }
 
 func decodeError(resp *http.Response) error {

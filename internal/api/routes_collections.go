@@ -25,10 +25,15 @@ func registerCollectionRoutes(api huma.API, d Deps, g *gate) {
 		Summary:     "List document-bearing ingest runs, newest first",
 		Description: "Counts and bytes describe current live members. Empty runs remain directly accessible only when they retain label authority.",
 	}, func(ctx context.Context, in *struct {
-		Limit  int `query:"limit" default:"100" minimum:"1" maximum:"1000"`
-		Offset int `query:"offset" default:"0" minimum:"0"`
+		Limit   int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset  int    `query:"offset" default:"0" minimum:"0"`
+		Profile string `query:"profile" maxLength:"128"`
 	}) (*collectionPageOutput, error) {
-		collections, total, err := d.Store.Collections(ctx, in.Limit, in.Offset)
+		selection, err := selectCollectionProfile(d.Cfg, in.Profile)
+		if err != nil {
+			return nil, err
+		}
+		collections, total, err := d.Store.Collections(ctx, in.Limit, in.Offset, selection.Coverage)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -36,7 +41,7 @@ func registerCollectionRoutes(api huma.API, d Deps, g *gate) {
 			Items: []Collection{}, Total: total, Limit: in.Limit, Offset: in.Offset,
 		}}
 		for _, collection := range collections {
-			out.Body.Items = append(out.Body.Items, fromStoreCollection(collection))
+			out.Body.Items = append(out.Body.Items, fromStoreCollection(collection, selection))
 		}
 		return out, nil
 	})
@@ -45,13 +50,18 @@ func registerCollectionRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "getCollection", Method: http.MethodGet, Path: "/api/v1/collections/{id}",
 		Summary: "Inspect one ingest run and its current live summary",
 	}, func(ctx context.Context, in *struct {
-		ID string `path:"id"`
+		ID      string `path:"id"`
+		Profile string `query:"profile" maxLength:"128"`
 	}) (*collectionOutput, error) {
-		collection, err := d.Store.CollectionByID(ctx, in.ID)
+		selection, err := selectCollectionProfile(d.Cfg, in.Profile)
+		if err != nil {
+			return nil, err
+		}
+		collection, err := d.Store.CollectionByID(ctx, in.ID, selection.Coverage)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &collectionOutput{Body: fromStoreCollection(collection)}, nil
+		return &collectionOutput{Body: fromStoreCollection(collection, selection)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -59,16 +69,21 @@ func registerCollectionRoutes(api huma.API, d Deps, g *gate) {
 		Path:    "/api/v1/collections/{id}/members",
 		Summary: "List a collection's current live file members",
 	}, func(ctx context.Context, in *struct {
-		ID     string `path:"id"`
-		Limit  int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
-		Offset int    `query:"offset" default:"0" minimum:"0"`
+		ID      string `path:"id"`
+		Limit   int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset  int    `query:"offset" default:"0" minimum:"0"`
+		Profile string `query:"profile" maxLength:"128"`
 	}) (*collectionMemberPageOutput, error) {
-		page, err := d.Store.CollectionMembers(ctx, in.ID, in.Limit, in.Offset)
+		selection, err := selectCollectionProfile(d.Cfg, in.Profile)
+		if err != nil {
+			return nil, err
+		}
+		page, err := d.Store.CollectionMembers(ctx, in.ID, in.Limit, in.Offset, selection.Coverage)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
 		out := &collectionMemberPageOutput{Body: CollectionMemberPage{
-			Collection: fromStoreCollection(page.Collection), Items: []Node{},
+			Collection: fromStoreCollection(page.Collection, selection), Items: []Node{},
 			Total: page.Total, Limit: in.Limit, Offset: in.Offset,
 		}}
 		for _, member := range page.Items {

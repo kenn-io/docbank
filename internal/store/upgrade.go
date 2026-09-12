@@ -77,8 +77,10 @@ var currentSchemaTables = [...]string{
 	"mailbox_jobs", "mailbox_occurrences",
 	"email_document_publications", "email_document_relations",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
+	"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
+	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
-	"saved_queries", "collection_labels",
+	"saved_queries", "saved_query_runs", "collection_labels", "batch_tag_receipts",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 	"vector_index_reader_leases", "vector_index_unavailable_coverage",
 }
@@ -243,10 +245,15 @@ func validateCurrentSchemaColumns(
 		)
 	}
 	for _, table := range []string{
+		"mailbox_containers", "mailbox_chunks",
+		"mailbox_archives", "mailbox_transfer_receipts", "mailbox_transfer_heads",
+		"mailbox_jobs", "mailbox_occurrences",
 		"email_document_publications", "email_document_relations",
 		"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
+		"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
 		"blob_stores", "blob_locations", "blob_pack_entries",
-		"saved_queries", "collection_labels",
+		"saved_queries", "saved_query_runs", "collection_labels", "batch_tag_receipts",
+		"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 		"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 		"vector_index_reader_leases", "vector_index_unavailable_coverage",
 	} {
@@ -307,7 +314,7 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 		return nil, fmt.Errorf("committing temporary schema transaction: %w", err)
 	}
 	columns = make(map[string][]string, len(currentSchemaTables))
-	for _, table := range currentSchemaTables {
+	for _, table := range &currentSchemaTables {
 		columns[table], err = tableColumns(db, table)
 		if err != nil {
 			return nil, err

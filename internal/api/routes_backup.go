@@ -131,7 +131,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				return
 			}
 			if createErr != nil {
-				stream.send(BackupCreateEvent{Type: "error", Error: backupProblem(createErr)})
+				stream.send(BackupCreateEvent{Type: streamErrorEvent, Error: backupProblem(createErr)})
 				return
 			}
 			stream.send(BackupCreateEvent{Type: "result", Snapshot: &snapshot})
@@ -228,7 +228,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				return
 			}
 			if verifyErr != nil {
-				stream.send(BackupVerifyEvent{Type: "error", Error: backupProblem(verifyErr)})
+				stream.send(BackupVerifyEvent{Type: streamErrorEvent, Error: backupProblem(verifyErr)})
 				return
 			}
 			stream.send(BackupVerifyEvent{Type: "result", Report: &report})
@@ -300,7 +300,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				return
 			}
 			if restoreErr != nil {
-				stream.send(BackupRestoreEvent{Type: "error", Error: backupProblem(restoreErr)})
+				stream.send(BackupRestoreEvent{Type: streamErrorEvent, Error: backupProblem(restoreErr)})
 				return
 			}
 			stream.send(BackupRestoreEvent{Type: "result", Report: &report})
@@ -660,6 +660,8 @@ func backupProgress(event backup.ProgressEvent) *BackupProgress {
 		BytesDone: event.BytesDone, BytesTotal: event.BytesTotal, Final: event.Final,
 	}
 }
+
+const streamErrorEvent = "error"
 
 type eventStreamWriter[T any] struct {
 	mu       sync.Mutex

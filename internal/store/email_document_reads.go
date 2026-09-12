@@ -8,6 +8,8 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+const emailDocumentFailedState = "failed"
+
 func (s *Store) EmailDocumentRelations(ctx context.Context, query document.EmailDocumentRelationQuery) (document.EmailDocumentRelationPage, error) {
 	query, err := document.NormalizeEmailDocumentRelationQuery(query)
 	if err != nil {
@@ -91,8 +93,8 @@ func emailDocumentProcessingState(ctx context.Context, q metadataQuerier, r docu
 	err = q.QueryRowContext(ctx, `SELECT j.state,COALESCE(j.failure_code,'') FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=? ORDER BY w.updated_at DESC,w.waiter_id DESC LIMIT 1`, r.Child.VersionID).Scan(&state, &failure)
 	if err == nil {
 		switch state {
-		case "failed", "operator_required":
-			return "failed", failure, nil
+		case emailDocumentFailedState, "operator_required":
+			return emailDocumentFailedState, failure, nil
 		default:
 			return "pending", failure, nil
 		}

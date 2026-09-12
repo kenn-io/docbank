@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
+	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/storenamespace"
 )
 
@@ -249,6 +250,7 @@ type EmailPDFConfig struct {
 // Config is the full contents of config.toml.
 type Config struct {
 	EmailPDF           *EmailPDFConfig                    `toml:"email_pdf"`
+	PageRuntime        *pagerender.Profile                `toml:"page_runtime"`
 	Server             ServerConfig                       `toml:"server"`
 	Web                WebConfig                          `toml:"web"`
 	Backup             BackupConfig                       `toml:"backup"`
@@ -442,6 +444,11 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 // self-publishes an ephemeral key rather than serving unauthenticated (see
 // cmd/docbank/daemon.go).
 func (c Config) Validate() error {
+	if c.PageRuntime != nil {
+		if err := c.PageRuntime.Validate(); err != nil {
+			return fmt.Errorf("[page_runtime]: %w", err)
+		}
+	}
 	if c.Backup.ZstdLevel != 0 && (c.Backup.ZstdLevel < 1 || c.Backup.ZstdLevel > 19) {
 		return fmt.Errorf("[backup] zstd_level %d: want 0 or 1-19", c.Backup.ZstdLevel)
 	}

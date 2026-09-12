@@ -335,6 +335,14 @@ func (layout metadataSourceLayout) hasCollectionLabels() bool {
 	return layout.schemaVersion >= 8
 }
 
+func (layout metadataSourceLayout) hasSavedQueryRuns() bool {
+	return layout.schemaVersion >= 10
+}
+
+func (layout metadataSourceLayout) hasBatchTagReceipts() bool {
+	return layout.schemaVersion >= 9
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -411,6 +419,16 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportProvenance(ctx, tx, write); err != nil {
 		return err
 	}
+	if layout.schemaVersion >= 11 {
+		if err := exportPageMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 12 {
+		if err := exportBundleMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
@@ -422,8 +440,18 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.hasSavedQueryRuns() {
+		if err := exportSavedQueryRuns(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasBatchTagReceipts() {
+		if err := exportBatchTagReceipts(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if err := exportExtractedText(ctx, tx, write, backupScoped); err != nil {
 		return err
@@ -988,6 +1016,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM nodes),
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM saved_queries)
+		    + (SELECT COUNT(*) FROM saved_query_runs)
 		    + (SELECT COUNT(*) FROM blob_checksums)
 		    + (SELECT COUNT(*) FROM email_generations)
 		    + (SELECT COUNT(*) FROM email_part_artifacts)
@@ -1007,10 +1036,19 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
 		    + (SELECT COUNT(*) FROM visual_preview_heads)
+		    + (SELECT COUNT(*) FROM page_documents)
+		    + (SELECT COUNT(*) FROM page_frames)
+		    + (SELECT COUNT(*) FROM page_recipes)
+		    + (SELECT COUNT(*) FROM page_images)
+		    + (SELECT COUNT(*) FROM page_render_jobs)
+		    + (SELECT COUNT(*) FROM export_sources)
+		    + (SELECT COUNT(*) FROM export_plans)
+		    + (SELECT COUNT(*) FROM export_jobs)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
+		    + (SELECT COUNT(*) FROM batch_tag_receipts)
 		    + (SELECT COUNT(*) FROM extracted_text)
 		    + (SELECT COUNT(*) FROM text_extraction_queue)
 		    + (SELECT COUNT(*) FROM text_searchable_versions)
@@ -1243,6 +1281,10 @@ func (s *Store) importMetadataRecord(
 			previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
 			v.CreatedAt)
 		return err
+	case metadataPageDocumentType, metadataPageRecipeType, metadataPageImageType, metadataPageJobType:
+		return importPageMetadata(ctx, tx, kind, raw)
+	case metadataExportType:
+		return importBundleMetadata(ctx, tx, raw)
 	case metadataVisualPreviewHeadType:
 		var v metadataVisualPreviewHead
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1348,6 +1390,12 @@ func (s *Store) importMetadataRecord(
 			return err
 		}
 		return importSavedQueryMetadata(ctx, tx, v)
+	case metadataSavedQueryRunType:
+		var v metadataSavedQueryRun
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importSavedQueryRunMetadata(ctx, tx, v)
 	case "node_tag":
 		var v metadataNodeTag
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1358,6 +1406,12 @@ func (s *Store) importMetadataRecord(
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, v.NodeID, v.TagID)
 		return err
+	case metadataBatchTagReceiptType:
+		var v metadataBatchTagReceipt
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importBatchTagReceipt(ctx, tx, v)
 	case "extracted_text":
 		var v metadataExtractedText
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1425,6 +1479,7 @@ const (
 	metadataWatchSourceType               = "watch_source"
 	metadataTagRecordType                 = "tag"
 	metadataSavedQueryType                = "saved_query"
+	metadataSavedQueryRunType             = "saved_query_run"
 	metadataAuditAuthorityType            = "audit_authority"
 	metadataAuditScopeType                = "audit_scope"
 	metadataAuditMembershipType           = "audit_membership"
@@ -1451,6 +1506,11 @@ var metadataRequiredFields = map[string][]string{
 	"email_part_artifact":                  {metadataTypeField, "generation_id", "part_path", "role", "blob_hash", "size"},
 	"email_generation":                     {metadataTypeField, "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
 	"email_document_publication":           {metadataTypeField, "request", "receipt"},
+	metadataExportType:                     {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
+	metadataPageDocumentType:               {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageRecipeType:                 {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageImageType:                  {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageJobType:                    {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
@@ -1465,7 +1525,9 @@ var metadataRequiredFields = map[string][]string{
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
 	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", "revision", metadataCreatedAtField, "updated_at"},
+	metadataSavedQueryRunType:              {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
+	metadataBatchTagReceiptType:            {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
 	"extracted_text":                       {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
 	metadataAuditAuthorityType:             {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
 	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
@@ -1502,9 +1564,13 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version":                  {"mime_type": true, "source_version_id": true},
-	metadataProvenanceType:             {"original_mtime": true, "supersedes": true},
-	metadataCollectionLabelType:        {"label": true},
+	"content_version":           {"mime_type": true, "source_version_id": true},
+	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
+	metadataCollectionLabelType: {"label": true},
+	metadataSavedQueryRunType: {
+		"previous_run_id": true, "previous_member_hash": true,
+		"previous_total": true, "previous_query_fingerprint": true,
+	},
 	"extracted_text":                   {"error": true, "text": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
@@ -1870,6 +1936,16 @@ func validateMetadataStateWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.hasSavedQueryRuns() {
+		if err := validateSavedQueryRunMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.hasBatchTagReceipts() {
+		if err := validateBatchTagReceiptMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if layout.hasDerivativeCatalog() {
 		if err := validateProcessingMetadataState(ctx, tx); err != nil {
 			return err
@@ -1894,6 +1970,16 @@ func validateMetadataStateWithVaultIdentity(
 			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 				return err
 			}
+		}
+	}
+	if layout.schemaVersion >= 11 {
+		if err := exportPageMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 12 {
+		if err := exportBundleMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			return err
 		}
 	}
 	topology, err := loadAuditTopologyRows(ctx, tx)

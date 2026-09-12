@@ -25,24 +25,23 @@ type suppliedTranscriptArtifactV1 struct {
 	Text            string `json:"text"`
 }
 
-// BuildTranscriptEvidenceV1 turns supplied transcript text into the existing
-// provider-neutral evidence and retained transcript artifact contracts.
-// Transcript text has generic audio provenance because this operation does
-// not inspect audio or infer timing, speakers, or authenticity.
-func BuildTranscriptEvidenceV1(
+// BuildTranscriptSourceEvidenceV1 builds the source evidence and retained
+// artifact returned by a rendition provider. BuildTranscriptEvidenceV1
+// normalizes that result. Both calls must use the same EvidencePolicy.
+func BuildTranscriptSourceEvidenceV1(
 	transcript SuppliedTranscript, policy EvidencePolicy,
-) (NormalizedEvidenceV1, RenditionArtifact, error) {
+) (SourceEvidenceV1, RenditionArtifact, error) {
 	if err := policy.validate(); err != nil {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 	if err := validateEvidenceIdentifier(transcript.Provider, "transcript provider"); err != nil {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 	if err := validateEvidenceText(transcript.Text, "transcript text"); err != nil {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 	if strings.TrimSpace(transcript.Text) == "" {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, errors.New("transcript text must contain non-whitespace text")
+		return SourceEvidenceV1{}, RenditionArtifact{}, errors.New("transcript text must contain non-whitespace text")
 	}
 
 	source := SourceEvidenceV1{
@@ -62,10 +61,10 @@ func BuildTranscriptEvidenceV1(
 		}},
 	}
 	if err := policy.validateSource(source); err != nil {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 	if _, err := validateSourceEvidenceV1(source, policy.maxDocumentChars); err != nil {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 
 	payload, err := canonical.Marshal(suppliedTranscriptArtifactV1{
@@ -74,7 +73,7 @@ func BuildTranscriptEvidenceV1(
 		Text:            transcript.Text,
 	})
 	if err != nil {
-		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
 	digest := sha256.Sum256(payload)
 	checksum := hex.EncodeToString(digest[:])
@@ -82,12 +81,26 @@ func BuildTranscriptEvidenceV1(
 		Pointer: "transcript.json", ProviderID: "transcript",
 		Role: EvidenceArtifactTranscript, SHA256: checksum,
 	}}
+	return source, RenditionArtifact{
+		Role: EvidenceArtifactTranscript, MediaType: "application/json",
+		Payload: payload, SHA256: checksum,
+	}, nil
+}
+
+// BuildTranscriptEvidenceV1 turns supplied transcript text into the existing
+// provider-neutral evidence and retained transcript artifact contracts.
+// Transcript text has generic audio provenance because this operation does
+// not inspect audio or infer timing, speakers, or authenticity.
+func BuildTranscriptEvidenceV1(
+	transcript SuppliedTranscript, policy EvidencePolicy,
+) (NormalizedEvidenceV1, RenditionArtifact, error) {
+	source, artifact, err := BuildTranscriptSourceEvidenceV1(transcript, policy)
+	if err != nil {
+		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
+	}
 	evidence, err := NormalizeEvidenceV1(source, policy)
 	if err != nil {
 		return NormalizedEvidenceV1{}, RenditionArtifact{}, err
 	}
-	return evidence, RenditionArtifact{
-		Role: EvidenceArtifactTranscript, MediaType: "application/json",
-		Payload: payload, SHA256: checksum,
-	}, nil
+	return evidence, artifact, nil
 }

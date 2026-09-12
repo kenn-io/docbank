@@ -224,6 +224,9 @@ func (s *Store) PurgeDerivatives(
 	}
 	report := PurgeReport{ImmutableBackupCopiesUntouched: true}
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := checkExportPurgeRetained(ctx, tx, request); err != nil {
+			return err
+		}
 		auditActive, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err

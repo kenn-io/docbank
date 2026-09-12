@@ -219,6 +219,14 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := startMailboxJobs(ctx, jobSupervisor, s, blobs, layout.BlobTmpDir(), operationGate); err != nil {
 		return err
 	}
+	exportWorker, err := startExportWorker(jobSupervisor, s, blobs, layout.Root, operationGate)
+	if err != nil {
+		return err
+	}
+	pageRuntime, err := startPageRuntime(sigCtx, cfg, jobSupervisor, s, blobs, operationGate, logger)
+	if err != nil {
+		return err
+	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
 	emailPDFRuntime, err := configureEmailPDF(cfg, s, blobs, layout.BlobTmpDir(), runtimeRegistry)
 	if err != nil {
@@ -375,6 +383,7 @@ func runServe(ctx context.Context) (retErr error) {
 		StartedAt:       time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
 		WebURL: webURL, BlobRegistry: blobRegistry,
+		PageRuntime: pageRuntime, Exports: exportWorker,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {
