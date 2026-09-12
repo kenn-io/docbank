@@ -156,7 +156,7 @@ func filenameExtension(filename string) string {
 	baseStart := strings.LastIndexAny(filename, `/\\`) + 1
 	base := filename[baseStart:]
 	dot := strings.LastIndexByte(base, '.')
-	if dot < 0 || dot == len(base)-1 {
+	if dot <= 0 || dot == len(base)-1 {
 		return ""
 	}
 	extension, ok := lowerASCII(base[dot+1:])

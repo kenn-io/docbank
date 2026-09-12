@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,35 +118,8 @@ func TestServeRecoversInterruptedRestoreBeforeInitializingVault(t *testing.T) {
 	require.NoError(t, handoff.Prepare(t.Context()))
 	t.Setenv("DOCBANK_HOME", dir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			require.NoError(t, err)
-		case <-time.After(10 * time.Second):
-			require.Fail(t, "daemon did not shut down")
-		}
-	})
-	healthClient := &http.Client{Timeout: time.Second}
-	// Recovery and fresh SQLite initialization can exceed ten seconds on
-	// Windows CI. This checks recovery ordering, not startup performance.
-	require.Eventually(t, func() bool {
-		records, listErr := client.RuntimeStore(dir).List()
-		if listErr != nil || len(records) != 1 {
-			return false
-		}
-		// Discovery is published before worker registration finishes. Wait for
-		// serving readiness before asking a successfully started daemon to stop.
-		response, err := healthClient.Get("http://" + records[0].Address + "/health")
-		if err != nil {
-			return false
-		}
-		_ = response.Body.Close()
-		return response.StatusCode == http.StatusOK
-	}, time.Minute, 50*time.Millisecond)
+	startServe(t)
+	waitForDaemon(t, dir)
 	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(dir, "blobs"))
 	require.NoError(t, err)
 	assert.False(t, pending)
@@ -191,26 +165,9 @@ func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
-
+	stop := startServe(t)
 	// Discover via the runtime record like a real client would.
-	var rec kitdaemon.RuntimeRecord
-	require.Eventually(t, func() bool {
-		recs, err := client.RuntimeStore(dir).List()
-		if err != nil || len(recs) == 0 {
-			return false
-		}
-		rec = recs[0]
-		resp, err := http.Get("http://" + rec.Address + "/health")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 10*time.Second, 50*time.Millisecond)
+	waitForDaemon(t, dir)
 
 	// Second daemon on the same vault must refuse.
 	err := runServe(context.Background())
@@ -224,13 +181,7 @@ func TestServeServesAndShutsDownGracefully(t *testing.T) {
 	}
 	require.ErrorIs(t, err, docbank.ErrProcessingSpoolLocked)
 
-	cancel()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not shut down")
-	}
+	stop()
 	// Record removed on shutdown.
 	recs, err := client.RuntimeStore(dir).List()
 	require.NoError(t, err)
@@ -249,25 +200,8 @@ func TestServeRequiresKeyEvenWhenConfigIsKeyless(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
-
-	var rec kitdaemon.RuntimeRecord
-	require.Eventually(t, func() bool {
-		recs, err := client.RuntimeStore(dir).List()
-		if err != nil || len(recs) == 0 {
-			return false
-		}
-		rec = recs[0]
-		resp, err := http.Get("http://" + rec.Address + "/health")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 10*time.Second, 50*time.Millisecond)
+	startServe(t)
+	rec := waitForDaemon(t, dir)
 
 	// No X-Api-Key at all: any local OS user reaching the loopback port
 	// without a key must be refused, not silently served.
@@ -287,12 +221,54 @@ func TestServeRequiresKeyEvenWhenConfigIsKeyless(t *testing.T) {
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
+}
 
-	cancel()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not shut down")
-	}
+// Fresh SQLite initialization and shutdown can each exceed ten seconds on busy
+// Windows CI runners. These tests check daemon behavior, not performance.
+const (
+	daemonStartTimeout    = time.Minute
+	daemonShutdownTimeout = 30 * time.Second
+)
+
+// startServe runs the daemon until stop or test cleanup, whichever comes first,
+// and waits for it to exit so TempDir removal never races a live daemon.
+func startServe(t *testing.T) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx) }()
+	stop = sync.OnceFunc(func() {
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(daemonShutdownTimeout):
+			require.Fail(t, "daemon did not shut down")
+		}
+	})
+	t.Cleanup(stop)
+	return stop
+}
+
+// waitForDaemon discovers the daemon through its runtime record like a real
+// client and waits until it serves health checks, since discovery is published
+// before worker registration finishes.
+func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
+	t.Helper()
+	healthClient := &http.Client{Timeout: time.Second}
+	var rec kitdaemon.RuntimeRecord
+	require.Eventually(t, func() bool {
+		recs, err := client.RuntimeStore(dir).List()
+		if err != nil || len(recs) != 1 {
+			return false
+		}
+		rec = recs[0]
+		resp, err := healthClient.Get("http://" + rec.Address + "/health")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, daemonStartTimeout, 50*time.Millisecond)
+	return rec
 }

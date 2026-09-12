@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -280,7 +281,6 @@ func TestRenditionClientResolvesSecretPerAttemptAndStopsAtExpiry(t *testing.T) {
 	manifest := syntheticManifest(t, policy, true)
 	descriptor := renditionDescriptor(t, policy, manifest, "pdf")
 	fixture := renditionFixture(t, descriptor, testPDF("expiry"))
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(20 * time.Millisecond).Format("2006-01-02T15:04:05.000000000Z")
 	secrets := &countingSecrets{}
 	var requests atomic.Int64
 	client := newRenditionTestClient(t, policy, manifest, descriptor, secrets,
@@ -293,10 +293,17 @@ func TestRenditionClientResolvesSecretPerAttemptAndStopsAtExpiry(t *testing.T) {
 			}, nil
 		}))
 
-	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
-	assert.Equal(t, int64(1), requests.Load())
-	assert.Equal(t, int64(1), secrets.calls.Load(), "expired retry must not resolve another credential")
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Keep the dated capability manifest valid on the simulated clock.
+		time.Sleep(time.Until(now))
+		fixture.authorization.ExpiresAt = time.Now().UTC().Add(20 * time.Millisecond).Format("2006-01-02T15:04:05.000000000Z")
+
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+		assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
+		assert.Equal(t, int64(1), requests.Load())
+		assert.Equal(t, int64(1), secrets.calls.Load(), "expired retry must not resolve another credential")
+	})
 }
 
 func TestRenditionClientExpiryCancelsInFlightUpload(t *testing.T) {
