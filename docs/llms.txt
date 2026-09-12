@@ -33,6 +33,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Trash, GC, Repack & Verify](https://docbank.ai/docs/usage/trash-and-gc.md): The explicit deletion and physical-reclamation lifecycle.
 - [Multi-store Storage](https://docbank.ai/docs/usage/storage.md): Keep document bytes local-first, add filesystem or S3-compatible stores, and move verified authority deliberately.
 - [Backup & Restore](https://docbank.ai/docs/usage/backup.md): Create incremental, verifiable snapshots in an immutable repository.
+- [Verified export bundles](https://docbank.ai/docs/usage/export-bundles.md): Export exact document versions and retained text or page images through stored plans and independently verified ZIP archives.
 - [Troubleshooting](https://docbank.ai/docs/troubleshooting.md): Diagnose docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
 
 ## Automate & Integrate
@@ -51,6 +52,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Document Processing](https://docbank.ai/docs/architecture/document-processing.md): How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
 - [Source Metadata](https://docbank.ai/docs/architecture/source-metadata.md): How Docbank records bounded facts found inside original files.
 - [Visual Previews](https://docbank.ai/docs/architecture/visual-previews.md): How Docbank identifies and retains canonical visual derivatives.
+- [Verified Page Images](https://docbank.ai/docs/architecture/page-images.md): Exact-version page geometry and bounded local page rendering.
 - [Storage](https://docbank.ai/docs/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.
 - [Loose & Packed Content](https://docbank.ai/docs/architecture/packed-storage.md): The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
 - [Editing & Versions](https://docbank.ai/docs/architecture/editing-and-versions.md): Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.

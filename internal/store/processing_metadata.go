@@ -1630,13 +1630,19 @@ type RenditionBlobReader interface {
 // artifact through the restored mixed-storage catalog, including builds that
 // are staged but not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
-	return s.verifyRenditionBlobBytes(ctx, reader, false)
+	if err := s.verifyRenditionBlobBytes(ctx, reader, false); err != nil {
+		return err
+	}
+	return s.VerifyPageImageBytes(ctx, reader)
 }
 
 // VerifyRestoredRenditionBlobBytes allows omitted vector payloads during restore.
 // Source, evidence, and rendition bytes remain required; corrupt vectors fail.
 func (s *Store) VerifyRestoredRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
-	return s.verifyRenditionBlobBytes(ctx, reader, true)
+	if err := s.verifyRenditionBlobBytes(ctx, reader, true); err != nil {
+		return err
+	}
+	return s.VerifyPageImageBytes(ctx, reader)
 }
 
 func (s *Store) verifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader, allowMissingVectorPayloads bool) error {

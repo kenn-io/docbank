@@ -70,6 +70,43 @@ type DuplicatePage struct {
 	Offset          int
 }
 
+// DuplicateGroupByHash returns the bounded live-current group for one exact
+// selected content identity. It uses the same eligible relation as Duplicates
+// and does not scan or reinterpret the paginated group listing.
+func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int64) (DuplicateGroup, error) {
+	if validateCatalogSHA256(hash, "duplicate hash") != nil || size < 0 {
+		return DuplicateGroup{}, ErrNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return DuplicateGroup{}, fmt.Errorf("starting exact duplicate snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	group := DuplicateGroup{Hash: hash, Size: size, References: make([]DuplicateReference, 0)}
+	err = tx.QueryRowContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+		SELECT COUNT(DISTINCT node_id),
+		       (SELECT node_id FROM current_content_members
+		        WHERE blob_hash=? AND size=? ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
+		FROM current_content_members WHERE blob_hash=? AND size=?
+		HAVING COUNT(DISTINCT node_id) >= 2`, hash, size, hash, size,
+	).Scan(&group.ReferenceCount, &group.RepresentativeNodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DuplicateGroup{}, ErrNotFound
+	}
+	if err != nil {
+		return DuplicateGroup{}, fmt.Errorf("reading exact duplicate group %s: %w", hash, err)
+	}
+	group.References, err = duplicateReferences(ctx, tx, group)
+	if err != nil {
+		return DuplicateGroup{}, err
+	}
+	group.ReferencesTruncated = group.ReferenceCount > len(group.References)
+	if err := tx.Commit(); err != nil {
+		return DuplicateGroup{}, fmt.Errorf("closing exact duplicate snapshot: %w", err)
+	}
+	return group, nil
+}
+
 // Duplicates lists groups of at least two distinct live files whose exact
 // current versions share canonical blob content.
 func (s *Store) Duplicates(

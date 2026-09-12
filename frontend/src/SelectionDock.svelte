@@ -7,6 +7,10 @@
     truncated: boolean;
     onclear: () => void;
     onselectvisible: () => void;
+    ontags?: () => void;
+    context?: "live" | "snapshot";
+    wholeQueryCount?: number;
+    onwholequerytags?: () => void;
   }
 
   let {
@@ -15,6 +19,10 @@
     truncated,
     onclear,
     onselectvisible,
+    ontags,
+    context = "live",
+    wholeQueryCount = 0,
+    onwholequerytags,
   }: Props = $props();
 </script>
 
@@ -31,8 +39,10 @@
 >
   {#snippet header()}
     <div class="selection-summary">
-      <strong>{selectedCount} selected on this page</strong>
-      {#if truncated}<span>More results exist beyond this page</span>{/if}
+      <strong>{selectedCount} selected on this {context === "snapshot" ? "frozen page" : "page"}</strong>
+      {#if context === "snapshot"}
+        <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
+      {:else if truncated}<span>More results exist beyond this page</span>{/if}
     </div>
   {/snippet}
 
@@ -43,6 +53,12 @@
       onclick={onselectvisible}
     >Select visible documents</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
+    {#if ontags}
+      <Button size="sm" onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Add tags"}</Button>
+    {/if}
+    {#if context === "snapshot" && onwholequerytags}
+      <Button size="sm" tone="info" onclick={onwholequerytags}>Tag whole query</Button>
+    {/if}
   </div>
 </BottomDock>
 

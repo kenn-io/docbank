@@ -1,5 +1,105 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+CREATE TABLE IF NOT EXISTS export_sources (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    request_json BLOB NOT NULL,
+    canonical_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS export_chunks (
+    source_id TEXT NOT NULL REFERENCES export_sources(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(source_id,chunk_index)
+);
+CREATE TABLE IF NOT EXISTS export_members (
+    source_id TEXT NOT NULL REFERENCES export_sources(id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL,
+    version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(source_id,node_id,version_id)
+);
+CREATE INDEX IF NOT EXISTS export_members_version ON export_members(version_id);
+CREATE TABLE IF NOT EXISTS export_plans (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES export_sources(id),
+    request_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS export_documents (
+    plan_id TEXT NOT NULL REFERENCES export_plans(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(plan_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS export_role_roots (
+    plan_id TEXT NOT NULL REFERENCES export_plans(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    PRIMARY KEY(plan_id,blob_hash)
+);
+CREATE TABLE IF NOT EXISTS export_jobs (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    plan_id TEXT NOT NULL REFERENCES export_plans(id) ON DELETE CASCADE,
+    request_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    archive_name TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS export_jobs_pending ON export_jobs(state,id);
+
+-- Physical page frames are independent of optional renderer recipes.
+CREATE TABLE IF NOT EXISTS page_documents (
+    version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS page_frames (
+    version_id TEXT NOT NULL REFERENCES page_documents(version_id) ON DELETE CASCADE,
+    page INTEGER NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    PRIMARY KEY(version_id,page)
+);
+CREATE TABLE IF NOT EXISTS page_recipes (
+    checksum TEXT PRIMARY KEY,
+    canonical_json BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS page_images (
+    version_id TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    recipe_sha256 TEXT NOT NULL REFERENCES page_recipes(checksum),
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    PRIMARY KEY(version_id,recipe_sha256,page),
+    FOREIGN KEY(version_id,page) REFERENCES page_frames(version_id,page) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS page_render_jobs (
+    id TEXT PRIMARY KEY,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    request_sha256 TEXT NOT NULL UNIQUE,
+    request_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    results_json BLOB NOT NULL,
+    failure_code TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS page_render_jobs_pending ON page_render_jobs(state,created_at,id);
+
 -- One stable logical identity follows the vault through JSONL backup and
 -- restore. Filesystem location is deliberately not identity.
 CREATE TABLE IF NOT EXISTS vault_metadata (
@@ -1183,6 +1283,24 @@ CREATE TABLE IF NOT EXISTS node_tags (
 
 CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
+-- Immutable protocol replay authority deliberately has no tag or node foreign
+-- keys: a committed operation identity survives later deletion and purge.
+CREATE TABLE IF NOT EXISTS batch_tag_receipts (
+    operation_id  TEXT PRIMARY KEY,
+    request_digest TEXT NOT NULL,
+    receipt_json  BLOB NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS batch_tag_receipts_immutable_update
+BEFORE UPDATE ON batch_tag_receipts BEGIN
+    SELECT RAISE(ABORT, 'batch tag receipts are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS batch_tag_receipts_immutable_delete
+BEFORE DELETE ON batch_tag_receipts BEGIN
+    SELECT RAISE(ABORT, 'batch tag receipts are immutable');
+END;
+
 -- Saved definitions are mutable intent, fenced by revision. Their canonical
 -- payload and fingerprint are validated in Go before they enter authority.
 CREATE TABLE IF NOT EXISTS saved_queries (
@@ -1196,6 +1314,28 @@ CREATE TABLE IF NOT EXISTS saved_queries (
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+-- Saved run receipts retain comparison evidence while snapshot rows remain
+-- daemon-local. Evolving receipt policy is validated in Go, not SQL checks.
+CREATE TABLE IF NOT EXISTS saved_query_runs (
+    run_id                     TEXT PRIMARY KEY NOT NULL,
+    saved_query_id             TEXT NOT NULL REFERENCES saved_queries(id) ON DELETE CASCADE,
+    saved_query_revision       INTEGER NOT NULL,
+    query_fingerprint          TEXT NOT NULL,
+    snapshot_id                TEXT NOT NULL,
+    member_hash                TEXT NOT NULL,
+    total                      INTEGER NOT NULL,
+    total_bytes                INTEGER NOT NULL,
+    ran_at                     TEXT NOT NULL,
+    expires_at                 TEXT NOT NULL,
+    previous_run_id            TEXT,
+    previous_member_hash       TEXT,
+    previous_total             INTEGER,
+    previous_query_fingerprint TEXT
+);
+
+CREATE INDEX IF NOT EXISTS saved_query_runs_definition
+    ON saved_query_runs(saved_query_id, ran_at DESC);
 
 -- Canonical full-audit records are immutable content-addressed authority. The
 -- digest is over Docbank's typed canonical audit encoding, never the JSON

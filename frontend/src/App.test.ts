@@ -567,6 +567,7 @@ it.each(["browse", "search"] as const)(
         targetAuditReads += 1;
         return json({ enabled: false, scopes: [] });
       }
+      if (url === "/api/v1/nodes/3") return json(report);
       if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
         const items = [
           ...(assigned ? [tax] : []),
@@ -864,6 +865,7 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
     if (url === "/api/v1/audit/status?node_id=3") {
       return json({ enabled: false, scopes: [] });
     }
+    if (url === "/api/v1/nodes/3") return json(quarterlyReport);
     if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
@@ -1039,6 +1041,19 @@ function prepareSelectionApp(): void {
     value: vi.fn(),
   });
 }
+
+it("opens bounded tag assignment for the exact page selection", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
+  const dialog = await screen.findByRole("dialog", { name: "Tag selected documents" });
+  expect(within(dialog).getByText(/1 selected document\./)).toBeTruthy();
+  expect((within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled).toBe(true);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
+});
 
 it("selects displayed files without requests or changing the inspector, then reconciles a refresh", async () => {
   prepareSelectionApp();
