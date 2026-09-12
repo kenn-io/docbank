@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-10
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -457,6 +457,28 @@ still readable. Run `docbank backup verify` to independently prove repository
 integrity, and periodically restore into a separate vault to rehearse the
 complete recovery path.
 
+## Browse import collections
+
+Choose **Import collections** in the top bar to browse the vault's import groups.
+Each card shows its label or source description, ingest time, current live
+file count, and logical bytes. Select a collection to browse its current
+live members and inspect a document by its stable node identity. Counts are
+current membership, not a historical import total. The browser refresh time
+is separate from the ingest time.
+
+Labels belong to the import group, not its documents. Rename or clear a label
+under its inspected revision; if another client changes it first, the drawer
+keeps your draft and reports the conflict. Reload the label before deciding
+whether to save again. Label changes are unavailable once permanent audit
+authority has been enabled.
+
+Collection and member lists show at most 100 entries each. Empty groups,
+failed reads, and truncated lists are reported separately; use the paginated
+HTTP API to browse beyond that limit. This is direct member browsing, not
+a collection-filtered text search. Processing quality and coverage are
+unavailable here; the drawer does not treat missing coverage as zero failures
+or complete processing.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -491,6 +513,8 @@ accepts that credential for the following operations:
 | Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
+| Read collections and their members | Returns bounded lists of live import membership. |
+| Set or clear a collection label | Requires the inspected collection-label revision. |
 
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights).
 
