@@ -407,6 +407,8 @@ func validateRetainedArtifactPolicy(
 			requestedRole = document.EvidenceArtifactStructured
 		case string(document.EvidenceArtifactTranscript):
 			requestedRole = document.EvidenceArtifactTranscript
+		case string(document.EvidenceArtifactPDF):
+			requestedRole = document.EvidenceArtifactPDF
 		default:
 			return fmt.Errorf("staged rendition artifact role %q is unknown", artifact.Role)
 		}

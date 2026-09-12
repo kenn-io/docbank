@@ -1,9 +1,13 @@
 ---
+last_edited: 2026-09-12
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
 
 # Configuration
+
+For optional pinned local email rendering, see
+[Email PDF configuration](usage/email-pdf.md#configure-the-renderer).
 
 Docbank uses `~/.docbank/` with default settings unless you choose another
 vault. Use `DOCBANK_HOME` to select its location. Add `config.toml` when you need

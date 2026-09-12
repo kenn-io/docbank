@@ -22,6 +22,7 @@ Every public page is also published as raw Markdown at the route listed below.
 
 ## Work with Documents
 - [Importing Documents](https://docbank.ai/docs/usage/importing.md): Import folders, preview large sources, retry partial imports, and keep changing files up to date.
+- [Email PDFs](https://docbank.ai/docs/usage/email-pdf.md): Render one exact email version and keep a verified PDF alongside its original EML.
 - [Organizing & Tagging](https://docbank.ai/docs/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
 - [Searching](https://docbank.ai/docs/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
 - [Web application](https://docbank.ai/docs/usage/web.md): Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.

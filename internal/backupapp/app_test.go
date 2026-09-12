@@ -2518,6 +2518,9 @@ func TestDerivativeAuthorityCoversEveryProviderArtifactRole(t *testing.T) {
 		{document.EvidenceArtifactMarkdown, "synthetic provider markdown payload"},
 		{document.EvidenceArtifactStructured, "synthetic structured evidence payload"},
 		{document.EvidenceArtifactTranscript, "synthetic provider transcript payload"},
+		// Staged opaque bytes test role capture, not PDF publication. The real
+		// parser/receipt/backup path is covered by processing's email PDF tests.
+		{document.EvidenceArtifactPDF, "synthetic staged PDF role payload"},
 	}
 	hashes := map[string]string{}
 	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
@@ -2554,6 +2557,7 @@ func TestDerivativeAuthorityCoversEveryProviderArtifactRole(t *testing.T) {
 	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
 	require.NoError(t, err)
 	policy := `{"roles":[` +
+		`{"max_count":1,"min_count":1,"role":"email_pdf"},` +
 		`{"max_count":1,"min_count":1,"role":"normalized_evidence"},` +
 		`{"max_count":1,"min_count":1,"role":"provider_image"},` +
 		`{"max_count":1,"min_count":1,"role":"provider_markdown"},` +

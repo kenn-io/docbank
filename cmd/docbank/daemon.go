@@ -22,6 +22,8 @@ import (
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/emailpdf"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
@@ -198,6 +200,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if _, err := emailmime.RecoverStale(sigCtx, layout.BlobTmpDir()); err != nil {
 		return fmt.Errorf("recovering email decoder spool: %w", err)
 	}
+	if err := emailpdf.RecoverStale(sigCtx, layout.BlobTmpDir()); err != nil {
+		return fmt.Errorf("recovering email PDF workers: %w", err)
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
@@ -215,6 +220,14 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
+	emailPDFRuntime, err := configureEmailPDF(cfg, s, blobs, layout.BlobTmpDir(), runtimeRegistry)
+	if err != nil {
+		return err
+	}
+	var requestEmailPDF func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
+	if emailPDFRuntime != nil {
+		requestEmailPDF = emailPDFRuntime.Submit
+	}
 	if err := startProcessingJobs(
 		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
 	); err != nil {
@@ -358,7 +371,8 @@ func runServe(ctx context.Context) (retErr error) {
 	tracker := api.NewActivityTracker()
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
-		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
+		RequestEmailPDF: requestEmailPDF,
+		StartedAt:       time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
 		WebURL: webURL, BlobRegistry: blobRegistry,
 	})
@@ -446,16 +460,18 @@ func startProcessingJobs(
 	runtimes *processing.RenditionRuntimeRegistry, gate *api.OperationGate, logger *slog.Logger,
 ) error {
 	if runtimes.Ready() {
-		worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
-			Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
-			IdleDelay: time.Second,
-		})
-		if err != nil {
-			return fmt.Errorf("configuring rendition worker: %w", err)
-		}
-		if err := supervisor.Start("process:renditions", worker.Run); err != nil {
-			return fmt.Errorf("starting rendition worker: %w", err)
+		for index := range 2 {
+			worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+				Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
+				Owner: fmt.Sprintf("daemon-rendition-worker-%d", index), LeaseDuration: 5 * time.Minute,
+				IdleDelay: time.Second,
+			})
+			if err != nil {
+				return fmt.Errorf("configuring rendition worker: %w", err)
+			}
+			if err := supervisor.Start(fmt.Sprintf("process:renditions:%d", index), worker.Run); err != nil {
+				return fmt.Errorf("starting rendition worker: %w", err)
+			}
 		}
 	}
 	checksums := &processing.Backfill[store.BlobChecksumTarget]{

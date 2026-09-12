@@ -65,6 +65,7 @@ type Deps struct {
 	RepackPage            RepackPageFunc   // nil → shared bounded maintenance service
 	EnsureEmail           EnsureEmailFunc  // required only by POST /versions/{id}/email
 	PublishEmailDocuments PublishEmailDocumentsFunc
+	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	WebURL                string         // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry // nil keeps storage-registry routes read-only to the primary
 }

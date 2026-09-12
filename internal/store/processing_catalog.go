@@ -54,6 +54,7 @@ var persistedRenditionArtifactRoles = []string{
 	string(document.EvidenceArtifactMarkdown),
 	string(document.EvidenceArtifactStructured),
 	string(document.EvidenceArtifactTranscript),
+	string(document.EvidenceArtifactPDF),
 }
 
 // PersistedRenditionArtifactRoles returns the recognized rendition roles in
@@ -400,12 +401,19 @@ func renditionBuildDeclarationEqual(first, second RenditionBuildRecord) bool {
 func validateRenditionArtifactRolesForProfile(
 	record ProcessingProfileRecord, build RenditionBuildRecord,
 ) error {
+	output, err := validateEmailPDFBuild(build)
+	if err != nil {
+		return err
+	}
 	var profile document.ProcessingProfileV1
 	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("decoding attachment processing profile: %w", err)
 	}
 	if profile.Rendition == nil {
 		return errors.New("rendition attachment profile lacks a rendition binding")
+	}
+	if (output != nil) != (profile.Rendition.EmailPDF != nil) {
+		return ErrEmailCorrupt
 	}
 	requested := make(map[document.EvidenceArtifactRole]bool, len(profile.Rendition.RequestedArtifacts))
 	for _, role := range profile.Rendition.RequestedArtifacts {
@@ -425,7 +433,7 @@ func validateRenditionArtifactRolesForProfile(
 				continue
 			}
 		case string(document.EvidenceArtifactImage), string(document.EvidenceArtifactStructured),
-			string(document.EvidenceArtifactTranscript):
+			string(document.EvidenceArtifactTranscript), string(document.EvidenceArtifactPDF):
 			if requested[role] && profile.RetentionDisclosure.RetainTypedArtifacts {
 				continue
 			}

@@ -49,11 +49,13 @@ type webDownloadTicket struct {
 }
 
 type webDownloadRequest struct {
-	NodeID    int64  `json:"node_id"`
-	Revision  int64  `json:"revision"`
-	VersionID string `json:"version_id"`
-	BlobHash  string `json:"blob_hash"`
-	Size      int64  `json:"size"`
+	EmailPDFProfile    string `json:"email_pdf_profile,omitempty"`
+	EmailPDFAttachment string `json:"email_pdf_attachment,omitempty"`
+	NodeID             int64  `json:"node_id"`
+	Revision           int64  `json:"revision"`
+	VersionID          string `json:"version_id"`
+	BlobHash           string `json:"blob_hash"`
+	Size               int64  `json:"size"`
 }
 
 type webDownloadEvent struct {
@@ -186,21 +188,38 @@ func registerWebDownload(
 				fmt.Sprintf("node %d is not live", node.ID)))
 			return
 		}
+		contentHash, contentSize, contentType, contentName := version.BlobHash, version.Size, version.MimeType, node.Name
+		if request.EmailPDFProfile != "" {
+			receipt, err := d.Store.EmailPDFReceipt(r.Context(), version.ID, request.EmailPDFProfile)
+			if err != nil {
+				writeEmailStoreError(w, err)
+				return
+			}
+			if receipt.AttachmentID != request.EmailPDFAttachment || receipt.Source.VersionID != version.ID || receipt.Source.NodeID != node.ID || receipt.Source.SHA256 != version.BlobHash || receipt.Source.Size != version.Size {
+				writeError(w, NewError(http.StatusConflict, "download_selection_stale", "the retained PDF receipt disagrees with the selected email version"))
+				return
+			}
+			if _, err = verifiedEmailPDFBytes(r.Context(), d, receipt); err != nil {
+				writeEmailStoreError(w, err)
+				return
+			}
+			contentHash, contentSize, contentType, contentName = receipt.Output.PDFSHA256, receipt.Output.PDFSize, "application/pdf", "message.pdf"
+		}
 		if node.Revision != request.Revision ||
-			version.BlobHash != request.BlobHash ||
-			version.Size != request.Size {
+			contentHash != request.BlobHash ||
+			contentSize != request.Size {
 			writeError(w, NewError(http.StatusConflict, "download_selection_stale",
 				"the selected document or version changed; refresh it before downloading"))
 			return
 		}
 
-		stream, streamSize, err := d.Blobs.OpenStreamContext(r.Context(), version.BlobHash)
+		stream, streamSize, err := d.Blobs.OpenStreamContext(r.Context(), contentHash)
 		if err != nil {
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"opening document content failed; run docbank verify"))
 			return
 		}
-		if streamSize != version.Size {
+		if streamSize != contentSize {
 			_ = stream.Close()
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"document size authority is inconsistent; run docbank verify"))
@@ -236,44 +255,44 @@ func registerWebDownload(
 			}
 			return nil
 		}
-		if err := report(webDownloadEvent{Phase: "progress", Total: version.Size}); err != nil {
+		if err := report(webDownloadEvent{Phase: "progress", Total: contentSize}); err != nil {
 			_ = file.Close()
 			_ = stream.Close()
 			return
 		}
 
 		progress := &webDownloadProgressWriter{
-			ctx: r.Context(), dst: file, total: version.Size, report: report,
+			ctx: r.Context(), dst: file, total: contentSize, report: report,
 		}
 		_, copyErr := io.CopyBuffer(progress, stream, make([]byte, 256<<10))
 		closeStreamErr := stream.Close()
 		closeFileErr := file.Close()
 		if err := errors.Join(copyErr, closeStreamErr, closeFileErr); err != nil ||
-			!stream.Verified() || progress.written != version.Size {
+			!stream.Verified() || progress.written != contentSize {
 			_ = report(webDownloadEvent{
-				Phase: "error", Total: version.Size,
+				Phase: "error", Total: contentSize,
 				Detail: "Docbank could not verify the complete document; run docbank verify",
 			})
 			return
 		}
 
 		ticket := webDownloadTicket{
-			path: stagedPath, name: node.Name, mediaType: version.MimeType,
-			versionID: version.ID, blobHash: version.BlobHash, size: version.Size,
+			path: stagedPath, name: contentName, mediaType: contentType,
+			versionID: version.ID, blobHash: contentHash, size: contentSize,
 		}
 		token, err := downloads.issue(ticket)
 		if err != nil {
 			_ = report(webDownloadEvent{
-				Phase: "error", Total: version.Size,
+				Phase: "error", Total: contentSize,
 				Detail: "Docbank could not publish the verified browser download",
 			})
 			return
 		}
 		keepStaged = true
 		_ = report(webDownloadEvent{
-			Phase: "ready", Received: version.Size, Total: version.Size,
+			Phase: "ready", Received: contentSize, Total: contentSize,
 			URL:  webDownloadFilePath + "?ticket=" + token,
-			Name: node.Name, VersionID: version.ID, BlobHash: version.BlobHash,
+			Name: contentName, VersionID: version.ID, BlobHash: contentHash,
 		})
 	})
 
@@ -332,6 +351,9 @@ func decodeWebDownloadRequest(w http.ResponseWriter, r *http.Request) (webDownlo
 		request.VersionID == "" || len(request.BlobHash) != 64 {
 		return webDownloadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"download request has invalid document authority")
+	}
+	if (request.EmailPDFProfile == "") != (request.EmailPDFAttachment == "") {
+		return webDownloadRequest{}, NewError(http.StatusUnprocessableEntity, "validation", "PDF downloads require both profile and retained attachment")
 	}
 	if _, err := hex.DecodeString(request.BlobHash); err != nil {
 		return webDownloadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",

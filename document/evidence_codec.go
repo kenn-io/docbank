@@ -1995,7 +1995,7 @@ func validEvidenceRegionKind(value EvidenceRegionKind) bool {
 
 func validEvidenceArtifactRole(value EvidenceArtifactRole) bool {
 	return value == EvidenceArtifactImage || value == EvidenceArtifactMarkdown ||
-		value == EvidenceArtifactStructured || value == EvidenceArtifactTranscript
+		value == EvidenceArtifactStructured || value == EvidenceArtifactTranscript || value == EvidenceArtifactPDF
 }
 
 func validEvidenceConfidenceInterpretation(value EvidenceConfidenceInterpretation) bool {

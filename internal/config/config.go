@@ -235,8 +235,20 @@ type ResolvedProcessingProfile struct {
 	Retrieval     embedding.RetrievalPolicy
 }
 
+// EmailPDFConfig opts into a locally pinned, isolated Chromium renderer.
+// No runtime is downloaded or installed by the daemon.
+type EmailPDFConfig struct {
+	Chromium     string `toml:"chromium"`
+	Bundle       string `toml:"bundle"`
+	BundleSHA256 string `toml:"bundle_sha256"`
+	Version      string `toml:"version"`
+	Fonts        string `toml:"fonts"`
+	FontsSHA256  string `toml:"fonts_sha256"`
+}
+
 // Config is the full contents of config.toml.
 type Config struct {
+	EmailPDF           *EmailPDFConfig                    `toml:"email_pdf"`
 	Server             ServerConfig                       `toml:"server"`
 	Web                WebConfig                          `toml:"web"`
 	Backup             BackupConfig                       `toml:"backup"`

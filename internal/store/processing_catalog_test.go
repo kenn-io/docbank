@@ -84,6 +84,7 @@ func TestPersistedRenditionArtifactRoles(t *testing.T) {
 		catalogArtifactNormalizedEvidence, catalogArtifactSanitizedMarkdown,
 		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
 		string(document.EvidenceArtifactStructured), string(document.EvidenceArtifactTranscript),
+		string(document.EvidenceArtifactPDF),
 	}
 	assert.Equal(t, want, PersistedRenditionArtifactRoles())
 	for _, role := range want {

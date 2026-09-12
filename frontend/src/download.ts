@@ -1,4 +1,5 @@
 import { requestResponse, type ContentVersion, type Node } from "./api.js";
+import { validatePDFReceipt, type EmailPDFReceipt } from "./email-pdf.js";
 
 export interface DownloadProgress {
   received: number;
@@ -25,12 +26,20 @@ interface DownloadEvent {
 }
 
 interface DownloadAuthority {
+	PDFProfile?: string;
+	PDFAttachment?: string;
   nodeID: number;
   revision: number;
   name: string;
   versionID: string;
   blobHash: string;
   size: number;
+}
+
+export async function prepareEmailPDFDownload(session: string, node: Node, version: ContentVersion, receipt: EmailPDFReceipt, signal: AbortSignal, onprogress: (progress: DownloadProgress) => void): Promise<PreparedDownload> {
+  validatePDFReceipt(receipt, version.id);
+  if (receipt.source.node_id !== node.id || version.node_id !== node.id || receipt.source.sha256 !== version.blob_hash || receipt.source.size !== version.size) throw new Error("The PDF source disagrees with the selected email.");
+  return prepareDownload(session, { nodeID: node.id, revision: node.revision, name: "message.pdf", versionID: version.id, blobHash: receipt.output.pdf_sha256, size: receipt.output.pdf_size, PDFProfile: receipt.profile_fingerprint, PDFAttachment: receipt.attachment_id }, signal, onprogress);
 }
 
 export async function prepareCurrentDownload(
@@ -113,6 +122,8 @@ async function prepareDownload(
       version_id: authority.versionID,
       blob_hash: authority.blobHash,
       size: authority.size,
+      email_pdf_profile: authority.PDFProfile,
+      email_pdf_attachment: authority.PDFAttachment,
     }),
     signal,
   });

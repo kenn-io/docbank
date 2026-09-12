@@ -242,18 +242,19 @@ type RenditionUsage struct {
 
 // RenditionReceipt is a sanitized, bounded execution record without provider bodies or secrets.
 type RenditionReceipt struct {
-	ProviderID                  string         `json:"provider_id"`
-	DescriptorFingerprint       string         `json:"descriptor_fingerprint"`
-	PolicyFingerprint           string         `json:"policy_fingerprint"`
-	RenditionRequestFingerprint string         `json:"rendition_request_fingerprint"`
-	AuthorizationFingerprint    string         `json:"authorization_fingerprint"`
-	SourceSHA256                string         `json:"source_sha256"`
-	OperationID                 string         `json:"operation_id"`
-	StartedAt                   string         `json:"started_at"`
-	CompletedAt                 string         `json:"completed_at"`
-	Warnings                    []string       `json:"warnings,omitempty"`
-	Usage                       RenditionUsage `json:"usage"`
-	RetryDelayMillis            int64          `json:"retry_delay_millis,omitempty"`
+	EmailPDF                    *EmailPDFOutputV1 `json:"email_pdf,omitempty"`
+	ProviderID                  string            `json:"provider_id"`
+	DescriptorFingerprint       string            `json:"descriptor_fingerprint"`
+	PolicyFingerprint           string            `json:"policy_fingerprint"`
+	RenditionRequestFingerprint string            `json:"rendition_request_fingerprint"`
+	AuthorizationFingerprint    string            `json:"authorization_fingerprint"`
+	SourceSHA256                string            `json:"source_sha256"`
+	OperationID                 string            `json:"operation_id"`
+	StartedAt                   string            `json:"started_at"`
+	CompletedAt                 string            `json:"completed_at"`
+	Warnings                    []string          `json:"warnings,omitempty"`
+	Usage                       RenditionUsage    `json:"usage"`
+	RetryDelayMillis            int64             `json:"retry_delay_millis,omitempty"`
 }
 
 // RenditionResult contains bounded provider output and its sanitized receipt.

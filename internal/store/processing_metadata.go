@@ -2357,7 +2357,7 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	if err != nil {
 		return err
 	}
-	type attachmentPolicyBinding struct{ buildID, profileID string }
+	type attachmentPolicyBinding struct{ id, buildID, profileID string }
 	bindings := make([]attachmentPolicyBinding, 0)
 	for rows.Next() {
 		var id, vaultID, contentVersionID, buildID, profileID, attachedAt string
@@ -2373,7 +2373,7 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			_ = rows.Close()
 			return err
 		}
-		bindings = append(bindings, attachmentPolicyBinding{buildID: buildID, profileID: profileID})
+		bindings = append(bindings, attachmentPolicyBinding{id: id, buildID: buildID, profileID: profileID})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -2393,6 +2393,19 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 		}
 		if err := validateRenditionArtifactRolesForProfile(profile, build); err != nil {
 			return fmt.Errorf("invalid restored rendition attachment: %w", err)
+		}
+		bindingPDF, err := emailPDFBinding(profile)
+		if err != nil {
+			return err
+		}
+		if bindingPDF != nil {
+			attachment, err := loadRenditionAttachment(ctx, tx, binding.id)
+			if err != nil {
+				return err
+			}
+			if _, err := validateEmailPDFPublication(ctx, tx, attachment, build); err != nil {
+				return fmt.Errorf("invalid restored email PDF attachment: %w", err)
+			}
 		}
 	}
 	rows, err = tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,attachment_id,published_at FROM rendition_heads`)

@@ -21,6 +21,7 @@ nav = [
   ]},
   {"Work with Documents" = [
     {"Importing Documents" = "usage/importing.md"},
+    {"Email PDFs" = "usage/email-pdf.md"},
     {"Organizing & Tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
     {"Web Application" = "usage/web.md"},

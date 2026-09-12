@@ -39,6 +39,17 @@ pass the final ordinal as `--after` to read the next page.
 See [Mailbox archives](usage/importing.md#mailbox-archives) for retention,
 limits, explicit continuation and the EML transfer retry contract.
 
+## docbank email-pdf
+
+```text
+docbank email-pdf <version-id> <local-file> [--paper A4|Letter] [--overwrite]
+```
+
+Requests a retained PDF for one exact EML version through the daemon, waits for
+its processing job, and atomically publishes independently verified bytes.
+Requires a configured local renderer for new requests. See
+[Email PDFs](usage/email-pdf.md) for retained browser downloads and setup.
+
 ## docbank info
 
 ```

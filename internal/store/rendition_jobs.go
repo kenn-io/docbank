@@ -331,6 +331,23 @@ func (s *Store) EnqueueRenditionJob(
 			&alreadyActive); err != nil {
 			return fmt.Errorf("checking active rendition waiter: %w", err)
 		}
+		if binding, err := emailPDFBinding(profile); err != nil {
+			return err
+		} else if binding != nil {
+			attachment, err := loadRenditionAttachment(ctx, tx, attachmentID)
+			if err == nil {
+				build, err := loadRenditionBuild(ctx, tx, jobID)
+				if err != nil {
+					return err
+				}
+				if _, err = validateEmailPDFPublication(ctx, tx, attachment, build); err != nil {
+					return err
+				}
+				alreadyActive = true
+			} else if !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
 		if alreadyActive {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
 					SET state='published',updated_at=? WHERE waiter_id=?`, now, waiterID); err != nil {

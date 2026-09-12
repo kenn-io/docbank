@@ -109,6 +109,7 @@ const (
 type EvidenceArtifactRole string
 
 const (
+	EvidenceArtifactPDF        EvidenceArtifactRole = "email_pdf"
 	EvidenceArtifactImage      EvidenceArtifactRole = "provider_image"
 	EvidenceArtifactMarkdown   EvidenceArtifactRole = "provider_markdown"
 	EvidenceArtifactStructured EvidenceArtifactRole = "structured_evidence"

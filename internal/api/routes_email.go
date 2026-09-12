@@ -24,6 +24,7 @@ const emailEnsureMaxBodyBytes = 1 << 20
 func registerEmailRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	registerEmailOpenAPI(api)
 	registerEmailDocumentRoutes(mux, api, d, g)
+	registerEmailPDFRoutes(mux, api, d, g)
 	mux.HandleFunc("GET /api/v1/versions/{version_id}/email", func(w http.ResponseWriter, r *http.Request) {
 		handleEmailMetadata(w, r, d)
 	})

@@ -1534,6 +1534,7 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 	ctx context.Context, tx *sql.Tx, pairs []renditionPublicationPair, generationID string,
 	authorization *providerPublicationAuthorization,
 ) error {
+	allEmailPDF := true
 	if len(pairs) == 0 {
 		return errors.New("rendition publication requires at least one attachment")
 	}
@@ -1560,6 +1561,11 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 		if err != nil {
 			return err
 		}
+		pdf, err := validateEmailPDFPublication(ctx, tx, normalized, build)
+		if err != nil {
+			return err
+		}
+		allEmailPDF = allEmailPDF && pdf != nil
 		if authorization != nil {
 			if err := s.authorizeRenditionPublicationTx(ctx, tx, build, authorization); err != nil {
 				return err
@@ -1568,6 +1574,9 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 		if err := insertRenditionAttachmentAndHeadTx(ctx, tx, normalized, pair.head); err != nil {
 			return err
 		}
+	}
+	if allEmailPDF {
+		return nil
 	}
 	if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID); errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
@@ -1721,6 +1730,11 @@ func insertRenditionAttachmentAndHeadTx(
 		if !reflect.DeepEqual(stored, normalized) {
 			return fmt.Errorf("rendition attachment %s names different immutable metadata", normalized.ID)
 		}
+	}
+	if binding, err := emailPDFBinding(normalized.Profile); err != nil {
+		return err
+	} else if binding != nil {
+		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)

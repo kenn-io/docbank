@@ -171,6 +171,19 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	method, path := r.Method, r.URL.Path
+	if r.URL.RawQuery == "" {
+		if method == http.MethodPost && path == "/api/v1/email-pdfs" {
+			return true
+		}
+		if method == http.MethodGet {
+			if after, ok := strings.CutPrefix(path, "/api/v1/email-pdfs/"); ok && after != "" && len(strings.Split(after, "/")) <= 2 {
+				return true
+			}
+			if after, ok := strings.CutPrefix(path, "/api/v1/email-pdf-jobs/"); ok && after != "" && !strings.Contains(after, "/") {
+				return true
+			}
+		}
+	}
 	if mailboxBrowserRequestAllowed(r) {
 		return true
 	}
