@@ -1,8 +1,8 @@
 name: CI
 
 # The PR dispatcher always calls the main-pinned workflow. That workflow
-# independently routes same-repository Linux jobs to the managed public fleet
-# and fork jobs to GitHub-hosted runners.
+# independently routes same-repository Linux Go and documentation jobs to the
+# managed public fleet. Web application and fork jobs use GitHub-hosted runners.
 on:
   pull_request:
 
