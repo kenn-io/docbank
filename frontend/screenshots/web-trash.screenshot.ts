@@ -337,6 +337,90 @@ test.describe("Docbank web screenshots", () => {
     if (workspace) await rm(workspace, { recursive: true, force: true });
   });
 
+  test("loaded-page keyboard navigation and tag hotkey", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("docbank-theme", "dark");
+    });
+    let listingRequests = 0;
+    page.on("request", (request) => {
+      if (/\/api\/v1\/nodes\/\d+\/children\?/.test(request.url())) {
+        listingRequests += 1;
+      }
+    });
+    await page.goto(webURL, { waitUntil: "domcontentloaded" });
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          animation-duration: 0.001s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+          caret-color: transparent !important;
+        }
+      `,
+    });
+
+    await page.getByRole("cell", { name: "Reports", exact: true }).dblclick();
+    const quarterly = page.getByRole("cell", {
+      name: "quarterly-tax-report.txt",
+      exact: true,
+    });
+    await quarterly.click();
+    await page.keyboard.press("j");
+    const supportingRow = page
+      .getByRole("row")
+      .filter({ has: page.getByRole("cell", { name: "supporting-schedule.csv" }) });
+    await expect(supportingRow).toHaveAttribute("aria-selected", "true");
+
+    const requestsAtBoundary = listingRequests;
+    await page.keyboard.press("j");
+    await expect(
+      page.getByRole("status", { name: "Keyboard shortcut status" }),
+    ).toContainText("Last loaded row reached.");
+    expect(listingRequests).toBe(requestsAtBoundary);
+
+    await page.keyboard.press("Space");
+    const dock = page.getByRole("region", { name: "Selected documents" });
+    await expect(dock).toContainText("1 selected on this page");
+    await page.keyboard.press("k");
+    await page.keyboard.press("j");
+    await expect(supportingRow).toBeFocused();
+    await expectFocusAboveDock(page, dock);
+
+    await page.keyboard.press("Shift+/");
+    const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect(help).toBeVisible();
+    const firstTag = help.getByRole("combobox", {
+      name: "Tag shortcut 1: Unassigned",
+    });
+    await expect(firstTag).toBeEnabled();
+    await firstTag.click();
+    await help.getByRole("option", { name: "tax" }).click();
+    await help.getByRole("button", { name: "Done" }).click();
+
+    const receiptResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        /\/api\/v1\/nodes\/\d+\/tags\/[0-9a-f-]+$/.test(response.url()),
+    );
+    await page.keyboard.press("1");
+    const response = await receiptResponse;
+    expect(response.status()).toBe(200);
+    const receipt = (await response.json()) as {
+      changed?: unknown;
+      node?: { path?: unknown };
+      tag?: { name?: unknown };
+    };
+    expect(receipt.changed).toBe(true);
+    expect(receipt.node?.path).toBe("/Reports/supporting-schedule.csv");
+    expect(receipt.tag?.name).toBe("tax");
+    await expect(
+      page.getByRole("status", { name: "Keyboard shortcut status" }),
+    ).toContainText("Added tax to supporting-schedule.csv.");
+
+    await page.keyboard.press("Shift+/");
+    await expect(help.getByRole("combobox", { name: "Tag shortcut 1: tax" })).toBeVisible();
+  });
+
   test("trash confirmation", async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem("docbank-theme", "dark");

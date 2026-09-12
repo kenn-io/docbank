@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-10
+last_edited: 2026-09-11
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
@@ -21,7 +21,7 @@ The daemon accepts connections only from the local machine.
 
 Choose a task:
 
-- [Browse the vault](#browse-the-vault), inspect document details, or
+- [Browse the vault](#browse-the-vault), [use keyboard shortcuts](#use-keyboard-shortcuts), inspect document details, or
   [select documents on this page](#select-documents-on-this-page).
 - [Upload files](#upload-verified-documents) or [download content](#download-verified-content).
 - [Manage tags](#manage-tag-definitions) and [search text](#browse-tags-and-search-text).
@@ -65,6 +65,24 @@ even when the card wraps it across lines. Every selected node also shows its
 assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
+
+## Use keyboard shortcuts
+
+Press <kbd>?</kbd> or choose the keyboard button in the top bar to see every
+shortcut. Press <kbd>/</kbd> to focus search, <kbd>j</kbd> or <kbd>k</kbd> to
+inspect the next or previous loaded row, <kbd>Space</kbd> to check or uncheck
+the inspected file, <kbd>Enter</kbd> to open the inspected folder, and
+<kbd>Escape</kbd> to clear page selection. Row navigation stops at the loaded
+page boundary and never fetches another page.
+
+The same help dialog can assign digits <kbd>1</kbd> through <kbd>9</kbd> to tag
+definitions. These bindings stay in this browser and are scoped to the vault's
+stable ID. Pressing a configured digit toggles that tag on the one inspected
+file, independent of checked documents. Docbank waits for the file's complete
+assigned-tag list and sends its displayed revision with the change. A stale
+revision remains visible as an error and is never retried against newer state.
+
+App shortcuts pause while a text field, control, or dialog owns the keyboard.
 
 ## Select documents on this page
 
