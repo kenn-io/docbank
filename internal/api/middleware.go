@@ -39,7 +39,34 @@ func timeoutExempt(path string) bool {
 		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
 		return true
 	}
-	return strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content")
+	return strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content") ||
+		isEmailPartPath(path)
+}
+
+func timeoutExemptRequest(r *http.Request) bool {
+	if timeoutExempt(r.URL.Path) {
+		return true
+	}
+	if r.Method != http.MethodPost {
+		return false
+	}
+	rest, found := strings.CutPrefix(r.URL.Path, "/api/v1/versions/")
+	if !found {
+		return false
+	}
+	segments := strings.Split(rest, "/")
+	return len(segments) == 2 && segments[0] != "" && segments[1] == "email"
+}
+
+func isEmailPartPath(path string) bool {
+	rest, found := strings.CutPrefix(path, "/api/v1/versions/")
+	if !found {
+		return false
+	}
+	segments := strings.Split(rest, "/")
+	return len(segments) == 7 && segments[0] != "" && segments[1] == "email" &&
+		segments[2] == "generations" && segments[3] != "" && segments[4] == "parts" &&
+		segments[5] != "" && segments[6] != ""
 }
 
 // clearLongRunningBodyReadDeadlines keeps Huma's request-body deadline in
@@ -148,7 +175,7 @@ func isLoopbackRemote(remoteAddr string) bool {
 
 func timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if timeoutExempt(r.URL.Path) {
+		if timeoutExemptRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

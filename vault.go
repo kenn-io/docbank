@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/home"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
@@ -68,7 +69,13 @@ var (
 	ErrAuditMutationUnsupported = store.ErrAuditMutationUnsupported
 	// ErrProvenanceMismatch reports a provenance correction whose predecessor
 	// is missing, belongs to another node, or is already superseded.
-	ErrProvenanceMismatch = store.ErrProvenanceMismatch
+	ErrProvenanceMismatch        = store.ErrProvenanceMismatch
+	ErrEmailPending              = store.ErrEmailPending
+	ErrEmailNotSupported         = store.ErrEmailNotSupported
+	ErrEmailDerivativeSuppressed = store.ErrEmailDerivativeSuppressed
+	ErrEmailCorrupt              = store.ErrEmailCorrupt
+	ErrEmailPartUnavailable      = store.ErrEmailPartUnavailable
+	ErrInvalidEmailPart          = store.ErrInvalidEmailPart
 )
 
 const (
@@ -119,12 +126,13 @@ type StoreBinding struct {
 // may be open concurrently when their roots do not overlap and their processing
 // upload directories are distinct.
 type Vault struct {
-	root       *os.Root
-	lock       *home.Lock
-	spoolLock  *home.Lock
-	metadata   *store.Store
-	blobs      *blob.Store
-	processing *internalprocessing.Service
+	root             *os.Root
+	lock             *home.Lock
+	spoolLock        *home.Lock
+	metadata         *store.Store
+	blobs            *blob.Store
+	processing       *internalprocessing.Service
+	emailSpoolParent string
 
 	lifecycle    sync.RWMutex
 	mutation     sync.Mutex
@@ -291,10 +299,16 @@ func openVaultWithRootOpener(
 	if _, err := upload.RecoverStale(context.Background(), spoolDirectory); err != nil {
 		return nil, fmt.Errorf("recovering processing uploads: %w", err)
 	}
+	if _, err := emailmime.RecoverStale(context.Background(), layout.BlobTmpDir()); err != nil {
+		return nil, err
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return nil, err
 	}
-	vault := &Vault{root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs}
+	vault := &Vault{
+		root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
+		emailSpoolParent: layout.BlobTmpDir(),
+	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
 		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),

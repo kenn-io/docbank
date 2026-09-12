@@ -42,6 +42,9 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
+| `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
+| `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to the exact version | Implemented |
+| `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
@@ -397,7 +400,45 @@ while the old fact stays visible and immutable. Operational CLI and
 watched-folder ingest facts cannot be superseded: they keep re-ingest
 idempotent. Record a newly learned origin as an additional fact instead.
 
-The encoded request body must be smaller than 1 MiB (1,048,576 bytes). A body at or above that limit receives `413` before the append runs.
+The encoded request body must be smaller than 1 MiB (1,048,576 bytes). A body
+at or above that limit receives `413` before the append runs.
+
+### Email metadata and exact parts
+
+Email files keep their original bytes as the immutable content version. The
+built-in decoder adds a separate canonical MIME inventory: ordered raw header
+spans, decoded fields including Bcc, message and part structure, alternatives,
+diagnostics, and exact SHA-256/size receipts for retained artifacts. It does not
+normalize the source, deduplicate messages by Message-ID, or turn attachments
+into child documents.
+
+Encoded headers, addresses, and multipart structure use the Go standard library. The recipe
+records the Go version and fixed resource limits. A structure rejected by the
+parser remains a partial inventory with a diagnostic; this includes malformed
+part headers and multipart delimiter or preamble lines longer than 4 KiB.
+Original bytes and already inventoried parts remain readable.
+
+`GET /versions/{version_id}/email` returns the selected generation for that
+exact version. An eligible version still waiting for the daemon worker returns
+`202` with its populated version and `state: "pending"`. An undeclared source
+returns `422 email_not_supported`; `POST` with `{}` explicitly attempts it
+without changing its stored media type or bytes. A suppressed inventory returns
+`409 email_derivative_suppressed`.
+
+Generation and part URLs are immutable. A generation must be attached to the
+version in the URL, and a part is selected by its dotted structural path plus
+one role: `raw_headers`, `decoded_payload`, or `body_utf8`. Missing roles return
+`409 email_part_unavailable`; invalid selectors return `422
+invalid_email_part`. Part responses are always downloads with
+`application/octet-stream`, `nosniff`, complete version, generation,
+attachment, and part identity headers, expected SHA-256 and size, and an actual
+`Content-Digest` trailer. Clients must read through verified EOF; a partial or
+corrupt stream has no successful digest proof.
+
+These routes require the master API credential. Browser-session credentials
+cannot read email metadata or part bytes. There is no browser email viewer,
+PDF rendering, attachment indexing, mailbox sync, or MBOX import in this
+surface.
 
 `GET /content-references` is the inverse identity lookup. It accepts one
 canonical lowercase SHA-256 and returns only logical `content_versions`

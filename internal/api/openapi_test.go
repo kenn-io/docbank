@@ -20,6 +20,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
 		"lookupContentReferences",
 		"listCollections", "getCollection", "listCollectionMembers", "getCollectionLabel", "setCollectionLabel",
+		"getEmailMetadata", "ensureEmailMetadata", "getEmailMetadataGeneration", "getEmailPart",
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
 		"assignTagPath", "unassignTagPath",
@@ -176,6 +177,39 @@ func resolveOpenAPISchema(
 	resolved := schemas[strings.TrimPrefix(schema.Ref, prefix)]
 	require.NotNil(t, resolved, schema.Ref)
 	return resolved
+}
+
+func TestOpenAPIDeclaresEmailMetadataAndBinaryParts(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	metadata := doc.Paths["/api/v1/versions/{version_id}/email"]
+	require.NotNil(t, metadata)
+	require.NotNil(t, metadata.Get)
+	require.NotNil(t, metadata.Post)
+	assert.NotNil(t, metadata.Get.Responses["200"])
+	assert.NotNil(t, metadata.Get.Responses["202"])
+	request := metadata.Post.RequestBody.Content["application/json"]
+	require.NotNil(t, request)
+	assert.Equal(t, "object", request.Schema.Type)
+	assert.Equal(t, false, request.Schema.AdditionalProperties)
+
+	generation := doc.Paths["/api/v1/versions/{version_id}/email/generations/{generation_id}"]
+	require.NotNil(t, generation)
+	require.NotNil(t, generation.Get)
+	part := doc.Paths["/api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}"]
+	require.NotNil(t, part)
+	require.NotNil(t, part.Get)
+	success := part.Get.Responses["200"]
+	require.NotNil(t, success)
+	binary := success.Content["application/octet-stream"]
+	require.NotNil(t, binary)
+	assert.Equal(t, "binary", binary.Schema.Format)
+	for _, header := range []string{
+		api.ContentVersionHeader, api.EmailGenerationHeader, api.EmailAttachmentHeader,
+		api.EmailPartPathHeader, api.EmailPartRoleHeader, api.BlobHashHeader,
+		api.BlobSizeHeader, "Content-Digest",
+	} {
+		assert.Contains(t, success.Headers, header)
+	}
 }
 
 func openAPISchemaBlock(t *testing.T, doc, schema string) string {

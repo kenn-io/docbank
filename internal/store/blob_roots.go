@@ -31,6 +31,7 @@ func (reference blobReference) conditionSQL() string {
 // same hash as their content version, which is already listed.
 var blobRootReferences = []blobReference{
 	{table: "content_versions", column: columnBlobHash},
+	{table: "email_part_artifacts", column: columnBlobHash},
 	{table: "rendition_builds", column: columnSourceSHA256},
 	{table: "rendition_jobs", column: columnSourceSHA256},
 	{table: "rendition_artifacts", column: columnBlobHash},

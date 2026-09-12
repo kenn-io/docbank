@@ -38,6 +38,13 @@ type RepackPageFunc func(
 	context.Context, *store.Store, *blob.Store, internalmaintenance.RepackOptions,
 ) (internalmaintenance.RepackReport, error)
 
+// EnsureEmailFunc builds and publishes one version's verified email metadata.
+// Keeping the processor behind this dependency preserves the API package as a
+// transport boundary instead of making processing depend on its own HTTP API.
+type EnsureEmailFunc func(
+	context.Context, *store.Store, *blob.Store, string, store.EmailTarget,
+) (store.EmailMetadataView, error)
+
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
 	Store         *store.Store
@@ -53,6 +60,7 @@ type Deps struct {
 	Gate          *OperationGate   // nil → a server-private gate
 	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
 	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
+	EnsureEmail   EnsureEmailFunc  // required only by POST /versions/{id}/email
 	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry  *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 }
@@ -144,6 +152,7 @@ func NewServer(d Deps) *Server {
 	registerTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
+	registerEmailRoutes(mux, humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)

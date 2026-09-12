@@ -11,7 +11,25 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 )
+
+var errCanonicalSizeLimit = errors.New("canonical JSON size limit exceeded")
+
+type canonicalSizeWriter struct {
+	limit int64
+	size  int64
+}
+
+func (w *canonicalSizeWriter) Write(value []byte) (int, error) {
+	remaining := w.limit - w.size
+	if int64(len(value)) <= remaining {
+		w.size += int64(len(value))
+		return len(value), nil
+	}
+	w.size = w.limit + 1
+	return max(0, int(remaining)), errCanonicalSizeLimit
+}
 
 // Marshal encodes value deterministically and then applies RFC 8785 JSON
 // canonicalization: sorted object members, minimal strings, ES6 number
@@ -26,6 +44,25 @@ func Marshal(value any) ([]byte, error) {
 		return nil, fmt.Errorf("canonicalizing JSON: %w", err)
 	}
 	return []byte(canonical), nil
+}
+
+// BoundedSize returns the deterministic JSON byte size without retaining the
+// encoded value. Once the limit is crossed, observed is limit+1 and encoding
+// stops at that decision byte. Callers must validate individual string and
+// collection bounds before calling so a single semantic token is also bounded.
+func BoundedSize(value any, limit int64) (observed int64, exceeded bool, err error) {
+	if limit < 0 {
+		return 0, false, errors.New("canonical JSON size limit is negative")
+	}
+	writer := &canonicalSizeWriter{limit: limit}
+	err = json.MarshalWrite(writer, value, json.Deterministic(true))
+	if errors.Is(err, errCanonicalSizeLimit) || errors.Is(err, io.ErrShortWrite) && writer.size > limit {
+		return limit + 1, true, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return writer.size, false, nil
 }
 
 // Decode accepts only bytes that are the exact Marshal encoding of a T.

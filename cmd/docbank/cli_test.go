@@ -725,6 +725,7 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:source-metadata").Status)
+	assert.Equal(t, "running", requireJob(t, got, "extract:email").Status)
 	_, renditions := jobNamed(got, "process:renditions")
 	assert.False(t, renditions, "no rendition provider is bound, so no rendition job is reported")
 }
