@@ -627,6 +627,7 @@ type IngestPreflightReport struct {
 // TrashEmptyReport summarizes a trash-empty dry run or execution.
 type TrashEmptyReport struct {
 	CandidateRoots int64 `json:"candidate_roots"`
+	RetainedRoots  int64 `json:"retained_roots"`
 	Deleted        int64 `json:"deleted"`
 	Run            bool  `json:"run"`
 }

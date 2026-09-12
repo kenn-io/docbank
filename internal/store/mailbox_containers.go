@@ -57,6 +57,13 @@ func validateMailboxContainerRequest(r MailboxContainerRequest) error {
 	}
 	return nil
 }
+func validateMailboxChunk(size int64, ch MailboxChunk) error {
+	if ch.Index < 0 || ch.Index >= MailboxMaxChunks || int64(ch.Index)*MailboxChunkBytes >= size || ch.Size != min(MailboxChunkBytes, size-int64(ch.Index)*MailboxChunkBytes) || !mailboxHash(ch.SHA256) {
+		return ErrMailboxInvalid
+	}
+	return nil
+}
+
 func mailboxManifest(c MailboxContainer) (string, error) {
 	if err := validateMailboxContainerRequest(c.MailboxContainerRequest); err != nil {
 		return "", err
@@ -65,13 +72,10 @@ func mailboxManifest(c MailboxContainer) (string, error) {
 	if len(c.Chunks) != int(count) || len(c.Chunks) > MailboxMaxChunks {
 		return "", ErrMailboxInvalid
 	}
-	var total int64
 	for i, ch := range c.Chunks {
-		want := min(MailboxChunkBytes, c.Size-total)
-		if ch.Index != i || ch.Size != want || !mailboxHash(ch.SHA256) {
+		if ch.Index != i || validateMailboxChunk(c.Size, ch) != nil {
 			return "", ErrMailboxInvalid
 		}
-		total += ch.Size
 	}
 	b, err := json.Marshal(struct {
 		SHA256 string         `json:"sha256"`
@@ -93,6 +97,12 @@ func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id stri
 	if err != nil {
 		return c, err
 	}
+	if err = validateMailboxContainerRequest(c.MailboxContainerRequest); err != nil {
+		return c, err
+	}
+	if c.State != "uploading" && c.State != "sealed" {
+		return c, ErrMailboxInvalid
+	}
 	rows, err := q.QueryContext(ctx, `SELECT chunk_index,blob_hash,size FROM mailbox_chunks WHERE container_id=? ORDER BY chunk_index LIMIT 4097`, id)
 	if err != nil {
 		return c, err
@@ -102,6 +112,9 @@ func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id stri
 	for rows.Next() {
 		var ch MailboxChunk
 		if err = rows.Scan(&ch.Index, &ch.SHA256, &ch.Size); err != nil {
+			return c, err
+		}
+		if err = validateMailboxChunk(c.Size, ch); err != nil {
 			return c, err
 		}
 		c.Chunks = append(c.Chunks, ch)
@@ -176,8 +189,8 @@ func (s *Store) PutMailboxChunk(ctx context.Context, owner, id string, ch Mailbo
 		if err != nil {
 			return err
 		}
-		if ch.Index < 0 || ch.Index >= MailboxMaxChunks || int64(ch.Index)*MailboxChunkBytes >= c.Size || ch.Size != min(MailboxChunkBytes, c.Size-int64(ch.Index)*MailboxChunkBytes) || !mailboxHash(ch.SHA256) {
-			return ErrMailboxInvalid
+		if err = validateMailboxChunk(c.Size, ch); err != nil {
+			return err
 		}
 		for _, old := range c.Chunks {
 			if old.Index == ch.Index {

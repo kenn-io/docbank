@@ -1551,18 +1551,18 @@ CREATE TABLE IF NOT EXISTS mailbox_containers (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
     sha256 TEXT NOT NULL,
-    size INTEGER NOT NULL CHECK(size > 0 AND size <= 274877906944),
-    format TEXT NOT NULL CHECK(format IN ('mbox','zip')),
-    state TEXT NOT NULL CHECK(state IN ('uploading','sealed')),
+    size INTEGER NOT NULL CHECK(size > 0),
+    format TEXT NOT NULL,
+    state TEXT NOT NULL,
     created_at TEXT NOT NULL,
     manifest_sha256 TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS mailbox_containers_owner ON mailbox_containers(owner,state);
 CREATE TABLE IF NOT EXISTS mailbox_chunks (
     container_id TEXT NOT NULL REFERENCES mailbox_containers(id) ON DELETE CASCADE,
-    chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0 AND chunk_index < 4096),
+    chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
     blob_hash TEXT NOT NULL REFERENCES blobs(hash),
-    size INTEGER NOT NULL CHECK(size > 0 AND size <= 67108864),
+    size INTEGER NOT NULL CHECK(size > 0),
     PRIMARY KEY(container_id,chunk_index)
 );
 CREATE INDEX IF NOT EXISTS mailbox_chunks_blob ON mailbox_chunks(blob_hash);

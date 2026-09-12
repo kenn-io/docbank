@@ -49,6 +49,32 @@ func TestMailboxContainerSessions(t *testing.T) {
 	require.NoError(t, restored.ValidateMetadata(ctx))
 }
 
+// Unknown persisted policy values must be rejected by reads and integrity
+// validation, not hidden by the query that exports only sealed containers.
+func TestMailboxContainerPolicyValidationWithoutSchemaEnums(t *testing.T) {
+	for _, update := range []string{
+		`UPDATE mailbox_containers SET state='unsupported-state'`,
+		`UPDATE mailbox_containers SET format='unsupported-format'`,
+		`UPDATE mailbox_containers SET size=274877906945`,
+		`UPDATE mailbox_chunks SET chunk_index=4096`,
+		`UPDATE mailbox_chunks SET size=67108865`,
+	} {
+		t.Run(update, func(t *testing.T) {
+			s := newTestStore(t)
+			request := MailboxContainerRequest{ID: "synthetic-policy", Owner: "owner", SHA256: fakeHash("aa"), Size: 1, Format: "mbox"}
+			_, err := s.BeginMailboxContainer(t.Context(), request)
+			require.NoError(t, err)
+			require.NoError(t, s.RecordRenditionBlob(t.Context(), request.SHA256, 1, BlobPhysical{Encoding: "raw", StoredBytes: 1, PackEligible: true, Created: true}))
+			require.NoError(t, s.PutMailboxChunk(t.Context(), request.Owner, request.ID, MailboxChunk{Index: 0, SHA256: request.SHA256, Size: 1}))
+			_, err = s.db.ExecContext(t.Context(), update)
+			require.NoError(t, err)
+			_, err = s.MailboxContainer(t.Context(), request.Owner, request.ID)
+			require.ErrorIs(t, err, ErrMailboxInvalid)
+			require.ErrorIs(t, s.ValidateMetadata(t.Context()), ErrMailboxInvalid)
+		})
+	}
+}
+
 func TestMailboxContainerMaximumOrderedManifest(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

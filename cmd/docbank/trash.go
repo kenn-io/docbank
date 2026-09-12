@@ -85,6 +85,9 @@ var trashEmptyCmd = &cobra.Command{
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d trashed root(s) eligible for permanent deletion\n",
 			rep.CandidateRoots)
+		if rep.RetainedRoots > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "retained %d trashed root(s) referenced by email publications\n", rep.RetainedRoots)
+		}
 		if !rep.Run {
 			if rep.CandidateRoots > 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to delete")

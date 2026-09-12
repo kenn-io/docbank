@@ -56,6 +56,40 @@ func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, download, nil))
 }
 
+func TestMailboxWatchTimeoutBoundary(t *testing.T) {
+	const events = "/api/v1/mailbox/jobs/synthetic-import/events"
+	for _, test := range []struct {
+		method, path string
+		deadline     bool
+	}{
+		{http.MethodGet, events, false},
+		{http.MethodPost, events, true},
+		{http.MethodGet, "/api/v1/mailbox/jobs/synthetic-import", true},
+		{http.MethodGet, "/api/v1/mailbox/jobs/synthetic-import/extra/events", true},
+		{http.MethodGet, "/api/v1/mailbox/jobs//events", true},
+		{http.MethodGet, events + "/", true},
+	} {
+		t.Run(test.method+test.path, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, deadline := r.Context().Deadline()
+				assert.Equal(t, test.deadline, deadline)
+				cancel()
+				assert.ErrorIs(t, r.Context().Err(), context.Canceled)
+			})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, test.method, test.path, nil))
+		})
+	}
+	parent, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	want, _ := parent.Deadline()
+	timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, ok := r.Context().Deadline()
+		assert.True(t, ok)
+		assert.Equal(t, want, got, "watch must preserve the caller's own deadline")
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodGet, events, nil))
+}
+
 func TestExportTicketOperationClearsBodyDeadlineWithoutRelaxingBounds(t *testing.T) {
 	doc := NewOfflineServer().API().OpenAPI()
 	operation := doc.Paths["/api/v1/exports/jobs/{id}/download"].Post

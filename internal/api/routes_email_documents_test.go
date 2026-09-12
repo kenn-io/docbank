@@ -3,12 +3,46 @@ package api_test
 import (
 	"encoding/json/v2"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestTrashEmptyReportsEmailRetentionWithoutBlockingOtherRoots(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	version := createEmailVersion(t, s, "synthetic-retained.eml", "Subject: Synthetic\r\n\r\nRetained body")
+	response, body := do(t, ts, http.MethodPost, "/api/v1/versions/"+version.ID+"/email", nil, struct{}{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	view, err := s.EmailMetadata(t.Context(), version.ID)
+	require.NoError(t, err)
+	root, err := s.NodeByID(t.Context(), s.RootID())
+	require.NoError(t, err)
+	_, err = s.PublishEmailDocuments(t.Context(), document.EmailDocumentPublicationRequest{
+		OperationID: "synthetic-retention", Parent: document.EmailDocumentIdentity{NodeID: version.NodeID, VersionID: version.ID, SHA256: version.BlobHash, Size: version.Size},
+		GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID, DestinationID: root.ID, DestinationRevision: root.Revision,
+	})
+	require.NoError(t, err)
+	discard := createFileWithContent(t, ts, s, "/synthetic-discard.txt", "Discard")
+	for _, id := range []int64{version.NodeID, discard.ID} {
+		_, _, err = s.Trash(t.Context(), id, store.UnconditionalRev)
+		require.NoError(t, err)
+	}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil, map[string]bool{"run": true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var report api.TrashEmptyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	require.EqualValues(t, 1, report.CandidateRoots)
+	require.EqualValues(t, 1, report.Deleted)
+	require.EqualValues(t, 1, report.RetainedRoots)
+	_, err = s.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	_, err = s.NodeByID(t.Context(), discard.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
 
 func TestEmailDocumentsAndConsentRequireMasterAPIKey(t *testing.T) {
 	ts, _ := newTestServer(t, nil)

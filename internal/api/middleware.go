@@ -41,6 +41,13 @@ func timeoutExempt(method, path string) bool {
 		webDownloadPreparePath, webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
+	if method == http.MethodGet {
+		if rest, ok := strings.CutPrefix(path, "/api/v1/mailbox/jobs/"); ok {
+			if id, ok := strings.CutSuffix(rest, "/events"); ok && id != "" && len(id) <= 128 && !strings.Contains(id, "/") {
+				return true
+			}
+		}
+	}
 	if method == http.MethodPost {
 		if rest, ok := strings.CutPrefix(path, "/api/v1/versions/"); ok {
 			segments := strings.Split(rest, "/")

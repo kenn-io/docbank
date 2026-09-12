@@ -38,7 +38,7 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 	after := ""
 	for {
 		var id, owner string
-		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE state='sealed' AND id>? ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
+		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
 		if errors.Is(err, sql.ErrNoRows) {
 			return exportMailboxTransfers(ctx, q, write)
 		}
@@ -49,13 +49,16 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 		if err != nil {
 			return err
 		}
+		after = id
+		if c.State == "uploading" {
+			continue // Valid transient uploads are not portable authority.
+		}
 		if err = validateRetainedMailboxContainer(ctx, q, c); err != nil {
 			return err
 		}
 		if err = write(metadataMailboxContainer{Type: "mailbox_container", Container: c}); err != nil {
 			return err
 		}
-		after = id
 	}
 }
 func importMailboxMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
