@@ -5,6 +5,7 @@ export interface Node {
   kind: "dir" | "file";
   current_version_id?: string;
   blob_hash?: string;
+  md5?: string;
   size: number;
   mime_type?: string;
   revision: number;

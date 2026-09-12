@@ -1,10 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+
+import { parseCSV } from "../test-support/csv.js";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +33,7 @@ const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
 const retainedVersionScreenshotPath = screenshotPathFor(
   "web-retained-version-download.png",
 );
+const visiblePageCSVScreenshotPath = path.join(repositoryRoot, ".superpowers", "web-visible-page-csv.png");
 const packedStorageScreenshotPath = screenshotPathFor("web-storage-status.png");
 
 async function expectDockInViewport(page: Page, dock: Locator): Promise<void> {
@@ -127,6 +130,7 @@ test.describe("Docbank web screenshots", () => {
     workspace = await mkdtemp(path.join(tmpdir(), "docbank-screenshot-"));
     vault = path.join(workspace, "vault");
     await mkdir(path.dirname(screenshotPath), { recursive: true, mode: 0o700 });
+    await mkdir(path.dirname(visiblePageCSVScreenshotPath), { recursive: true, mode: 0o700 });
     await rm(screenshotPath, { force: true });
     await rm(restoreScreenshotPath, { force: true });
     await rm(tagAssignmentScreenshotPath, { force: true });
@@ -137,6 +141,7 @@ test.describe("Docbank web screenshots", () => {
     await rm(tuiStorageScreenshotPath, { force: true });
     await rm(vaultBrowserScreenshotPath, { force: true });
     await rm(pageSelectionScreenshotPath, { force: true });
+    await rm(visiblePageCSVScreenshotPath, { force: true });
     await rm(pageSelectionMobileScreenshotPath, { force: true });
     await rm(searchResultsScreenshotPath, { force: true });
     await rm(retainedVersionScreenshotPath, { force: true });
@@ -166,6 +171,11 @@ test.describe("Docbank web screenshots", () => {
     await writeFile(
       path.join(reports, "supporting-schedule.csv"),
       "category,amount\nSynthetic revenue,125000\nSynthetic expense,42000\n",
+      { mode: 0o600 },
+    );
+    await writeFile(
+      path.join(reports, "résumé-日本語.txt"),
+      "Internationalized metadata download proof.\n",
       { mode: 0o600 },
     );
     const archiveReference = path.join(
@@ -335,6 +345,125 @@ test.describe("Docbank web screenshots", () => {
       }
     }
     if (workspace) await rm(workspace, { recursive: true, force: true });
+  });
+
+  test("visible page CSV download", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("docbank-theme", "dark");
+    });
+    await page.goto(webURL, { waitUntil: "domcontentloaded" });
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          animation-duration: 0.001s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+          caret-color: transparent !important;
+        }
+      `,
+    });
+
+    const reportsCell = page.getByRole("cell", { name: "Reports", exact: true });
+    await expect(reportsCell).toBeVisible();
+    const reportsResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        /\/api\/v1\/nodes\/\d+\/children\?limit=1000&offset=0$/.test(
+          new URL(response.url()).pathname + new URL(response.url()).search,
+        ),
+    );
+    await reportsCell.dblclick();
+    const reportsPage = (await (await reportsResponse).json()) as {
+      directory: { path?: string };
+      items: Array<{
+        id: number;
+        name: string;
+        current_version_id?: string;
+        blob_hash?: string;
+        md5?: string;
+        revision: number;
+      }>;
+    };
+    const report = page.getByRole("cell", {
+      name: "quarterly-tax-report.txt",
+      exact: true,
+    });
+    await expect(report).toBeVisible();
+    const filingSelection = page.getByRole("checkbox", {
+      name: "Select filing-checklist.md",
+    });
+    await filingSelection.click();
+    await expect(filingSelection).toBeFocused();
+    const reportSelection = page.getByRole("checkbox", {
+      name: "Select quarterly-tax-report.txt",
+    });
+    await reportSelection.click({ modifiers: ["Shift"] });
+    await expect(reportSelection).toBeFocused();
+    const unicodeSelection = page.getByRole("checkbox", {
+      name: "Select résumé-日本語.txt",
+    });
+    await unicodeSelection.click();
+    await expect(unicodeSelection).toBeFocused();
+    const selectionDock = page.getByRole("region", {
+      name: "Selected documents",
+    });
+    await expect(selectionDock).toContainText("3 selected on this page");
+    await expectDockInViewport(page, selectionDock);
+    const downloadPromise = page.waitForEvent("download");
+    await selectionDock
+      .getByRole("button", { name: "Export page CSV" })
+      .click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(
+      /^docbank-visible-page-\d{4}-\d{2}-\d{2}\.csv$/,
+    );
+    const downloadedPath = await download.path();
+    if (!downloadedPath) throw new Error("visible-page CSV download has no file");
+    const downloadedBytes = await readFile(downloadedPath);
+    expect(Array.from(downloadedBytes.subarray(0, 3))).toEqual([
+      0xef, 0xbb, 0xbf,
+    ]);
+    const csv = parseCSV(downloadedBytes.toString("utf8"));
+    const csvHeader = csv[0] ?? [];
+    const expectedNames = [
+      "filing-checklist.md",
+      "quarterly-tax-report.txt",
+      "résumé-日本語.txt",
+    ];
+    const expectedRows = reportsPage.items
+      .filter((item) => expectedNames.includes(item.name))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    expect(
+      expectedRows.every((item) => /^[0-9a-f]{32}$/.test(item.md5 ?? "")),
+    ).toBe(true);
+    expect(csvHeader).toHaveLength(12);
+    expect(csv).toHaveLength(expectedRows.length + 1);
+    expect(
+      csv.slice(1).map((row) => ({
+        node_id: Number(row[0]),
+        content_version_id: row[1],
+        revision: Number(row[2]),
+        path: row[3],
+        name: row[4],
+        sha256: row[9],
+        md5: row[10],
+      })),
+    ).toEqual(
+      expectedRows.map((item) => ({
+        node_id: item.id,
+        content_version_id: item.current_version_id,
+        revision: item.revision,
+        path: `${reportsPage.directory.path}/${item.name}`,
+        name: item.name,
+        sha256: item.blob_hash,
+        md5: item.md5,
+      })),
+    );
+    await page.screenshot({
+      path: visiblePageCSVScreenshotPath,
+      fullPage: false,
+      animations: "disabled",
+    });
   });
 
   test("trash confirmation", async ({ page }) => {

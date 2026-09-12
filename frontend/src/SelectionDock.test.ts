@@ -28,6 +28,7 @@ it("describes a truncated page-local selection and exposes local controls", asyn
     truncated: true,
     onclear,
     onselectvisible,
+    oncsv: vi.fn(),
   });
 
   const dock = screen.getByRole("region", { name: "Selected documents" });
@@ -55,6 +56,7 @@ it("uses the dock close control to clear selection", async () => {
     truncated: false,
     onclear,
     onselectvisible: vi.fn(),
+    oncsv: vi.fn(),
   });
 
   expect(screen.queryByText("More results exist beyond this page")).toBeNull();
@@ -62,4 +64,21 @@ it("uses the dock close control to clear selection", async () => {
     screen.getByRole("button", { name: "Clear selected documents" }),
   );
   expect(onclear).toHaveBeenCalledOnce();
+});
+
+it("labels and invokes the visible-page CSV action for the current selection", async () => {
+  const oncsv = vi.fn();
+  render(SelectionDock, {
+    selectedCount: 2,
+    visibleDocumentCount: 2,
+    truncated: false,
+    onclear: vi.fn(),
+    onselectvisible: vi.fn(),
+    oncsv,
+  });
+
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Export page CSV" }),
+  );
+  expect(oncsv).toHaveBeenCalledOnce();
 });
