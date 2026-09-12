@@ -235,7 +235,7 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 			if err != nil {
 				return err
 			}
-			if receipt.Entries != p.RoleEntries+3 || j.CompletedRoles != p.RoleEntries || j.CompletedBytes != p.RoleBytes {
+			if receipt.Entries != p.ArchiveEntries() || j.CompletedRoles != p.RoleEntries || j.CompletedBytes != p.RoleBytes {
 				return bundle.ErrConflict
 			}
 			j.State = "completed"

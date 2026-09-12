@@ -164,65 +164,62 @@ func Write(ctx context.Context, file *os.File, plan Plan, walk Walk, open Open, 
 	buffer := make([]byte, BufferSize)
 	var roleBytes, metadataBytes int64
 	add := func(name string, limit int64, write func(io.Writer) error) (string, int64, error) {
-		if !safePath(name) && name != "SHA256SUMS" {
-			return "", 0, ErrInvalidArchive
-		}
-		header := &zip.FileHeader{Name: name, Method: zip.Store, ModifiedDate: 33} //nolint:staticcheck // Fixed DOS time avoids optional timestamp extra fields in the strict archive profile.
-		header.SetMode(0600)
-		dst, err := z.CreateHeader(header)
+		h, n, err := addZIPEntry(ctx, z, name, limit, write)
 		if err != nil {
-			return "", 0, fmt.Errorf("write ZIP entry header: %w", err)
-		}
-		h := sha256.New()
-		w := &boundedWriter{ctx: ctx, dst: dst, limit: limit, hash: h}
-		if err = write(w); err != nil {
 			return "", 0, err
 		}
 		entries++
-		return hex.EncodeToString(h.Sum(nil)), w.n, nil
+		return h, n, nil
+	}
+	var volumes *volumeWriter
+	if plan.VolumeLimits != nil {
+		volumes, err = newVolumeWriter(ctx, file, plan, add, sums)
+		if err != nil {
+			return Receipt{}, err
+		}
+		defer volumes.Close()
 	}
 	count := 0
-	var previous Member
+	roles := 0
+	validator := RowValidator{Plan: plan}
 	err = walk(func(d Document) error {
-		if count > 0 && (d.NodeID < previous.NodeID || d.NodeID == previous.NodeID && d.VersionID <= previous.VersionID) {
-			return ErrConflict
+		if err := validator.Add(d); err != nil {
+			return err
 		}
-		previous = d.Member
 		count++
 		for _, r := range d.Roles {
+			if r.Status == "collapsed" {
+				continue
+			}
 			if r.Status == "unavailable" {
 				if r.Path != "" || r.SHA256 != "" || r.Size != 0 {
 					return ErrConflict
 				}
 				continue
 			}
-			if r.Status != "available" || !canonical.IsSHA256Hex(r.SHA256) || r.Size < 0 || r.Size > MaxRoleBytes-roleBytes || entries >= MaxRoles {
+			if r.Status != "available" || !canonical.IsSHA256Hex(r.SHA256) || r.Size < 0 || r.Size > MaxRoleBytes-roleBytes || roles >= MaxRoles {
 				return ErrLimit
 			}
-			h, n, err := add(r.Path, r.Size, func(w io.Writer) error {
-				src, err := open(r)
+			if volumes != nil {
+				if err := volumes.Add(r, open); err != nil {
+					return err
+				}
+			} else {
+				h, n, err := add(r.Path, r.Size, func(w io.Writer) error { return copyExportRole(w, r, open, buffer) })
 				if err != nil {
 					return err
 				}
-				_, copyErr := io.CopyBuffer(w, src, buffer)
-				closeErr := src.Close()
-				if copyErr != nil {
-					return copyErr
+				if h != r.SHA256 || n != r.Size {
+					return ErrInvalidArchive
 				}
-				return closeErr
-			})
-			if err != nil {
-				return err
+				if _, err = fmt.Fprintf(sums, "%s  %s\n", h, r.Path); err != nil {
+					return fmt.Errorf("write role checksum: %w", err)
+				}
 			}
-			if h != r.SHA256 || n != r.Size {
-				return ErrInvalidArchive
-			}
-			roleBytes += n
-			if _, err = fmt.Fprintf(sums, "%s  %s\n", h, r.Path); err != nil {
-				return fmt.Errorf("write role checksum: %w", err)
-			}
+			roleBytes += r.Size
+			roles++
 			if progress != nil {
-				if err = progress(entries, roleBytes); err != nil {
+				if err = progress(roles, roleBytes); err != nil {
 					return err
 				}
 			}
@@ -232,7 +229,12 @@ func Write(ctx context.Context, file *os.File, plan Plan, walk Walk, open Open, 
 	if err != nil {
 		return Receipt{}, err
 	}
-	if count != plan.Total || entries != plan.RoleEntries || roleBytes != plan.RoleBytes {
+	if volumes != nil {
+		if err = volumes.finish(); err != nil {
+			return Receipt{}, err
+		}
+	}
+	if validator.Finish() != nil || count != plan.Rows() || roles != plan.RoleEntries || entries != plan.ArchiveEntries()-3 || roleBytes != plan.RoleBytes {
 		return Receipt{}, ErrConflict
 	}
 	h, n, err := add("metadata.csv", MaxMetadataBytes/4, func(dst io.Writer) error {

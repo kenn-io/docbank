@@ -127,26 +127,31 @@ func (s *Store) EmailPDFReceipt(ctx context.Context, versionID, profileFingerpri
 		return EmailPDFReceipt{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	return emailPDFReceipt(ctx, tx, versionID, profileFingerprint)
+}
+
+// emailPDFReceipt also serves export sealing inside its existing transaction.
+func emailPDFReceipt(ctx context.Context, q metadataQuerier, versionID, profileFingerprint string) (EmailPDFReceipt, error) {
 	var id string
-	err = tx.QueryRowContext(ctx, `SELECT attachment_id FROM rendition_attachments WHERE content_version_id=? AND profile_fingerprint=? ORDER BY attached_at,attachment_id LIMIT 1`, versionID, profileFingerprint).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT attachment_id FROM rendition_attachments WHERE content_version_id=? AND profile_fingerprint=? ORDER BY attached_at,attachment_id LIMIT 1`, versionID, profileFingerprint).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EmailPDFReceipt{}, ErrNotFound
 	}
 	if err != nil {
 		return EmailPDFReceipt{}, err
 	}
-	a, err := loadRenditionAttachment(ctx, tx, id)
+	a, err := loadRenditionAttachment(ctx, q, id)
 	if err != nil {
 		return EmailPDFReceipt{}, err
 	}
-	b, err := loadRenditionBuild(ctx, tx, a.BuildID)
+	b, err := loadRenditionBuild(ctx, q, a.BuildID)
 	if err != nil {
 		return EmailPDFReceipt{}, err
 	}
 	if err := validateRenditionArtifactRolesForProfile(a.Profile, b); err != nil {
 		return EmailPDFReceipt{}, err
 	}
-	r, err := validateEmailPDFPublication(ctx, tx, a, b)
+	r, err := validateEmailPDFPublication(ctx, q, a, b)
 	if err != nil {
 		return EmailPDFReceipt{}, err
 	}

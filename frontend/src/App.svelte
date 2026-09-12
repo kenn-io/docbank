@@ -2426,7 +2426,7 @@
         onauthfailure={handleFailure}
       />
     {/if}
-	{#if mailboxTarget && uploadChannel}<MailboxImportDrawer session={webSession} channel={uploadChannel} directory={mailboxTarget} onclose={()=>{mailboxTarget=null;}} oncomplete={async()=>{if(mailboxTarget)await loadDirectory(mailboxTarget.id,false);}} onauthfailure={handleFailure}/>{/if}
+	{#if mailboxTarget && uploadChannel}<MailboxImportDrawer session={webSession} channel={uploadChannel} directory={mailboxTarget} onclose={()=>{mailboxTarget=null;}} oncomplete={async()=>{if(mailboxTarget)await loadDirectory(mailboxTarget.id,false);}} onauthfailure={handleFailure} onexport={(collectionID,total)=>{if(exportHasJob){exportOpen=true;return;}exportInput={label:"Completed mailbox import",collectionID,total};mailboxTarget=null;exportOpen=true;}}/>{/if}
     {#if trashTarget}
       <TrashNodeModal
         session={webSession}

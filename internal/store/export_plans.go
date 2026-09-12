@@ -17,7 +17,7 @@ import (
 )
 
 func validateExportPolicies(roles []bundle.RolePolicy) error {
-	if len(roles) < 1 || len(roles) > 3 {
+	if len(roles) < 1 || len(roles) > 6 {
 		return bundle.ErrLimit
 	}
 	seen := map[string]bool{}
@@ -27,7 +27,7 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 		}
 		seen[p.Role] = true
 		switch p.Role {
-		case "original":
+		case "original", "attachment_original":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
 				return bundle.ErrConflict
 			}
@@ -37,6 +37,10 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 			}
 		case "pages":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" && !canonical.IsSHA256Hex(p.RecipeSHA256) {
+				return bundle.ErrConflict
+			}
+		case "email_pdf", "attachment_pdf":
+			if (p.ProfileFingerprint == "") == (p.RecipeSHA256 == "") || p.ProfileFingerprint != "" && !canonical.IsSHA256Hex(p.ProfileFingerprint) || p.RecipeSHA256 != "" && !canonical.IsSHA256Hex(p.RecipeSHA256) {
 				return bundle.ErrConflict
 			}
 		default:
@@ -92,9 +96,28 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 	if err := validateExportPolicies(r.Roles); err != nil {
 		return bundle.Plan{}, err
 	}
+	publications := map[string]string{}
+	for _, p := range r.Publications {
+		if validateUUIDv4(p.VersionID) != nil || document.ValidateEmailDocumentOperationID(p.OperationID) != nil || publications[p.VersionID] != "" {
+			return bundle.Plan{}, bundle.ErrConflict
+		}
+		publications[p.VersionID] = p.OperationID
+	}
+	if len(publications) > bundle.ChunkMembers {
+		return bundle.Plan{}, bundle.ErrLimit
+	}
+	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
+		return bundle.Plan{}, err
+	}
+	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
+		return bundle.Plan{}, err
+	}
 	request, err := canonical.Marshal(r)
 	if err != nil {
 		return bundle.Plan{}, err
+	}
+	if len(request) > 1<<20 {
+		return bundle.Plan{}, bundle.ErrLimit
 	}
 	digest := pageChecksum(request)
 	var plan bundle.Plan
@@ -142,6 +165,10 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 			return bundle.ErrLimit
 		}
 		plan = bundle.Plan{Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
+		if r.VolumeLimits != nil {
+			plan.VolumeLimits = new(*r.VolumeLimits)
+		}
+		plan.DuplicatePolicy = r.DuplicatePolicy
 		raw, e := canonical.Marshal(plan)
 		if e != nil {
 			return e
@@ -156,10 +183,25 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		index := 0
 		csvBytes, directoryBytes := int64(1024), int64(1024)
-		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
-			d, err := resolveExportDocument(ctx, tx, m, r.Roles)
-			if err != nil {
+		volumes := bundle.VolumeCursor{Limits: plan.VolumeLimits}
+		duplicates := bundle.DuplicateCursor{Policy: plan.DuplicatePolicy}
+		write := func(d bundle.Document) error {
+			if index >= bundle.MaxDocumentRows {
+				return bundle.ErrLimit
+			}
+			if err := duplicates.Add(&d, true); err != nil {
 				return err
+			}
+			for i := range d.Roles {
+				role := &d.Roles[i]
+				if role.Status != exportRoleAvailable {
+					continue
+				}
+				var err error
+				role.Volume, err = volumes.Add(role.Size)
+				if err != nil {
+					return err
+				}
 			}
 			raw, err := canonical.Marshal(d)
 			if err != nil {
@@ -181,7 +223,7 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 				return bundle.ErrLimit
 			}
 			for _, role := range d.Roles {
-				if role.Status == exportRoleUnavailable {
+				if role.Status != exportRoleAvailable {
 					continue
 				}
 				plan.RoleEntries++
@@ -201,13 +243,41 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 			_, err = tx.ExecContext(ctx, `INSERT INTO export_documents(plan_id,ordinal,canonical_json) VALUES(?,?,?)`, plan.ID, index, raw)
 			index++
 			return err
+		}
+		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
+			d, err := resolveExportDocument(ctx, tx, m, r.Roles)
+			if err != nil {
+				return err
+			}
+			publication := publications[m.VersionID]
+			delete(publications, m.VersionID)
+			return expandExportAttachments(ctx, tx, d, r.Roles, publication, write)
 		})
 		if err != nil {
 			return err
 		}
-		if index != plan.Total {
+		if len(publications) != 0 {
 			return bundle.ErrConflict
 		}
+		if index != plan.Total {
+			plan.DocumentRows = index
+		}
+		plan.Volumes = volumes.Index
+		validator := bundle.RowValidator{Plan: plan}
+		err = walkExportDocumentBytes(ctx, tx, plan.ID, func(raw []byte) error {
+			var d bundle.Document
+			if err := json.Unmarshal(raw, &d, json.RejectUnknownMembers(true)); err != nil {
+				return err
+			}
+			return validator.Add(d)
+		})
+		if err != nil {
+			return err
+		}
+		if err = validator.Finish(); err != nil {
+			return err
+		}
+		plan.Counts = new(validator.Counts)
 		plan.Fingerprint, err = exportPlanFingerprint(ctx, tx, plan)
 		if err != nil {
 			return err
@@ -352,6 +422,9 @@ func resolveExportDocument(ctx context.Context, tx *sql.Tx, m bundle.Member, pol
 	}
 	base := fmt.Sprintf("documents/%d/%s/", m.NodeID, m.VersionID)
 	for _, policy := range policies {
+		if policy.Role == "attachment_original" || policy.Role == "attachment_pdf" {
+			continue
+		}
 		roles := []bundle.Role{}
 		switch policy.Role {
 		case "original":
@@ -364,6 +437,12 @@ func resolveExportDocument(ctx context.Context, tx *sql.Tx, m bundle.Member, pol
 			}
 		case "pages":
 			roles, d.Frames, err = resolveExportPages(ctx, tx, m, policy, base)
+		case "email_pdf":
+			var role bundle.Role
+			role, err = resolveExportEmailPDF(ctx, tx, m.VersionID, policy, base)
+			if err == nil {
+				roles = append(roles, role)
+			}
 		}
 		if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, bundle.ErrUnavailable) {
 			return d, err

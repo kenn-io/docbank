@@ -114,7 +114,7 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 	if err = json.Unmarshal(raw, &plan, json.RejectUnknownMembers(true)); err != nil {
 		return Receipt{}, err
 	}
-	if plan.Format != Format || plan.Fingerprint != wantFingerprint || plan.Total < 1 || plan.Total > MaxMembers || plan.RoleEntries != n-3 || plan.RoleEntries > MaxRoles || plan.RoleBytes < 0 || plan.RoleBytes > MaxRoleBytes {
+	if plan.Format != Format || plan.Fingerprint != wantFingerprint || plan.Total < 1 || plan.Total > MaxMembers || plan.ArchiveEntries() != n || plan.RoleEntries > MaxRoles || plan.RoleBytes < 0 || plan.RoleBytes > MaxRoleBytes || ValidateVolumeLimits(plan.VolumeLimits) != nil {
 		return Receipt{}, ErrInvalidArchive
 	}
 	plan.Fingerprint = ""
@@ -130,6 +130,10 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 	}
 	checksums := bufio.NewReaderSize(io.NewSectionReader(r, sums.offset, sums.size), BufferSize)
 	checkLine := func(hash, name string) error { return expect(checksums, fmt.Sprintf("%s  %s\n", hash, name)) }
+	var volumes *volumeReader
+	if plan.VolumeLimits != nil {
+		volumes = &volumeReader{ctx: ctx, reader: r, entries: entries[:n-3], plan: plan, fingerprint: wantFingerprint, checkLine: checkLine, buffer: buffer}
+	}
 	csvHash := sha256.New()
 	csvWriter := csv.NewWriter(csvHash)
 	if err = csvWriter.Write(csvHeader); err != nil {
@@ -137,7 +141,7 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 	}
 	index, count := 0, 0
 	var roleBytes int64
-	var previous Member
+	validator := RowValidator{Plan: plan}
 	for {
 		peek, err := reader.Peek(1)
 		if err != nil {
@@ -166,10 +170,9 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 		if !bytes.Equal(raw, canonicalBytes) {
 			return Receipt{}, ErrInvalidArchive
 		}
-		if count >= plan.Total || d.NodeID < 1 || count > 0 && (d.NodeID < previous.NodeID || d.NodeID == previous.NodeID && d.VersionID <= previous.VersionID) {
+		if validator.Add(d) != nil {
 			return Receipt{}, ErrInvalidArchive
 		}
-		previous = d.Member
 		count++
 		_, _ = fingerprint.Write(raw)
 		_, _ = fingerprint.Write([]byte{'\n'})
@@ -177,24 +180,36 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 			return Receipt{}, err
 		}
 		for _, role := range d.Roles {
+			if role.Status == "collapsed" {
+				continue
+			}
 			if role.Status == "unavailable" {
 				if role.Path != "" || role.SHA256 != "" || role.Size != 0 {
 					return Receipt{}, ErrInvalidArchive
 				}
 				continue
 			}
-			if role.Status != "available" || index >= n-3 || role.Path != entries[index].name || role.Size != entries[index].size || role.Size > MaxRoleBytes-roleBytes {
+			if role.Status != "available" || index >= plan.RoleEntries || role.Size > MaxRoleBytes-roleBytes {
 				return Receipt{}, ErrInvalidArchive
 			}
-			h, err := entryHash(ctx, r, entries[index], buffer)
-			if err != nil {
-				return Receipt{}, err
-			}
-			if h != role.SHA256 {
-				return Receipt{}, ErrInvalidArchive
-			}
-			if err = checkLine(h, role.Path); err != nil {
-				return Receipt{}, err
+			if volumes != nil {
+				if err = volumes.Add(role, index); err != nil {
+					return Receipt{}, err
+				}
+			} else {
+				if role.Path != entries[index].name || role.Size != entries[index].size {
+					return Receipt{}, ErrInvalidArchive
+				}
+				h, err := entryHash(ctx, r, entries[index], buffer)
+				if err != nil {
+					return Receipt{}, err
+				}
+				if h != role.SHA256 {
+					return Receipt{}, ErrInvalidArchive
+				}
+				if err = checkLine(h, role.Path); err != nil {
+					return Receipt{}, err
+				}
 			}
 			index++
 			roleBytes += role.Size
@@ -206,8 +221,13 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 	if _, err = reader.ReadByte(); !errors.Is(err, io.EOF) {
 		return Receipt{}, ErrInvalidArchive
 	}
-	if count != plan.Total || index != plan.RoleEntries || roleBytes != plan.RoleBytes || hex.EncodeToString(fingerprint.Sum(nil)) != wantFingerprint {
+	if validator.Finish() != nil || count != plan.Rows() || index != plan.RoleEntries || roleBytes != plan.RoleBytes || hex.EncodeToString(fingerprint.Sum(nil)) != wantFingerprint {
 		return Receipt{}, ErrInvalidArchive
+	}
+	if volumes != nil {
+		if err = volumes.Finish(); err != nil {
+			return Receipt{}, err
+		}
 	}
 	csvWriter.Flush()
 	if err = csvWriter.Error(); err != nil {

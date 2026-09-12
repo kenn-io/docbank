@@ -51,6 +51,7 @@ type SourceRequest struct {
 	SavedQueryID       string       `json:"saved_query_id,omitzero"`
 	SavedQueryRevision int64        `json:"saved_query_revision,omitzero"`
 	SnapshotID         string       `json:"snapshot_id,omitzero"`
+	CollectionID       string       `json:"collection_id,omitzero"`
 	MemberHash         string       `json:"member_hash,omitzero"`
 	Total              int          `json:"total,omitzero"`
 }
@@ -68,6 +69,7 @@ type Source struct {
 	SavedQueryID       string `json:"saved_query_id,omitzero"`
 	SavedQueryRevision int64  `json:"saved_query_revision,omitzero"`
 	QueryFingerprint   string `json:"query_fingerprint,omitzero"`
+	CollectionID       string `json:"collection_id,omitzero"`
 }
 
 type RolePolicy struct {
@@ -78,10 +80,45 @@ type RolePolicy struct {
 }
 
 type PlanRequest struct {
-	OperationID string       `json:"operation_id"`
-	SourceID    string       `json:"source_id"`
-	MemberHash  string       `json:"member_hash"`
-	Roles       []RolePolicy `json:"roles"`
+	OperationID     string                 `json:"operation_id"`
+	SourceID        string                 `json:"source_id"`
+	MemberHash      string                 `json:"member_hash"`
+	Roles           []RolePolicy           `json:"roles"`
+	Publications    []PublicationSelection `json:"publications,omitzero"`
+	VolumeLimits    *VolumeLimits          `json:"volume_limits,omitzero"`
+	DuplicatePolicy string                 `json:"duplicate_policy,omitzero"`
+}
+
+type VolumeLimits struct {
+	RoleBytes int64 `json:"role_bytes"`
+	Roles     int   `json:"roles"`
+}
+
+type OutputCounts struct {
+	Messages               int   `json:"messages"`
+	Attachments            int   `json:"attachments"`
+	EmailPDFs              int   `json:"email_pdfs"`
+	AttachmentPDFs         int   `json:"attachment_pdfs"`
+	Pages                  int64 `json:"pages"`
+	Collapsed              int   `json:"collapsed"`
+	Unavailable            int   `json:"unavailable"`
+	UnavailableInventories int   `json:"unavailable_inventories"`
+}
+
+type PublicationSelection struct {
+	VersionID   string `json:"version_id"`
+	OperationID string `json:"operation_id"`
+}
+
+// AttachmentInventory is a bounded parent declaration. Each occurrence follows
+// as its own Document row, so even a thousand children never enlarge one row.
+type AttachmentInventory struct {
+	OperationID   string `json:"operation_id,omitzero"`
+	RequestDigest string `json:"request_digest,omitzero"`
+	GenerationID  string `json:"generation_id,omitzero"`
+	AttachmentID  string `json:"attachment_id,omitzero"`
+	State         string `json:"state"`
+	Total         int    `json:"total"`
 }
 
 type Role struct {
@@ -93,34 +130,44 @@ type Role struct {
 	MediaType string                `json:"media_type,omitzero"`
 	Recipe    jsontext.Value        `json:"recipe,omitzero"`
 	Page      *document.PageImageV1 `json:"page,omitzero"`
+	Reason    string                `json:"reason,omitzero"`
+	Volume    int                   `json:"volume,omitzero"`
+	ReuseOf   string                `json:"reuse_of,omitzero"`
 }
 
 type Document struct {
 	Member
 
-	Name      string                 `json:"name"`
-	Path      string                 `json:"path"`
-	MediaType string                 `json:"media_type"`
-	Roles     []Role                 `json:"roles"`
-	Frames    []document.PageFrameV1 `json:"frames,omitzero"`
+	Name       string                          `json:"name"`
+	Path       string                          `json:"path"`
+	MediaType  string                          `json:"media_type"`
+	Roles      []Role                          `json:"roles"`
+	Frames     []document.PageFrameV1          `json:"frames,omitzero"`
+	Inventory  *AttachmentInventory            `json:"attachment_inventory,omitzero"`
+	Attachment *document.EmailDocumentRelation `json:"attachment,omitzero"`
 }
 
 // Plan is the bounded header. Documents are streamed separately in identity
 // order; Fingerprint covers the header with Fingerprint empty plus those rows.
 type Plan struct {
-	Format        string       `json:"format"`
-	ID            string       `json:"id"`
-	VaultID       string       `json:"vault_id"`
-	Toolchain     string       `json:"toolchain"`
-	Source        Source       `json:"source"`
-	Roles         []RolePolicy `json:"roles"`
-	Fingerprint   string       `json:"fingerprint"`
-	Total         int          `json:"total"`
-	RoleEntries   int          `json:"role_entries"`
-	RoleBytes     int64        `json:"role_bytes"`
-	MetadataBytes int64        `json:"metadata_bytes"`
-	CreatedAt     string       `json:"created_at"`
-	ExpiresAt     string       `json:"expires_at"`
+	Format          string        `json:"format"`
+	ID              string        `json:"id"`
+	VaultID         string        `json:"vault_id"`
+	Toolchain       string        `json:"toolchain"`
+	Source          Source        `json:"source"`
+	Roles           []RolePolicy  `json:"roles"`
+	Fingerprint     string        `json:"fingerprint"`
+	Total           int           `json:"total"`
+	DocumentRows    int           `json:"document_rows,omitzero"`
+	VolumeLimits    *VolumeLimits `json:"volume_limits,omitzero"`
+	Volumes         int           `json:"volumes,omitzero"`
+	DuplicatePolicy string        `json:"duplicate_policy,omitzero"`
+	Counts          *OutputCounts `json:"counts,omitzero"`
+	RoleEntries     int           `json:"role_entries"`
+	RoleBytes       int64         `json:"role_bytes"`
+	MetadataBytes   int64         `json:"metadata_bytes"`
+	CreatedAt       string        `json:"created_at"`
+	ExpiresAt       string        `json:"expires_at"`
 }
 
 type JobRequest struct {
@@ -145,6 +192,7 @@ type RoleSummary struct {
 	UnavailableMembers int    `json:"unavailable_members"`
 	Files              int    `json:"files"`
 	Bytes              int64  `json:"bytes"`
+	CollapsedFiles     int    `json:"collapsed_files,omitzero"`
 	UnavailableReason  string `json:"unavailable_reason,omitzero"`
 }
 

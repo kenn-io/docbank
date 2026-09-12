@@ -61,6 +61,14 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		var resolver func(context.Context) ([]bundle.Member, error)
 		var queryFingerprint string
+		if request.Kind == "mailbox_collection" {
+			// Mailbox imports are vault-scoped and already readable by this
+			// authenticated session. The resulting source/plan remains private
+			// to the export session; do not reuse the mailbox owner for it.
+			resolver = func(ctx context.Context) ([]bundle.Member, error) {
+				return d.Store.ExportMailboxCollectionMembers(ctx, mailboxOwner(d), request.CollectionID)
+			}
+		}
 		if request.Kind == "query" || request.Kind == "saved_query" || request.Kind == "snapshot" {
 			resolver = func(ctx context.Context) ([]bundle.Member, error) {
 				snapshotOwner, _ := workspaceSnapshotOwner(ctx)
@@ -145,7 +153,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		return &sourceOutput{Body: source}, nil
 	})
 	type planOutput struct{ Body bundle.Plan }
-	huma.Register(api, huma.Operation{OperationID: "createExportPlan", Method: http.MethodPost, Path: "/api/v1/exports/plans", Summary: "Freeze role availability and exact archive paths", MaxBodyBytes: 8192}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{OperationID: "createExportPlan", Method: http.MethodPost, Path: "/api/v1/exports/plans", Summary: "Freeze role availability and exact archive paths", MaxBodyBytes: 1 << 20}, func(ctx context.Context, in *struct {
 		Body    bundle.PlanRequest
 		RawBody []byte
 	}) (*planOutput, error) {
@@ -177,6 +185,35 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		return &planOutput{Body: p}, nil
 	})
 	type jobOutput struct{ Body bundle.Job }
+	type recipesOutput struct{ Body bundle.EmailPDFRecipes }
+	huma.Register(api, huma.Operation{OperationID: "getExportEmailPDFRecipes", Method: http.MethodGet, Path: "/api/v1/exports/sources/{id}/email-pdf-recipes", Summary: "Discover qualified retained body PDF recipes for a sealed source"}, func(ctx context.Context, in *struct {
+		ID string `path:"id"`
+	}) (*recipesOutput, error) {
+		owner, err := exportOwner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		choices, err := d.Store.ExportEmailPDFRecipes(ctx, owner, in.ID)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
+		return &recipesOutput{Body: choices}, nil
+	})
+	type problemsOutput struct{ Body bundle.OutputProblems }
+	huma.Register(api, huma.Operation{OperationID: "getExportOutputProblems", Method: http.MethodGet, Path: "/api/v1/exports/plans/{id}/problems", Summary: "Read one bounded page of frozen unavailable output details"}, func(ctx context.Context, in *struct {
+		ID    string `path:"id"`
+		After int    `query:"after" minimum:"0" maximum:"2600000"`
+	}) (*problemsOutput, error) {
+		owner, err := exportOwner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		problems, err := d.Store.ExportOutputProblems(ctx, owner, in.ID, in.After)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
+		return &problemsOutput{Body: problems}, nil
+	})
 	type previewOutput struct{ Body bundle.PlanPreview }
 	huma.Register(api, huma.Operation{OperationID: "getExportPlanPreview", Method: http.MethodGet, Path: "/api/v1/exports/plans/{id}/preview", Summary: "Summarize frozen export role availability"}, func(ctx context.Context, in *struct {
 		ID string `path:"id"`
@@ -377,6 +414,13 @@ func exportBrowserRouteAllowed(r *http.Request) bool {
 		return r.URL.RawQuery == "" && r.Method == http.MethodGet && (parts[0] == "plans" || parts[0] == "jobs")
 	}
 	if len(parts) == 3 {
+		if parts[0] == "sources" && parts[2] == "email-pdf-recipes" {
+			return r.Method == http.MethodGet && r.URL.RawQuery == ""
+		}
+		if parts[0] == "plans" && parts[2] == "problems" {
+			q := r.URL.Query()
+			return r.Method == http.MethodGet && (r.URL.RawQuery == "" || len(q) == 1 && len(q["after"]) == 1)
+		}
 		if parts[0] == "plans" && parts[2] == "preview" {
 			return r.Method == http.MethodGet && r.URL.RawQuery == ""
 		}

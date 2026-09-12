@@ -29,8 +29,9 @@
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
+    onexport?: (collectionID: string, total: number) => void;
   }
-  let { session, channel, directory, onclose, oncomplete, onauthfailure }: Props = $props();
+  let { session, channel, directory, onclose, oncomplete, onauthfailure, onexport }: Props = $props();
   let file = $state<File | null>(null),
     dialect = $state("mboxrd"),
     busy = $state(false),
@@ -233,6 +234,7 @@
         <p class="muted">Attachment documents are retained. Their indexing status depends on the configured processing profile and consent.</p>
         <small>Import {job.id}</small>
         <div class="actions">
+          {#if job.state === "complete" && job.imported + job.retries > 0 && onexport}<Button size="sm" onclick={() => onexport?.(job!.collection_id, job!.imported + job!.retries)}>Export completed collection</Button>{/if}
           {#if ["queued","running"].includes(job.state)}<Button size="sm" onclick={()=>void cancel()}>Cancel import</Button>{/if}
           {#if job.state==="partial"&&!job.scanned_tail}<Button size="sm" onclick={()=>void resume(true)}>Continue import</Button>{/if}
           {#if ["failed","canceled"].includes(job.state)&&!job.scanned_tail}<Button size="sm" onclick={()=>void resume(false)}>Resume import</Button>{/if}

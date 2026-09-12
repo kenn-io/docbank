@@ -61,6 +61,9 @@ func validateExportSource(r bundle.SourceRequest) error {
 	if r.SnapshotID != "" {
 		choices++
 	}
+	if r.CollectionID != "" {
+		choices++
+	}
 	if r.Kind == "upload" {
 		choices++
 	}
@@ -68,6 +71,10 @@ func validateExportSource(r bundle.SourceRequest) error {
 		return bundle.ErrConflict
 	}
 	switch r.Kind {
+	case "mailbox_collection":
+		if validateUUIDv4(r.CollectionID) != nil {
+			return bundle.ErrConflict
+		}
 	case "explicit":
 		if len(r.Members) == 0 || len(r.Members) > bundle.ChunkMembers {
 			return bundle.ErrLimit
@@ -199,6 +206,7 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		}
 		source = bundle.Source{ID: r.OperationID, RequestSHA256: digest, Kind: r.Kind, State: state, Total: r.Total, MemberHash: r.MemberHash, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
 		source.SavedQueryID = r.SavedQueryID
+		source.CollectionID = r.CollectionID
 		source.SavedQueryRevision = r.SavedQueryRevision
 		raw, e := canonical.Marshal(source)
 		if e != nil {
@@ -225,6 +233,8 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		members, err = resolve(ctx)
 	} else if r.Kind == "explicit" {
 		members = r.Members
+	} else if r.Kind == "mailbox_collection" {
+		members, err = s.ExportMailboxCollectionMembers(ctx, owner, r.CollectionID)
 	} else if r.Kind == "nodes" {
 		for _, id := range r.NodeIDs {
 			var n Node

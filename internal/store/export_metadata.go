@@ -143,12 +143,13 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		if err = q.QueryRowContext(ctx, `SELECT count(*),COALESCE(min(ordinal),-1),COALESCE(max(ordinal),-1) FROM export_documents WHERE plan_id=?`, id).Scan(&rowCount, &firstOrdinal, &lastOrdinal); err != nil {
 			return err
 		}
-		if rowCount != plan.Total || firstOrdinal != 0 || lastOrdinal != plan.Total-1 {
+		if rowCount != plan.Rows() || firstOrdinal != 0 || lastOrdinal != plan.Rows()-1 {
 			return bundle.ErrConflict
 		}
 		index, entries := 0, 0
 		roots := make(map[string]struct{})
 		var roleBytes int64
+		validator := bundle.RowValidator{Plan: plan}
 		err = walkExportDocumentBytes(ctx, q, id, func(raw []byte) error {
 			var d bundle.Document
 			if err := json.Unmarshal(raw, &d, json.RejectUnknownMembers(true)); err != nil {
@@ -165,7 +166,16 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 			if m != d.Member {
 				return bundle.ErrConflict
 			}
+			if err := validator.Add(d); err != nil {
+				return err
+			}
+			if err := validateExportAttachmentAuthority(ctx, q, d); err != nil {
+				return err
+			}
 			for _, r := range d.Roles {
+				if r.Status == "collapsed" {
+					continue
+				}
 				if r.Status == exportRoleUnavailable {
 					if r.Path != "" || r.SHA256 != "" || r.Size != 0 {
 						return bundle.ErrConflict
@@ -195,7 +205,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		if err != nil {
 			return err
 		}
-		if index != plan.Total || entries != plan.RoleEntries || roleBytes != plan.RoleBytes {
+		if validator.Finish() != nil || index != plan.Rows() || entries != plan.RoleEntries || roleBytes != plan.RoleBytes {
 			return bundle.ErrConflict
 		}
 		var rootCount int
@@ -263,7 +273,7 @@ func importBundleMetadata(ctx context.Context, tx *sql.Tx, raw jsontext.Value) e
 		_, err := tx.ExecContext(ctx, `INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES(?,'',?,'',?,?)`, r.ID, p.Source.ID, []byte(r.CanonicalJSON), r.RetainUntil)
 		return err
 	case "document":
-		if r.Ordinal < 0 || r.Ordinal >= bundle.MaxMembers {
+		if r.Ordinal < 0 || r.Ordinal >= bundle.MaxDocumentRows {
 			return bundle.ErrLimit
 		}
 		var d bundle.Document
