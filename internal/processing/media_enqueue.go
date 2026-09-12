@@ -272,7 +272,9 @@ func (worker *MediaContinuationWorker) runContinuation(
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
 				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil); runErr != nil {
-				if ctx.Err() != nil {
+				// Consent denial is a job outcome. Let failContinuation handle
+				// concurrent shutdown without reporting it as a worker failure.
+				if ctx.Err() != nil && !isEmbeddingConsentFailure(runErr) {
 					return false, runErr
 				}
 				return worker.failContinuation(ctx, continuation, runErr)

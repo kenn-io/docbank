@@ -228,6 +228,9 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if emailNavigationBrowserReadAllowed(r) {
+		return true
+	}
 	method, path := r.Method, r.URL.Path
 	if strings.HasPrefix(path, "/api/v1/exports/") {
 		return exportBrowserRouteAllowed(r)
