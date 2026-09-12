@@ -255,6 +255,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			}
 			out.Body = TrashEmptyReport{
 				CandidateRoots: rep.Candidates,
+				RetainedRoots:  rep.Retained,
 				Deleted:        rep.Deleted,
 				Run:            rep.Run,
 			}

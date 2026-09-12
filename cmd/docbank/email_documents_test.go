@@ -63,13 +63,16 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	_, err = c.API().TrashNode(t.Context(), &apiclient.TrashNodeRequestOptions{PathParams: &apiclient.TrashNodePath{ID: uploaded.Node.ID}, Header: &apiclient.TrashNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(uploaded.Node.Revision, 10))}})
 
 	require.NoError(t, err)
-	_, err = runCLI(t, "trash", "empty", "--run")
-	require.ErrorContains(t, err, receipt.OperationID)
+	out, err = runCLI(t, "trash", "empty", "--run")
+	require.NoError(t, err)
+	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications")
+	require.Contains(t, out, "deleted 0 trashed root(s)")
 	_, err = runCLI(t, "email-documents", "release", receipt.OperationID,
 		"--request-digest", receipt.RequestDigest)
 	require.NoError(t, err)
-	_, err = runCLI(t, "trash", "empty", "--run")
+	out, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
+	require.Contains(t, out, "deleted 1 trashed root(s)")
 	child, err := c.API().GetNode(t.Context(), &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: receipt.Relations[0].Child.NodeID}})
 
 	require.NoError(t, err)
