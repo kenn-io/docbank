@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,23 @@ func TestWebDownloadSessionRevocationFencesTicketIssuance(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, active)
 	assert.False(t, called)
+}
+
+func TestArchiveTicketExpiryReleasesLeaseWithoutRemovingArchive(t *testing.T) {
+	downloads := newWebDownloadRegistry(t.TempDir())
+	path := filepath.Join(t.TempDir(), "retained.zip")
+	require.NoError(t, os.WriteFile(path, []byte("synthetic archive"), 0600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	released := 0
+	token, err := downloads.issue(webDownloadTicket{path: path, owner: "owner", archiveFile: file, releaseArchive: func() { released++; _ = file.Close() }})
+	require.NoError(t, err)
+	require.False(t, downloads.cancel("other", token))
+	downloads.expire(sha256.Sum256([]byte(token)))
+	require.Equal(t, 1, released)
+	_, ok := downloads.consume(token)
+	require.False(t, ok)
+	require.FileExists(t, path)
 }
 
 func TestWebDownloadConcurrentRevocationRemovesTicketIssuedBeforeRevokeWins(t *testing.T) {

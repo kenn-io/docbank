@@ -32,6 +32,7 @@ nav = [
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
     {"Multi-store Storage" = "usage/storage.md"},
     {"Backup & Restore" = "usage/backup.md"},
+    {"Verified Export Bundles" = "usage/export-bundles.md"},
     {"Troubleshooting" = "troubleshooting.md"},
   ]},
   {"Automate & Integrate" = [

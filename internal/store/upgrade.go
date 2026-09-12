@@ -72,6 +72,7 @@ var (
 )
 
 var currentSchemaTables = [...]string{
+	"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
 	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "collection_labels", "batch_tag_receipts",
@@ -239,6 +240,7 @@ func validateCurrentSchemaColumns(
 		)
 	}
 	for _, table := range []string{
+		"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
 		"blob_stores", "blob_locations", "blob_pack_entries",
 		"saved_queries", "saved_query_runs", "collection_labels", "batch_tag_receipts",
 		"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",

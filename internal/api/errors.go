@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/document/bundle"
 	"net/http"
 	"strings"
 
@@ -113,6 +114,9 @@ var storeErrCodes = []struct {
 func FromStoreError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, bundle.ErrRetained) {
+		return NewError(http.StatusConflict, "export_retained", err.Error())
 	}
 	var exhausted *packstore.ExhaustedError
 	if errors.As(err, &exhausted) && exhausted.Headline != nil {

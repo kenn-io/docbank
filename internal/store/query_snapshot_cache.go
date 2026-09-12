@@ -421,12 +421,20 @@ func (s *QuerySnapshotService) Page(
 func (s *QuerySnapshotService) CopyMembers(
 	ctx context.Context, owner, snapshotID, memberHash string,
 ) ([]SnapshotMember, error) {
+	return s.CopyMembersBounded(ctx, owner, snapshotID, memberHash, int(querySnapshotMaxRows))
+}
+
+// CopyMembersBounded rejects oversized membership before allocating its copy.
+func (s *QuerySnapshotService) CopyMembersBounded(ctx context.Context, owner, snapshotID, memberHash string, limit int) ([]SnapshotMember, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	cached, err := s.lookup(owner, snapshotID)
 	if err != nil {
 		return nil, err
+	}
+	if limit < 1 || len(cached.rows) > limit {
+		return nil, ErrQuerySnapshotTooLarge
 	}
 	var metadata SnapshotProjection
 	if err := json.Unmarshal(cached.metadata, &metadata); err != nil {

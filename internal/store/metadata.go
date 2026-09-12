@@ -423,6 +423,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 12 {
+		if err := exportBundleMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
@@ -1006,6 +1011,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM page_recipes)
 		    + (SELECT COUNT(*) FROM page_images)
 		    + (SELECT COUNT(*) FROM page_render_jobs)
+		    + (SELECT COUNT(*) FROM export_sources)
+		    + (SELECT COUNT(*) FROM export_plans)
+		    + (SELECT COUNT(*) FROM export_jobs)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
@@ -1239,6 +1247,8 @@ func (s *Store) importMetadataRecord(
 		return err
 	case metadataPageDocumentType, metadataPageRecipeType, metadataPageImageType, metadataPageJobType:
 		return importPageMetadata(ctx, tx, kind, raw)
+	case metadataExportType:
+		return importBundleMetadata(ctx, tx, raw)
 	case metadataVisualPreviewHeadType:
 		var v metadataVisualPreviewHead
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1448,6 +1458,7 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
+	metadataExportType:                     {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
 	metadataPageDocumentType:               {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	metadataPageRecipeType:                 {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	metadataPageImageType:                  {metadataTypeField, "canonical_json", metadataPageChecksumField},
@@ -1899,6 +1910,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.schemaVersion >= 11 {
 		if err := exportPageMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 12 {
+		if err := exportBundleMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 			return err
 		}
 	}
