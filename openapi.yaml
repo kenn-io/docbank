@@ -3172,17 +3172,23 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    DownloadExportArchiveRequest:
+    DownloadRequest:
       additionalProperties: false
       properties:
         $schema:
           description: A URL to the JSON Schema for this object.
           examples:
-            - https://example.com/schemas/DownloadExportArchiveRequest.json
+            - https://example.com/schemas/DownloadRequest.json
           format: uri
           readOnly: true
           type: string
+        basename:
+          type: string
       type: object
+      x-go-type: bundle.DownloadRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     DuplicateCollection:
       additionalProperties: false
       properties:
@@ -7101,6 +7107,40 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PlanPreview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PlanPreview.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          type: string
+        member_hash:
+          type: string
+        plan_id:
+          type: string
+        roles:
+          items:
+            $ref: "#/components/schemas/RoleSummary"
+          type: array
+        total:
+          format: int64
+          type: integer
+      required:
+        - plan_id
+        - fingerprint
+        - member_hash
+        - total
+        - roles
+      type: object
+      x-go-type: bundle.PlanPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     PlanRequest:
       additionalProperties: false
       properties:
@@ -8883,6 +8923,36 @@ components:
         - role
       type: object
       x-go-type: bundle.RolePolicy
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
+    RoleSummary:
+      additionalProperties: false
+      properties:
+        available_members:
+          format: int64
+          type: integer
+        bytes:
+          format: int64
+          type: integer
+        files:
+          format: int64
+          type: integer
+        role:
+          type: string
+        unavailable_members:
+          format: int64
+          type: integer
+        unavailable_reason:
+          type: string
+      required:
+        - role
+        - available_members
+        - unavailable_members
+        - files
+        - bytes
+      type: object
+      x-go-type: bundle.RoleSummary
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
@@ -12660,7 +12730,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DownloadExportArchiveRequest"
+              $ref: "#/components/schemas/DownloadRequest"
+          application/octet-stream:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
         required: true
       responses:
         "200":
@@ -12793,6 +12868,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read an immutable export plan header
+  /api/v1/exports/plans/{id}/preview:
+    get:
+      operationId: getExportPlanPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanPreview"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Summarize frozen export role availability
   /api/v1/exports/sources:
     post:
       operationId: createExportSource
