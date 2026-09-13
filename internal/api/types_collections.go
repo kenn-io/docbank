@@ -5,16 +5,15 @@ import "go.kenn.io/docbank/internal/store"
 // Collection is one document-bearing ingest run and its current live summary.
 // LabelRevision advances independently of member observations.
 type Collection struct {
-	Coverage          ProcessingCoverage `json:"coverage"`
-	ID                string             `json:"id" format:"uuid"`
-	SourceKind        string             `json:"source_kind" minLength:"1"`
-	SourceDescription string             `json:"source_description" minLength:"1"`
-	StartedAt         string             `json:"started_at" format:"date-time"`
-	FileCount         int64              `json:"file_count" minimum:"0"`
-	TotalBytes        int64              `json:"total_bytes" minimum:"0"`
-	Label             *string            `json:"label"`
-	LabelRevision     int64              `json:"label_revision" minimum:"1"`
-	LabelUpdatedAt    string             `json:"label_updated_at" format:"date-time"`
+	ID                string  `json:"id" format:"uuid"`
+	SourceKind        string  `json:"source_kind" minLength:"1"`
+	SourceDescription string  `json:"source_description" minLength:"1"`
+	StartedAt         string  `json:"started_at" format:"date-time"`
+	FileCount         int64   `json:"file_count" minimum:"0"`
+	TotalBytes        int64   `json:"total_bytes" minimum:"0"`
+	Label             *string `json:"label"`
+	LabelRevision     int64   `json:"label_revision" minimum:"1"`
+	LabelUpdatedAt    string  `json:"label_updated_at" format:"date-time"`
 }
 
 // CollectionPage is one bounded, newest-first page of nonempty collections.
@@ -44,10 +43,9 @@ type CollectionLabel struct {
 	UpdatedAt string  `json:"updated_at" format:"date-time"`
 }
 
-func fromStoreCollection(collection store.Collection, selected ...collectionProfileSelection) Collection {
+func fromStoreCollection(collection store.Collection) Collection {
 	return Collection{
-		Coverage: fromStoreCoverage(collection.Coverage, selected...),
-		ID:       collection.ID, SourceKind: collection.SourceKind,
+		ID: collection.ID, SourceKind: collection.SourceKind,
 		SourceDescription: collection.SourceDescription, StartedAt: collection.StartedAt,
 		FileCount: collection.FileCount, TotalBytes: collection.TotalBytes,
 		Label: collection.Label, LabelRevision: collection.LabelRevision,

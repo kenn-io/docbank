@@ -53,18 +53,25 @@ type QualitySpike struct {
 	Count int64  `json:"count" minimum:"0"`
 }
 
-// CollectionQuality is a bounded census from the collection coverage snapshot.
-type CollectionQuality struct {
-	Collection         Collection         `json:"collection"`
-	SourceFingerprint  string             `json:"source_fingerprint"`
-	Dimensions         []QualityDimension `json:"dimensions" maxItems:"7"`
-	ZeroBytes          int64              `json:"zero_bytes" minimum:"0"`
-	Mismatches         int64              `json:"mismatches" minimum:"0"`
-	DuplicateDocuments int64              `json:"duplicate_documents" minimum:"0"`
-	Spikes             []QualitySpike     `json:"spikes" maxItems:"7"`
+// CollectionQualitySummary keeps processing coverage on the quality route.
+type CollectionQualitySummary struct {
+	Collection
+
+	Coverage ProcessingCoverage `json:"coverage"`
 }
 
-func fromStoreCoverage(value store.ProcessingCoverage, selected ...collectionProfileSelection) ProcessingCoverage {
+// CollectionQuality is a bounded census from the collection coverage snapshot.
+type CollectionQuality struct {
+	Collection         CollectionQualitySummary `json:"collection"`
+	SourceFingerprint  string                   `json:"source_fingerprint"`
+	Dimensions         []QualityDimension       `json:"dimensions" maxItems:"7"`
+	ZeroBytes          int64                    `json:"zero_bytes" minimum:"0"`
+	Mismatches         int64                    `json:"mismatches" minimum:"0"`
+	DuplicateDocuments int64                    `json:"duplicate_documents" minimum:"0"`
+	Spikes             []QualitySpike           `json:"spikes" maxItems:"7"`
+}
+
+func fromStoreCoverage(value store.ProcessingCoverage, selected collectionProfileSelection) ProcessingCoverage {
 	out := ProcessingCoverage{Configuration: value.Configuration, ProfileFingerprint: value.ProfileFingerprint, GenerationID: value.GenerationID, Profiles: []string{}}
 	if out.Configuration == "" {
 		out.Configuration = "unconfigured"
@@ -73,15 +80,13 @@ func fromStoreCoverage(value store.ProcessingCoverage, selected ...collectionPro
 		c := value.Counts
 		out.Counts = &CoverageCounts{Complete: c.Complete, Partial: c.Partial, Failed: c.Failed, Unprocessed: c.Unprocessed, None: c.None}
 	}
-	if len(selected) > 0 {
-		out.Profile = selected[0].Name
-		out.Profiles = selected[0].Names
-	}
+	out.Profile = selected.Name
+	out.Profiles = selected.Names
 	return out
 }
 
 func fromStoreCollectionQuality(value store.CollectionQuality, selected collectionProfileSelection) CollectionQuality {
-	out := CollectionQuality{Collection: fromStoreCollection(value.Collection, selected), SourceFingerprint: value.SourceFingerprint,
+	out := CollectionQuality{Collection: CollectionQualitySummary{Collection: fromStoreCollection(value.Collection.Collection), Coverage: fromStoreCoverage(value.Collection.Coverage, selected)}, SourceFingerprint: value.SourceFingerprint,
 		Dimensions: []QualityDimension{}, ZeroBytes: value.ZeroBytes, Mismatches: value.Mismatches, DuplicateDocuments: value.DuplicateDocuments, Spikes: []QualitySpike{}}
 	for _, dimension := range value.Dimensions {
 		d := QualityDimension{Field: dimension.Field, Values: []QualityBucket{}, Missing: dimension.Missing, Other: dimension.Other}

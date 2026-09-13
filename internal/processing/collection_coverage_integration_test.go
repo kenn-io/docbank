@@ -59,7 +59,10 @@ func (p coverageProvider) Render(ctx context.Context, upload document.Authorized
 		return document.RenditionResult{}, fmt.Errorf("synthetic provider received invalid PDF: %w", err)
 	}
 	if p.mode == "failed" {
-		failure, _ := document.NewRenditionProviderError(document.RenditionErrorUnsupportedInput, 0, nil)
+		failure, err := document.NewRenditionProviderError(document.RenditionErrorUnsupportedInput, 0, nil)
+		if err != nil {
+			return document.RenditionResult{}, err
+		}
 		return document.RenditionResult{}, failure
 	}
 	result, err := p.base.Render(ctx, upload, auth)
@@ -116,8 +119,7 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			_, _, err = fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 			require.NoError(t, err)
 			selection := store.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
-			quality := store.NewCollectionQualityService(fixture.catalog)
-			before, err := quality.Read(t.Context(), run.ID(), selection, nil)
+			before, err := fixture.catalog.CollectionQuality(t.Context(), run.ID(), selection, nil)
 			require.NoError(t, err)
 			require.NotNil(t, before.Collection.Coverage.Counts)
 			assert.Equal(t, int64(1), before.Collection.Coverage.Counts.Unprocessed)
@@ -131,15 +133,12 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			processed, err := worker.RunOne(t.Context())
 			require.NoError(t, err)
 			require.True(t, processed)
-			after, err := quality.Read(t.Context(), run.ID(), selection, nil)
+			after, err := fixture.catalog.CollectionQuality(t.Context(), run.ID(), selection, nil)
 			require.NoError(t, err)
 			counts := after.Collection.Coverage.Counts
 			require.NotNil(t, counts)
 			expected := map[string]store.CoverageCounts{"complete": {Complete: 1}, "partial": {Partial: 1}, "blank": {Failed: 1}, "failed": {Failed: 1}}
 			assert.Equal(t, expected[mode], *counts)
-			detail, err := fixture.catalog.CollectionByID(t.Context(), run.ID(), selection)
-			require.NoError(t, err)
-			assert.Equal(t, after.Collection.Coverage, detail.Coverage)
 			hits, _, err = fixture.catalog.SearchPage(t.Context(), "renditiononlyneedle", 10)
 			require.NoError(t, err)
 			if mode == "complete" || mode == "partial" {

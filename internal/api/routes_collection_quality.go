@@ -69,7 +69,6 @@ func collectionQualityError(err error) error {
 }
 
 func registerCollectionQualityRoutes(api huma.API, d Deps) {
-	service := store.NewCollectionQualityService(d.Store)
 	huma.Register(api, huma.Operation{OperationID: "getCollectionQuality", Method: http.MethodGet, Path: "/api/v1/collections/{id}/quality", Summary: "Inspect bounded current collection quality and text coverage"}, func(ctx context.Context, in *struct {
 		ID      string `path:"id"`
 		Profile string `query:"profile" maxLength:"128"`
@@ -83,7 +82,7 @@ func registerCollectionQualityRoutes(api huma.API, d Deps) {
 		if in.Fields != "" {
 			fields = strings.Split(in.Fields, ",")
 		}
-		value, err := service.Read(ctx, in.ID, selection.Coverage, fields)
+		value, err := d.Store.CollectionQuality(ctx, in.ID, selection.Coverage, fields)
 		if err != nil {
 			return nil, collectionQualityError(err)
 		}

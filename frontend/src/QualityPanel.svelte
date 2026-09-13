@@ -6,6 +6,7 @@
   interface Props {session:string;collectionID:string;profile:string;onprofile:(name:string)=>void;onnewquery?:(query:Query)=>void;onauthfailure:(cause:unknown)=>void}
   let {session,collectionID,profile,onprofile,onnewquery,onauthfailure}:Props=$props();
   let result=$state<CollectionQuality>();
+  let profileOptions=$state<{session:string;collectionID:string;selected:string;names:string[]}>();
   let error=$state("");let loading=$state(false);let revision=$state(0);
   let selected=$state<Record<string,string[]>>({});
   let generation=0;
@@ -14,7 +15,10 @@
     const request=++generation,abort=new AbortController();
     result=undefined;error="";selected={};loading=true;
     void collectionQuality(activeSession,id,name,abort.signal).then(value=>{
-      if(request===generation&&!abort.signal.aborted)result=value;
+      if(request===generation&&!abort.signal.aborted){
+        result=value;
+        profileOptions={session:activeSession,collectionID:id,selected:value.collection.coverage.profile,names:value.collection.coverage.profiles};
+      }
     }).catch((cause:unknown)=>{
       if(request!==generation||abort.signal.aborted)return;
       if(cause instanceof APIError&&cause.status===401){onauthfailure(cause);return;}
@@ -36,11 +40,11 @@
   <div class="heading"><h3>Collection quality</h3><Button size="sm" onclick={()=>revision++}>Refresh quality</Button></div>
   {#if loading}<span role="status"><Spinner size={14}/> Loading quality…</span>{/if}
   {#if error}<p role="alert">{error}</p>{/if}
+  {#if profileOptions?.session===session&&profileOptions.collectionID===collectionID&&profileOptions.names.length>0}
+    <SelectDropdown title="Coverage profile" value={profile||profileOptions.selected} options={profileOptions.names.map(value=>({value,label:value}))} onchange={onprofile}/>
+  {/if}
   {#if result}
     {@const coverage=result.collection.coverage}
-    {#if coverage.profiles.length>0}
-      <SelectDropdown title="Coverage profile" value={coverage.profile} options={coverage.profiles.map(value=>({value,label:value}))} onchange={onprofile}/>
-    {/if}
     {#if coverage.configuration==="unconfigured"}<p>Processing is not configured.</p>
     {:else if coverage.configuration==="profile_required"}<p>Choose a processing profile to inspect coverage.</p>
     {:else if coverage.counts}

@@ -10,7 +10,54 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/query"
 )
+
+func TestCollectionQualityBucketsMatchSuggestedQueries(t *testing.T) {
+	s, run, _, _ := collectionCoverageFixture(t, 0)
+	nodes := make([]Node, 0, 9)
+	for _, file := range []struct{ name, mime string }{
+		{"report.txt~", "text/plain; charset=utf-8"},
+		{"main.c++", "text/*"},
+		{"report.éxt", ""},
+		{"report.İCS", "text/plain; charset"},
+		{"résumé.TXT", "TEXT/PLAIN"},
+		{"notes.ICS", "text/calendar"},
+		{".pdf", ""},
+		{".report.PDF", "APPLICATION/PDF"},
+		{"tabbed.bin", "\ttext/plain\t"},
+	} {
+		node, err := s.IngestFileExact(t.Context(), run, s.RootID(), file.name, testSHA256([]byte(file.name)), 1, file.mime, file.name, "")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+	got, err := s.CollectionQuality(t.Context(), run.ID(), CoverageSelection{}, []string{"extension", "media_type"})
+	require.NoError(t, err)
+	require.Equal(t, QualityDimension{Field: "extension", Values: []QualityBucket{{"bin", 1}, {"ics", 1}, {"pdf", 1}, {"txt", 1}}, Missing: 5}, qualityDimension(t, got, "extension"))
+	require.Equal(t, QualityDimension{Field: "media_type", Values: []QualityBucket{{"text/plain", 3}, {"application/pdf", 1}, {"text/calendar", 1}}, Missing: 4}, qualityDimension(t, got, "media_type"))
+	want := map[string][]int64{
+		`extension:"bin"`: {nodes[8].ID}, `extension:"ics"`: {nodes[5].ID},
+		`extension:"pdf"`: {nodes[7].ID}, `extension:"txt"`: {nodes[4].ID},
+		`mime:"text/plain"`:      {nodes[0].ID, nodes[3].ID, nodes[4].ID},
+		`mime:"application/pdf"`: {nodes[7].ID}, `mime:"text/calendar"`: {nodes[5].ID},
+	}
+	for _, dimension := range got.Dimensions {
+		field := dimension.Field
+		if field == "media_type" {
+			field = "mime"
+		}
+		for _, bucket := range dimension.Values {
+			text := fmt.Sprintf("%s:%q", field, bucket.Value)
+			value := compilerQuery(t, text)
+			value.Filters = query.Filters{CollectionIDs: []string{run.ID()}}
+			compiled, err := s.CompileQuery(t.Context(), value)
+			require.NoError(t, err, text)
+			ids := compiledFixtureIDs(t, s.db, compiled, "")
+			require.Equal(t, want[text], ids, text)
+			require.Equal(t, bucket.Count, int64(len(ids)), text)
+		}
+	}
+}
 
 // Ignoring current-version metadata, using per-fact membership, or scoping
 // duplicates to this collection would change these hand-counted buckets.
@@ -248,9 +295,8 @@ func TestCollectionQualityScaleProof(t *testing.T) {
 				require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: hash, Extractor: "synthetic-scale-native", ExtractorVersion: 1, Status: ExtractionOK, Text: texts[i]}))
 			}
 		}
-		service := NewCollectionQualityService(s)
 		started := time.Now()
-		cold, err := service.Read(t.Context(), run.ID(), selection, nil)
+		cold, err := s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 		coldElapsed := time.Since(started)
 		if target > 250000 {
 			require.ErrorIs(t, err, ErrQualityTooLarge)
@@ -267,7 +313,7 @@ func TestCollectionQualityScaleProof(t *testing.T) {
 		require.Equal(t, CoverageCounts{Complete: int64(target)}, *cold.Collection.Coverage.Counts)
 		require.Equal(t, int64(target), cold.DuplicateDocuments)
 		started = time.Now()
-		warm, err := service.Read(t.Context(), run.ID(), selection, nil)
+		warm, err := s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 		warmElapsed := time.Since(started)
 		if err != nil {
 			require.ErrorIs(t, err, ErrQualityUnavailable)

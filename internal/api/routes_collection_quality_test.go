@@ -50,6 +50,10 @@ func TestCollectionQualityHTTPConfigurationAndCoverage(t *testing.T) {
 					collection, ok = raw["collection"].(map[string]any)
 					require.True(t, ok)
 				}
+				if suffix != "/quality" {
+					assert.NotContains(t, collection, "coverage")
+					continue
+				}
 				require.Contains(t, collection, "coverage")
 				coverage, ok := collection["coverage"].(map[string]any)
 				require.True(t, ok)
@@ -74,9 +78,7 @@ func TestCollectionQualityHTTPConfigurationAndCoverage(t *testing.T) {
 			require.Len(t, items, 1)
 			item, ok := items[0].(map[string]any)
 			require.True(t, ok)
-			coverage, ok := item["coverage"].(map[string]any)
-			require.True(t, ok)
-			assert.Equal(t, tc.state, coverage["configuration"])
+			assert.NotContains(t, item, "coverage")
 		})
 	}
 }
@@ -85,7 +87,7 @@ func TestCollectionQualityHTTPRejectsUnknownInputsAndMissingAuth(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	imported := importCollection(t, ts.URL, ts.Client(), "manual.txt", "synthetic manual", nil)
 	base := "/api/v1/collections/" + imported.IngestID
-	for _, suffix := range []string{"?profile=unknown", "/quality?fields=unknown", "/quality?fields=size,size"} {
+	for _, suffix := range []string{"/quality?profile=unknown", "/quality?fields=unknown", "/quality?fields=size,size"} {
 		resp, body := get(t, ts, base+suffix, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}

@@ -64,13 +64,14 @@ afterEach(() => {
 });
 
 describe("collections drawer", () => {
-  it("changes coverage profiles without duplicate collection refreshes or losing selection",async()=>{
+  it("changes coverage profiles without reloading collection browsing",async()=>{
     vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}});
     Object.defineProperty(HTMLElement.prototype,"scrollIntoView",{value:vi.fn(),configurable:true});
     const requests:string[]=[];
     vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
       const url=String(input);requests.push(url);
       if(url.includes("/quality")) {
+        if(url.includes("profile=review"))return new Response(JSON.stringify({title:"Quality unavailable"}),{status:503});
         const chosen=url.includes("profile=archive");
         return json({collection:{...collection,coverage:{configuration:chosen?"configured":"profile_required",profile:chosen?"archive":"",profiles:["archive","review"],profile_fingerprint:chosen?"a".repeat(64):"",generation_id:"",counts:chosen?{complete:2,partial:0,failed:0,unprocessed:0,none:0}:null}},source_fingerprint:"b".repeat(64),dimensions:[],zero_bytes:0,mismatches:0,duplicate_documents:0,spikes:[]});
       }
@@ -85,8 +86,14 @@ describe("collections drawer", () => {
     await fireEvent.click(screen.getByRole("combobox",{name:/Coverage profile/}));
     await fireEvent.click(await screen.findByRole("option",{name:"archive"}));
     await screen.findByText("Complete: 2");
-    expect(requests.filter(url=>url.startsWith("/api/v1/collections?")&&url.includes("profile=archive"))).toHaveLength(1);
-    expect(requests.filter(url=>url.includes("/members?")&&url.includes("profile=archive"))).toHaveLength(1);
+    await fireEvent.click(screen.getByRole("combobox",{name:/Coverage profile/}));
+    await fireEvent.click(await screen.findByRole("option",{name:"review"}));
+    await screen.findByRole("alert");
+    await fireEvent.click(screen.getByRole("combobox",{name:/Coverage profile/}));
+    await fireEvent.click(await screen.findByRole("option",{name:"archive"}));
+    await screen.findByText("Complete: 2");
+    expect(requests.filter(url=>url.startsWith("/api/v1/collections?"))).toHaveLength(1);
+    expect(requests.filter(url=>url.includes("/members?"))).toHaveLength(1);
   });
   it("opens collection quality only after an explicit action",async()=>{
     vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{

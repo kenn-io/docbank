@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"mime"
 	"slices"
 	"strings"
 	"time"
@@ -35,9 +34,16 @@ type QualitySpike struct {
 	Count        int64
 }
 
+// CollectionQualitySummary adds processing coverage only to a quality receipt.
+type CollectionQualitySummary struct {
+	Collection
+
+	Coverage ProcessingCoverage
+}
+
 // CollectionQuality is an aggregate receipt from one bounded source snapshot.
 type CollectionQuality struct {
-	Collection                                Collection
+	Collection                                CollectionQualitySummary
 	SourceFingerprint                         string
 	Dimensions                                []QualityDimension
 	ZeroBytes, Mismatches, DuplicateDocuments int64
@@ -81,7 +87,7 @@ func normalizeQualityFields(fields []string) ([]string, error) {
 // CollectionQuality reads the full census before deriving any successful
 // histogram. The timeout and both limits apply even when few fields are requested.
 func (s *Store) CollectionQuality(ctx context.Context, id string, selection CoverageSelection, fields []string) (result CollectionQuality, retErr error) {
-	selection, err := normalizeCoverageSelection([]CoverageSelection{selection})
+	selection, err := normalizeCoverageSelection(selection)
 	if err != nil {
 		return CollectionQuality{}, err
 	}
@@ -119,11 +125,10 @@ func (s *Store) CollectionQuality(ctx context.Context, id string, selection Cove
 	return result, nil
 }
 
-// The census/aggregation boundary allows a cache to compare fresh source
-// fingerprints before reusing an immutable receipt. Census rows never escape
-// the store API and contain no document text or provider error payloads.
+// Census rows stay within the store API and contain no document text or
+// provider error payloads.
 type collectionQualityCensus struct {
-	collection  Collection
+	collection  CollectionQualitySummary
 	fingerprint string
 	rows        []collectionQualityRow
 }
@@ -133,7 +138,7 @@ type collectionQualityRow struct {
 	VersionID, BlobHash, Name, MediaType, ModifiedAt                      string
 	Size                                                                  int64
 	State, AttachmentID, PublishedAt, BuildID, Completeness               string
-	PartialSuccess, Truncated, LexicalSegmentCount, Verified, Serving     int64
+	PartialSuccess, Truncated, LexicalSegmentCount, Serving               int64
 	WaiterID, JobID, WaiterState, JobState, WaiterUpdatedAt, JobUpdatedAt string
 	DuplicateCount                                                        int64
 }
@@ -156,28 +161,32 @@ const qualityProjectionBytes = `128+length(CAST(version_id AS BLOB))+length(CAST
  length(CAST(waiter_updated_at AS BLOB))+length(CAST(job_updated_at AS BLOB))`
 
 func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string, selection CoverageSelection) (collectionQualityCensus, error) {
-	collection, err := collectionSummaryByID(ctx, q, id)
+	summary, err := collectionSummaryByID(ctx, q, id)
+	collection := CollectionQualitySummary{Collection: summary, Coverage: ProcessingCoverage{Configuration: selection.Configuration, ProfileFingerprint: selection.ProfileFingerprint}}
 	if err != nil {
 		return collectionQualityCensus{}, err
 	}
 	if err := validateCollectionQualityBounds(collection.FileCount, 0); err != nil {
 		return collectionQualityCensus{}, err
 	}
-	generation, err := collectionGenerationTx(ctx, q)
-	if err != nil {
-		return collectionQualityCensus{}, err
+	if selection.Configuration == "configured" {
+		generation, err := collectionGenerationTx(ctx, q)
+		if err != nil {
+			return collectionQualityCensus{}, err
+		}
+		// A configured policy can precede its first catalog use.
+		if _, err := loadProcessingProfile(ctx, q, selection.ProfileFingerprint); err != nil && !errors.Is(err, ErrNotFound) {
+			return collectionQualityCensus{}, err
+		}
+		collection.Coverage.GenerationID = generation
+		collection.Coverage.Counts = &CoverageCounts{}
 	}
-	coverage, err := collectionCoverageTx(ctx, q, []string{id}, selection, generation)
-	if err != nil {
-		return collectionQualityCensus{}, err
-	}
-	collection.Coverage = coverage[id]
 	cte := `WITH ` + CollectionMembershipCTE + `,` + CurrentContentMembershipCTE + `,
  coverage_members AS (SELECT node_id FROM collection_members WHERE ingest_id=?),
  ` + processingCoverageCTE() + `,
  duplicate_counts AS (SELECT blob_hash,COUNT(*) references_count FROM current_content_members GROUP BY blob_hash),
  ` + qualityProjectionCTE
-	args := []any{id, selection.ProfileFingerprint, generation}
+	args := []any{id, selection.ProfileFingerprint, collection.Coverage.GenerationID}
 	var projectedBytes int64
 	if err := q.QueryRowContext(ctx, cte+` SELECT COALESCE(SUM(`+qualityProjectionBytes+`),0) FROM quality_projection`, args...).Scan(&projectedBytes); err != nil {
 		return collectionQualityCensus{}, err
@@ -186,7 +195,7 @@ func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string
 		return collectionQualityCensus{}, err
 	}
 	rows, err := q.QueryContext(ctx, cte+` SELECT node_id,version_id,blob_hash,name,media_type,modified_at,size,
- state,attachment_id,published_at,build_id,completeness,partial_success,truncated,lexical_segment_count,verified,serving,
+ state,attachment_id,published_at,build_id,completeness,partial_success,truncated,lexical_segment_count,serving,
  waiter_id,job_id,waiter_state,job_state,waiter_updated_at,job_updated_at,duplicate_count
  FROM quality_projection ORDER BY node_id`, args...)
 	if err != nil {
@@ -204,12 +213,15 @@ func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string
 		}
 		var row collectionQualityRow
 		if err := rows.Scan(&row.NodeID, &row.VersionID, &row.BlobHash, &row.Name, &row.MediaType, &row.ModifiedAt, &row.Size,
-			&row.State, &row.AttachmentID, &row.PublishedAt, &row.BuildID, &row.Completeness, &row.PartialSuccess, &row.Truncated, &row.LexicalSegmentCount, &row.Verified, &row.Serving,
+			&row.State, &row.AttachmentID, &row.PublishedAt, &row.BuildID, &row.Completeness, &row.PartialSuccess, &row.Truncated, &row.LexicalSegmentCount, &row.Serving,
 			&row.WaiterID, &row.JobID, &row.WaiterState, &row.JobState, &row.WaiterUpdatedAt, &row.JobUpdatedAt, &row.DuplicateCount); err != nil {
 			return collectionQualityCensus{}, err
 		}
 		if err := json.MarshalWrite(hash, row, json.Deterministic(true)); err != nil {
 			return collectionQualityCensus{}, err
+		}
+		if collection.Coverage.Counts != nil {
+			addCoverageCount(collection.Coverage.Counts, row.State, 1)
 		}
 		census.rows = append(census.rows, row)
 	}
@@ -298,16 +310,9 @@ func aggregateCollectionQuality(ctx context.Context, census collectionQualityCen
 func qualityValue(row collectionQualityRow, field string, configured bool) string {
 	switch field {
 	case "extension":
-		if dot := strings.LastIndexByte(row.Name, '.'); dot > 0 {
-			return strings.ToLower(row.Name[dot+1:])
-		}
-		return ""
+		return query.FilenameExtension(row.Name)
 	case "media_type":
-		mediaType, _, err := mime.ParseMediaType(row.MediaType)
-		if err != nil {
-			return ""
-		}
-		return strings.ToLower(mediaType)
+		return query.MIMEType(row.MediaType)
 	case "media_family":
 		family := query.ClassifyMedia(row.MediaType, row.Name)
 		if family == "unknown" {

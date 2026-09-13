@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { untrack } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import FileIcon from "@lucide/svelte/icons/file";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -66,7 +65,7 @@
 
   $effect(() => {
     const currentSession = session;
-    untrack(() => void refresh(currentSession));
+    void refresh(currentSession);
     return () => {
       generation += 1;
       memberGeneration += 1;
@@ -115,7 +114,7 @@
     openingMemberID = null;
     openError = "";
     try {
-      const page = await collections(currentSession,0,100,profile);
+      const page = await collections(currentSession);
       if (request !== generation || currentSession !== session) return;
       items = page.items;
       total = page.total;
@@ -146,7 +145,7 @@
     labelNotice = "";
     void reloadLabel(collection);
     try {
-      const page = await collectionMembers(currentSession, collection.id,0,100,profile);
+      const page = await collectionMembers(currentSession, collection.id);
       if (
         request !== memberGeneration ||
         currentSession !== session ||
@@ -179,16 +178,6 @@
         : collection;
     items = items.map(update);
     if (selected?.id === label.ingest_id) selected = update(selected);
-  }
-
-  async function changeProfile(name: string): Promise<void> {
-    const id=selected?.id;
-    const currentSession=session;
-    profile=name;
-    await refresh();
-    if(session!==currentSession||profile!==name)return;
-    const current=items.find(item=>item.id===id);
-    if(current)await browse(current);
   }
 
   async function reloadLabel(collection = selected): Promise<void> {
@@ -360,7 +349,7 @@
 
       {#if selected}
         <Button onclick={()=>qualityOpen=!qualityOpen}>{qualityOpen ? "Close collection quality" : "Inspect collection quality"}</Button>
-        {#if qualityOpen}<QualityPanel {session} collectionID={selected.id} {profile} onprofile={(name)=>void changeProfile(name)} onnewquery={onqualityquery} {onauthfailure}/>{/if}
+        {#if qualityOpen}<QualityPanel {session} collectionID={selected.id} {profile} onprofile={(name)=>profile=name} onnewquery={onqualityquery} {onauthfailure}/>{/if}
         {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}>New query for this collection</Button>{/if}
         <section class="label-editor" aria-labelledby="collection-label-heading">
           <div class="section-heading">

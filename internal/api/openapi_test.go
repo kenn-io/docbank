@@ -371,11 +371,13 @@ func TestOpenAPICollectionContractIsBoundedAndLabelSpecific(t *testing.T) {
 		assert.Contains(t, collection.Properties, field)
 	}
 	assert.NotContains(t, collection.Properties, "quality")
-	assert.Contains(t, collection.Properties, "coverage")
-	assert.Contains(t, collection.Required, "coverage")
+	assert.NotContains(t, collection.Properties, "coverage")
 	quality := doc.Paths["/api/v1/collections/{id}/quality"].Get
 	require.NotNil(t, quality)
-	coverage := collection.Properties["coverage"]
+	qualityCollection := schemas["CollectionQualitySummary"]
+	require.NotNil(t, qualityCollection)
+	assert.Contains(t, qualityCollection.Required, "coverage")
+	coverage := qualityCollection.Properties["coverage"]
 	require.NotNil(t, coverage)
 	assert.ElementsMatch(t, []any{"configured", "unconfigured", "profile_required"}, coverage.Properties["configuration"].Enum)
 	require.NotNil(t, coverage.Properties["counts"])
