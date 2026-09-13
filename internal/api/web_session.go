@@ -24,9 +24,9 @@ const (
 // webSessionRegistry owns browser credentials for exactly one daemon
 // lifetime. Tokens are random, retained only as digests, and authorize only
 // the deliberately limited routes used by the built-in browser. Most are
-// reads; verified upload plus revision-bound trash, restore, tag assignment,
-// tag-definition management, and saved-definition management are the only
-// document-authority mutations.
+// reads; mutations cover verified upload, revision-bound trash, restore, and
+// tag assignment, tag and saved-definition management, processing execution,
+// and operator-scope processing consent.
 type webSessionRegistry struct {
 	mu          sync.Mutex
 	tokens      map[[sha256.Size]byte]webSessionState
@@ -207,7 +207,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if method == http.MethodPost && r.URL.RawQuery == "" {
 		switch path {
-		case "/api/v1/processing/plans", "/api/v1/processing/jobs", "/api/v1/search":
+		case "/api/v1/processing/plans", "/api/v1/processing/jobs",
+			"/api/v1/processing/consent/grants", "/api/v1/processing/consent/revocations",
+			"/api/v1/search":
 			return true
 		}
 	}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
+import * as processingAPI from "./api.js";
 
 afterEach(() => {
   cleanup();
@@ -8,6 +9,52 @@ afterEach(() => {
 });
 
 describe("document processing drawer", () => {
+  it("uses the success tone for a completed job", async () => {
+    renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
+    expect(await screen.findByText("completed")).toBeTruthy();
+    expect(screen.getByText("embedding").closest(".kit-chip")?.classList.contains("kit-chip--tone-success")).toBe(true);
+  });
+
+  it("keeps the durable job visible when the status stream is truncated", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } });
+    renderProcessingResponse(Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } })));
+    await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
+    stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ sequence: 1, type: "job", job: processingJob })}\n`));
+    try {
+      expect(await screen.findByText(processingJob.id)).toBeTruthy();
+    } finally {
+      stream.close();
+    }
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "The processing stream did not end after its terminal status.");
+    expect(screen.getByText(processingJob.id)).toBeTruthy();
+    expect(screen.queryByText("failed")).toBeNull();
+  });
+
+  it.each(["completed", "unauthorized"])("ignores a %s response after the drawer closes", async (outcome) => {
+    const start = vi.spyOn(processingAPI, "startProcessing");
+    let finish!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => { finish = resolve; });
+    const view = renderProcessingResponse(response);
+    await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
+    view.unmount();
+    await act(async () => {
+      finish(outcome === "completed" ? completedProcessingResponse() : Response.json({ detail: "Session expired" }, { status: 401 }));
+      await start.mock.results[0]!.value.catch(() => {});
+    });
+    expect(view.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/coverage?")).length).toBe(1);
+    expect(view.onauthfailure).not.toHaveBeenCalled();
+    expect(view.onclose).not.toHaveBeenCalled();
+  });
+
+  it("revokes consent from the browser and refreshes the plan", async () => {
+    renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await fireEvent.click(await screen.findByRole("button", { name: "Revoke all processing consent" }));
+    expect(await screen.findByText("Consent revoked")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Consent and run" })).toBeTruthy();
+  });
+
   it("discards the previous profile plan and coverage when a new preview fails", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
@@ -244,3 +291,42 @@ describe("document processing drawer", () => {
     expect(screen.queryByText("DURABLE JOB")).toBeNull();
   });
 });
+
+const processingJob = {
+  id: "b".repeat(64), embedding_job_ids: ["c".repeat(64)], profile_fingerprint: "a".repeat(64),
+  content_version_id: "11111111-1111-4111-8111-111111111111",
+};
+
+function completedProcessingResponse(): Response {
+  return new Response(`${JSON.stringify({ sequence: 1, type: "job", job: processingJob })}\n${JSON.stringify({
+    sequence: 2, type: "status", status: { job_id: processingJob.id, state: "completed", phase: "embedding", embedding_job_ids: processingJob.embedding_job_ids, completed_bindings: 1 }, terminal: true,
+  })}\n`, { headers: { "Content-Type": "application/x-ndjson" } });
+}
+
+function renderProcessingResponse(response: Promise<Response>) {
+  let revoked = false;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/v1/processing/profiles") return Response.json([{ name: "private", fingerprint: processingJob.profile_fingerprint, rendition: false, embedding_bindings: ["semantic"] }]);
+    if (path === "/api/v1/processing/plans") return Response.json({
+      fingerprint: processingJob.profile_fingerprint, vault_uid: processingJob.content_version_id,
+      selector: JSON.parse(String(init?.body)).selector, profile_fingerprint: processingJob.profile_fingerprint,
+      flow: [], disclosed_classes: [], retained_classes: [], estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 1 },
+      consent_required: revoked, consent_state: revoked ? "revoked" : "active", backup_consequence: "none",
+    });
+    if (path.startsWith("/api/v1/coverage?")) return Response.json({
+      state: "missing", renditions: { state: "ineligible", complete: 0, total: 1 }, embeddings: [],
+    });
+    if (path === "/api/v1/processing/jobs") return response;
+    if (path === "/api/v1/processing/consent/revocations" && init?.method === "POST") {
+      revoked = true;
+      return Response.json({ revoked_at: "2026-01-01T00:00:00Z" });
+    }
+    throw new Error(`unexpected request: ${path}`);
+  });
+  const onclose = vi.fn(), onauthfailure = vi.fn();
+  return { ...render(ProcessingDrawer, {
+    session: "short-lived", node: { id: 42, name: "report.txt", kind: "file", current_version_id: processingJob.content_version_id, size: 1, revision: 1, created_at: "", modified_at: "" },
+    path: "/Reports/report.txt", onclose, onauthfailure, onrendition: vi.fn(),
+  }), fetchMock, onclose, onauthfailure };
+}

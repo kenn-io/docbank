@@ -38,6 +38,8 @@ func (c *Client) PlanProcessing(ctx context.Context, request api.ProcessingPlanR
 	return result, err
 }
 
+// StartProcessing returns the durable job alongside any later execution or stream
+// error, so callers can query its status without submitting another job.
 func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessingRequest) (api.ProcessingJob, error) {
 	body, err := marshalJSONRequest(request)
 	if err != nil {
@@ -70,26 +72,43 @@ func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessin
 	if err := json.UnmarshalDecode(decoder, &first, json.RejectUnknownMembers(true)); err != nil {
 		return api.ProcessingJob{}, fmt.Errorf("decoding processing job event: %w", err)
 	}
-	if first.Sequence != 1 || first.Type != "job" || first.Job == nil || first.Status != nil || first.Terminal {
+	if first.Sequence != 1 || first.Type != "job" || first.Job == nil || first.Status != nil || first.Error != nil || first.Terminal {
 		return api.ProcessingJob{}, errors.New("processing stream returned malformed job event")
 	}
 	if err := json.UnmarshalDecode(decoder, &second, json.RejectUnknownMembers(true)); err != nil {
-		return api.ProcessingJob{}, fmt.Errorf("decoding processing status event: %w", err)
+		return *first.Job, fmt.Errorf("decoding processing status event: %w", err)
 	}
-	if second.Sequence != 2 || second.Type != "status" || second.Job != nil || second.Status == nil ||
-		!second.Terminal || second.Status.JobID != first.Job.ID {
-		return api.ProcessingJob{}, errors.New("processing stream returned malformed terminal status")
+	if second.Sequence != 2 || !second.Terminal {
+		return *first.Job, errors.New("processing stream returned malformed terminal event")
+	}
+	switch second.Type {
+	case "status":
+		if second.Job != nil || second.Status == nil || second.Error != nil || second.Status.JobID != first.Job.ID {
+			return *first.Job, errors.New("processing stream returned malformed terminal status")
+		}
+		first.Job.EmbeddingJobIDs = second.Status.EmbeddingJobIDs
+	case "error":
+		if second.Job == nil || second.Status != nil || second.Error == nil || second.Job.ID != first.Job.ID {
+			return *first.Job, errors.New("processing stream returned malformed terminal error")
+		}
+		first.Job = second.Job
+	default:
+		return *first.Job, errors.New("processing stream returned an unknown terminal event")
 	}
 	var extra api.ProcessingJobEvent
 	if err := json.UnmarshalDecode(decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
-		return api.ProcessingJob{}, errors.New("processing stream continued after its terminal status")
+		return *first.Job, errors.New("processing stream continued after its terminal event")
 	}
-	first.Job.EmbeddingJobIDs = second.Status.EmbeddingJobIDs
-	if cause := codeToTypedErr[second.Status.FailureCode]; cause != nil {
+	if second.Error != nil {
+		return *first.Job, apiProblemError(*second.Error)
+	}
+	switch second.Status.State {
+	case "failed", "abandoned", "operator_required":
+		cause := codeToTypedErr[second.Status.FailureCode]
+		if cause == nil {
+			cause = fmt.Errorf("document processing %s: %s", second.Status.State, second.Status.FailureCode)
+		}
 		return *first.Job, &problemError{code: second.Status.FailureCode, err: cause}
-	}
-	if second.Status.FailureCode == "processing_failed" {
-		return *first.Job, &problemError{code: second.Status.FailureCode, err: errors.New("document processing failed")}
 	}
 	return *first.Job, nil
 }

@@ -138,7 +138,7 @@ export interface ProcessingJob {
 
 export interface ProcessingStatus {
   job_id: string;
-  state: string;
+  state: "queued" | "running" | "retry_wait" | "operator_required" | "failed" | "completed" | "abandoned" | "partial";
   phase: string;
   failure_code?: string;
   embedding_job_ids: string[];
@@ -598,11 +598,16 @@ export async function processingPlan(
   });
 }
 
+export async function revokeProcessingConsent(session: string): Promise<void> {
+  await requestJSON("/api/v1/processing/consent/revocations", session, { method: "POST" });
+}
+
 export async function startProcessing(
   session: string,
   selector: ProcessingSelector,
   planFingerprint: string,
   consent: boolean,
+  onJob?: (job: ProcessingJob) => void,
 ): Promise<ProcessingRun> {
   const response = await requestResponse("/api/v1/processing/jobs", session, {
     method: "POST",
@@ -612,16 +617,49 @@ export async function startProcessing(
   if (!(response.headers.get("Content-Type") ?? "").startsWith("application/x-ndjson")) {
     throw new Error("The daemon returned an invalid processing stream.");
   }
-  const lines = (await response.text()).trimEnd().split("\n");
-  if (lines.length !== 2) throw new Error("The processing stream did not end after its terminal status.");
-  const first = JSON.parse(lines[0] ?? "null") as { sequence?: number; type?: string; job?: ProcessingJob };
-  const second = JSON.parse(lines[1] ?? "null") as { sequence?: number; type?: string; status?: ProcessingStatus; terminal?: boolean };
-  if (first.sequence !== 1 || first.type !== "job" || !first.job || second.sequence !== 2 ||
-      second.type !== "status" || !second.status || !second.terminal || second.status.job_id !== first.job.id) {
-    throw new Error("The daemon returned malformed processing progress.");
+  const reader = response.body?.pipeThrough(new TextDecoderStream()).getReader();
+  if (!reader) throw new Error("The daemon returned an empty processing stream.");
+  let pending = "";
+  let job: ProcessingJob | undefined;
+  let status: ProcessingStatus | undefined;
+  let problem: Problem | undefined;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      pending += value ?? "";
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      if (done && pending.trim()) lines.push(pending);
+      for (const line of lines) {
+        if ((status || problem) && !line.trim()) continue;
+        const event = JSON.parse(line) as { sequence?: number; type?: string; job?: ProcessingJob; status?: ProcessingStatus; error?: Problem; terminal?: boolean };
+        if (!job && event.sequence === 1 && event.type === "job" && event.job && !event.terminal) {
+          job = event.job;
+          onJob?.(job);
+        } else if (job && !status && !problem && event.sequence === 2 && event.terminal) {
+          if (event.type === "status" && event.status?.job_id === job.id) {
+            status = event.status;
+            job = { ...job, embedding_job_ids: status.embedding_job_ids };
+          } else if (event.type === "error" && event.error && event.job?.id === job.id) {
+            job = event.job;
+            problem = event.error;
+            onJob?.(job);
+          } else {
+            throw new Error("The daemon returned malformed processing progress.");
+          }
+        } else {
+          throw new Error("The daemon returned malformed processing progress.");
+        }
+      }
+      if (done) break;
+    }
+    if (problem) throw new APIError(problem.detail ?? "Document processing status is unavailable.", problem.status ?? 503, problem.code ?? "");
+    if (!job || !status) throw new Error("The processing stream did not end after its terminal status.");
+    return { job, status };
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
-  first.job.embedding_job_ids = second.status.embedding_job_ids;
-  return { job: first.job, status: second.status };
 }
 
 export async function documentCoverage(
@@ -788,6 +826,8 @@ function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
   const bodyBytes = utf8ToBytes(markdown);
   const seen = new Set<string>();
   let priorByte = -1;
+  let scannedByte = 0;
+  let currentLine = 1;
   const entries = rawEntries.map((rawEntry) => {
     const entry = record(rawEntry, "navigation entry");
     exactKeys(entry, ["key", "kind", "line", "byte"], ["title"]);
@@ -797,10 +837,13 @@ function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
     const line = integerField(entry, "line", 1);
     const byte = integerField(entry, "byte", 0);
     if (!["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"].includes(kind) ||
-        seen.has(key) || byte < priorByte || byte >= bodyBytes.length || (bodyBytes[byte]! & 0xc0) === 0x80 ||
-        line !== 1 + bodyBytes.slice(0, byte).filter((value) => value === 0x0a).length) {
+        seen.has(key) || byte < priorByte || byte >= bodyBytes.length || (bodyBytes[byte]! & 0xc0) === 0x80) {
       throw new Error("The rendition navigation entry is invalid.");
     }
+    while (scannedByte < byte) {
+      if (bodyBytes[scannedByte++] === 0x0a) currentLine += 1;
+    }
+    if (line !== currentLine) throw new Error("The rendition navigation entry is invalid.");
     seen.add(key);
     priorByte = byte;
     return { key, kind, title, line, byte };

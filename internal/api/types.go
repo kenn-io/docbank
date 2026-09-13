@@ -166,12 +166,13 @@ type ProcessingStatus struct {
 }
 
 // ProcessingJobEvent is one bounded NDJSON event. A successful stream contains
-// one job event followed by one terminal status event.
+// one job event followed by one terminal status or status-read error event.
 type ProcessingJobEvent struct {
 	Sequence int               `json:"sequence" minimum:"1" maximum:"2"`
-	Type     string            `json:"type" enum:"job,status"`
+	Type     string            `json:"type" enum:"job,status,error"`
 	Job      *ProcessingJob    `json:"job,omitzero"`
 	Status   *ProcessingStatus `json:"status,omitzero"`
+	Error    *Error            `json:"error,omitzero"`
 	Terminal bool              `json:"terminal,omitzero"`
 }
 

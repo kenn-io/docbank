@@ -578,18 +578,21 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		}
 	}
 	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, embeddingProgress)
-	if err != nil {
-		return announced, processingConsentBoundaryError(err)
-	}
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
-	}
-	if processingJobID == "" {
-		return Job{}, errors.New("processing profile has no executable stage")
 	}
 	completed := Job{ID: processingJobID, RenditionJobID: renditionJobID, AttachmentID: attachmentID,
 		EmbeddingJobIDs: embeddingJobIDs, ProfileFingerprint: profile.record.Fingerprint,
 		ContentVersionID: version.ID}
+	if err != nil {
+		if completed.ID == "" {
+			return announced, processingConsentBoundaryError(err)
+		}
+		return completed, processingConsentBoundaryError(err)
+	}
+	if processingJobID == "" {
+		return Job{}, errors.New("processing profile has no executable stage")
+	}
 	notify(completed)
 	return completed, nil
 }
@@ -1112,26 +1115,30 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	required, completeRequired := 0, 0
 	optionalIncomplete := false
+	var unregisteredCoverage *store.SearchCoverageSnapshot
 	for _, binding := range profile.portable.Embeddings {
 		validated, err := service.catalog.RevalidateSearchCandidates(ctx, nil,
 			store.SearchOptions{ContentVersionIDs: ids}, profile.record.Fingerprint, binding.Name)
 		if errors.Is(err, store.ErrNotFound) {
 			// Configured profiles become durable authority on their first run.
 			// Before then, current sources have no embedding coverage.
-			validated.Coverage = &store.SearchCoverageSnapshot{}
-			for _, id := range ids {
-				version, sourceErr := service.catalog.ContentVersionByID(ctx, id)
-				var node store.Node
-				if sourceErr == nil {
-					node, sourceErr = service.catalog.NodeByID(ctx, version.NodeID)
-				}
-				if sourceErr != nil && !errors.Is(sourceErr, store.ErrNotFound) {
-					return Coverage{}, sourceErr
-				}
-				if sourceErr == nil && node.CurrentVersionID == id && node.TrashedAt == nil {
-					validated.Coverage.ScopedDocuments++
+			if unregisteredCoverage == nil {
+				unregisteredCoverage = &store.SearchCoverageSnapshot{}
+				for _, id := range ids {
+					version, sourceErr := service.catalog.ContentVersionByID(ctx, id)
+					var node store.Node
+					if sourceErr == nil {
+						node, sourceErr = service.catalog.NodeByID(ctx, version.NodeID)
+					}
+					if sourceErr != nil && !errors.Is(sourceErr, store.ErrNotFound) {
+						return Coverage{}, sourceErr
+					}
+					if sourceErr == nil && node.CurrentVersionID == id && node.TrashedAt == nil {
+						unregisteredCoverage.ScopedDocuments++
+					}
 				}
 			}
+			validated.Coverage = unregisteredCoverage
 		} else if err != nil {
 			return Coverage{}, err
 		}
@@ -1246,10 +1253,10 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		case document.EmbeddingInputRenditionChunk:
 			generation, err = service.chunkEmbeddingGeneration(ctx, version, profile, binding)
 			if err != nil {
-				return nil, err
+				return jobIDs, err
 			}
 		default:
-			return nil, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
+			return jobIDs, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
 		}
 		authorization := store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
@@ -1266,15 +1273,15 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		})
 		if enqueueErr != nil {
 			if errors.Is(enqueueErr, store.ErrEmbeddingJobFenced) {
-				return nil, ErrPlanChanged
+				return jobIDs, ErrPlanChanged
 			}
-			return nil, enqueueErr
+			return jobIDs, enqueueErr
 		}
 		jobIDs = append(jobIDs, job.ID)
-	}
-	if onEnqueued != nil {
-		onEnqueued(slices.Clone(jobIDs))
-		ctx = service.lifecycle
+		if len(jobIDs) == 1 && onEnqueued != nil {
+			onEnqueued(slices.Clone(jobIDs))
+			ctx = service.lifecycle
+		}
 	}
 	for index, jobID := range jobIDs {
 		binding := profile.portable.Embeddings[index]
@@ -1288,22 +1295,22 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			DescriptorFingerprints: []string{binding.Descriptor.Fingerprint},
 		})
 		if err != nil {
-			return nil, err
+			return jobIDs, err
 		}
 		for {
 			processed, runErr := worker.RunJob(ctx, jobID)
 			if runErr != nil {
 				if isEmbeddingWorkFence(runErr) {
-					return nil, ErrPlanChanged
+					return jobIDs, ErrPlanChanged
 				}
-				return nil, runErr
+				return jobIDs, runErr
 			}
 			status, statusErr := service.catalog.EmbeddingJobByID(ctx, jobID)
 			if statusErr != nil {
-				return nil, statusErr
+				return jobIDs, statusErr
 			}
 			if status.State == "abandoned" {
-				return nil, ErrPlanChanged
+				return jobIDs, ErrPlanChanged
 			}
 			if status.State == "failed" && status.FailureCode == store.EmbeddingFailureAuthorization {
 				// Provider credentials and consent share a durable failure category.
@@ -1313,7 +1320,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 					DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
 					RetainedArtifactClasses: []string{"embedding_vector_set"}})
 				if consentErr != nil {
-					return nil, consentErr
+					return jobIDs, consentErr
 				}
 			}
 			if processed || status.State == "completed" || status.State == "failed" {
@@ -1323,10 +1330,10 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 				break
 			}
 			if status.State != "running" && status.State != "retry_wait" {
-				return nil, errors.New("embedding job was not claimable")
+				return jobIDs, errors.New("embedding job was not claimable")
 			}
 			if err := worker.wait(ctx, 100*time.Millisecond); err != nil {
-				return nil, err
+				return jobIDs, err
 			}
 		}
 	}
@@ -1340,7 +1347,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		Mutate: service.gate.MutateContext, Owner: "embedded-index-worker", BuildLease: 5 * time.Minute,
 		ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 	if err != nil {
-		return nil, err
+		return jobIDs, err
 	}
 	for _, vectorSpace := range sortedUnique(vectorSpaces) {
 		for {
@@ -1349,12 +1356,12 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 				errors.Is(err, store.ErrVectorIndexSourceStale) {
 				// Another request can publish embeddings while this index builds.
 				if err := waitRenditionWorker(ctx, 100*time.Millisecond); err != nil {
-					return nil, err
+					return jobIDs, err
 				}
 				continue
 			}
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return nil, err
+				return jobIDs, err
 			}
 			break
 		}

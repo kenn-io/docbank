@@ -11,13 +11,15 @@
     documentSearch,
     processingPlan,
     processingProfiles,
+    revokeProcessingConsent,
     startProcessing,
     type CoverageReport,
     type DocumentSearchReport,
     type Node,
     type ProcessingPlan,
     type ProcessingProfileSummary,
-    type ProcessingRun,
+    type ProcessingJob,
+    type ProcessingStatus,
   } from "./api.js";
 
   interface Props {
@@ -34,7 +36,8 @@
   let profileName = $state("");
   let plan = $state<ProcessingPlan | null>(null);
   let coverage = $state<CoverageReport | null>(null);
-  let run = $state<ProcessingRun | null>(null);
+  let job = $state<ProcessingJob | null>(null);
+  let status = $state<ProcessingStatus | null>(null);
   let loading = $state(true);
   let running = $state(false);
   let error = $state("");
@@ -80,8 +83,10 @@
     error = "";
     plan = null;
     coverage = null;
-    run = null;
+    job = null;
+    status = null;
     searchReport = null;
+    searching = false;
     try {
       const next = await processingPlan(session, {
         node_id: node.id,
@@ -102,33 +107,61 @@
 
   async function execute(): Promise<void> {
     if (!plan || !node.current_version_id) return;
+    const request = generation;
     running = true;
     error = "";
+    job = null;
+    status = null;
     try {
-      run = await startProcessing(session, plan.selector, plan.fingerprint, plan.consent_required);
-      coverage = await documentCoverage(session, profileName, plan.vault_uid, [node.current_version_id]);
+      const result = await startProcessing(session, plan.selector, plan.fingerprint, plan.consent_required, (accepted) => {
+        if (request === generation) job = accepted;
+      });
+      if (request !== generation) return;
+      job = result.job;
+      status = result.status;
+      const nextCoverage = await documentCoverage(session, profileName, plan.vault_uid, [node.current_version_id]);
+      if (request !== generation) return;
+      coverage = nextCoverage;
     } catch (cause) {
-      handleFailure(cause);
+      if (request === generation) handleFailure(cause);
     } finally {
-      running = false;
+      if (request === generation) running = false;
+    }
+  }
+
+  async function revokeConsent(): Promise<void> {
+    const request = ++generation;
+    loading = true;
+    error = "";
+    try {
+      await revokeProcessingConsent(session);
+      if (request !== generation) return;
+      await preview(request);
+    } catch (cause) {
+      if (request === generation) handleFailure(cause);
+    } finally {
+      if (request === generation) loading = false;
     }
   }
 
   async function searchVersion(): Promise<void> {
     if (!plan || !node.current_version_id || !query.trim()) return;
+    const request = generation;
     searching = true;
     error = "";
     try {
-      searchReport = await documentSearch(session, {
+      const nextReport = await documentSearch(session, {
         query: query.trim(), mode: "auto", limit: 20, profile: profileName,
         binding_id: profiles.find((item) => item.name === profileName)?.embedding_bindings[0],
         fence: { vault_uid: plan.vault_uid, content_version_ids: [node.current_version_id] },
         explain: true,
       });
+      if (request !== generation) return;
+      searchReport = nextReport;
     } catch (cause) {
-      handleFailure(cause);
+      if (request === generation) handleFailure(cause);
     } finally {
-      searching = false;
+      if (request === generation) searching = false;
     }
   }
 
@@ -216,6 +249,8 @@
         <Button size="sm" tone="info" disabled={running || loading} onclick={() => void execute()}>
           {#if running}<Spinner size={14} /> Running…{:else}<ActivityIcon size="14" aria-hidden="true" /> {plan.consent_required ? "Consent and run" : "Run processing"}{/if}
         </Button>
+        <Button size="sm" surface="soft" disabled={running || loading} onclick={() => void revokeConsent()}>Revoke all processing consent</Button>
+        <small>Revocation applies to all processing profiles for this operator.</small>
       </section>
 
       <section aria-label="Reviewed processing scope">
@@ -230,12 +265,12 @@
         <p><strong>Backup consequence:</strong> {plan.backup_consequence}</p>
       </section>
 
-      {#if run}
+      {#if job}
         <section aria-live="polite">
-          <div class="section-heading"><div><span>DURABLE JOB</span><strong>{run.status.state}</strong></div><Chip size="xs" tone={run.status.state === "complete" ? "success" : "warning"}>{run.status.phase}</Chip></div>
-          <code>{run.job.id}</code>
-          {#if run.status.failure_code}<p class="warning">{run.status.failure_code}</p>{/if}
-          {#if run.job.attachment_id}<Button size="sm" surface="soft" onclick={() => onrendition(run!.job.attachment_id!)}>Read sanitized Markdown</Button>{/if}
+          <div class="section-heading"><div><span>DURABLE JOB</span><strong>{status?.state ?? "Accepted"}</strong></div>{#if status}<Chip size="xs" tone={status.state === "completed" ? "success" : "warning"}>{status.phase}</Chip>{/if}</div>
+          <code>{job.id}</code>
+          {#if status?.failure_code}<p class="warning">{status.failure_code}</p>{/if}
+          {#if status && job.attachment_id}<Button size="sm" surface="soft" onclick={() => onrendition(job!.attachment_id!)}>Read sanitized Markdown</Button>{/if}
         </section>
       {/if}
 

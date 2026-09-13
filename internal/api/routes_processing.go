@@ -66,7 +66,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "startDocumentProcessing", Method: http.MethodPost,
 		Path: "/api/v1/processing/jobs", Summary: "Start the exact reviewed document-processing plan",
-		Description: "Returns exactly one job event followed by one terminal status event as newline-delimited JSON.",
+		Description: "Returns exactly one job event followed by one terminal status or status-read error event as newline-delimited JSON.",
 		Responses: map[string]*huma.Response{"200": {Description: "Durable job identity and terminal status",
 			Content: map[string]*huma.MediaType{"application/x-ndjson": {Schema: processingEventSchema}}}},
 	}, func(ctx context.Context, input *startInput) (*huma.StreamResponse, error) {
@@ -122,20 +122,10 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				}
 			}
 			status, statusErr := d.Processing.Status(hctx.Context(), first.ID)
-			if statusErr != nil {
-				status = processing.Status{JobID: first.ID, State: "failed", Phase: "processing",
-					FailureCode: "processing_failed", EmbeddingJobIDs: []string{}}
+			if result.job.ID == "" {
+				result.job = first
 			}
-			if result.err != nil {
-				if status.State != "operator_required" {
-					status.State = "failed"
-				}
-				if problem, ok := errors.AsType[*Error](fromProcessingError(result.err)); ok {
-					status.FailureCode = problem.Code
-				}
-			}
-			wireStatus := fromProcessingStatus(status)
-			stream.send(ProcessingJobEvent{Sequence: 2, Type: "status", Status: &wireStatus, Terminal: true})
+			stream.send(processingTerminalEvent(result.job, result.err, status, statusErr))
 		}}, nil
 	})
 
@@ -328,6 +318,25 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		return &searchOutput{Body: fromDocumentSearchReport(report, input.Body.Explain)}, nil
 	})
+}
+
+func processingTerminalEvent(job processing.Job, runErr error, status processing.Status, statusErr error) ProcessingJobEvent {
+	if statusErr != nil {
+		wireJob := fromProcessingJob(job)
+		return ProcessingJobEvent{Sequence: 2, Type: "error", Job: &wireJob, Terminal: true,
+			Error: NewError(http.StatusServiceUnavailable, "processing_status_unavailable",
+				"document processing status is unavailable; check the job status")}
+	}
+	if runErr != nil {
+		if status.State != "operator_required" {
+			status.State = "failed"
+		}
+		if problem, ok := errors.AsType[*Error](fromProcessingError(runErr)); ok {
+			status.FailureCode = problem.Code
+		}
+	}
+	wireStatus := fromProcessingStatus(status)
+	return ProcessingJobEvent{Sequence: 2, Type: "status", Status: &wireStatus, Terminal: true}
 }
 
 func processingUnavailable() error {

@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -120,6 +121,42 @@ func TestProcessingCLIBuildRequiresReviewedFingerprintAndConsent(t *testing.T) {
 	err = runProcessingBuild(command, client.New("http://127.0.0.1:1", "test-key"),
 		"id:42", "private", strings.Repeat("a", 64), false, false, false)
 	require.ErrorContains(t, err, "--consent")
+}
+
+func TestProcessingCLIBuildFailureIncludesDurableJobID(t *testing.T) {
+	jobID := strings.Repeat("a", 64)
+	for _, truncated := range []bool{false, true} {
+		t.Run(strconv.FormatBool(truncated), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/v1/nodes/42":
+					assert.NoError(t, json.MarshalWrite(w, api.Node{
+						ID: 42, Kind: "file", CurrentVersionID: processingTestVersionID}))
+				case "/api/v1/processing/jobs":
+					w.Header().Set("Content-Type", "application/x-ndjson")
+					assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
+						Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID}}))
+					if !truncated {
+						assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
+							Sequence: 2, Type: "status", Terminal: true, Status: &api.ProcessingStatus{
+								JobID: jobID, State: "failed", FailureCode: "provider_unavailable"}}))
+					}
+				case "/api/v1/processing/jobs/" + jobID:
+					assert.NoError(t, json.MarshalWrite(w, api.ProcessingStatus{
+						JobID: jobID, State: "failed", FailureCode: "provider_unavailable"}))
+				default:
+					http.NotFound(w, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+			command, _ := processingTestCommand()
+			err := runProcessingBuild(command, client.New(server.URL, "test-key"),
+				"id:42", "private", strings.Repeat("b", 64), true, false, false)
+			require.ErrorContains(t, err, jobID)
+			assert.Equal(t, exitGeneral, commandExitCode(err, true))
+		})
+	}
 }
 
 func TestProcessingCLIRegistersCommandsAndValidatesBeforeDaemon(t *testing.T) {

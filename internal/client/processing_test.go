@@ -190,6 +190,95 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 	}
 }
 
+func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testing.T) {
+	for _, test := range []struct {
+		state string
+		code  string
+		want  error
+	}{
+		{"failed", "provider_unavailable", nil},
+		{"failed", "authorization", nil},
+		{"failed", "invalid_response", nil},
+		{"failed", "input_rejected", nil},
+		{"failed", "stale_authority", nil},
+		{"failed", "", nil},
+		{"abandoned", "stale_authority", nil},
+		{"failed", "rendition_failed", store.ErrRenditionJobTerminal},
+		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired},
+		{"failed", "processing_consent_expired", client.ErrProcessingConsent},
+		{"partial", "authorization", nil},
+	} {
+		t.Run(test.state+"/"+test.code, func(t *testing.T) {
+			job := api.ProcessingJob{ID: strings.Repeat("a", 64)}
+			status := api.ProcessingStatus{JobID: job.ID, State: test.state, FailureCode: test.code,
+				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
+					Sequence: 2, Type: "status", Status: &status, Terminal: true}))
+			}))
+			t.Cleanup(server.Close)
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			if test.state == "partial" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				if test.code != "" {
+					code, ok := client.ProblemCode(err)
+					require.True(t, ok)
+					assert.Equal(t, test.code, code)
+				}
+				if test.want != nil {
+					require.ErrorIs(t, err, test.want)
+				}
+			}
+			assert.Equal(t, job.ID, got.ID)
+			assert.Equal(t, status.EmbeddingJobIDs, got.EmbeddingJobIDs)
+		})
+	}
+}
+
+func TestProcessingClientPreservesJobAfterStreamFailure(t *testing.T) {
+	for _, suffix := range []string{"", `{"sequence":2,"type":"status","status":`, `{}`} {
+		t.Run(suffix, func(t *testing.T) {
+			job := api.ProcessingJob{ID: strings.Repeat("a", 64),
+				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
+				_, err := io.WriteString(w, "\n"+suffix)
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			require.Error(t, err)
+			assert.Equal(t, job, got)
+		})
+	}
+}
+
+func TestProcessingClientPreservesCompletedJobWhenStatusIsUnavailable(t *testing.T) {
+	jobID, embeddingID := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
+			Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID}}))
+		_, err := io.WriteString(w, `{"sequence":2,"type":"error","terminal":true,"job":{"id":"`+jobID+
+			`","embedding_job_ids":["`+embeddingID+`"]},"error":{"status":503,"code":"processing_status_unavailable",`+
+			`"detail":"document processing status is unavailable; check the job status"}}`)
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	job, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+	require.Error(t, err)
+	code, ok := client.ProblemCode(err)
+	require.True(t, ok)
+	assert.Equal(t, "processing_status_unavailable", code)
+	assert.Equal(t, jobID, job.ID)
+	assert.Equal(t, []string{embeddingID}, job.EmbeddingJobIDs)
+}
+
 func TestDerivativePurgeClientPreservesDeferredReceipt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")

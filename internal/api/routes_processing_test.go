@@ -108,6 +108,44 @@ func TestProcessingClientReturnsCompletedEmbeddingIDs(t *testing.T) {
 	require.Equal(t, status.EmbeddingJobIDs, job.EmbeddingJobIDs)
 }
 
+func TestProcessingClientReportsRequiredEmbeddingFailure(t *testing.T) {
+	rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := invalidProcessingEmbeddingProvider{EmbeddingProvider: newProcessingTestEmbeddingProvider(t)}
+	for _, activation := range []document.EmbeddingActivation{document.EmbeddingRequired, document.EmbeddingOptional} {
+		t.Run(string(activation), func(t *testing.T) {
+			ts, catalog := newTestServer(t,
+				configureProcessingTestServiceWithProviders(t, rendition, provider, true, activation))
+			node := createFileWithContent(t, ts, catalog, "/embedding-failure.txt", "synthetic embedding failure\n")
+			c := client.New(ts.URL, testAPIKey)
+			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+			plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+			require.NoError(t, err)
+			job, startErr := c.StartProcessing(t.Context(), api.StartProcessingRequest{
+				Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NotEmpty(t, job.ID)
+			status, err := c.ProcessingStatus(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "invalid_response", status.FailureCode)
+			if activation == document.EmbeddingRequired {
+				require.Equal(t, "failed", status.State)
+				require.Error(t, startErr)
+			} else {
+				require.Equal(t, "partial", status.State)
+				require.NoError(t, startErr)
+			}
+		})
+	}
+}
+
+type invalidProcessingEmbeddingProvider struct{ document.EmbeddingProvider }
+
+func (invalidProcessingEmbeddingProvider) Embed(context.Context, []document.EmbeddingInput,
+	document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	return document.EmbeddingResult{}, nil
+}
+
 func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *testing.T) {
 	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
@@ -148,7 +186,7 @@ func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T)
 		inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}),
 	}
 	ts, catalog := newTestServer(t,
-		configureProcessingTestServiceWithProviders(t, rendition, embedding, true))
+		configureProcessingTestServiceWithProviders(t, rendition, embedding, true, document.EmbeddingOptional))
 	node := createFileWithContent(t, ts, catalog, "/combined.txt", "render and embed after disconnect\n")
 	selector := map[string]any{"node_id": node.ID,
 		"content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -593,11 +631,11 @@ func configureProcessingTestServiceWithEmbeddingProvider(t *testing.T,
 	t.Helper()
 	rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
-	return configureProcessingTestServiceWithProviders(t, rendition, embedding, withRendition)
+	return configureProcessingTestServiceWithProviders(t, rendition, embedding, withRendition, document.EmbeddingOptional)
 }
 
 func configureProcessingTestServiceWithProviders(t *testing.T, rendition document.RenditionProvider,
-	embedding document.EmbeddingProvider, withRendition bool,
+	embedding document.EmbeddingProvider, withRendition bool, activation document.EmbeddingActivation,
 ) func(*api.Deps) {
 	t.Helper()
 	return func(deps *api.Deps) {
@@ -610,7 +648,7 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 		}
 		descriptor := embedding.Descriptor()
 		profile.Embeddings = []document.EmbeddingBindingV1{{
-			Activation: document.EmbeddingOptional, AuthorizationFingerprint: processingTestHash("embedding-authorization"),
+			Activation: activation, AuthorizationFingerprint: processingTestHash("embedding-authorization"),
 			CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test",
 			Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
 			Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"),
