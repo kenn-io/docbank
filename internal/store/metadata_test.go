@@ -1525,6 +1525,66 @@ func TestProcessingMetadataRoundTripsHeadedEmptyLexicalGeneration(t *testing.T) 
 	assert.Zero(t, restored.BuildCount)
 }
 
+func TestProcessingMetadataClearsPublishedJobGenerationAfterCollection(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:metadata", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.ID = job.ID
+	require.NoError(t, s.StageRenditionJobBuild(t.Context(), claim, build, now.Add(2*time.Second)))
+	jobGenerationID := testSHA256([]byte("published-job-generation"))
+	_, err = s.StageRenditionJobGeneration(t.Context(), claim, jobGenerationID, now.Add(3*time.Second))
+	require.NoError(t, err)
+	_, err = s.PublishRenditionJob(t.Context(), claim, now.Add(4*time.Second))
+	require.NoError(t, err)
+
+	newGeneration, err := s.StageLexicalGeneration(t.Context(), testSHA256([]byte("newer-serving-generation")))
+	require.NoError(t, err)
+	publishedWaiter, err := s.RenditionJobWaiterByID(t.Context(), waiter.ID)
+	require.NoError(t, err)
+	attachment, err := s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.NoError(t, err)
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment.Attachment,
+		RenditionHeadRecord{ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: publishedWaiter.AttachmentID, PublishedAt: now.Add(5 * time.Second).Format(timestampLayout)},
+		newGeneration.ID))
+
+	// Published job generations survive metadata restoration even after their
+	// inactive job roots have been discarded from the export.
+	for range 2 {
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		restored := newTestStore(t)
+		require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+		s = restored
+	}
+
+	report, err := s.PurgeDerivatives(t.Context(), PurgeRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.RemovedLexicalGenerations)
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+	var retainedGeneration sql.NullString
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT lexical_generation_id FROM rendition_jobs WHERE job_id=?`, job.ID,
+	).Scan(&retainedGeneration))
+	assert.False(t, retainedGeneration.Valid,
+		"a completed job must not retain a dangling reference to collected projection authority")
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+}
+
 func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
 	source := newTestStore(t)
 	versions := seedRenditionCatalogVersions(t, source)

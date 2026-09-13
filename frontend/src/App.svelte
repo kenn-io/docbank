@@ -47,10 +47,12 @@
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import BatchTagsModal from "./BatchTagsModal.svelte";
   import type { BatchTagReceipt } from "./batch-tags.js";
+  import ProcessingDrawer from "./ProcessingDrawer.svelte";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import type { SelectionTarget } from "./selection.js";
   import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
+  import RenditionDrawer from "./RenditionDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
   import SavedQueriesDrawer from "./SavedQueriesDrawer.svelte";
   import QueryBar from "./QueryBar.svelte";
@@ -167,6 +169,8 @@
   let historyOpen = $state(false);
   let versionsOpen = $state(false);
   let provenanceOpen = $state(false);
+  let processingTarget = $state<Row | null>(null);
+  let renditionTarget = $state<{ attachmentID: string; path: string } | null>(null);
   let jobsOpen = $state(false);
   let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
@@ -524,6 +528,8 @@
       historyOpen = false;
       versionsOpen = false;
       provenanceOpen = false;
+      processingTarget = null;
+      renditionTarget = null;
       jobsOpen = false;
       auditEvidenceOpen = false;
       storageOpen = false;
@@ -821,6 +827,8 @@
       historyOpen = false;
       versionsOpen = false;
       provenanceOpen = false;
+      processingTarget = null;
+      renditionTarget = null;
     }
     selectedID = nodeID;
     selectedAudit = null;
@@ -1222,6 +1230,8 @@
     historyOpen = false;
     versionsOpen = false;
     provenanceOpen = false;
+    processingTarget = null;
+    renditionTarget = null;
     jobsOpen = false;
     auditEvidenceOpen = false;
     storageOpen = false;
@@ -1857,6 +1867,28 @@
                   </Button>
                   <Button
                     size="sm"
+                    tone="info"
+                    surface="soft"
+                    disabled={!selected.node.current_version_id}
+                    onclick={() => {
+                      historyOpen = false;
+                      versionsOpen = false;
+                      provenanceOpen = false;
+                      jobsOpen = false;
+                      auditEvidenceOpen = false;
+                      storageOpen = false;
+                      backupsOpen = false;
+                      trashOpen = false;
+                      uploadTarget = null;
+                      renditionTarget = null;
+                      processingTarget = selected;
+                    }}
+                  >
+                    <ActivityIcon size="14" aria-hidden="true" />
+                    Process and retrieve
+                  </Button>
+                  <Button
+                    size="sm"
                     tone="danger"
                     surface="soft"
                     onclick={() => {
@@ -2012,6 +2044,29 @@
         node={selected.node}
         path={selected.path}
         onclose={() => (provenanceOpen = false)}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if processingTarget?.node.kind === "file"}
+      <ProcessingDrawer
+        session={webSession}
+        node={processingTarget.node}
+        path={processingTarget.path}
+        onclose={() => (processingTarget = null)}
+        onauthfailure={handleFailure}
+        onrendition={(attachmentID) => {
+          if (!processingTarget) return;
+          renditionTarget = { attachmentID, path: processingTarget.path };
+          processingTarget = null;
+        }}
+      />
+    {/if}
+    {#if renditionTarget}
+      <RenditionDrawer
+        session={webSession}
+        attachmentID={renditionTarget.attachmentID}
+        path={renditionTarget.path}
+        onclose={() => (renditionTarget = null)}
         onauthfailure={handleFailure}
       />
     {/if}

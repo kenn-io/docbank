@@ -38,6 +38,8 @@ func (c *Client) PlanProcessing(ctx context.Context, request api.ProcessingPlanR
 	return result, err
 }
 
+// StartProcessing returns the durable job alongside any later execution or stream
+// error, so callers can query its status without submitting another job.
 func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessingRequest) (api.ProcessingJob, error) {
 	body, err := marshalJSONRequest(request)
 	if err != nil {
@@ -70,19 +72,43 @@ func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessin
 	if err := json.UnmarshalDecode(decoder, &first, json.RejectUnknownMembers(true)); err != nil {
 		return api.ProcessingJob{}, fmt.Errorf("decoding processing job event: %w", err)
 	}
-	if first.Sequence != 1 || first.Type != "job" || first.Job == nil || first.Status != nil || first.Terminal {
+	if first.Sequence != 1 || first.Type != "job" || first.Job == nil || first.Status != nil || first.Error != nil || first.Terminal {
 		return api.ProcessingJob{}, errors.New("processing stream returned malformed job event")
 	}
 	if err := json.UnmarshalDecode(decoder, &second, json.RejectUnknownMembers(true)); err != nil {
-		return api.ProcessingJob{}, fmt.Errorf("decoding processing status event: %w", err)
+		return *first.Job, fmt.Errorf("decoding processing status event: %w", err)
 	}
-	if second.Sequence != 2 || second.Type != "status" || second.Job != nil || second.Status == nil ||
-		!second.Terminal || second.Status.JobID != first.Job.ID {
-		return api.ProcessingJob{}, errors.New("processing stream returned malformed terminal status")
+	if second.Sequence != 2 || !second.Terminal {
+		return *first.Job, errors.New("processing stream returned malformed terminal event")
+	}
+	switch second.Type {
+	case "status":
+		if second.Job != nil || second.Status == nil || second.Error != nil || second.Status.JobID != first.Job.ID {
+			return *first.Job, errors.New("processing stream returned malformed terminal status")
+		}
+		first.Job.EmbeddingJobIDs = second.Status.EmbeddingJobIDs
+	case "error":
+		if second.Job == nil || second.Status != nil || second.Error == nil || second.Job.ID != first.Job.ID {
+			return *first.Job, errors.New("processing stream returned malformed terminal error")
+		}
+		first.Job = second.Job
+	default:
+		return *first.Job, errors.New("processing stream returned an unknown terminal event")
 	}
 	var extra api.ProcessingJobEvent
 	if err := json.UnmarshalDecode(decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
-		return api.ProcessingJob{}, errors.New("processing stream continued after its terminal status")
+		return *first.Job, errors.New("processing stream continued after its terminal event")
+	}
+	if second.Error != nil {
+		return *first.Job, apiProblemError(*second.Error)
+	}
+	switch second.Status.State {
+	case "failed", "abandoned", "operator_required":
+		cause := codeToTypedErr[second.Status.FailureCode]
+		if cause == nil {
+			cause = fmt.Errorf("document processing %s: %s", second.Status.State, second.Status.FailureCode)
+		}
+		return *first.Job, &problemError{code: second.Status.FailureCode, err: cause}
 	}
 	return *first.Job, nil
 }
@@ -191,10 +217,13 @@ func (c *Client) SearchDocuments(ctx context.Context, request api.DocumentSearch
 type RenditionStream struct {
 	*ContentStream
 
-	AttachmentID string
-	BuildID      string
-	ArtifactID   string
-	FrontMatter  document.RenditionFrontMatterV1
+	AttachmentID       string
+	BuildID            string
+	ArtifactID         string
+	ProfileFingerprint string
+	Completeness       string
+	Warnings           []string
+	FrontMatter        document.RenditionFrontMatterV1
 }
 
 // RenditionRangeStream is a verified byte range of the complete immutable
@@ -203,15 +232,18 @@ type RenditionStream struct {
 type RenditionRangeStream struct {
 	io.ReadCloser
 
-	AttachmentID string
-	BuildID      string
-	ArtifactID   string
-	VersionID    string
-	BlobHash     string
-	Start        int64
-	End          int64
-	TotalSize    int64
-	trailer      http.Header
+	AttachmentID       string
+	BuildID            string
+	ArtifactID         string
+	VersionID          string
+	BlobHash           string
+	ProfileFingerprint string
+	Completeness       string
+	Warnings           []string
+	Start              int64
+	End                int64
+	TotalSize          int64
+	trailer            http.Header
 }
 
 func (stream *RenditionRangeStream) CopyVerified(w io.Writer) (int64, error) {
@@ -262,6 +294,10 @@ func (stream *RenditionStream) CopyVerified(w io.Writer) (int64, error) {
 		return written, integrityErrorf("verifying rendition: frontmatter build %q differs from transport %q",
 			frontmatter.Rendition.BuildID, stream.BuildID)
 	}
+	if string(frontmatter.Rendition.Completeness) != stream.Completeness {
+		return written, integrityErrorf("verifying rendition: frontmatter completeness %q differs from transport %q",
+			frontmatter.Rendition.Completeness, stream.Completeness)
+	}
 	stream.FrontMatter = frontmatter
 	published, err := io.Copy(w, &buffered)
 	if err != nil {
@@ -311,6 +347,10 @@ func (c *Client) Rendition(ctx context.Context, attachmentID string, maxBytes in
 	if !validSHA256Hex(buildID) || !validSHA256Hex(artifactID) {
 		return fail("rendition returned invalid build or artifact identity")
 	}
+	profileFingerprint, completeness, warnings, err := renditionMetadataHeaders(resp.Header)
+	if err != nil {
+		return fail("rendition returned invalid metadata: %v", err)
+	}
 	size, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
 	if err != nil || size < 0 || (maxBytes != 0 && size > maxBytes) {
 		return fail("rendition returned invalid size %q", resp.Header.Get(api.BlobSizeHeader))
@@ -321,7 +361,8 @@ func (c *Client) Rendition(ctx context.Context, attachmentID string, maxBytes in
 	}
 	return &RenditionStream{ContentStream: &ContentStream{ReadCloser: resp.Body,
 		VersionID: versionID, BlobHash: hash, Size: size, trailer: resp.Trailer},
-		AttachmentID: attachmentID, BuildID: buildID, ArtifactID: artifactID}, nil
+		AttachmentID: attachmentID, BuildID: buildID, ArtifactID: artifactID,
+		ProfileFingerprint: profileFingerprint, Completeness: completeness, Warnings: warnings}, nil
 }
 
 func (c *Client) RenditionRange(ctx context.Context, attachmentID string,
@@ -364,6 +405,10 @@ func (c *Client) RenditionRange(ctx context.Context, attachmentID string,
 		!validSHA256Hex(artifactID) || !validUUIDv4(versionID) || !validSHA256Hex(blobHash) {
 		return fail("rendition range returned invalid immutable identity")
 	}
+	profileFingerprint, completeness, warnings, err := renditionMetadataHeaders(resp.Header)
+	if err != nil {
+		return fail("rendition range returned invalid metadata: %v", err)
+	}
 	total, err := strconv.ParseInt(resp.Header.Get(api.BlobSizeHeader), 10, 64)
 	if err != nil || total < 1 || total > 64<<20 {
 		return fail("rendition range returned invalid total size")
@@ -374,7 +419,45 @@ func (c *Client) RenditionRange(ctx context.Context, attachmentID string,
 	}
 	return &RenditionRangeStream{ReadCloser: resp.Body, AttachmentID: attachmentID,
 		BuildID: buildID, ArtifactID: artifactID, VersionID: versionID, BlobHash: blobHash,
+		ProfileFingerprint: profileFingerprint, Completeness: completeness, Warnings: warnings,
 		Start: gotStart, End: gotEnd, TotalSize: total, trailer: resp.Trailer}, nil
+}
+
+func renditionMetadataHeaders(header http.Header) (string, string, []string, error) {
+	profileFingerprint := header.Get(api.RenditionProfileHeader)
+	if !validSHA256Hex(profileFingerprint) {
+		return "", "", nil, errors.New("profile fingerprint is invalid")
+	}
+	completeness := header.Get(api.RenditionCompletenessHeader)
+	if completeness != string(document.EvidenceComplete) && completeness != string(document.EvidencePartial) &&
+		completeness != string(document.EvidenceDegradedProvenance) {
+		return "", "", nil, errors.New("completeness is invalid")
+	}
+	rawWarnings := header.Get(api.RenditionWarningsHeader)
+	if rawWarnings == "" {
+		return profileFingerprint, completeness, []string{}, nil
+	}
+	warnings := strings.Split(rawWarnings, ",")
+	if len(warnings) > 64 {
+		return "", "", nil, errors.New("warning list is too large")
+	}
+	seen := make(map[string]struct{}, len(warnings))
+	for _, warning := range warnings {
+		if warning == "" || len(warning) > 63 {
+			return "", "", nil, errors.New("warning is invalid")
+		}
+		for _, char := range warning {
+			if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '_' || char == '-' || char == '.' {
+				continue
+			}
+			return "", "", nil, errors.New("warning is invalid")
+		}
+		if _, exists := seen[warning]; exists {
+			return "", "", nil, errors.New("warning list contains a duplicate")
+		}
+		seen[warning] = struct{}{}
+	}
+	return profileFingerprint, completeness, warnings, nil
 }
 
 func parseContentRange(value string) (int64, int64, int64, error) {

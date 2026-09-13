@@ -198,6 +198,9 @@ func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profi
 		Selector: selector, PlanFingerprint: fingerprint, Consent: true,
 	})
 	if err != nil {
+		if job.ID != "" {
+			return fmt.Errorf("processing job %s: %w", job.ID, err)
+		}
 		return err
 	}
 	if jsonOutput {
@@ -205,7 +208,7 @@ func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profi
 	}
 	status, err := c.ProcessingStatus(cmd.Context(), job.ID)
 	if err != nil {
-		return err
+		return fmt.Errorf("processing job %s: %w", job.ID, err)
 	}
 	if ndjsonOutput {
 		if err := writeCLIJSON(cmd.OutOrStdout(), api.ProcessingJobEvent{

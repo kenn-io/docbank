@@ -43,6 +43,7 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	require.NoError(t, err)
 	renditionBody := string(rendered.Markdown)
 	renderedHash := sha256.Sum256([]byte(renditionBody))
+	headerCompleteness := "complete"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, serverKey, r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
@@ -89,6 +90,9 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 			w.Header().Set(api.RenditionAttachmentHeader, attachmentID)
 			w.Header().Set(api.RenditionBuildHeader, buildID)
 			w.Header().Set(api.RenditionArtifactHeader, artifactID)
+			w.Header().Set(api.RenditionProfileHeader, profileFingerprint)
+			w.Header().Set(api.RenditionCompletenessHeader, headerCompleteness)
+			w.Header().Set(api.RenditionWarningsHeader, "degraded_provenance")
 			w.Header().Set(api.ContentVersionHeader, versionID)
 			w.Header().Set(api.BlobHashHeader, hex.EncodeToString(renderedHash[:]))
 			w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(renditionBody)))
@@ -137,6 +141,9 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	assert.Equal(t, int64(len(renditionBody)), written)
 	assert.Equal(t, renditionBody, copied.String())
 	assert.Equal(t, buildID, stream.FrontMatter.Rendition.BuildID)
+	assert.Equal(t, profileFingerprint, stream.ProfileFingerprint)
+	assert.Equal(t, "complete", stream.Completeness)
+	assert.Equal(t, []string{"degraded_provenance"}, stream.Warnings)
 	rangeStream, err := c.RenditionRange(t.Context(), job.AttachmentID, 0, 16)
 	require.NoError(t, err)
 	var ranged strings.Builder
@@ -145,6 +152,12 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	assert.Equal(t, int64(16), written)
 	assert.Equal(t, renditionBody[:16], ranged.String())
 	assert.Equal(t, int64(len(renditionBody)), rangeStream.TotalSize)
+	headerCompleteness = "partial"
+	mismatched, err := c.Rendition(t.Context(), job.AttachmentID, 0)
+	require.NoError(t, err)
+	_, err = mismatched.CopyVerified(io.Discard)
+	require.ErrorContains(t, err, "completeness")
+	headerCompleteness = "complete"
 	revocation, err := c.RevokeProcessingConsent(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "2026-08-28T00:00:00Z", revocation.RevokedAt)
@@ -175,6 +188,95 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 			require.ErrorIs(t, err, test.want)
 		})
 	}
+}
+
+func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testing.T) {
+	for _, test := range []struct {
+		state string
+		code  string
+		want  error
+	}{
+		{"failed", "provider_unavailable", nil},
+		{"failed", "authorization", nil},
+		{"failed", "invalid_response", nil},
+		{"failed", "input_rejected", nil},
+		{"failed", "stale_authority", nil},
+		{"failed", "", nil},
+		{"abandoned", "stale_authority", nil},
+		{"failed", "rendition_failed", store.ErrRenditionJobTerminal},
+		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired},
+		{"failed", "processing_consent_expired", client.ErrProcessingConsent},
+		{"partial", "authorization", nil},
+	} {
+		t.Run(test.state+"/"+test.code, func(t *testing.T) {
+			job := api.ProcessingJob{ID: strings.Repeat("a", 64)}
+			status := api.ProcessingStatus{JobID: job.ID, State: test.state, FailureCode: test.code,
+				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
+					Sequence: 2, Type: "status", Status: &status, Terminal: true}))
+			}))
+			t.Cleanup(server.Close)
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			if test.state == "partial" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				if test.code != "" {
+					code, ok := client.ProblemCode(err)
+					require.True(t, ok)
+					assert.Equal(t, test.code, code)
+				}
+				if test.want != nil {
+					require.ErrorIs(t, err, test.want)
+				}
+			}
+			assert.Equal(t, job.ID, got.ID)
+			assert.Equal(t, status.EmbeddingJobIDs, got.EmbeddingJobIDs)
+		})
+	}
+}
+
+func TestProcessingClientPreservesJobAfterStreamFailure(t *testing.T) {
+	for _, suffix := range []string{"", `{"sequence":2,"type":"status","status":`, `{}`} {
+		t.Run(suffix, func(t *testing.T) {
+			job := api.ProcessingJob{ID: strings.Repeat("a", 64),
+				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
+				_, err := io.WriteString(w, "\n"+suffix)
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			require.Error(t, err)
+			assert.Equal(t, job, got)
+		})
+	}
+}
+
+func TestProcessingClientPreservesCompletedJobWhenStatusIsUnavailable(t *testing.T) {
+	jobID, embeddingID := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
+			Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID}}))
+		_, err := io.WriteString(w, `{"sequence":2,"type":"error","terminal":true,"job":{"id":"`+jobID+
+			`","embedding_job_ids":["`+embeddingID+`"]},"error":{"status":503,"code":"processing_status_unavailable",`+
+			`"detail":"document processing status is unavailable; check the job status"}}`)
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	job, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+	require.Error(t, err)
+	code, ok := client.ProblemCode(err)
+	require.True(t, ok)
+	assert.Equal(t, "processing_status_unavailable", code)
+	assert.Equal(t, jobID, job.ID)
+	assert.Equal(t, []string{embeddingID}, job.EmbeddingJobIDs)
 }
 
 func TestDerivativePurgeClientPreservesDeferredReceipt(t *testing.T) {

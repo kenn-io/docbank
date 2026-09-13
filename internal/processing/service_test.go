@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,6 +67,7 @@ func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	plan.ConsentRequired = false
+	plan.ConsentState = "active"
 	granted, err := planFingerprint(plan)
 	require.NoError(t, err)
 	require.Equal(t, first, granted)
@@ -86,6 +88,34 @@ func TestAggregateStatusNeverReportsUnfinishedEmbeddingsAsCompleted(t *testing.T
 
 	embeddings[1].State = "unexpected"
 	require.Equal(t, "unexpected", aggregateStatus("a", nil, embeddings).State)
+}
+
+func TestInspectionPolicyCanonicalizesDeclaredMediaTypeForDurableReplay(t *testing.T) {
+	profile := configuredProfile{
+		portable: document.ProcessingProfileV1{Rendition: &document.RenditionBindingV1{
+			MaxDocumentBytes: 1024, DisclosureFingerprint: strings.Repeat("1", 64),
+		}},
+		record: store.ProcessingProfileRecord{Fingerprint: strings.Repeat("2", 64)},
+		provider: inertRenditionProvider{descriptor: document.RenditionDescriptor{
+			Fingerprint: strings.Repeat("3", 64),
+		}},
+	}
+	policy := inspectionPolicy("document.txt", store.ContentVersion{
+		ID: "00000000-0000-4000-8000-000000000001", BlobHash: strings.Repeat("4", 64),
+		Size: 12, MimeType: "text/plain; charset=utf-8",
+	}, profile)
+	require.Equal(t, "text/plain", policy.DeclaredMediaType)
+}
+
+type inertRenditionProvider struct{ descriptor document.RenditionDescriptor }
+
+func (provider inertRenditionProvider) Descriptor() document.RenditionDescriptor {
+	return provider.descriptor
+}
+func (inertRenditionProvider) Render(context.Context, document.AuthorizedUpload,
+	document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	return document.RenditionResult{}, nil
 }
 
 func BenchmarkProcessingServiceSourceFence4096(b *testing.B) {
@@ -122,7 +152,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
-	jobs, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	jobs, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
@@ -130,16 +160,140 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	require.Equal(t, "retry_wait", status.State)
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	_, err = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	interrupted, err := service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, jobs, interrupted)
 	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
 	clockOffset.Store(int64(2 * time.Minute))
-	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope)
+	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
 	require.NoError(t, err)
 	require.Equal(t, jobs, retried)
 	status, err = fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
+}
+
+func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.T) {
+	for _, stop := range []string{"request-canceled", "later-consent-missing"} {
+		t.Run(stop, func(t *testing.T) {
+			fixture, fake, worker, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			var profile document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			profile.RetentionDisclosure.RetainProviderMarkdown = false
+			binding := profile.Embeddings[0]
+			profile.Embeddings = nil
+			provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
+			providers := map[string]document.EmbeddingProvider{}
+			for _, name := range []string{"first", "second", "third"} {
+				binding.Name = name
+				if name == "third" {
+					binding.DisclosureFingerprint = workerHash("third-binding-disclosure")
+				}
+				profile.Embeddings = append(profile.Embeddings, binding)
+				providers[name] = provider
+			}
+			service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+				Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+				Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
+				Profiles: map[string]ProfileConfig{"direct": {Profile: profile, EmbeddingProviders: providers}}})
+			require.NoError(t, err)
+			version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
+			require.NoError(t, err)
+			selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			for _, binding := range profile.Embeddings {
+				if stop == "later-consent-missing" && binding.Name == "third" {
+					continue
+				}
+				_, err := fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+					Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
+					ProfileFingerprint: plan.ProfileFingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+					InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+				})
+				require.NoError(t, err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var announced []Job
+			job, err := service.StartWithProgress(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, func(job Job) {
+				announced = append(announced, job)
+				jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, plan.ProfileFingerprint)
+				require.NoError(t, err)
+				require.Len(t, jobs, 1, "the first durable binding must be announced before later enqueues")
+				if stop == "request-canceled" {
+					cancel()
+				}
+			})
+			jobs, readErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, plan.ProfileFingerprint)
+			require.NoError(t, readErr)
+			if stop == "later-consent-missing" {
+				require.ErrorIs(t, err, ErrConsentRequired)
+				require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+				require.Len(t, jobs, 2)
+				processed, workerErr := worker.RunJob(t.Context(), jobs[0].ID)
+				require.NoError(t, workerErr)
+				require.True(t, processed, "independent workers can process the already committed binding")
+				status, statusErr := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0].ID)
+				require.NoError(t, statusErr)
+				require.Equal(t, "completed", status.State)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, jobs, 3)
+				for _, job := range jobs {
+					require.Equal(t, "completed", job.State)
+				}
+			}
+			require.Len(t, announced, 1)
+			require.Equal(t, announced[0].ID, job.ID)
+			require.Equal(t, []string{job.ID}, announced[0].EmbeddingJobIDs)
+			for _, durable := range jobs {
+				require.Contains(t, job.EmbeddingJobIDs, durable.ID, "partial results must retain every durable binding identity")
+			}
+		})
+	}
+}
+
+func TestProcessingServiceCoverageBeforeProfileRegistration(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	record := embeddingWorkerProfile(t, embeddingWorkerDescriptor(t))
+	var profile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &profile))
+	service := &Service{catalog: fixture.catalog, profiles: map[string]configuredProfile{
+		"private": {portable: profile, record: record},
+	}}
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), fixture.versionID)
+	require.NoError(t, err)
+	trashed, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "trashed.pdf",
+		version.BlobHash, version.Size, version.MimeType)
+	require.NoError(t, err)
+	_, _, err = fixture.catalog.Trash(t.Context(), trashed.ID, -1)
+	require.NoError(t, err)
+	fence := SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{
+		version.ID, trashed.CurrentVersionID, "00000000-0000-4000-8000-000000000001",
+	}}
+	coverage, err := service.Coverage(t.Context(), "private", fence)
+	require.NoError(t, err)
+	require.Equal(t, "partial", coverage.State)
+	require.Len(t, coverage.Embeddings, 2)
+	for _, binding := range coverage.Embeddings {
+		require.Equal(t, "unavailable", binding.State)
+		require.Equal(t, 3, binding.Total)
+		require.Equal(t, 2, binding.Stale)
+		require.Equal(t, 1, binding.Unavailable)
+		require.Zero(t, binding.Complete)
+	}
+	_, _, err = fixture.catalog.Trash(t.Context(), version.NodeID, -1)
+	require.NoError(t, err)
+	coverage, err = service.Coverage(t.Context(), "private", fence)
+	require.NoError(t, err)
+	for _, binding := range coverage.Embeddings {
+		require.Equal(t, "stale", binding.State)
+		require.Equal(t, 3, binding.Stale)
+		require.Zero(t, binding.Unavailable)
+	}
 }
 
 func TestAggregateStatusUsesBindingActivation(t *testing.T) {

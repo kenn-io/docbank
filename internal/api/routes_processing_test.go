@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -46,6 +49,7 @@ func TestProcessingPlanRouteIsAuthenticatedAndReturnsReviewedDisclosure(t *testi
 	require.Equal(t, http.StatusOK, response.StatusCode, responseBody)
 	assert.Contains(t, responseBody, `"profile_fingerprint"`)
 	assert.Contains(t, responseBody, `"consent_required":true`)
+	assert.Contains(t, responseBody, `"consent_state":"required"`)
 	assert.Contains(t, responseBody, `"original_file"`)
 	assert.Contains(t, responseBody, `"disclose_filename":true`)
 	assert.Contains(t, responseBody, `"filename":"private.txt"`)
@@ -64,6 +68,314 @@ func TestProcessingProfilesRouteListsExecutableProfilesDeterministically(t *test
 	assert.Len(t, profiles[0].Fingerprint, 64)
 	assert.True(t, profiles[0].Rendition)
 	assert.Empty(t, profiles[0].EmbeddingBindings)
+}
+
+func TestProcessingServicePopulatesSuppliedRenditionRuntimeRegistry(t *testing.T) {
+	registry := processing.NewRenditionRuntimeRegistry()
+	assert.False(t, registry.Ready())
+
+	ts, _ := newTestServer(t, configureProcessingTestServiceWithRegistry(t, registry))
+	response, body := get(t, ts, "/api/v1/processing/profiles", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.True(t, registry.Ready(),
+		"the daemon-supervised registry must receive configured providers for restart recovery")
+}
+
+func TestProcessingCoverageReportsConfiguredEmbeddingUnavailableBeforeFirstRun(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	node := createFileWithContent(t, ts, catalog, "/unprocessed.txt", "not processed yet\n")
+
+	response, body := get(t, ts, "/api/v1/coverage?profile=private&vault_uid="+
+		catalog.VaultID()+"&content_version_id="+node.CurrentVersionID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.Contains(t, body, `"name":"semantic"`)
+	assert.Contains(t, body, `"state":"unavailable"`)
+}
+
+func TestProcessingClientReturnsCompletedEmbeddingIDs(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	node := createFileWithContent(t, ts, catalog, "/combined-receipt.txt", "synthetic combined receipt\n")
+	c := client.New(ts.URL, testAPIKey)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
+		PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	status, err := c.ProcessingStatus(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Len(t, status.EmbeddingJobIDs, 1)
+	require.Equal(t, status.EmbeddingJobIDs, job.EmbeddingJobIDs)
+}
+
+func TestProcessingClientReportsRequiredEmbeddingFailure(t *testing.T) {
+	rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := invalidProcessingEmbeddingProvider{EmbeddingProvider: newProcessingTestEmbeddingProvider(t)}
+	for _, activation := range []document.EmbeddingActivation{document.EmbeddingRequired, document.EmbeddingOptional} {
+		t.Run(string(activation), func(t *testing.T) {
+			ts, catalog := newTestServer(t,
+				configureProcessingTestServiceWithProviders(t, rendition, provider, true, activation))
+			node := createFileWithContent(t, ts, catalog, "/embedding-failure.txt", "synthetic embedding failure\n")
+			c := client.New(ts.URL, testAPIKey)
+			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+			plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+			require.NoError(t, err)
+			job, startErr := c.StartProcessing(t.Context(), api.StartProcessingRequest{
+				Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NotEmpty(t, job.ID)
+			status, err := c.ProcessingStatus(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "invalid_response", status.FailureCode)
+			if activation == document.EmbeddingRequired {
+				require.Equal(t, "failed", status.State)
+				require.Error(t, startErr)
+			} else {
+				require.Equal(t, "partial", status.State)
+				require.NoError(t, startErr)
+			}
+		})
+	}
+}
+
+type invalidProcessingEmbeddingProvider struct{ document.EmbeddingProvider }
+
+func (invalidProcessingEmbeddingProvider) Embed(context.Context, []document.EmbeddingInput,
+	document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	return document.EmbeddingResult{}, nil
+}
+
+func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *testing.T) {
+	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &blockingProcessingProvider{
+		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithProvider(t, provider))
+	node := createFileWithContent(t, ts, catalog, "/stream.txt", "durable before provider completion\n")
+	selector := map[string]any{"node_id": node.ID,
+		"content_version_id": node.CurrentVersionID, "profile": "private"}
+	assertProcessingSurvivesDisconnect(t, ts, selector, provider.started, provider.release)
+}
+
+func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
+	inner := newProcessingTestEmbeddingProvider(t)
+	provider := &blockingProcessingEmbeddingProvider{
+		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
+	node := createFileWithContent(t, ts, catalog, "/embedding-only.txt", "embed after disconnect\n")
+	selector := map[string]any{"node_id": node.ID,
+		"content_version_id": node.CurrentVersionID, "profile": "private"}
+	job := assertProcessingSurvivesDisconnect(t, ts, selector, provider.started, provider.release)
+	assert.NotEmpty(t, job.EmbeddingJobIDs)
+	assert.Empty(t, job.RenditionJobID)
+}
+
+func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
+	inner := newProcessingTestEmbeddingProvider(t)
+	provider := &shutdownProcessingEmbeddingProvider{
+		EmbeddingProvider: inner, started: make(chan struct{}),
+		cancelled: make(chan struct{}), release: make(chan struct{}),
+	}
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	node := createFileWithContent(t, ts, catalog, "/shutdown.txt", "recover accepted processing after shutdown\n")
+	c := client.New(ts.URL, testAPIKey)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	start := api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}
+	payload, err := json.Marshal(start)
+	require.NoError(t, err)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	scanner := bufio.NewScanner(response.Body)
+	require.True(t, scanner.Scan())
+	var event api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
+	require.NotNil(t, event.Job)
+	require.Len(t, event.Job.EmbeddingJobIDs, 1)
+	select {
+	case <-provider.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("accepted embedding did not reach the provider")
+	}
+	require.NoError(t, response.Body.Close())
+
+	// HTTP shutdown cannot drain the worker after this client has disconnected.
+	// The API owner must cancel it and wait for provider cleanup itself.
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, catalog.Server.Shutdown(shutdownCtx), context.DeadlineExceeded)
+	select {
+	case <-provider.cancelled:
+	default:
+		t.Fatal("shutdown did not cancel accepted processing")
+	}
+	closed := make(chan struct{})
+	go func() {
+		catalog.Server.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("server closed while the provider still owned processing resources")
+	case <-time.After(50 * time.Millisecond):
+	}
+	closeProcessingSignal(provider.release)
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server did not drain accepted processing after provider cleanup")
+	}
+
+	rejected, err := c.StartProcessing(t.Context(), start)
+	require.Error(t, err, "shutdown must reject new processing starts")
+	require.Empty(t, rejected.ID)
+
+	jobID := event.Job.EmbeddingJobIDs[0]
+	interrupted, err := catalog.EmbeddingJobByID(t.Context(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, "running", interrupted.State)
+	require.Empty(t, interrupted.FailureCode)
+	// A restarted daemon reclaims the same durable job once its lease expires.
+	runtime, err := processing.NewProviderEmbeddingRuntime(inner, catalog.Blobs, t.TempDir(),
+		func(error) (processing.EmbeddingProviderFailure, time.Duration) {
+			return processing.EmbeddingProviderInvalidResponse, 0
+		})
+	require.NoError(t, err)
+	now := time.Now().Add(10 * time.Minute)
+	worker, err := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
+		Catalog: catalog.Store, Authority: catalog.Store, Blobs: catalog.Blobs,
+		GenerationBlobs: catalog.Blobs, Runtime: runtime, Gate: api.NewOperationGate(),
+		Owner: "restarted-processing-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+		RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
+		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
+		MaxVectorBlobBytes: 64 << 20, Clock: func() time.Time { return now },
+		DescriptorFingerprints: []string{inner.Descriptor().Fingerprint},
+	})
+	require.NoError(t, err)
+	processed, err := worker.RunJob(t.Context(), jobID)
+	require.NoError(t, err)
+	require.True(t, processed)
+	recovered, err := catalog.EmbeddingJobByID(t.Context(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", recovered.State)
+}
+
+type shutdownProcessingEmbeddingProvider struct {
+	document.EmbeddingProvider
+
+	started, cancelled, release chan struct{}
+}
+
+func (provider *shutdownProcessingEmbeddingProvider) Embed(ctx context.Context,
+	inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	close(provider.started)
+	select {
+	case <-ctx.Done():
+		close(provider.cancelled)
+		<-provider.release
+		return document.EmbeddingResult{}, ctx.Err()
+	case <-provider.release:
+		return provider.EmbeddingProvider.Embed(ctx, inputs, authorization)
+	}
+}
+
+func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T) {
+	innerRendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	rendition := &blockingProcessingProvider{
+		inner: innerRendition, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	t.Cleanup(func() { closeProcessingSignal(rendition.release) })
+	embedding := &observedProcessingEmbeddingProvider{
+		inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}),
+	}
+	ts, catalog := newTestServer(t,
+		configureProcessingTestServiceWithProviders(t, rendition, embedding, true, document.EmbeddingOptional))
+	node := createFileWithContent(t, ts, catalog, "/combined.txt", "render and embed after disconnect\n")
+	selector := map[string]any{"node_id": node.ID,
+		"content_version_id": node.CurrentVersionID, "profile": "private"}
+	assertProcessingSurvivesDisconnect(t, ts, selector, rendition.started, rendition.release)
+	select {
+	case <-embedding.started:
+	case <-time.After(time.Second):
+		t.Fatal("post-rendition embedding was not enqueued after the response disconnected")
+	}
+}
+
+func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selector map[string]any,
+	started, release chan struct{},
+) api.ProcessingJob {
+	t.Helper()
+	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+	payload, err := json.Marshal(map[string]any{"selector": selector,
+		"plan_fingerprint": plan.Fingerprint, "consent": true})
+	require.NoError(t, err)
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+
+	type responseResult struct {
+		response *http.Response
+		err      error
+	}
+	responseCh := make(chan responseResult, 1)
+	go func() {
+		response, requestErr := ts.Client().Do(request)
+		responseCh <- responseResult{response: response, err: requestErr}
+	}()
+	select {
+	case result := <-responseCh:
+		require.NoError(t, result.err)
+		require.Equal(t, http.StatusOK, result.response.StatusCode)
+		t.Cleanup(func() { _ = result.response.Body.Close() })
+		scanner := bufio.NewScanner(result.response.Body)
+		require.True(t, scanner.Scan())
+		var event api.ProcessingJobEvent
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
+		require.NotNil(t, event.Job)
+		assert.False(t, event.Terminal)
+		jobID := event.Job.ID
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("provider did not start after durable job publication")
+		}
+		require.NoError(t, result.response.Body.Close())
+		time.Sleep(50 * time.Millisecond)
+		closeProcessingSignal(release)
+		require.Eventually(t, func() bool {
+			statusResponse, statusBody := get(t, ts, "/api/v1/processing/jobs/"+jobID, nil)
+			return statusResponse.StatusCode == http.StatusOK && strings.Contains(statusBody, `"state":"completed"`)
+		}, 3*time.Second, 10*time.Millisecond,
+			"accepted processing did not complete after the response stream disconnected")
+		return *event.Job
+	case <-time.After(time.Second):
+		closeProcessingSignal(release)
+		result := <-responseCh
+		if result.response != nil {
+			_ = result.response.Body.Close()
+		}
+		t.Fatal("processing response headers waited for provider completion")
+	}
+	return api.ProcessingJob{}
 }
 
 func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
@@ -101,11 +413,16 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	assert.Contains(t, renditionBody, "docbank-sanitized-markdown/v1")
 	assert.Contains(t, renditionBody, "needle inside fence")
 	assert.Equal(t, job.AttachmentID, renditionResponse.Header.Get("X-Docbank-Rendition-Attachment"))
+	assert.Equal(t, plan.ProfileFingerprint, renditionResponse.Header.Get("X-Docbank-Rendition-Profile"))
+	assert.Equal(t, "degraded_provenance", renditionResponse.Header.Get("X-Docbank-Rendition-Completeness"))
+	assert.Equal(t, "degraded_provenance", renditionResponse.Header.Get("X-Docbank-Rendition-Warnings"))
+	assert.Equal(t, "no-store", renditionResponse.Header.Get("Cache-Control"))
 	rangeResponse, rangeBody := get(t, ts, "/api/v1/renditions/"+job.AttachmentID,
 		map[string]string{"Range": "bytes=0-31"})
 	require.Equal(t, http.StatusPartialContent, rangeResponse.StatusCode, rangeBody)
 	assert.Equal(t, renditionBody[:32], rangeBody)
 	assert.Equal(t, "bytes 0-31/"+strconv.Itoa(len(renditionBody)), rangeResponse.Header.Get("Content-Range"))
+	assert.Equal(t, "no-store", rangeResponse.Header.Get("Cache-Control"))
 	assert.NotEmpty(t, rangeResponse.Trailer.Get("Content-Digest"))
 	clampedResponse, clampedBody := get(t, ts, "/api/v1/renditions/"+job.AttachmentID,
 		map[string]string{"Range": "bytes=0-9223372036854775807"})
@@ -173,6 +490,15 @@ func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *t
 		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint})
 	require.Equal(t, http.StatusOK, grantResponse.StatusCode, grantBody)
 	assert.Contains(t, grantBody, `"profile_fingerprint":"`+plan.ProfileFingerprint+`"`)
+	activePlanResponse, activePlanBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, activePlanResponse.StatusCode, activePlanBody)
+	var activePlan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(activePlanBody), &activePlan))
+	assert.Equal(t, "active", activePlan.ConsentState)
+	assert.False(t, activePlan.ConsentRequired)
+	assert.Equal(t, plan.Fingerprint, activePlan.Fingerprint,
+		"consent state is not part of the reviewed provider-flow fingerprint")
 
 	grantedResponse, grantedBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
 		map[string]any{"selector": selector})
@@ -197,6 +523,8 @@ func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *t
 		map[string]any{"selector": secondSelector})
 	require.Equal(t, http.StatusOK, secondPlanResponse.StatusCode, secondPlanBody)
 	require.NoError(t, json.Unmarshal([]byte(secondPlanBody), &plan))
+	assert.Equal(t, "revoked", plan.ConsentState)
+	assert.True(t, plan.ConsentRequired)
 	revokedResponse, revokedBody := do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
 		map[string]any{"selector": secondSelector, "plan_fingerprint": plan.Fingerprint, "consent": false})
 	assert.Equal(t, http.StatusPreconditionFailed, revokedResponse.StatusCode, revokedBody)
@@ -298,14 +626,38 @@ func derivativePurgeReceiptFromStream(t *testing.T, body string) api.DerivativeP
 
 func configureProcessingTestService(t *testing.T) func(*api.Deps) {
 	t.Helper()
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	return configureProcessingTestServiceWithProviderAndRegistry(t, provider, nil)
+}
+
+func configureProcessingTestServiceWithRegistry(t *testing.T,
+	registry *processing.RenditionRuntimeRegistry,
+) func(*api.Deps) {
+	t.Helper()
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	return configureProcessingTestServiceWithProviderAndRegistry(t, provider, registry)
+}
+
+func configureProcessingTestServiceWithProvider(t *testing.T,
+	provider document.RenditionProvider,
+) func(*api.Deps) {
+	t.Helper()
+	return configureProcessingTestServiceWithProviderAndRegistry(t, provider, nil)
+}
+
+func configureProcessingTestServiceWithProviderAndRegistry(t *testing.T,
+	provider document.RenditionProvider, registry *processing.RenditionRuntimeRegistry,
+) func(*api.Deps) {
+	t.Helper()
 	return func(deps *api.Deps) {
-		provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-		require.NoError(t, err)
 		gate := api.NewOperationGate()
 		deps.Gate = gate
 		service, err := processing.NewService(processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
-			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
+			SpoolDirectory:    filepath.Join(deps.VaultRoot, "blobs", "tmp"),
+			RenditionRuntimes: registry,
 			Profiles: map[string]processing.ProfileConfig{"private": {
 				Profile: processingTestProfile(provider.Descriptor()), RenditionProvider: provider,
 			}},
@@ -313,6 +665,166 @@ func configureProcessingTestService(t *testing.T) func(*api.Deps) {
 		require.NoError(t, err)
 		deps.Processing = service
 	}
+}
+
+type blockingProcessingProvider struct {
+	inner   document.RenditionProvider
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (provider *blockingProcessingProvider) Descriptor() document.RenditionDescriptor {
+	return provider.inner.Descriptor()
+}
+
+func (provider *blockingProcessingProvider) Render(ctx context.Context, upload document.AuthorizedUpload,
+	authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	provider.once.Do(func() { close(provider.started) })
+	select {
+	case <-ctx.Done():
+		return document.RenditionResult{}, ctx.Err()
+	case <-provider.release:
+		return provider.inner.Render(ctx, upload, authorization)
+	}
+}
+
+type blockingProcessingEmbeddingProvider struct {
+	inner   document.EmbeddingProvider
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+type observedProcessingEmbeddingProvider struct {
+	inner   document.EmbeddingProvider
+	started chan struct{}
+	once    sync.Once
+}
+
+func (provider *observedProcessingEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.inner.Descriptor()
+}
+
+func (provider *observedProcessingEmbeddingProvider) Embed(ctx context.Context,
+	inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	provider.once.Do(func() { close(provider.started) })
+	return provider.inner.Embed(ctx, inputs, authorization)
+}
+
+func (provider *blockingProcessingEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.inner.Descriptor()
+}
+
+func (provider *blockingProcessingEmbeddingProvider) Embed(ctx context.Context,
+	inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	provider.once.Do(func() { close(provider.started) })
+	select {
+	case <-ctx.Done():
+		return document.EmbeddingResult{}, ctx.Err()
+	case <-provider.release:
+		return provider.inner.Embed(ctx, inputs, authorization)
+	}
+}
+
+func closeProcessingSignal(signal chan struct{}) {
+	select {
+	case <-signal:
+	default:
+		close(signal)
+	}
+}
+
+func configureProcessingTestServiceWithEmbedding(t *testing.T) func(*api.Deps) {
+	t.Helper()
+	return configureProcessingTestServiceWithEmbeddingProvider(t, newProcessingTestEmbeddingProvider(t), true)
+}
+
+func configureProcessingTestServiceWithEmbeddingProvider(t *testing.T,
+	embedding document.EmbeddingProvider, withRendition bool,
+) func(*api.Deps) {
+	t.Helper()
+	rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	return configureProcessingTestServiceWithProviders(t, rendition, embedding, withRendition, document.EmbeddingOptional)
+}
+
+func configureProcessingTestServiceWithProviders(t *testing.T, rendition document.RenditionProvider,
+	embedding document.EmbeddingProvider, withRendition bool, activation document.EmbeddingActivation,
+) func(*api.Deps) {
+	t.Helper()
+	return func(deps *api.Deps) {
+		profile := processingTestProfile(rendition.Descriptor())
+		var renditionProvider = rendition
+		if !withRendition {
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			renditionProvider = nil
+		}
+		descriptor := embedding.Descriptor()
+		profile.Embeddings = []document.EmbeddingBindingV1{{
+			Activation: activation, AuthorizationFingerprint: processingTestHash("embedding-authorization"),
+			CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test",
+			Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
+			Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"),
+			DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputOriginalFile,
+			MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
+			Metric: descriptor.Metric, Model: descriptor.Model, ModelInput: descriptor.ModelInput,
+			Name: "semantic", Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter,
+			ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary),
+		}}
+		gate := api.NewOperationGate()
+		deps.Gate = gate
+		service, err := processing.NewService(processing.ServiceConfig{
+			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
+			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
+			Profiles: map[string]processing.ProfileConfig{"private": {
+				Profile: profile, RenditionProvider: renditionProvider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"semantic": embedding},
+			}},
+		})
+		require.NoError(t, err)
+		deps.Processing = service
+	}
+}
+
+type processingTestEmbeddingProvider struct{ descriptor document.EmbeddingDescriptor }
+
+func newProcessingTestEmbeddingProvider(t *testing.T) processingTestEmbeddingProvider {
+	t.Helper()
+	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{
+		Profile: document.ModelInputProfileNomic,
+	})
+	require.NoError(t, err)
+	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{
+		ID: "synthetic.embedding-v1", ContractVersion: document.EmbeddingProviderContractVersion,
+		PolicyFingerprint: processingTestHash("embedding-policy"), TrustBoundary: document.EmbeddingTrustLocalProcess,
+		Model: "synthetic-model", ModelRevision: "v1", Dimension: 2,
+		Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
+		ScalarEncoding: "float32", DocumentFormatter: "synthetic/document-v1",
+		QueryFormatter: "synthetic/query-v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile},
+		CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract,
+		SupportedRequestModes: []document.ModelInputMode{contract.Document.Mode},
+	})
+	require.NoError(t, err)
+	return processingTestEmbeddingProvider{descriptor: descriptor}
+}
+
+func (provider processingTestEmbeddingProvider) Descriptor() document.EmbeddingDescriptor {
+	return provider.descriptor
+}
+
+func (processingTestEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
+	_ document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	vectors := make([]document.EmbeddingVector, len(inputs))
+	for index, input := range inputs {
+		vectors[index] = document.EmbeddingVector{Key: input.Key, Values: []float32{1, 0}}
+	}
+	return document.EmbeddingResult{Vectors: vectors}, nil
 }
 
 func processingTestProfile(descriptor document.RenditionDescriptor) document.ProcessingProfileV1 {

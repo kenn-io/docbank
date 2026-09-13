@@ -134,6 +134,10 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 func executableProcessingProfiles(cfg config.Config,
 	bundle embeddingRuntimeBundle,
 ) (map[string]processing.ProfileConfig, error) {
+	renditionProviders, err := configureRenditionProviders(cfg)
+	if err != nil {
+		return nil, err
+	}
 	profiles := make(map[string]processing.ProfileConfig)
 	names := make([]string, 0, len(cfg.ProcessingProfiles))
 	for name := range cfg.ProcessingProfiles {
@@ -146,26 +150,37 @@ func executableProcessingProfiles(cfg config.Config,
 			return nil, err
 		}
 		portable := resolved.Document
-		// Rendition adapters and exact tokenizer implementations are admitted
-		// only when their process-local runtime binding exists. The current
-		// daemon bundle owns direct-file embedding runtimes, so do not advertise
-		// a portable profile that this process cannot execute end to end.
-		if portable.Rendition != nil || len(portable.Embeddings) == 0 {
+		if portable.Rendition == nil && len(portable.Embeddings) == 0 {
 			continue
 		}
 		executable := true
 		configured := processing.ProfileConfig{Profile: portable,
 			EmbeddingProviders:   make(map[string]document.EmbeddingProvider),
-			EmbeddingClassifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration))}
+			EmbeddingClassifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
+			Tokenizers:           make(map[string]document.Tokenizer)}
+		if portable.Rendition != nil {
+			configured.RenditionProvider = renditionProviders[portable.Rendition.Name]
+			if configured.RenditionProvider == nil {
+				continue
+			}
+		}
 		for _, binding := range portable.Embeddings {
 			provider := bundle.providers[binding.Name]
 			classifier := bundle.classifiers[binding.Name]
-			if provider == nil || classifier == nil || binding.InputKind != document.EmbeddingInputOriginalFile {
+			if provider == nil || classifier == nil {
 				executable = false
 				break
 			}
 			configured.EmbeddingProviders[binding.Name] = provider
 			configured.EmbeddingClassifiers[binding.Name] = classifier
+			if binding.InputKind == document.EmbeddingInputRenditionChunk {
+				tokenizer := configuredEmbeddingTokenizer(binding.Chunk.Tokenizer + "@" + binding.Chunk.TokenizerRevision)
+				if tokenizer == nil {
+					executable = false
+					break
+				}
+				configured.Tokenizers[binding.Name] = tokenizer
+			}
 		}
 		if executable {
 			profiles[name] = configured

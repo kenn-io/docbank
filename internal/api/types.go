@@ -16,10 +16,13 @@ const (
 	BlobSizeHeader = "X-Docbank-Blob-Size"
 	// ContentVersionHeader carries the stable version identity whose immutable
 	// bytes are being streamed.
-	ContentVersionHeader      = "X-Docbank-Content-Version"
-	RenditionAttachmentHeader = "X-Docbank-Rendition-Attachment"
-	RenditionBuildHeader      = "X-Docbank-Rendition-Build"
-	RenditionArtifactHeader   = "X-Docbank-Rendition-Artifact"
+	ContentVersionHeader        = "X-Docbank-Content-Version"
+	RenditionAttachmentHeader   = "X-Docbank-Rendition-Attachment"
+	RenditionBuildHeader        = "X-Docbank-Rendition-Build"
+	RenditionArtifactHeader     = "X-Docbank-Rendition-Artifact"
+	RenditionProfileHeader      = "X-Docbank-Rendition-Profile"
+	RenditionCompletenessHeader = "X-Docbank-Rendition-Completeness"
+	RenditionWarningsHeader     = "X-Docbank-Rendition-Warnings"
 )
 
 // ProcessingSelector binds provider work to one exact immutable document
@@ -69,6 +72,7 @@ type ProcessingPlan struct {
 	RetainedClasses    []string            `json:"retained_classes"`
 	Estimate           ProcessingEstimate  `json:"estimate"`
 	ConsentRequired    bool                `json:"consent_required"`
+	ConsentState       string              `json:"consent_state" enum:"active,required,expired,revoked"`
 	BackupConsequence  string              `json:"backup_consequence"`
 }
 
@@ -162,12 +166,13 @@ type ProcessingStatus struct {
 }
 
 // ProcessingJobEvent is one bounded NDJSON event. A successful stream contains
-// one job event followed by one terminal status event.
+// one job event followed by one terminal status or status-read error event.
 type ProcessingJobEvent struct {
 	Sequence int               `json:"sequence" minimum:"1" maximum:"2"`
-	Type     string            `json:"type" enum:"job,status"`
+	Type     string            `json:"type" enum:"job,status,error"`
 	Job      *ProcessingJob    `json:"job,omitzero"`
 	Status   *ProcessingStatus `json:"status,omitzero"`
+	Error    *Error            `json:"error,omitzero"`
 	Terminal bool              `json:"terminal,omitzero"`
 }
 

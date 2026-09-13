@@ -575,6 +575,12 @@ func (s *Store) PurgeDerivatives(
 			); err != nil {
 				return fmt.Errorf("removing lexical generation %s manifest: %w", generation.id, err)
 			}
+			if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs
+				SET lexical_generation_id=NULL
+				WHERE phase='published' AND lexical_generation_id=?`, generation.id); err != nil {
+				return fmt.Errorf("releasing collected lexical generation %s from completed jobs: %w",
+					generation.id, err)
+			}
 			result, err = tx.ExecContext(ctx,
 				`DELETE FROM rendition_lexical_generations WHERE generation_id=?`, generation.id)
 			if err != nil {
