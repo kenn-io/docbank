@@ -134,7 +134,7 @@ processing_coverage AS (
   CASE
    WHEN verified.build_id IS NOT NULL AND serving.nonempty>0 THEN
     CASE WHEN b.truncated OR b.partial_success OR b.completeness='partial' THEN 'partial' ELSE 'complete' END
-   WHEN verified.build_id IS NOT NULL AND serving.build_id IS NOT NULL AND b.lexical_segment_count=0 THEN 'none'
+   WHEN verified.build_id IS NOT NULL AND serving.nonempty=0 THEN 'none'
    WHEN native.version_id IS NOT NULL THEN 'complete'
    WHEN attempt.waiter_state='rejected' OR attempt.job_state IN ('failed','operator_required') THEN 'failed'
    ELSE 'unprocessed'

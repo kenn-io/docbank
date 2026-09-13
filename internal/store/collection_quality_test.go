@@ -46,9 +46,10 @@ func TestCollectionQualityCensusAndFreshFingerprint(t *testing.T) {
 
 func TestCollectionQualityTopFiftyAndConcentrations(t *testing.T) {
 	s, run, _, _ := collectionCoverageFixture(t, 0)
+	mediaType := "application/" + strings.Repeat("a", 1024)
 	for i := range 52 {
 		name := fmt.Sprintf("document.e%02d", i)
-		_, err := s.IngestFileExact(t.Context(), run, s.RootID(), name, testSHA256([]byte(name)), 10, "text/plain", name, "")
+		_, err := s.IngestFileExact(t.Context(), run, s.RootID(), name, testSHA256([]byte(name)), 10, mediaType, name, "")
 		require.NoError(t, err)
 	}
 	got, err := s.CollectionQuality(t.Context(), run.ID(), CoverageSelection{}, []string{"extension", "media_type"})
@@ -58,7 +59,8 @@ func TestCollectionQualityTopFiftyAndConcentrations(t *testing.T) {
 	require.Equal(t, QualityBucket{"e00", 1}, ext.Values[0])
 	require.Equal(t, QualityBucket{"e49", 1}, ext.Values[49])
 	require.Equal(t, int64(2), ext.Other)
-	require.Equal(t, []QualitySpike{{Field: "media_type", Value: "text/plain", Count: 52}}, got.Spikes)
+	require.Equal(t, []QualityBucket{{mediaType, 52}}, qualityDimension(t, got, "media_type").Values)
+	require.Equal(t, []QualitySpike{{Field: "media_type", Value: mediaType, Count: 52}}, got.Spikes)
 }
 
 func TestCollectionQualityRejectsInvalidDimensionsAndCancellation(t *testing.T) {

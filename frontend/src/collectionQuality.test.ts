@@ -37,6 +37,18 @@ describe("collection quality receipts",()=>{
     vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(value)));
     expect((await collectionQuality("session",id,"",new AbortController().signal)).collection.coverage.configuration).toBe("unconfigured");
   });
+  it("accepts long MIME buckets and concentrations allowed by the API",async()=>{
+    const mediaType="application/"+"a".repeat(1024);
+    const value=receipt();
+    value.collection.file_count=10;
+    value.collection.coverage.counts.unprocessed=9;
+    value.dimensions=[{field:"media_type",values:[{value:mediaType,count:10}],missing:0,other:0}];
+    const spikes=[{field:"media_type",value:mediaType,count:10}];
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({...value,spikes})));
+    const result=await collectionQuality("session",id,"archive",new AbortController().signal);
+    expect(result.dimensions[0].values).toEqual([{value:mediaType,count:10}]);
+    expect(result.spikes).toEqual(spikes);
+  });
   it("creates an explicit OR expression scoped to the collection",()=>{
     expect(qualitySuggestion(id,"extension",["pdf","txt"])).toEqual({v:1,text:'(extension:"pdf" OR extension:"txt")',syntax:"advanced",mode:"lexical",filters:{collection_ids:[id]},sort:{field:"name",direction:"asc"}});
     expect(()=>qualitySuggestion(id,"extension",[])).toThrow();

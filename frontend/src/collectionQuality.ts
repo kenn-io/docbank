@@ -54,12 +54,12 @@ export async function collectionQuality(session:string,id:string,profile:string,
     const d=object(value);check(typeof d.field==="string"&&fields.has(d.field)&&!seen.has(d.field));seen.add(d.field);
     check(Array.isArray(d.values)&&d.values.length<=50&&count(d.missing,collection.file_count)&&count(d.other,collection.file_count));
     let total=d.missing+d.other;const keys=new Set<string>();
-    for(const bucket of d.values){const b=object(bucket);check(typeof b.value==="string"&&b.value.length<=1024&&!keys.has(b.value)&&count(b.count,collection.file_count));keys.add(b.value);total+=b.count;}
+    for(const bucket of d.values){const b=object(bucket);check(typeof b.value==="string"&&!keys.has(b.value)&&count(b.count,collection.file_count));keys.add(b.value);total+=b.count;}
     check(total===collection.file_count);
   }
   for(const key of ["zero_bytes","mismatches","duplicate_documents"])check(count(raw[key],collection.file_count));
   check(Array.isArray(raw.spikes)&&raw.spikes.length<=7);
-  for(const spike of raw.spikes){const s=object(spike);check(typeof s.field==="string"&&fields.has(s.field)&&typeof s.value==="string"&&s.value.length<=1024&&count(s.count,collection.file_count));}
+  for(const spike of raw.spikes){const s=object(spike);check(typeof s.field==="string"&&fields.has(s.field)&&typeof s.value==="string"&&count(s.count,collection.file_count));}
   return {...raw,collection:{...collection,coverage}} as unknown as CollectionQuality;
 }
 

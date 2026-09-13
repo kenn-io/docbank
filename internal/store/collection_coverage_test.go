@@ -46,7 +46,7 @@ func TestCollectionCoverageFiveStatesAndExactAuthority(t *testing.T) {
 }
 
 func TestCollectionCoverageRetainsActivatedOutputAfterFailure(t *testing.T) {
-	for _, state := range []string{"complete", "none", "degraded", "truncated", "partial_success"} {
+	for _, state := range []string{"complete", "none", "empty_segments", "blank_segments", "degraded", "truncated", "partial_success"} {
 		t.Run(state, func(t *testing.T) {
 			s, run, nodes, profile := collectionCoverageFixture(t, 1)
 			collectionCoveragePublish(t, s, nodes[0], profile, state)
@@ -54,7 +54,7 @@ func TestCollectionCoverageRetainsActivatedOutputAfterFailure(t *testing.T) {
 			got, err := s.CollectionByID(t.Context(), run.ID(), CoverageSelection{"configured", profile.Fingerprint})
 			require.NoError(t, err)
 			want := CoverageCounts{Complete: 1}
-			if state == "none" {
+			if state == "none" || state == "empty_segments" || state == "blank_segments" {
 				want = CoverageCounts{None: 1}
 			}
 			if state == "truncated" || state == "partial_success" {
@@ -275,6 +275,14 @@ func collectionCoveragePublish(t *testing.T, s *Store, node Node, profile Proces
 	case "none":
 		build.Units = nil
 		build.LexicalSegments = nil
+	case "empty_segments", "blank_segments":
+		text := ""
+		if state == "blank_segments" {
+			text = "   "
+		}
+		build.LexicalSegments[0].Text = text
+		build.LexicalSegments[0].CharEnd = len(text)
+		build.LexicalSegments[0].Checksum = testSHA256([]byte(text))
 	}
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
