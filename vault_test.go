@@ -233,7 +233,7 @@ func TestVaultSourceMetadataBackfillRefreshesV15MOVGeneration(t *testing.T) {
 		t.Context(), internalprocessing.SourceMetadataExtractorFingerprint, "", 10)
 	require.NoError(t, err)
 	require.Len(t, targets, 1, "the current extractor must revisit the stored v15 warning")
-	completed, err := internalprocessing.BackfillSourceMetadataTargets(t.Context(), vault.metadata, vault.blobs, targets)
+	completed, err := internalprocessing.BackfillSourceMetadataTargets(t.Context(), vault.metadata, vault.blobs, vault.emailSpoolParent, targets)
 	require.NoError(t, err)
 	require.Equal(t, 1, completed)
 

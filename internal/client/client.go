@@ -305,6 +305,12 @@ var codeToTypedErr = map[string]error{
 	"processing_consent_expired":    ErrProcessingConsent,
 	"processing_consent_revoked":    ErrProcessingConsent,
 	"derivative_purge_plan_changed": ErrProcessingPlanChanged,
+	"email_pending":                 store.ErrEmailPending,
+	"email_not_supported":           store.ErrEmailNotSupported,
+	"email_derivative_suppressed":   store.ErrEmailDerivativeSuppressed,
+	"email_corrupt":                 store.ErrEmailCorrupt,
+	"email_part_unavailable":        store.ErrEmailPartUnavailable,
+	"invalid_email_part":            store.ErrInvalidEmailPart,
 }
 
 func decodeError(resp *http.Response) error {

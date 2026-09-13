@@ -128,6 +128,10 @@ func (request PurgeRequest) IsGC() bool {
 // PhysicalDerivativeBlobsPendingGC. Immutable backup repositories are outside
 // this mutation boundary and are never rewritten.
 type PurgeReport struct {
+	RemovedEmailHeads                int
+	RemovedEmailAttachments          int
+	RemovedEmailGenerations          int
+	RemovedEmailPartArtifacts        int
 	RemovedHeads                     int
 	RemovedAttachments               int
 	RemovedBuilds                    int
@@ -261,6 +265,10 @@ func (s *Store) PurgeDerivatives(
 			}
 		}
 
+		emailSuppressions, emailPayloads, err := purgeEmailCatalogTx(ctx, tx, request, asOf, &report)
+		if err != nil {
+			return err
+		}
 		versionSet := stringSet(request.ContentVersionIDs)
 		attachmentSet := stringSet(request.AttachmentIDs)
 		explicitBuilds := stringSet(request.BuildIDs)
@@ -336,6 +344,9 @@ func (s *Store) PurgeDerivatives(
 			if _, rooted := rootedEmbeddingAttachments[attachment.id]; rooted {
 				continue
 			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM email_body_results WHERE rendition_attachment_id=?`, attachment.id); err != nil {
+				return err
+			}
 			result, err = tx.ExecContext(ctx,
 				`DELETE FROM rendition_attachments WHERE attachment_id=?`, attachment.id)
 			if err != nil {
@@ -406,6 +417,11 @@ func (s *Store) PurgeDerivatives(
 			return err
 		}
 		suppressionChanges = append(suppressionChanges, jobSuppressionChanges...)
+		emailChanges, err := installDerivativePurgeSuppressionRecordsTx(ctx, tx, emailSuppressions)
+		if err != nil {
+			return err
+		}
+		suppressionChanges = append(suppressionChanges, emailChanges...)
 		embeddingSuppressionChanges, err := installDerivativePurgeSuppressionRecordsTx(ctx, tx, embeddingSuppressions)
 		if err != nil {
 			return err
@@ -608,6 +624,9 @@ func (s *Store) PurgeDerivatives(
 		}
 
 		artifactBlobs := make(map[string]struct{})
+		for _, hash := range emailPayloads {
+			artifactBlobs[hash] = struct{}{}
+		}
 		for _, hash := range embeddingPayloads {
 			artifactBlobs[hash] = struct{}{}
 		}

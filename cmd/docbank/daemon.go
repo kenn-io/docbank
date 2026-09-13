@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemon"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/extract"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
@@ -199,6 +200,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := recoverEmbeddingRuntimeSpool(sigCtx, layout.BlobTmpDir()); err != nil {
 		return err
 	}
+	if _, err := emailmime.RecoverStale(sigCtx, layout.BlobTmpDir()); err != nil {
+		return fmt.Errorf("recovering email decoder spool: %w", err)
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
@@ -231,7 +235,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
-	if err := startProcessingJobs(jobSupervisor, s, blobs, runtimeRegistry, operationGate, logger); err != nil {
+	if err := startProcessingJobs(
+		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
+	); err != nil {
 		return err
 	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
@@ -370,7 +376,7 @@ func runServe(ctx context.Context) (retErr error) {
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
-		Processing: processingService,
+		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {
@@ -452,6 +458,7 @@ func runServe(ctx context.Context) (retErr error) {
 // bound, so `docbank jobs` never reports rendition work that cannot happen.
 func startProcessingJobs(
 	supervisor *jobs.Supervisor, s *store.Store, blobs *blob.Store,
+	spoolParent string,
 	runtimes *processing.RenditionRuntimeRegistry, gate *api.OperationGate, logger *slog.Logger,
 ) error {
 	if runtimes.Ready() {
@@ -493,12 +500,40 @@ func startProcessingJobs(
 		Logger: logger,
 		Process: func(ctx context.Context, target store.SourceMetadataTarget) error {
 			_, err := processing.BackfillSourceMetadataTargets(
-				ctx, s, blobs, []store.SourceMetadataTarget{target})
+				ctx, s, blobs, spoolParent, []store.SourceMetadataTarget{target})
 			return err
 		},
 	}
 	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
+	}
+	emailFingerprint, err := processing.EmailDecoderFingerprint()
+	if err != nil {
+		return fmt.Errorf("fingerprinting email decoder: %w", err)
+	}
+	emailBodyProfileFingerprint, err := processing.EmailBodyProfileFingerprint()
+	if err != nil {
+		return fmt.Errorf("fingerprinting email body profile: %w", err)
+	}
+	email := &processing.Backfill[store.EmailTarget]{
+		Name: "email", Page: 10, IdleDelay: time.Second,
+		List: func(ctx context.Context, after string, limit int) ([]store.EmailTarget, error) {
+			return s.MissingEmailTargetsAfter(
+				ctx, emailFingerprint, emailBodyProfileFingerprint, after, limit,
+			)
+		},
+		Key:    func(target store.EmailTarget) string { return target.Version.ID },
+		Mutate: gate.MutateContext,
+		Logger: logger,
+		Process: func(ctx context.Context, target store.EmailTarget) error {
+			_, processErr := processing.BackfillEmailTargets(
+				ctx, s, blobs, spoolParent, []store.EmailTarget{target},
+			)
+			return processErr
+		},
+	}
+	if err := supervisor.Start("extract:email", email.Run); err != nil {
+		return fmt.Errorf("starting email backfill: %w", err)
 	}
 	return nil
 }

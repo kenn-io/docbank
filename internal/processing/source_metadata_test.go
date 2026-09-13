@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -43,7 +46,8 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 			keys: []string{"creators", "media.id3.album", "title"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			metadata := ExtractSourceMetadata(testCase.payload)
+			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), testCase.payload)
+			require.NoError(t, err)
 			keys := make([]string, 0, len(metadata.Fields))
 			sensitive := map[string]bool{}
 			for _, field := range metadata.Fields {
@@ -78,7 +82,8 @@ func TestExtractSourceMetadataReadsVisualContainerFacts(t *testing.T) {
 		{name: "MP4", payload: mediatest.MP4(640, 368, 3500), kind: "video", width: 640, height: 368, durationMS: 3500},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			metadata := ExtractSourceMetadata(testCase.payload)
+			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), testCase.payload)
+			require.NoError(t, err)
 			kind, found := sourceMetadataString(metadata, "media.container.kind")
 			require.True(t, found)
 			assert.Equal(t, testCase.kind, kind)
@@ -113,7 +118,8 @@ func TestExtractSourceMetadataReadsMP4CreationTime(t *testing.T) {
 	const mp4EpochToUnix = int64(2_082_844_800)
 	binary.BigEndian.PutUint32(payload[mvhd+8:mvhd+12], uint32(want.Unix()+mp4EpochToUnix))
 
-	metadata := ExtractSourceMetadata(payload)
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+	require.NoError(t, err)
 	created, found := sourceMetadataTimestamp(metadata, "created")
 	require.True(t, found)
 	assert.Equal(t, want.Format(time.RFC3339), created.Normalized)
@@ -121,7 +127,8 @@ func TestExtractSourceMetadataReadsMP4CreationTime(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticRichExifTIFF())
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticRichExifTIFF())
+	require.NoError(t, err)
 	for key, want := range map[string]string{
 		"media.container.format":  "tiff",
 		"media.container.kind":    "image",
@@ -188,7 +195,8 @@ func TestExtractSourceMetadataReadsRawTIFFVariants(t *testing.T) {
 			if testCase.rw2ISO > 0 {
 				root = append(root, tiffShort(0x0017, testCase.rw2ISO))
 			}
-			metadata := ExtractSourceMetadata(syntheticTIFF(testCase.magic, root, exif))
+			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticTIFF(testCase.magic, root, exif))
+			require.NoError(t, err)
 			format, found := sourceMetadataString(metadata, "media.container.format")
 			require.True(t, found)
 			assert.Equal(t, testCase.format, format)
@@ -203,7 +211,8 @@ func TestExtractSourceMetadataReadsRawTIFFVariants(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticRAF())
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticRAF())
+	require.NoError(t, err)
 	for key, want := range map[string]string{
 		"media.container.format":  "raf",
 		"media.container.kind":    "image",
@@ -227,7 +236,8 @@ func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsCR3PhotoFacts(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticCR3())
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3())
+	require.NoError(t, err)
 	for key, want := range map[string]string{
 		"media.container.format":  "cr3",
 		"media.container.kind":    "image",
@@ -309,10 +319,11 @@ func TestExtractSourceMetadataOmitsIncompleteOrInvalidGPSCoordinates(t *testing.
 		}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			metadata := ExtractSourceMetadata(syntheticCR3WithDirectories(
+			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3WithDirectories(
 				syntheticBMFFBox("CMT1", syntheticCR3CMT1()),
 				syntheticBMFFBox("CMT4", syntheticTIFFRoot(testCase.entries)),
 			))
+			require.NoError(t, err)
 			_, latitudeFound := sourceMetadataString(metadata, "image.exif.gps_latitude")
 			_, longitudeFound := sourceMetadataString(metadata, "image.exif.gps_longitude")
 			assert.False(t, latitudeFound)
@@ -323,12 +334,13 @@ func TestExtractSourceMetadataOmitsIncompleteOrInvalidGPSCoordinates(t *testing.
 }
 
 func TestExtractSourceMetadataOmitsIncompleteGPSTimestamp(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticCR3WithDirectories(
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3WithDirectories(
 		syntheticBMFFBox("CMT1", syntheticCR3CMT1()),
 		syntheticBMFFBox("CMT4", syntheticTIFFRoot([]syntheticTIFFEntry{
 			tiffASCII(0x001d, "2024:01:02"),
 		})),
 	))
+	require.NoError(t, err)
 
 	_, found := sourceMetadataTimestamp(metadata, "image.exif.gps_timestamp")
 	assert.False(t, found)
@@ -336,7 +348,7 @@ func TestExtractSourceMetadataOmitsIncompleteGPSTimestamp(t *testing.T) {
 }
 
 func TestExtractSourceMetadataWarnsForMalformedGPSDirectory(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticTIFF(42,
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticTIFF(42,
 		[]syntheticTIFFEntry{
 			tiffLong(0x0100, 6000),
 			tiffLong(0x0101, 4000),
@@ -344,16 +356,18 @@ func TestExtractSourceMetadataWarnsForMalformedGPSDirectory(t *testing.T) {
 		},
 		nil,
 	))
+	require.NoError(t, err)
 
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 }
 
 func TestExtractSourceMetadataWarnsForDuplicateCR3Directory(t *testing.T) {
 	cmt1 := syntheticCR3CMT1()
-	metadata := ExtractSourceMetadata(syntheticCR3WithDirectories(
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3WithDirectories(
 		syntheticBMFFBox("CMT1", cmt1),
 		syntheticBMFFBox("CMT1", cmt1),
 	))
+	require.NoError(t, err)
 
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 	format, found := sourceMetadataString(metadata, "media.container.format")
@@ -365,7 +379,8 @@ func TestExtractSourceMetadataWarnsForMalformedRAFOffsets(t *testing.T) {
 	payload := syntheticRAF()
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(len(payload)+1))
 
-	metadata := ExtractSourceMetadata(payload)
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+	require.NoError(t, err)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 	format, found := sourceMetadataString(metadata, "media.container.format")
 	require.True(t, found)
@@ -376,7 +391,8 @@ func TestExtractSourceMetadataKeepsRAFDirectoryInsideDeclaredBounds(t *testing.T
 	payload := syntheticRAF()
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryLength:], 4)
 
-	metadata := ExtractSourceMetadata(payload)
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+	require.NoError(t, err)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 	_, found := sourceMetadataInteger(metadata, "media.container.width_px")
 	assert.False(t, found)
@@ -391,14 +407,16 @@ func TestExtractSourceMetadataRejectsOverlappingRAFMetadataRegions(t *testing.T)
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(directoryOffset))
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryLength:], uint32(len(directory)))
 
-	metadata := ExtractSourceMetadata(payload)
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+	require.NoError(t, err)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 	_, found := sourceMetadataInteger(metadata, "media.container.width_px")
 	assert.False(t, found)
 }
 
 func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticOOXML(t))
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticOOXML(t))
+	require.NoError(t, err)
 	pages, found := sourceMetadataInteger(metadata, "page_count")
 	require.True(t, found)
 	assert.Equal(t, int64(7), pages)
@@ -408,28 +426,32 @@ func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
 }
 
 func TestExtractSourceMetadataUsesVerifiedPDFPageTree(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticMetadataPDF(2))
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDF(2))
+	require.NoError(t, err)
 	pageCount, found := sourceMetadataInteger(metadata, "page_count")
 	require.True(t, found)
 	assert.Equal(t, int64(2), pageCount,
 		"an unrelated earlier /Count must not override the catalog page tree")
 
-	malformed := ExtractSourceMetadata([]byte("%PDF-1.7 /Count 99"))
+	malformed, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte("%PDF-1.7 /Count 99"))
+	require.NoError(t, err)
 	_, found = sourceMetadataInteger(malformed, "page_count")
 	assert.False(t, found)
 	assert.Contains(t, sourceMetadataWarningCodes(malformed), "unparseable_pdf_pages")
 }
 
 func TestExtractSourceMetadataUsesAuthoritativePDFInfo(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticMetadataPDF(1))
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDF(1))
+	require.NoError(t, err)
 	title, found := sourceMetadataString(metadata, "title")
 	require.True(t, found)
 	assert.Equal(t, "Quarterly report", title)
 }
 
 func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticMetadataPDFWithInfo(2,
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDFWithInfo(2,
 		"<< /Title 42 /Author (Ada) /Subject (Synthetic) >>"))
+	require.NoError(t, err)
 	pageCount, found := sourceMetadataInteger(metadata, "page_count")
 	require.True(t, found)
 	assert.Equal(t, int64(2), pageCount)
@@ -441,9 +463,10 @@ func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testi
 }
 
 func TestExtractSourceMetadataPreservesPDFPagesWhenXMPIsMalformed(t *testing.T) {
-	metadata := ExtractSourceMetadata(syntheticMetadataPDFWithInfoAndMetadata(2,
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDFWithInfoAndMetadata(2,
 		"<< /Title (Quarterly report) >>",
 		"<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length 4 >>\nstream\nnope\nendstream"))
+	require.NoError(t, err)
 	pageCount, found := sourceMetadataInteger(metadata, "page_count")
 	require.True(t, found)
 	assert.Equal(t, int64(2), pageCount)
@@ -468,14 +491,16 @@ func TestExtractID3TextEncodingsAndFrameBoundary(t *testing.T) {
 		{name: "UTF-8", version: 4, encoding: 3, text: []byte("Café"), want: "Café"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			metadata := ExtractSourceMetadata(syntheticID3TextTag(testCase.version, testCase.encoding, testCase.text))
+			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticID3TextTag(testCase.version, testCase.encoding, testCase.text))
+			require.NoError(t, err)
 			title, found := sourceMetadataString(metadata, "title")
 			require.True(t, found)
 			assert.Equal(t, testCase.want, title)
 		})
 	}
 
-	metadata := ExtractSourceMetadata(append(syntheticID3TextTag(4, 3, nil), []byte("TIT2\x00Decoy audio bytes")...))
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), append(syntheticID3TextTag(4, 3, nil), []byte("TIT2\x00Decoy audio bytes")...))
+	require.NoError(t, err)
 	_, found := sourceMetadataString(metadata, "title")
 	assert.False(t, found)
 }
@@ -546,7 +571,8 @@ func TestExtractXMLTextSkipsXMPStructureAndUnknownNamespaces(t *testing.T) {
 func TestExtractImageIgnoresMetadataLikeEntropyBytes(t *testing.T) {
 	data := append([]byte{0xff, 0xd8, 0xff, 0xda, 0x00, 0x02}, []byte("ImageDescription=Fabricated entropy\x00")...)
 	data = append(data, 0xff, 0xd9)
-	metadata := ExtractSourceMetadata(data)
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), data)
+	require.NoError(t, err)
 	_, found := sourceMetadataString(metadata, "description")
 	assert.False(t, found)
 }
@@ -573,7 +599,8 @@ func TestMalformedXMLMetadataEmitsWarnings(t *testing.T) {
 }
 
 func TestExtractCalendarRetainsUnsupportedNamedTimezone(t *testing.T) {
-	metadata := ExtractSourceMetadata([]byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR"))
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR"))
+	require.NoError(t, err)
 	raw, found := sourceMetadataString(metadata, "calendar.start.raw")
 	require.True(t, found)
 	assert.Equal(t, "20240102T030405", raw)
@@ -612,6 +639,93 @@ func TestCanonicalSourceMetadataResultPublishesWarningForInvalidExtraction(t *te
 	assert.NotEmpty(t, canonical)
 }
 
+func TestExtractSourceMetadataUsesSharedEmailInterpretation(t *testing.T) {
+	for _, zone := range []string{"XYZ", "-0700", "GMT", ""} {
+		t.Run(zone, func(t *testing.T) {
+			date := strings.TrimSpace("Tue, 2 Jan 2024 03:04:05 " + zone)
+			payload := []byte("From: =?UTF-8?Q?Ad=C3=A1?= <ada@example.test>\r\n" +
+				"Subject: =?UTF-8?Q?Synthetic_caf=C3=A9?=\r\nDate: " + date + "\r\n" +
+				"Received: from sender.example.test\r\n\tby receiver.example.test\r\n\r\nbody")
+			digest := sha256.Sum256(payload)
+			decoded, err := emailmime.Decode(t.Context(), hex.EncodeToString(digest[:]),
+				int64(len(payload)), bytes.NewReader(payload), t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, decoded.Close()) })
+			message := decoded.Evidence.Inventory.Messages[0]
+			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+			require.NoError(t, err)
+			from, found := sourceMetadataString(metadata, "email.from")
+			require.True(t, found)
+			assert.Equal(t, *message.Fields.From[0].Text, from)
+			subject, found := sourceMetadataString(metadata, "email.subject")
+			require.True(t, found)
+			assert.Equal(t, *message.Fields.Subject[0].Text, subject)
+			received, found := sourceMetadataStrings(metadata, "email.received")
+			require.True(t, found)
+			assert.Equal(t, []string{"from sender.example.test by receiver.example.test"}, received)
+			sent, found := sourceMetadataTimestamp(metadata, "email.sent")
+			switch message.Date.TimezoneState {
+			case document.EmailTimezoneUnknownNamed:
+				assert.False(t, found)
+				raw, found := sourceMetadataString(metadata, "email.sent.raw")
+				require.True(t, found)
+				assert.Equal(t, date, raw)
+				assert.Contains(t, sourceMetadataWarningCodes(metadata), "unsupported_timezone")
+			case document.EmailTimezoneMissing:
+				require.True(t, found)
+				assert.Equal(t, *message.Date.Civil, sent.Normalized)
+				assert.Equal(t, document.SourceMetadataTimezoneOmitted, sent.Timezone)
+			default:
+				require.True(t, found)
+				parsed, err := time.Parse(time.RFC3339, sent.Normalized)
+				require.NoError(t, err)
+				assert.Equal(t, *message.Date.UTC, parsed.UTC().Format(time.RFC3339))
+				assert.Equal(t, date, sent.Raw)
+			}
+		})
+	}
+}
+
+func TestExtractSourceMetadataWarnsForUndecodableEmailFields(t *testing.T) {
+	for _, header := range []string{"From", "To", "Cc", "Bcc", "Subject"} {
+		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(header+": \xff\r\n\r\nbody"))
+		require.NoError(t, err)
+		assert.Empty(t, metadata.Fields)
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata", header)
+	}
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte("From: invalid-address\r\n\r\nbody"))
+	require.NoError(t, err)
+	from, found := sourceMetadataString(metadata, "email.from")
+	require.True(t, found)
+	assert.Equal(t, "invalid-address", from)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
+}
+
+func TestExtractSourceMetadataRequiresEmailHeaders(t *testing.T) {
+	for _, payload := range []string{"", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n"} {
+		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(payload))
+		require.NoError(t, err)
+		assert.Empty(t, metadata.Fields)
+		assert.Contains(t, sourceMetadataWarningCodes(metadata), "unsupported_format")
+	}
+}
+
+func TestExtractSourceMetadataOwnsEmailSpool(t *testing.T) {
+	spool := sourceMetadataTestSpool(t)
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, filepath.Join(spool, "missing"))
+	}
+	payload := []byte("Subject: Synthetic message\r\n\r\nbody")
+	metadata, err := ExtractSourceMetadata(t.Context(), spool, payload)
+	require.NoError(t, err)
+	subject, found := sourceMetadataString(metadata, "email.subject")
+	require.True(t, found)
+	assert.Equal(t, "Synthetic message", subject)
+	entries, err := os.ReadDir(spool)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
 func TestExtractSourceMetadataParsesMultipartAttachmentHeaders(t *testing.T) {
 	payload := strings.Join([]string{
 		"From: Ada <ada@example.test>",
@@ -634,10 +748,17 @@ func TestExtractSourceMetadataParsesMultipartAttachmentHeaders(t *testing.T) {
 		"--synthetic-boundary--",
 		"",
 	}, "\r\n")
-	metadata := ExtractSourceMetadata([]byte(payload))
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(payload))
+	require.NoError(t, err)
 	count, found := sourceMetadataInteger(metadata, "attachment_count")
 	require.True(t, found)
 	assert.Equal(t, int64(2), count)
+
+	metadata, err = ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(strings.ReplaceAll(payload, "--synthetic-boundary--\r\n", "")))
+	require.NoError(t, err)
+	_, found = sourceMetadataInteger(metadata, "attachment_count")
+	assert.False(t, found)
+	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_attachments")
 }
 
 func sourceMetadataInteger(metadata document.SourceMetadataV1, key string) (int64, bool) {
@@ -1132,15 +1253,50 @@ func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
 	target := store.SourceMetadataTarget{SourceSHA256: processingHash("a1"), Size: int64(len(payload))}
 	catalog := &sourceMetadataCatalogStub{targets: []store.SourceMetadataTarget{target}}
 	reader := &sourceMetadataReaderStub{payload: payload, closeErr: errors.New("verification failed")}
-	completed, err := BackfillSourceMetadataTargets(t.Context(), catalog, reader, catalog.targets)
+	completed, err := BackfillSourceMetadataTargets(t.Context(), catalog, reader, sourceMetadataTestSpool(t), catalog.targets)
 	require.ErrorContains(t, err, "verification failed")
 	assert.Zero(t, completed)
 	assert.Zero(t, catalog.published)
 	reader.closeErr = nil
-	completed, err = BackfillSourceMetadataTargets(t.Context(), catalog, reader, catalog.targets)
+	completed, err = BackfillSourceMetadataTargets(t.Context(), catalog, reader, sourceMetadataTestSpool(t), catalog.targets)
 	require.NoError(t, err)
 	assert.Equal(t, 1, completed)
 	assert.Equal(t, 1, catalog.published)
+}
+
+func sourceMetadataTestSpool(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return root
+}
+
+func TestBackfillSourceMetadataRetriesEmailSpoolFailure(t *testing.T) {
+	f := newEmailPipelineFixture(t)
+	target := f.add(t, "message.eml", "Subject: Synthetic message\r\n\r\nbody", "message/rfc822")
+	targets, err := f.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, filepath.Join(f.spool, "missing"))
+	}
+	completed, err := BackfillSourceMetadataTargets(t.Context(), f.catalog, f.blobs, filepath.Join(f.spool, "missing"), targets)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Zero(t, completed)
+	_, _, err = f.catalog.ActiveSourceMetadata(t.Context(), target.Version.BlobHash)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	retryTargets, err := f.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Equal(t, targets, retryTargets)
+	completed, err = BackfillSourceMetadataTargets(t.Context(), f.catalog, f.blobs, f.spool, retryTargets)
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	_, metadata, err := f.catalog.ActiveSourceMetadata(t.Context(), target.Version.BlobHash)
+	require.NoError(t, err)
+	subject, found := sourceMetadataString(metadata, "email.subject")
+	require.True(t, found)
+	assert.Equal(t, "Synthetic message", subject)
+	f.emptySpool(t)
 }
 
 func TestBackfillSourceMetadataContinuesPastUnreadableTarget(t *testing.T) {
@@ -1148,7 +1304,7 @@ func TestBackfillSourceMetadataContinuesPastUnreadableTarget(t *testing.T) {
 	targets := []store.SourceMetadataTarget{{SourceSHA256: processingHash("a1"), Size: int64(len(payload))}, {SourceSHA256: processingHash("b2"), Size: int64(len(payload))}}
 	catalog := &sourceMetadataCatalogStub{targets: targets}
 	reader := &sourceMetadataReaderStub{payload: payload, closeErrors: []error{errors.New("first corrupt"), nil}}
-	completed, err := BackfillSourceMetadataTargets(t.Context(), catalog, reader, targets)
+	completed, err := BackfillSourceMetadataTargets(t.Context(), catalog, reader, sourceMetadataTestSpool(t), targets)
 	require.ErrorContains(t, err, "first corrupt")
 	assert.Equal(t, 1, completed)
 	assert.Equal(t, 1, catalog.published)
@@ -1162,7 +1318,7 @@ func TestLargeMP4SourceMetadataSkipsPayloadWithoutBufferingIt(t *testing.T) {
 	expected := hex.EncodeToString(hasher.Sum(nil))
 	blobs := &largeSourceMetadataReaderStub{reader: reader}
 
-	metadata, err := sourceMetadataForTarget(t.Context(), blobs, store.SourceMetadataTarget{
+	metadata, err := sourceMetadataForTarget(t.Context(), blobs, sourceMetadataTestSpool(t), store.SourceMetadataTarget{
 		SourceSHA256: expected, Size: reader.size,
 	})
 	require.NoError(t, err)
@@ -1188,7 +1344,7 @@ func TestLargeMP4SourceMetadataMalformedBoxWarnsInsteadOfRetrying(t *testing.T) 
 	require.NoError(t, err)
 	blobs := &largeSourceMetadataReaderStub{reader: reader}
 
-	metadata, err := sourceMetadataForTarget(t.Context(), blobs, store.SourceMetadataTarget{
+	metadata, err := sourceMetadataForTarget(t.Context(), blobs, sourceMetadataTestSpool(t), store.SourceMetadataTarget{
 		SourceSHA256: hex.EncodeToString(hasher.Sum(nil)), Size: reader.size,
 	})
 	require.NoError(t, err)
@@ -1200,7 +1356,7 @@ func TestLargeRAFSourceMetadataUsesBoundedContainerReads(t *testing.T) {
 	reader := syntheticSparseLargeRAF()
 	require.Greater(t, reader.size, int64(maxSourceMetadataOriginalBytes))
 
-	metadata, err := extractLargeSourceMetadata(reader, reader.size)
+	metadata, err := extractLargeSourceMetadata(t.Context(), reader, reader.size, sourceMetadataTestSpool(t))
 	require.NoError(t, err)
 	format, found := sourceMetadataString(metadata, "media.container.format")
 	require.True(t, found)
@@ -1223,7 +1379,7 @@ func TestLargeCR3SourceMetadataUsesBoundedContainerReads(t *testing.T) {
 		},
 	}
 
-	metadata, err := extractLargeSourceMetadata(reader, reader.size)
+	metadata, err := extractLargeSourceMetadata(t.Context(), reader, reader.size, sourceMetadataTestSpool(t))
 	require.NoError(t, err)
 	format, found := sourceMetadataString(metadata, "media.container.format")
 	require.True(t, found)

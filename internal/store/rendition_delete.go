@@ -19,6 +19,9 @@ func deleteRenditionAuthorityForVersionsTx(
 	if len(versionIDs) == 0 {
 		return nil
 	}
+	if err := deleteEmailAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+		return err
+	}
 	if err := deleteEmbeddingAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 		return err
 	}
