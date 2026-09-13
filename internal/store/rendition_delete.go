@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -50,7 +51,7 @@ func deleteRenditionAuthorityForVersionsTx(
 			return fmt.Errorf("deleting rendition job waiters for content version %s: %w", versionID, err)
 		}
 	}
-	return reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, nowRFC3339())
+	return reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, nowRFC3339(), nil)
 }
 
 // deleteEmbeddingAuthorityForVersionsTx removes dependent derivative
@@ -88,17 +89,21 @@ func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, vers
 // provider egress keeps a durable tombstone so a later enqueue cannot silently
 // resubmit the same call.
 func reconcileRenditionJobsAfterWaiterDeletionTx(
-	ctx context.Context, tx *sql.Tx, at string,
+	ctx context.Context, tx *sql.Tx, at string, jobIDs []string,
 ) (retErr error) {
+	encoded, err := json.Marshal(jobIDs)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 		selected_waiter_id=NULL,authorization_grant_id=NULL,
 		authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,updated_at=?
-		WHERE state IN ('completed','operator_required')
+		WHERE (? OR job_id IN (SELECT value FROM json_each(?))) AND state IN ('completed','operator_required')
 		  AND selected_waiter_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM rendition_job_waiters w
 			WHERE w.waiter_id=rendition_jobs.selected_waiter_id
-		  )`, at); err != nil {
+		  )`, at, jobIDs == nil, string(encoded)); err != nil {
 		return fmt.Errorf("clearing deleted terminal rendition authority: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, `
@@ -106,13 +111,13 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 		       COALESCE(failure_code,''),
 		       provider_resume_handle IS NOT NULL AND execution_snapshot_json IS NOT NULL
 		FROM rendition_jobs
-		WHERE state IN ('queued','running','retry_wait','failed')
+		WHERE (? OR job_id IN (SELECT value FROM json_each(?))) AND state IN ('queued','running','retry_wait','failed')
 		  AND selected_waiter_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM rendition_job_waiters w
 			WHERE w.waiter_id=rendition_jobs.selected_waiter_id
 		  )
-		ORDER BY job_id`)
+		ORDER BY job_id`, jobIDs == nil, string(encoded))
 	if err != nil {
 		return fmt.Errorf("listing rendition jobs with deleted authority: %w", err)
 	}
@@ -264,33 +269,35 @@ func reconcileRenditionJobsAfterWaiterDeletionTx(
 		active=0,released_at=?
 		WHERE active=1 AND EXISTS (
 			SELECT 1 FROM rendition_jobs j
-			WHERE (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
+			WHERE (? OR j.job_id IN (SELECT value FROM json_each(?)))
+			  AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
 			       OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id)
 			  AND NOT EXISTS (
 				SELECT 1 FROM rendition_job_waiters w
 				WHERE w.job_id=j.job_id AND w.state='waiting'
 			  )
-		)`, at); err != nil {
+		)`, at, jobIDs == nil, string(encoded)); err != nil {
 		return fmt.Errorf("releasing canceled rendition job roots: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots
 		WHERE EXISTS (
 			SELECT 1 FROM rendition_jobs j
-			WHERE (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
+			WHERE (? OR j.job_id IN (SELECT value FROM json_each(?)))
+			  AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
 			       OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id)
 			  AND j.state<>'operator_required'
 			  AND NOT EXISTS (
 				SELECT 1 FROM rendition_job_waiters w
 				WHERE w.job_id=j.job_id AND w.state='waiting'
 			  )
-		)`); err != nil {
+		)`, jobIDs == nil, string(encoded)); err != nil {
 		return fmt.Errorf("deleting orphaned rendition job roots: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_jobs
-		WHERE state<>'operator_required'
+		WHERE (? OR job_id IN (SELECT value FROM json_each(?))) AND state<>'operator_required'
 		  AND NOT EXISTS (
 			SELECT 1 FROM rendition_job_waiters w WHERE w.job_id=rendition_jobs.job_id
-		  )`); err != nil {
+		  )`, jobIDs == nil, string(encoded)); err != nil {
 		return fmt.Errorf("deleting orphaned rendition jobs: %w", err)
 	}
 	return nil
@@ -316,7 +323,7 @@ func purgeRenditionJobWaitersTx(
 	var waiterIDs []string
 	scopes := make([]derivativePurgeSuppression, 0)
 	seenScopes := make(map[string]struct{})
-	matched := false
+	jobIDs := make(map[string]struct{})
 	for rows.Next() {
 		var jobID, sourceSHA256 string
 		var waiterID, versionID, profileFingerprint, attachmentID sql.NullString
@@ -335,7 +342,7 @@ func purgeRenditionJobWaitersTx(
 		if !selectedJob && !selectedWaiter {
 			continue
 		}
-		matched = true
+		jobIDs[jobID] = struct{}{}
 		if selectedJob {
 			scope := derivativePurgeSuppression{
 				sourceSHA256: sourceSHA256, profileFingerprint: derivativeBuildSuppressionProfile,
@@ -375,8 +382,8 @@ func purgeRenditionJobWaitersTx(
 			return nil, fmt.Errorf("deleting purged rendition job waiter %s: %w", waiterID, err)
 		}
 	}
-	if matched {
-		if err := reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, purgedAt); err != nil {
+	if len(jobIDs) != 0 {
+		if err := reconcileRenditionJobsAfterWaiterDeletionTx(ctx, tx, purgedAt, derivativeSortedKeys(jobIDs)); err != nil {
 			return nil, err
 		}
 	}

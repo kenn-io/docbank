@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -31,6 +31,28 @@ func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
 	require.ErrorContains(t, err, strconv.Itoa(MaxSourceFenceIDs))
 }
 
+func TestDerivativePurgeRequiresCanonicalContentVersionIDs(t *testing.T) {
+	const canonical = "abcdefab-1234-4abc-8def-123456789abc"
+	for _, id := range []string{
+		canonical,
+		"ABCDEFAB-1234-4ABC-8DEF-123456789ABC",
+		"abcdefab12344abc8def123456789abc",
+		"urn:uuid:" + canonical,
+		"abcdefab-1234-1abc-8def-123456789abc",
+		"abcdefab-1234-4abc-cdef-123456789abc",
+	} {
+		t.Run(id, func(t *testing.T) {
+			got, err := normalizeDerivativePurgeRequest(DerivativePurgeRequest{ContentVersionIDs: []string{id}})
+			if id == canonical {
+				require.NoError(t, err)
+				require.Equal(t, []string{canonical}, got.ContentVersionIDs)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidPurgeRequest)
+			}
+		})
+	}
+}
+
 func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	plan := Plan{VaultUID: "00000000-0000-4000-8000-000000000001",
 		Selector:           Selector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Profile: "private"},
@@ -43,6 +65,10 @@ func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	second, err := planFingerprint(plan)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+	plan.ConsentRequired = false
+	granted, err := planFingerprint(plan)
+	require.NoError(t, err)
+	require.Equal(t, first, granted)
 	plan.Flow[0].TrustBoundary = "hosted_provider"
 	changed, err := planFingerprint(plan)
 	require.NoError(t, err)
@@ -92,7 +118,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 		embeddingRuntimes: map[string]*ProviderEmbeddingRuntime{request.BindingID: runtime}}
 	var clockOffset atomic.Int64
 	clockOffset.Store(int64(time.Second))
-	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: processingServiceTestGate{fake.gate},
+	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: fake.gate,
 		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
@@ -153,7 +179,7 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.NoError(t, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider},
-		Gate: api.NewOperationGate(), Owner: "rendition-waiter-test",
+		Gate: newWorkerTestGate(), Owner: "rendition-waiter-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -166,13 +192,84 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	service := &Service{catalog: fixture.catalog}
 	result, err := service.renditionResult(t.Context(), published.ID)
 	require.NoError(t, err)
-	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID}, result)
+	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID, attachmentID: published.AttachmentID}, result)
 	_, err = service.renditionResult(t.Context(), rejected.ID)
 	require.ErrorIs(t, err, ErrConsentRequired)
 }
 
-type processingServiceTestGate struct{ *api.OperationGate }
-
-func (gate processingServiceTestGate) PreserveContext(ctx context.Context, fn func() error) error {
-	return gate.MutateContext(ctx, fn)
+func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
+	for _, phase := range []string{"missing", "revoked", "expired-before", "expired-during", "allowed", "provider-authorization"} {
+		t.Run(phase, func(t *testing.T) {
+			fixture, fake, _, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			var profile document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			profile.RetentionDisclosure.RetainProviderMarkdown = false
+			provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
+			config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+				Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
+				Profiles: map[string]ProfileConfig{"direct": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{original.BindingID: provider}}}}
+			if phase == "provider-authorization" {
+				fake.runtime.failures[original.BindingID] = []error{errors.New("synthetic credential denied")}
+				configured := config.Profiles["direct"]
+				configured.EmbeddingClassifiers = map[string]func(error) (EmbeddingProviderFailure, time.Duration){original.BindingID: func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }}
+				config.Profiles["direct"] = configured
+			}
+			service, err := NewService(config)
+			require.NoError(t, err)
+			version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
+			require.NoError(t, err)
+			selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			if phase != "missing" {
+				var expiry *time.Time
+				if phase == "expired-before" || phase == "expired-during" {
+					expiry = new(time.Now().Add(2 * time.Second))
+				}
+				_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, ExpiresAt: expiry})
+				require.NoError(t, err)
+				if phase == "revoked" {
+					_, err = service.RevokeConsent(t.Context())
+					require.NoError(t, err)
+				}
+				if phase == "expired-before" {
+					<-time.After(time.Until(*expiry) + 20*time.Millisecond)
+				}
+				if phase == "expired-during" {
+					fake.runtime.inspectInputs = func([]document.EmbeddingInput) { <-time.After(time.Until(*expiry) + 20*time.Millisecond) }
+				}
+			}
+			job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: false})
+			jobs, readErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, plan.ProfileFingerprint)
+			if phase == "missing" || phase == "revoked" || phase == "expired-before" {
+				require.ErrorIs(t, readErr, store.ErrNotFound)
+			} else {
+				require.NoError(t, readErr)
+			}
+			switch phase {
+			case "missing":
+				require.ErrorIs(t, err, ErrConsentRequired)
+				require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+			case "revoked":
+				require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
+			case "expired-before", "expired-during":
+				require.ErrorIs(t, err, store.ErrProcessingConsentExpired)
+			default:
+				require.NoError(t, err)
+				status, statusErr := service.Status(t.Context(), job.ID)
+				require.NoError(t, statusErr)
+				if phase == "allowed" {
+					require.Equal(t, "completed", status.State)
+				} else {
+					require.Equal(t, "authorization", status.FailureCode)
+				}
+			}
+			if phase == "missing" || phase == "revoked" || phase == "expired-before" {
+				require.Empty(t, jobs)
+				require.Zero(t, fake.runtime.calls())
+			}
+		})
+	}
 }

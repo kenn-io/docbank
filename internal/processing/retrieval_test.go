@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorworker"
@@ -44,7 +43,7 @@ func TestHybridSearcherUsesRealStoreBindingAuthority(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
 	index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-		Catalog: fixture.catalog, Mutate: api.NewOperationGate().MutateContext,
+		Catalog: fixture.catalog, Mutate: newWorkerTestGate().MutateContext,
 		Owner: "retrieval-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)

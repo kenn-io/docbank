@@ -56,6 +56,7 @@ type GCOptions struct {
 type GCReport struct {
 	Progress
 
+	retiredPackIDs     []string
 	CandidateBlobs     int
 	UntrackedFiles     int
 	ReclaimableBytes   int64
@@ -71,9 +72,10 @@ type GCReport struct {
 // the location-aware physical GC that follows it. Immutable backup repository
 // copies remain outside both mutation boundaries.
 type DerivativePurgeReport struct {
-	Purge    store.PurgeReport
-	Physical GCReport
-	Repack   RepackReport
+	CatalogCommitted bool
+	Purge            store.PurgeReport
+	Physical         GCReport
+	Repack           RepackReport
 }
 
 type VerifyOptions struct{ Budget Budget }
@@ -351,7 +353,7 @@ func PurgeDerivatives(
 ) (DerivativePurgeReport, error) {
 	report := DerivativePurgeReport{}
 	err := blobs.WithMaintenance(ctx, func() error {
-		for {
+		for request.IsGC() {
 			pending, err := metadata.PendingGCLooseRetirements(ctx, DefaultMaxObjects)
 			if err != nil {
 				return err
@@ -371,6 +373,7 @@ func PurgeDerivatives(
 		if err != nil {
 			return err
 		}
+		report.CatalogCommitted = true
 		physical, err := collectExactUnreachableBlobs(
 			ctx, metadata, blobs, purged.PhysicalDerivativeBlobsPendingGC)
 		physical.ReclaimedFiles += report.Physical.ReclaimedFiles
@@ -383,7 +386,13 @@ func PurgeDerivatives(
 	if err != nil {
 		return report, err
 	}
-	report.Repack, err = retireDerivativePurgePacks(ctx, metadata, blobs)
+	packIDs := report.Physical.retiredPackIDs
+	if request.IsGC() {
+		packIDs = nil
+	} else if len(packIDs) == 0 {
+		return report, nil
+	}
+	report.Repack, err = retireDerivativePurgePacks(ctx, metadata, blobs, packIDs)
 	if err != nil {
 		return report, fmt.Errorf("retiring purged packed derivative bytes: %w", err)
 	}
@@ -391,12 +400,12 @@ func PurgeDerivatives(
 }
 
 func retireDerivativePurgePacks(
-	ctx context.Context, metadata *store.Store, blobs *blob.Store,
+	ctx context.Context, metadata *store.Store, blobs *blob.Store, selectedPackIDs []string,
 ) (RepackReport, error) {
 	report := RepackReport{}
 	baseCatalog := store.NewPackCatalog(metadata)
 	for {
-		pending, err := metadata.PendingDerivativePackRetirements(ctx, DefaultMaxObjects)
+		pending, err := metadata.PendingDerivativePackRetirements(ctx, DefaultMaxObjects, selectedPackIDs)
 		if err != nil {
 			return report, err
 		}
@@ -424,7 +433,7 @@ func retireDerivativePurgePacks(
 		addRepackStats(&report, stats)
 		if err != nil || stats.PacksSelected != len(pending) || stats.PacksRemoved != len(pending) {
 			current, currentErr := metadata.PendingDerivativePackRetirements(
-				ctx, DefaultMaxObjects)
+				ctx, DefaultMaxObjects, selectedPackIDs)
 			if currentErr != nil {
 				return report, errors.Join(err, currentErr)
 			}
@@ -544,6 +553,9 @@ func collectExactUnreachableBlobs(
 			ctx, collected, retirements, packRetirements,
 		); err != nil {
 			return report, err
+		}
+		for _, retirement := range packRetirements {
+			report.retiredPackIDs = append(report.retiredPackIDs, retirement.PackID)
 		}
 		report.RemovedBlobs = len(collected)
 		report.Removed = len(collected)

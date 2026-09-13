@@ -397,6 +397,96 @@ func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) 
 	}
 }
 
+func TestEmbeddingHistoricalPurgeRemovesPendingChunkJobs(t *testing.T) {
+	for _, selector := range []string{"attachment", "build"} {
+		for _, state := range []string{"queued", "running"} {
+			t.Run(selector+"/"+state, func(t *testing.T) {
+				s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+				var buildID string
+				require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+				record, err := normalizeEmbeddingSetRecord(embeddingSetFixture(s, versionID, profile.Fingerprint,
+					document.EmbeddingInputRenditionChunk, "chunk", attachmentID))
+				require.NoError(t, err)
+				binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+				consent := ProviderOperationAuthorizationRequest{
+					Principal: "operator:purge-test", Scope: "embedding:chunk", ProfileFingerprint: profile.Fingerprint,
+					DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
+					RetainedArtifactClasses: []string{"embedding_vector_set"},
+				}
+				_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+					Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+					DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+					RetainedArtifactClasses: consent.RetainedArtifactClasses,
+				})
+				require.NoError(t, err)
+				job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{
+					ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+					Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent,
+				})
+				require.NoError(t, err)
+				at := time.Now().UTC()
+				var claim EmbeddingJobClaim
+				var work EmbeddingJobWork
+				if state == "running" {
+					var found bool
+					claim, work, found, err = s.ClaimEmbeddingWork(t.Context(), job.ID, "purge-worker", at, time.Minute,
+						[]string{record.VectorSpace.Descriptor.Fingerprint})
+					require.NoError(t, err)
+					require.True(t, found)
+					require.NoError(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at))
+				}
+
+				build := catalogRenditionBuild(s, profile)
+				build.ID = testSHA256([]byte("pending-purge-replacement-build"))
+				build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
+				build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":0,"role":"provider_markdown"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+				build.CapturedArtifactPolicyFingerprint = testSHA256(build.CapturedArtifactPolicy)
+				require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+				replacement := RenditionAttachmentRecord{
+					ID: testSHA256([]byte("pending-purge-replacement-attachment")), VaultID: s.VaultID(),
+					ContentVersionID: versionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime,
+				}
+				require.NoError(t, publishRenditionForTest(t, s, replacement, embeddingCatalogTime,
+					testSHA256([]byte("pending-purge-replacement-lexical"))))
+				current, err := normalizeEmbeddingSetRecord(embeddingSetFixture(s, versionID, profile.Fingerprint,
+					document.EmbeddingInputRenditionChunk, "chunk", replacement.ID))
+				require.NoError(t, err)
+				replacementJob, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{
+					ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+					Descriptor: current.VectorSpace.Descriptor, InputGeneration: current.InputGeneration, Authorization: consent,
+				})
+				require.NoError(t, err)
+
+				// Neither job has staged a set; purge must select their input generations directly.
+				request := PurgeRequest{AttachmentIDs: []string{attachmentID}}
+				if selector == "build" {
+					request = PurgeRequest{BuildIDs: []string{buildID}}
+				}
+				report, err := s.PurgeDerivatives(t.Context(), request)
+				require.NoError(t, err)
+				assert.Equal(t, 1, report.RemovedEmbeddingInputGenerations)
+				_, err = s.EmbeddingJobByID(t.Context(), job.ID)
+				require.ErrorIs(t, err, ErrNotFound)
+				var generations, roots int
+				require.NoError(t, s.db.QueryRow(`SELECT
+					(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),
+					(SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?)`,
+					record.InputGeneration.ID, job.ID).Scan(&generations, &roots))
+				assert.Zero(t, generations)
+				assert.Zero(t, roots)
+				if state == "running" {
+					require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at), ErrEmbeddingJobFenced)
+				}
+				currentClaim, currentWork, found, err := s.ClaimEmbeddingWork(t.Context(), replacementJob.ID,
+					"replacement-worker", time.Now().UTC(), time.Minute, []string{current.VectorSpace.Descriptor.Fingerprint})
+				require.NoError(t, err)
+				require.True(t, found, "replacement job survives the historical purge")
+				require.NoError(t, s.ValidateEmbeddingWork(t.Context(), currentClaim, currentWork, time.Now().UTC()))
+			})
+		}
+	}
+}
+
 func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
 	for _, selector := range []string{"attachment", "build", "version", "all"} {
 		t.Run(selector, func(t *testing.T) {

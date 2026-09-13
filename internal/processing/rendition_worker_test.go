@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -43,7 +42,7 @@ func TestRenditionWorkerPublishesNormalizedBuildAndAllAuthorizedWaiters(t *testi
 	now := time.Now().UTC()
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner:         "rendition-worker-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
@@ -115,7 +114,7 @@ func TestRenditionWorkerHonorsDaemonOperationGateAndCancellation(t *testing.T) {
 			grantWorkerConsent(t, fixture.catalog, request)
 			job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 			require.NoError(t, err)
-			gate := api.NewOperationGate()
+			gate := newWorkerTestGate()
 			held := make(chan struct{})
 			release := make(chan struct{})
 			maintenanceDone := make(chan error, 1)
@@ -181,7 +180,7 @@ func TestRenditionWorkerReleasesDaemonGateDuringProviderEgress(t *testing.T) {
 	grantWorkerConsent(t, fixture.catalog, request)
 	_, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
-	gate := api.NewOperationGate()
+	gate := newWorkerTestGate()
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Runtime: workerRuntime{provider: provider}, Gate: gate,
@@ -264,7 +263,7 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: runtime, Gate: api.NewOperationGate(),
+		Runtime: runtime, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-revocation-fence", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond,
 	})
@@ -330,7 +329,7 @@ func TestRenditionWorkerRetriesTransientCatalogFailuresWithinClaim(t *testing.T)
 			}
 			worker, err := NewRenditionWorker(RenditionWorkerConfig{
 				Catalog: catalog, Blobs: fixture.blobs,
-				Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+				Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 				Owner: "rendition-worker-transient-store", LeaseDuration: time.Minute,
 				IdleDelay: time.Millisecond,
 			})
@@ -363,7 +362,7 @@ func TestRenditionWorkerTransientCatalogRetryCancelsCleanly(t *testing.T) {
 	catalog := &transientRenditionCatalog{Store: fixture.catalog, failClaimsForever: true}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-transient-cancel", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond,
 	})
@@ -385,7 +384,7 @@ func TestRenditionWorkerStopsLeaseWhileRenewalRetries(t *testing.T) {
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-lease-stop", LeaseDuration: 3 * time.Second,
 		IdleDelay: time.Millisecond,
 	})
@@ -420,7 +419,7 @@ func TestRenditionWorkerPostEgressCatalogRetryCancelsWithoutTombstone(t *testing
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-post-egress-cancel", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond,
 	})
@@ -456,7 +455,7 @@ func TestRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T
 	now := time.Now().UTC()
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner:         "rendition-worker-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
@@ -492,7 +491,7 @@ func TestRenditionWorkerRetriesUnclassifiedResumeFailure(t *testing.T) {
 	require.NoError(t, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-resume-failure", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -529,7 +528,7 @@ func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: runtime, Gate: api.NewOperationGate(),
+		Runtime: runtime, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-definitive-retry", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -573,7 +572,7 @@ func TestRenditionWorkerTreatsSealTimeExpiryAsTransient(t *testing.T) {
 	var clockStep atomic.Int64
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: expiringWorkerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: expiringWorkerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-seal-expiry", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond,
 		Clock: func() time.Time {
@@ -605,7 +604,7 @@ func TestRenditionWorkerQuarantinesSealTimePolicyMismatch(t *testing.T) {
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Runtime: driftedWorkerRuntime{provider: provider, policyMismatch: true},
-		Gate:    api.NewOperationGate(),
+		Gate:    newWorkerTestGate(),
 		Owner:   "rendition-worker-seal-policy-mismatch", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -645,7 +644,7 @@ func TestRenditionWorkerQuarantinesSealTimeInvalidUpload(t *testing.T) {
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Runtime: driftedWorkerRuntime{provider: provider, unsafeFilename: true},
-		Gate:    api.NewOperationGate(),
+		Gate:    newWorkerTestGate(),
 		Owner:   "rendition-worker-seal-invalid-upload", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -675,7 +674,7 @@ func TestRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t *te
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog,
 		Blobs:   &failOnceRenditionBlobWriter{delegate: fixture.blobs},
-		Runtime: workerRuntime{provider: baseProvider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: baseProvider}, Gate: newWorkerTestGate(),
 		Owner:         "rendition-worker-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
@@ -723,7 +722,7 @@ func TestRenditionWorkerResumesAmbiguousProviderOutcomeWithDurableHandle(t *test
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: runtime, Gate: api.NewOperationGate(),
+		Runtime: runtime, Gate: newWorkerTestGate(),
 		Owner:         "rendition-worker-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
@@ -793,7 +792,7 @@ func TestRenditionWorkerQuarantinesResumePolicyMismatch(t *testing.T) {
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: resumableWorkerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: resumableWorkerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner:         "rendition-worker-policy-mismatch",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
@@ -848,7 +847,7 @@ func TestRenditionWorkerQuarantinesMalformedDurableSnapshot(t *testing.T) {
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
 		Runtime: resumableWorkerRuntime{provider: provider, resumeCalls: &resumeCalls},
-		Gate:    api.NewOperationGate(), Owner: "rendition-worker-malformed-snapshot",
+		Gate:    newWorkerTestGate(), Owner: "rendition-worker-malformed-snapshot",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
 	})
@@ -911,7 +910,7 @@ func TestRenditionWorkerReselectsAuthorizedWaiterWhenBeginConsentChanges(t *test
 	now := time.Now().UTC()
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-reselection", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -954,7 +953,7 @@ func TestRenditionWorkerFailsClosedWhenConsentIsRevokedBeforeEgress(t *testing.T
 	now := time.Now().UTC()
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner:         "rendition-worker-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return now },
@@ -997,7 +996,7 @@ func TestRenditionWorkerRejectsPreparedExecutionIdentityDriftBeforeEgress(t *tes
 	now := time.Now().UTC()
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: driftedWorkerRuntime{provider: provider}, Gate: api.NewOperationGate(),
+		Runtime: driftedWorkerRuntime{provider: provider}, Gate: newWorkerTestGate(),
 		Owner: "rendition-worker-drift-test", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -1053,7 +1052,7 @@ func TestRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testin
 		reclaimedCandidate.LexicalGenerationID)
 	crashedWorker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
-		Gate:  api.NewOperationGate(),
+		Gate:  newWorkerTestGate(),
 		Owner: "crashed-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return started },
 	})
@@ -1064,7 +1063,7 @@ func TestRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testin
 	reclaimedAt := started.Add(2 * time.Minute)
 	recoveredWorker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
-		Gate:  api.NewOperationGate(),
+		Gate:  newWorkerTestGate(),
 		Owner: "recovered-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		Clock: func() time.Time { return reclaimedAt },
 	})
@@ -1112,7 +1111,7 @@ func TestRenditionWorkerRefreshesStaleLexicalGenerationWithoutProviderEgress(t *
 	require.NoError(t, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
-		Gate:  api.NewOperationGate(),
+		Gate:  newWorkerTestGate(),
 		Owner: "fresh-generation-worker", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
 	})
@@ -1677,7 +1676,7 @@ func TestRenditionWorkerRejectsTypedNilRuntime(t *testing.T) {
 	assert.NotPanics(t, func() {
 		_, err := NewRenditionWorker(RenditionWorkerConfig{
 			Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
-			Gate:  api.NewOperationGate(),
+			Gate:  newWorkerTestGate(),
 			Owner: "rendition-worker-test", LeaseDuration: time.Minute,
 			IdleDelay: time.Millisecond,
 		})
@@ -1750,7 +1749,7 @@ func TestRenditionWorkerRejectsChangedSourcesBeforeEgress(t *testing.T) {
 				}
 				return nil
 			}
-			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider}, Gate: api.NewOperationGate(), Owner: "consent-probe", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider}, Gate: newWorkerTestGate(), Owner: "consent-probe", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
 			require.NoError(t, err)
 			processed, runErr := worker.RunOne(t.Context())
 			current, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
@@ -1824,7 +1823,7 @@ func TestRenditionWorkerRejectsResumeAfterSourceChanges(t *testing.T) {
 				}
 			}
 			now := time.Now().UTC()
-			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: &failOnceRenditionBlobWriter{delegate: fixture.blobs}, Runtime: resumableWorkerRuntime{provider: provider}, Gate: api.NewOperationGate(), Owner: "consent-resume-probe", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return now }})
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: &failOnceRenditionBlobWriter{delegate: fixture.blobs}, Runtime: resumableWorkerRuntime{provider: provider}, Gate: newWorkerTestGate(), Owner: "consent-resume-probe", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return now }})
 			require.NoError(t, err)
 			_, err = worker.RunOne(t.Context())
 			require.NoError(t, err)

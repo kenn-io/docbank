@@ -587,12 +587,15 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 
 	replayed, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: versions})
 	require.NoError(t, err)
+	assert.Equal(t, PurgeReport{ImmutableBackupCopiesUntouched: true}, replayed)
+	replayed, err = s.PurgeDerivatives(ctx, PurgeRequest{})
+	require.NoError(t, err)
 	assert.Equal(t, PurgeReport{
 		PhysicalDerivativeBlobsPendingGC: []string{
 			catalogMarkdownBlobHash, catalogEvidenceBlobHash,
 		},
 		ImmutableBackupCopiesUntouched: true,
-	}, replayed, "replaying a completed purge must retain crash-durable physical targets")
+	}, replayed, "ordinary GC must resume crash-durable physical targets")
 }
 
 func TestPurgeDerivativesPreservesLiveContentBlobSharingArtifactHash(t *testing.T) {
@@ -2192,4 +2195,100 @@ func TestAllBlobs(t *testing.T) {
 	require.Len(t, blobs, 2)
 	assert.Equal(t, fakeHash("a1"), blobs[0].Hash) // hash-ordered
 	assert.Equal(t, int64(1), blobs[0].Size)
+}
+
+func TestSelectedDerivativePurgeLeavesUnrelatedGarbageForGC(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	unrelated := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, unrelated))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("fa"))
+	require.NoError(t, err)
+	require.NoError(t, s.PutCurrentRenditionRoot(ctx, CurrentRenditionRoot{
+		ID: "expired-unrelated-worker", Kind: RenditionRootWorkerLease,
+		TargetKind: RenditionRootBuild, TargetID: unrelated.ID, FencingToken: 1,
+		RecordedAt: "2020-01-01T00:00:00.000000000Z", ExpiresAt: "2020-01-02T00:00:00.000000000Z",
+	}))
+	selected := cloneCatalogBuild(unrelated)
+	selected.ID = catalogBuildReplacement
+	require.NoError(t, s.StageRenditionBuild(ctx, selected))
+	request := PurgeRequest{BuildIDs: []string{selected.ID}}
+	before, err := s.DerivativePurgeFingerprint(ctx, request)
+	require.NoError(t, err)
+	staged := fakeHash("fb")
+	require.NoError(t, s.RecordRenditionBlob(ctx, staged, 12, BlobPhysical{Created: true, Encoding: "raw", StoredBytes: 12}))
+	after, err := s.DerivativePurgeFingerprint(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	report, err := s.PurgeDerivatives(ctx, request)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.RemovedBuilds)
+	assert.Zero(t, report.ExpiredRootsRemoved)
+	assert.NotContains(t, report.PhysicalDerivativeBlobsPendingGC, staged)
+	var builds, generations, activeRoots int
+	require.NoError(t, s.db.QueryRow(`SELECT
+ (SELECT COUNT(*) FROM rendition_builds WHERE build_id=?),
+ (SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?),
+ (SELECT active FROM current_rendition_roots WHERE root_id='expired-unrelated-worker')`,
+		unrelated.ID, generation.ID).Scan(&builds, &generations, &activeRoots))
+	assert.Equal(t, 1, builds)
+	assert.Equal(t, 1, generations)
+	assert.Equal(t, 1, activeRoots)
+	// The separate ordinary GC pass still reclaims abandoned work.
+	report, err = s.PurgeDerivatives(ctx, PurgeRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.RemovedBuilds)
+	assert.Contains(t, report.PhysicalDerivativeBlobsPendingGC, staged)
+}
+
+func TestSelectedDerivativePurgeLeavesUnrelatedEmbeddingArtifactsForGC(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	ctx := t.Context()
+	selected := embeddingSetFixture(s, versionID, profile.Fingerprint, "original_file", "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(ctx, selected))
+	other, err := s.CreateFile(ctx, s.RootID(), "unrelated.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	unrelated := embeddingSetFixture(s, other.CurrentVersionID, profile.Fingerprint, "original_file", "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(ctx, unrelated))
+	_, _, err = s.ReplaceContent(ctx, other.ID, UnconditionalRev, fakeHash("fd"), 20, "application/pdf")
+	require.NoError(t, err)
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versionID}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.RemovedEmbeddingSets)
+	var remaining int
+	require.NoError(t, s.db.QueryRow(`SELECT
+ (SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
+ (SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
+ (SELECT COUNT(*) FROM embedding_vector_sets WHERE vector_set_id=?)`,
+		unrelated.ID, unrelated.InputGeneration.ID, unrelated.VectorSet.ID).Scan(&remaining))
+	assert.Equal(t, 3, remaining)
+	report, err = s.PurgeDerivatives(ctx, PurgeRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.RemovedEmbeddingSets)
+	assert.Equal(t, 1, report.RemovedEmbeddingInputGenerations)
+	assert.Equal(t, 1, report.RemovedEmbeddingVectorSets)
+}
+
+func TestAllDerivativePurgeCollectsVectorsAfterVersionPrune(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	ctx := t.Context()
+	set := embeddingSetFixture(s, versionID, profile.Fingerprint, "original_file", "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(ctx, set))
+	version, err := s.ContentVersionByID(ctx, versionID)
+	require.NoError(t, err)
+	node, _, err := s.ReplaceContent(ctx, version.NodeID, UnconditionalRev, fakeHash("fe"), 20, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, node.ID, node.Revision, VersionPruneSelector{VersionIDs: []string{versionID}}, true)
+	require.NoError(t, err)
+	require.NoError(t, s.PutCurrentRenditionRoot(ctx, CurrentRenditionRoot{
+		ID: "expired-vector-reader", Kind: RenditionRootReaderLease,
+		TargetKind: RenditionRootEmbeddingVectorSet, TargetID: set.VectorSet.ID, FencingToken: 1,
+		RecordedAt: "2020-01-01T00:00:00.000000000Z", ExpiresAt: "2020-01-02T00:00:00.000000000Z",
+	}))
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{All: true})
+	require.NoError(t, err)
+	assert.Zero(t, report.RemovedEmbeddingSets, "version pruning already removed the owning set")
+	assert.Equal(t, 1, report.RemovedEmbeddingVectorSets)
+	assert.Contains(t, report.PhysicalDerivativeBlobsPendingGC, set.VectorSet.PayloadBlobHash)
 }

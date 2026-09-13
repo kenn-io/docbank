@@ -28,6 +28,7 @@ func browserSessionRequest(ctx context.Context) bool {
 func timeoutExempt(path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
+		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
@@ -39,7 +40,8 @@ func timeoutExempt(path string) bool {
 		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
 		return true
 	}
-	return strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content")
+	return strings.HasPrefix(path, "/api/v1/renditions/") ||
+		(strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content"))
 }
 
 // clearLongRunningBodyReadDeadlines keeps Huma's request-body deadline in

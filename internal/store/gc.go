@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -117,6 +118,11 @@ type PurgeRequest struct {
 	All               bool
 }
 
+// IsGC distinguishes ordinary unreachable collection from an explicit purge.
+func (request PurgeRequest) IsGC() bool {
+	return !request.All && len(request.ContentVersionIDs)+len(request.AttachmentIDs)+len(request.BuildIDs) == 0
+}
+
 // PurgeReport is the complete live-vault mutation receipt. Physical derivative
 // blobs remain cataloged for the ordinary location-aware GC pass named by
 // PhysicalDerivativeBlobsPendingGC. Immutable backup repositories are outside
@@ -144,6 +150,21 @@ type PurgeReport struct {
 
 type purgeAttachment struct {
 	id, contentVersionID, buildID, profileFingerprint, providerOperationID string
+}
+
+// expireSelectedDerivativeRootsTx preserves unrelated lease state during a purge.
+func expireSelectedDerivativeRootsTx(ctx context.Context, tx *sql.Tx, kind CurrentRenditionTargetKind, ids []string, at string) (int, error) {
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
+		WHERE target_kind=? AND target_id IN (SELECT value FROM json_each(?))
+		AND active=1 AND expires_at IS NOT NULL AND expires_at<=?`, at, kind, string(encoded), at)
+	if err != nil {
+		return 0, fmt.Errorf("expiring selected derivative roots: %w", err)
+	}
+	return rowsAffectedInt(result)
 }
 
 func renditionAttachmentsForPurgeTx(
@@ -211,7 +232,8 @@ func stringColumnTx(
 }
 
 // PurgeDerivatives revokes selected live attachment authority and atomically
-// collects every complete build/generation manifest no exact root still needs.
+// collects selected manifests no exact root still needs. Only an empty request
+// also collects unrelated abandoned work and retries earlier physical cleanup.
 func (s *Store) PurgeDerivatives(
 	ctx context.Context, request PurgeRequest,
 ) (PurgeReport, error) {
@@ -219,20 +241,24 @@ func (s *Store) PurgeDerivatives(
 		return PurgeReport{}, err
 	}
 	report := PurgeReport{ImmutableBackupCopiesUntouched: true}
+	collectGarbage := request.IsGC()
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		auditActive, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		asOf := nowRFC3339()
-		result, err := tx.ExecContext(ctx, `
+		var result sql.Result
+		if collectGarbage {
+			result, err = tx.ExecContext(ctx, `
 			UPDATE current_rendition_roots SET active=0,released_at=?
 			WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=?`, asOf, asOf)
-		if err != nil {
-			return fmt.Errorf("removing expired current rendition roots: %w", err)
-		}
-		if report.ExpiredRootsRemoved, err = rowsAffectedInt(result); err != nil {
-			return fmt.Errorf("counting expired current rendition roots: %w", err)
+			if err != nil {
+				return fmt.Errorf("removing expired current rendition roots: %w", err)
+			}
+			if report.ExpiredRootsRemoved, err = rowsAffectedInt(result); err != nil {
+				return fmt.Errorf("counting expired current rendition roots: %w", err)
+			}
 		}
 
 		versionSet := stringSet(request.ContentVersionIDs)
@@ -279,6 +305,23 @@ func (s *Store) PurgeDerivatives(
 				requestedBuilds[buildID] = struct{}{}
 			}
 		}
+		if len(request.ContentVersionIDs) != 0 {
+			versions, err := json.Marshal(request.ContentVersionIDs)
+			if err != nil {
+				return err
+			}
+			ids, err := stringColumnTx(ctx, tx, "selected legacy rendition builds", `
+				SELECT build_id FROM rendition_builds WHERE provider_operation_id=?
+				AND source_sha256 IN (SELECT blob_hash FROM content_versions
+				WHERE version_id IN (SELECT value FROM json_each(?)))`, legacyPlainTextProvider, string(versions))
+			if err != nil {
+				return err
+			}
+			for _, id := range ids {
+				requestedBuilds[id] = struct{}{}
+			}
+		}
+
 		for _, attachment := range selected {
 			result, err := tx.ExecContext(ctx,
 				`DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.id)
@@ -305,12 +348,22 @@ func (s *Store) PurgeDerivatives(
 			report.RemovedAttachments += count
 		}
 
+		if !collectGarbage {
+			count, err := expireSelectedDerivativeRootsTx(ctx, tx, RenditionRootBuild, derivativeSortedKeys(requestedBuilds), asOf)
+			if err != nil {
+				return err
+			}
+			report.ExpiredRootsRemoved += count
+		}
 		candidateBuilds := make(map[string]struct{})
 		allBuildIDs, err := renditionBuildIDsForPurgeTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		for _, buildID := range allBuildIDs {
+			if _, selected := requestedBuilds[buildID]; !collectGarbage && !selected {
+				continue
+			}
 			var rooted bool
 			if err := tx.QueryRowContext(ctx, `SELECT
 				EXISTS(SELECT 1 FROM rendition_attachments WHERE build_id=?) OR
@@ -488,6 +541,16 @@ func (s *Store) PurgeDerivatives(
 
 		pinned := s.pinnedLexicalGenerationIDs()
 		for _, generation := range generations {
+			if !collectGarbage && !generation.targetsExcluded {
+				continue
+			}
+			if !collectGarbage {
+				count, err := expireSelectedDerivativeRootsTx(ctx, tx, RenditionRootLexicalGeneration, []string{generation.id}, asOf)
+				if err != nil {
+					return err
+				}
+				report.ExpiredRootsRemoved += count
+			}
 			if generation.id == replacementGenerationID || generation.headed {
 				continue
 			}
@@ -524,42 +587,46 @@ func (s *Store) PurgeDerivatives(
 			report.RemovedLexicalGenerations += count
 		}
 
-		unindexed, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
+		if collectGarbage {
+			unindexed, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
 			WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
 			                  WHERE gb.build_id=rendition_lexical_index.build_id)`)
-		if err != nil {
-			return fmt.Errorf("removing lexical index rows no generation names: %w", err)
+			if err != nil {
+				return fmt.Errorf("removing lexical index rows no generation names: %w", err)
+			}
+			count, err := rowsAffectedInt(unindexed)
+			if err != nil {
+				return err
+			}
+			report.RemovedLexicalRows += count
 		}
-		count, err := rowsAffectedInt(unindexed)
-		if err != nil {
-			return err
-		}
-		report.RemovedLexicalRows += count
 
 		artifactBlobs := make(map[string]struct{})
 		for _, hash := range embeddingPayloads {
 			artifactBlobs[hash] = struct{}{}
 		}
-		if err := func() (retErr error) {
-			stagedRows, err := tx.QueryContext(ctx,
-				`SELECT blob_hash FROM rendition_blob_staging ORDER BY blob_hash`)
-			if err != nil {
-				return fmt.Errorf("reading abandoned rendition staging: %w", err)
-			}
-			defer func() { retErr = errors.Join(retErr, stagedRows.Close()) }()
-			for stagedRows.Next() {
-				var hash string
-				if err := stagedRows.Scan(&hash); err != nil {
-					return fmt.Errorf("scanning abandoned rendition staging: %w", err)
+		if collectGarbage {
+			if err := func() (retErr error) {
+				stagedRows, err := tx.QueryContext(ctx,
+					`SELECT blob_hash FROM rendition_blob_staging ORDER BY blob_hash`)
+				if err != nil {
+					return fmt.Errorf("reading abandoned rendition staging: %w", err)
 				}
-				artifactBlobs[hash] = struct{}{}
+				defer func() { retErr = errors.Join(retErr, stagedRows.Close()) }()
+				for stagedRows.Next() {
+					var hash string
+					if err := stagedRows.Scan(&hash); err != nil {
+						return fmt.Errorf("scanning abandoned rendition staging: %w", err)
+					}
+					artifactBlobs[hash] = struct{}{}
+				}
+				if err := stagedRows.Err(); err != nil {
+					return fmt.Errorf("reading abandoned rendition staging: %w", err)
+				}
+				return nil
+			}(); err != nil {
+				return err
 			}
-			if err := stagedRows.Err(); err != nil {
-				return fmt.Errorf("reading abandoned rendition staging: %w", err)
-			}
-			return nil
-		}(); err != nil {
-			return err
 		}
 		for _, buildID := range derivativeSortedKeys(candidateBuilds) {
 			var sourceHash, providerOperationID string
@@ -656,37 +723,51 @@ func (s *Store) PurgeDerivatives(
 				}
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derivative_blob_purge_pending
+		if collectGarbage {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM derivative_blob_purge_pending
 			WHERE `+blobReferencedSQL("derivative_blob_purge_pending.blob_hash", blobRootReferences),
-		); err != nil {
-			return fmt.Errorf("reconciling derivative blob purge targets: %w", err)
-		}
-		if err := func() (retErr error) {
-			pendingRows, err := tx.QueryContext(ctx,
-				`SELECT blob_hash FROM derivative_blob_purge_pending ORDER BY blob_hash`)
-			if err != nil {
-				return fmt.Errorf("reading derivative blob purge targets: %w", err)
+			); err != nil {
+				return fmt.Errorf("reconciling derivative blob purge targets: %w", err)
 			}
-			defer func() { retErr = errors.Join(retErr, pendingRows.Close()) }()
-			for pendingRows.Next() {
-				var hash string
-				if err := pendingRows.Scan(&hash); err != nil {
-					return fmt.Errorf("scanning derivative blob purge target: %w", err)
+			if err := func() (retErr error) {
+				pendingRows, err := tx.QueryContext(ctx,
+					`SELECT blob_hash FROM derivative_blob_purge_pending ORDER BY blob_hash`)
+				if err != nil {
+					return fmt.Errorf("reading derivative blob purge targets: %w", err)
 				}
-				report.PhysicalDerivativeBlobsPendingGC = append(
-					report.PhysicalDerivativeBlobsPendingGC, hash)
+				defer func() { retErr = errors.Join(retErr, pendingRows.Close()) }()
+				for pendingRows.Next() {
+					var hash string
+					if err := pendingRows.Scan(&hash); err != nil {
+						return fmt.Errorf("scanning derivative blob purge target: %w", err)
+					}
+					report.PhysicalDerivativeBlobsPendingGC = append(
+						report.PhysicalDerivativeBlobsPendingGC, hash)
+				}
+				if err := pendingRows.Err(); err != nil {
+					return fmt.Errorf("reading derivative blob purge targets: %w", err)
+				}
+				return nil
+			}(); err != nil {
+				return err
 			}
-			if err := pendingRows.Err(); err != nil {
-				return fmt.Errorf("reading derivative blob purge targets: %w", err)
+		} else {
+			// Only the objects made unreachable by this purge belong in its receipt.
+			for _, hash := range derivativeSortedKeys(artifactBlobs) {
+				var pending bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM derivative_blob_purge_pending WHERE blob_hash=?)`, hash).Scan(&pending); err != nil {
+					return err
+				}
+				if pending {
+					report.PhysicalDerivativeBlobsPendingGC = append(report.PhysicalDerivativeBlobsPendingGC, hash)
+				}
 			}
-			return nil
-		}(); err != nil {
-			return err
 		}
 		sort.Strings(report.PhysicalDerivativeBlobsPendingGC)
 		sort.Strings(report.RetainedBuildIDs)
 		report.RetainedBuildIDs = slices.Compact(report.RetainedBuildIDs)
 		sort.Strings(report.RetainedLexicalGenerations)
+
 		if auditActive && len(suppressionChanges) != 0 {
 			if err := s.persistAuditedDerivativeSuppressionChanges(
 				ctx, tx, suppressionChanges); err != nil {
@@ -844,6 +925,78 @@ func purgeEmbeddingCatalogTx(
 		return nil, fmt.Errorf("closing embedding set purge selection: %w", err)
 	}
 
+	collectGarbage := !all && len(versionSet)+len(attachmentSet)+len(buildSet) == 0
+	var generationIDs, vectorIDs []string
+	if !collectGarbage {
+		vectorIDs = []string{}
+		args := []any{all}
+		for _, ids := range [][]string{derivativeSortedKeys(versionSet), derivativeSortedKeys(attachmentSet), derivativeSortedKeys(buildSet)} {
+			encoded, err := json.Marshal(ids)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, string(encoded))
+		}
+		var err error
+		generationIDs, err = stringColumnTx(ctx, tx, "selected embedding purge generations", `
+			SELECT g.generation_id FROM embedding_input_generations g
+			LEFT JOIN rendition_attachments a ON a.attachment_id=g.attachment_id
+			WHERE ? OR g.source_version_id IN (SELECT value FROM json_each(?))
+			OR g.attachment_id IN (SELECT value FROM json_each(?))
+			OR a.build_id IN (SELECT value FROM json_each(?)) ORDER BY g.generation_id`, args...)
+		if err != nil {
+			return nil, err
+		}
+		if generationIDs == nil {
+			generationIDs = []string{}
+		}
+		// Historical attachments do not suppress their replacement's binding,
+		// but their own pending work must be fenced before collecting its inputs.
+		generations, err := json.Marshal(generationIDs)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
+			SELECT job_id FROM embedding_jobs WHERE generation_id IN (SELECT value FROM json_each(?)))`,
+			RenditionRootWorkerLease, string(generations)); err != nil {
+			return nil, fmt.Errorf("removing selected embedding worker leases: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs
+			WHERE generation_id IN (SELECT value FROM json_each(?))`, string(generations)); err != nil {
+			return nil, fmt.Errorf("removing selected embedding jobs: %w", err)
+		}
+		roots := map[CurrentRenditionTargetKind][]string{RenditionRootEmbeddingGeneration: generationIDs}
+		for _, candidate := range catalogSets {
+			if candidate.explicit {
+				roots[RenditionRootEmbeddingSet] = append(roots[RenditionRootEmbeddingSet], candidate.id)
+				roots[RenditionRootEmbeddingVectorSet] = append(roots[RenditionRootEmbeddingVectorSet], candidate.vectorSetID)
+				roots[RenditionRootEmbeddingPayload] = append(roots[RenditionRootEmbeddingPayload], candidate.payload)
+			}
+		}
+		if all {
+			// Version deletion can remove sets before their immutable vectors.
+			ids, err := stringColumnTx(ctx, tx, "all embedding purge vectors",
+				`SELECT vector_set_id FROM embedding_vector_sets ORDER BY vector_set_id`)
+			if err != nil {
+				return nil, err
+			}
+			vectorIDs = append(vectorIDs, ids...)
+			roots[RenditionRootEmbeddingVectorSet] = vectorIDs
+			roots[RenditionRootEmbeddingPayload], err = stringColumnTx(ctx, tx, "all embedding purge payloads",
+				`SELECT DISTINCT payload_blob_hash FROM embedding_vector_sets ORDER BY payload_blob_hash`)
+			if err != nil {
+				return nil, err
+			}
+		}
+		for kind, ids := range roots {
+			count, err := expireSelectedDerivativeRootsTx(ctx, tx, kind, ids, asOf)
+			if err != nil {
+				return nil, err
+			}
+			report.ExpiredRootsRemoved += count
+		}
+	}
+
 	var candidates []embeddingPurgeSet
 	for _, candidate := range catalogSets {
 		var rooted bool
@@ -877,6 +1030,9 @@ func purgeEmbeddingCatalogTx(
 			continue
 		}
 		if !candidate.explicit {
+			if !collectGarbage {
+				continue
+			}
 			var collectable bool
 			if err := tx.QueryRowContext(ctx, `SELECT
 				NOT EXISTS(SELECT 1 FROM embedding_heads WHERE embedding_set_id=?)
@@ -901,6 +1057,9 @@ func purgeEmbeddingCatalogTx(
 
 	payloads := make(map[string]struct{})
 	for _, candidate := range candidates {
+		if !collectGarbage && !all {
+			vectorIDs = append(vectorIDs, candidate.vectorSetID)
+		}
 		result, err := tx.ExecContext(ctx,
 			`DELETE FROM embedding_heads WHERE embedding_set_id=?`, candidate.id)
 		if err != nil {
@@ -935,7 +1094,7 @@ func purgeEmbeddingCatalogTx(
 		}
 		report.RemovedEmbeddingSets += count
 	}
-	collected, err := collectOrphanEmbeddingArtifactsTx(ctx, tx, asOf)
+	collected, err := collectOrphanEmbeddingArtifactsTx(ctx, tx, asOf, generationIDs, vectorIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1962,11 +2121,16 @@ func (s *Store) deleteBlobRows(
 
 // PendingDerivativePackRetirements returns a bounded stable batch of packs
 // that exact derivative erasure must rewrite regardless of ordinary sparsity.
+// A nil selection includes pending packs from every purge.
 func (s *Store) PendingDerivativePackRetirements(
-	ctx context.Context, limit int,
+	ctx context.Context, limit int, packIDs []string,
 ) ([]packstore.PackUsage, error) {
 	if limit <= 0 {
 		return nil, errors.New("derivative pack retirement limit must be positive")
+	}
+	encoded, err := json.Marshal(packIDs)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.pack_id,p.entry_count,p.stored_bytes,p.created_at,
@@ -1975,7 +2139,8 @@ func (s *Store) PendingDerivativePackRetirements(
 		FROM derivative_pack_purge_pending r
 		JOIN blob_packs p ON p.store_id=r.store_id AND p.pack_id=r.pack_id
 		WHERE r.store_id=(SELECT store_id FROM blob_stores WHERE role='primary')
-		ORDER BY p.created_at,p.pack_id LIMIT ?`, limit)
+		AND (? OR p.pack_id IN (SELECT value FROM json_each(?)))
+		ORDER BY p.created_at,p.pack_id LIMIT ?`, packIDs == nil, string(encoded), limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing derivative pack retirements: %w", err)
 	}

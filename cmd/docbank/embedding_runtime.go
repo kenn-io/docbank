@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,11 +48,19 @@ func (resolver environmentEmbeddingSecrets) ResolveSecret(_ context.Context, nam
 	return value, nil
 }
 
-func configureEmbeddingRuntimes(cfg config.Config, blobs embeddingRuntimeBlobStore,
+type embeddingRuntimeBundle struct {
+	registry    *processing.EmbeddingRuntimeRegistry
+	providers   map[string]document.EmbeddingProvider
+	classifiers map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)
+}
+
+func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBlobStore,
 	spoolDirectory string,
-) (*processing.EmbeddingRuntimeRegistry, error) {
-	registry := processing.NewEmbeddingRuntimeRegistry()
-	registered := make(map[string]struct{})
+) (embeddingRuntimeBundle, error) {
+	bundle := embeddingRuntimeBundle{registry: processing.NewEmbeddingRuntimeRegistry(),
+		providers:   make(map[string]document.EmbeddingProvider),
+		classifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration))}
+	registered := make(map[string]document.EmbeddingProvider)
 	secrets := environmentEmbeddingSecrets{variables: make(map[string]string)}
 	for name, binding := range cfg.CredentialBindings {
 		portable := "credential:" + name
@@ -63,11 +72,11 @@ func configureEmbeddingRuntimes(cfg config.Config, blobs embeddingRuntimeBlobSto
 		}
 		_, ok := secrets.variables[configured.CredentialBinding]
 		if !ok {
-			return nil, fmt.Errorf("embedding credential %q is not configured", configured.CredentialBinding)
+			return embeddingRuntimeBundle{}, fmt.Errorf("embedding credential %q is not configured", configured.CredentialBinding)
 		}
 		modelInput, err := cfg.EmbeddingModelInput(name)
 		if err != nil {
-			return nil, err
+			return embeddingRuntimeBundle{}, err
 		}
 		descriptor := configuredEmbeddingDescriptor(configured, modelInput)
 		var provider document.EmbeddingProvider
@@ -95,27 +104,74 @@ func configureEmbeddingRuntimes(cfg config.Config, blobs embeddingRuntimeBlobSto
 			err = errors.New("unsupported embedding runtime adapter")
 		}
 		if err != nil {
-			return nil, fmt.Errorf("configuring embedding runtime %q: %w", name, err)
+			return embeddingRuntimeBundle{}, fmt.Errorf("configuring embedding runtime %q: %w", name, err)
 		}
 		if descriptor.Fingerprint != configured.DescriptorFingerprint ||
 			descriptor.ID != configured.DescriptorID || descriptor.ModelRevision != configured.Runtime.ModelRevision {
-			return nil, fmt.Errorf("configuring embedding runtime %q: descriptor differs from portable binding", name)
+			return embeddingRuntimeBundle{}, fmt.Errorf("configuring embedding runtime %q: descriptor differs from portable binding", name)
 		}
 		// Every profile is validated above, including its complete provider policy.
 		// Chunking and activation may differ without requiring another provider.
-		if _, exists := registered[descriptor.Fingerprint]; exists {
+		if shared, exists := registered[descriptor.Fingerprint]; exists {
+			bundle.providers[name] = shared
+			bundle.classifiers[name] = classify
 			continue
 		}
 		runtime, err := processing.NewProviderEmbeddingRuntime(provider, blobs, spoolDirectory, classify)
 		if err != nil {
-			return nil, err
+			return embeddingRuntimeBundle{}, err
 		}
-		if err := registry.Register(descriptor.Fingerprint, runtime); err != nil {
-			return nil, err
+		if err := bundle.registry.Register(descriptor.Fingerprint, runtime); err != nil {
+			return embeddingRuntimeBundle{}, err
 		}
-		registered[descriptor.Fingerprint] = struct{}{}
+		registered[descriptor.Fingerprint] = provider
+		bundle.providers[name] = provider
+		bundle.classifiers[name] = classify
 	}
-	return registry, nil
+	return bundle, nil
+}
+
+func executableProcessingProfiles(cfg config.Config,
+	bundle embeddingRuntimeBundle,
+) (map[string]processing.ProfileConfig, error) {
+	profiles := make(map[string]processing.ProfileConfig)
+	names := make([]string, 0, len(cfg.ProcessingProfiles))
+	for name := range cfg.ProcessingProfiles {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		resolved, err := cfg.ProcessingProfile(name)
+		if err != nil {
+			return nil, err
+		}
+		portable := resolved.Document
+		// Rendition adapters and exact tokenizer implementations are admitted
+		// only when their process-local runtime binding exists. The current
+		// daemon bundle owns direct-file embedding runtimes, so do not advertise
+		// a portable profile that this process cannot execute end to end.
+		if portable.Rendition != nil || len(portable.Embeddings) == 0 {
+			continue
+		}
+		executable := true
+		configured := processing.ProfileConfig{Profile: portable,
+			EmbeddingProviders:   make(map[string]document.EmbeddingProvider),
+			EmbeddingClassifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration))}
+		for _, binding := range portable.Embeddings {
+			provider := bundle.providers[binding.Name]
+			classifier := bundle.classifiers[binding.Name]
+			if provider == nil || classifier == nil || binding.InputKind != document.EmbeddingInputOriginalFile {
+				executable = false
+				break
+			}
+			configured.EmbeddingProviders[binding.Name] = provider
+			configured.EmbeddingClassifiers[binding.Name] = classifier
+		}
+		if executable {
+			profiles[name] = configured
+		}
+	}
+	return profiles, nil
 }
 
 type embeddingRuntimeBlobStore interface {

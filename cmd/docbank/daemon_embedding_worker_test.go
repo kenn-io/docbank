@@ -101,10 +101,10 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 	cfg.EmbeddingProfiles["alternate-chunks"] = duplicate
 	require.NoError(t, cfg.Validate())
 	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "")
-	registry, err := configureEmbeddingRuntimes(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
 	require.NoError(t, err)
-	assert.True(t, registry.Ready())
-	assert.Equal(t, []string{final.Fingerprint}, registry.Fingerprints())
+	assert.True(t, bundle.registry.Ready())
+	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
 	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
 	assert.Equal(t, processing.EmbeddingProviderCapacity, classification)
 }
@@ -157,9 +157,9 @@ func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *
 	cfg.EmbeddingProfiles["voyage"] = profile
 	require.NoError(t, cfg.Validate())
 
-	registry, err := configureEmbeddingRuntimes(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
 	require.NoError(t, err)
-	assert.Equal(t, []string{final.Fingerprint}, registry.Fingerprints())
+	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
 }
 
 func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.T) {
