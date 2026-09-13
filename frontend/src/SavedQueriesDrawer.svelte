@@ -5,10 +5,11 @@
   import { canonicalQuery, parseHighlightSet, parseQuery, type HighlightTerm, type Query } from "./query.js";
   import { createSavedQuery, deleteSavedQuery, listSavedQueries, SavedQueryReceiptError, updateSavedQuery, type Definition, type SavedQuery, type SavedQueryKind } from "./savedQueries.js";
 
-  let { session, initialQuery, onload, onclose, onauthfailure }: {
+  let { session, initialQuery, onload, onclose, onauthfailure, onopenquery }: {
     session: string;
     initialQuery: Query;
     onload: (query: Query) => void;
+    onopenquery?: (query: Query) => void;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   } = $props();
@@ -174,6 +175,7 @@
         {#each items as item (item.id)}
           <div class="definition-row">
             <div><strong>{item.name}</strong><small>{item.kind === "query" ? "Query" : "Highlight set"} · revision {item.revision}</small></div>
+            {#if item.kind === "query" && onopenquery}<Button size="sm" disabled={pending} ariaLabel={`Open query ${item.name}`} onclick={() => item.kind === "query" && onopenquery?.(item.payload)}>Open query</Button>{/if}
             <Button size="sm" disabled={pending} onclick={() => edit(item)} ariaLabel={`Edit ${item.name}`}>Edit</Button>
             <Button size="sm" disabled={pending} onclick={() => { deleting = item; failure = ""; notice = ""; }} ariaLabel={`Delete ${item.name}`}>Delete</Button>
           </div>

@@ -330,6 +330,7 @@ export interface Problem {
   code?: string;
   detail?: string;
   title?: string;
+  position?: unknown;
 }
 
 export class APIError extends Error {
@@ -337,6 +338,7 @@ export class APIError extends Error {
     message: string,
     readonly status: number,
     readonly code: string,
+    readonly position?: unknown,
   ) {
     super(message);
     this.name = "APIError";
@@ -385,7 +387,7 @@ export async function requestResponse(
   if (!response.ok) {
     const problem = await decodeProblem(response);
     const detail = problem.detail || problem.title || `HTTP ${response.status}`;
-    throw new APIError(detail, response.status, problem.code ?? "");
+    throw new APIError(detail, response.status, problem.code ?? "", problem.position);
   }
   return response;
 }

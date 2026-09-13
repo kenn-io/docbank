@@ -216,6 +216,16 @@ in a vault that needs editable saved definitions.
 
 ## Preview a field-aware query
 
+In the web application, choose **Edit query** for expression editing, structured
+facet summaries, syntax help, and positioned server errors. A saved query can
+open in the same editor; an import collection can start a new collection-scoped
+draft. Text, facets, mode, and sort remain together when saved or kept in the
+URL. Closing the editor does not discard the draft.
+
+The editor validates intent only. It never sends an unsupported query through
+ordinary live search with constraints removed. **Run query** is unavailable
+until a route can honor the full query contract.
+
 `POST /api/v1/queries/parse` validates a QueryV1 expression and resolves its
 references. It returns `query`, `query_fingerprint`, and `dependencies`, each
 with a `kind`, stable `id`, and observed `revision`. It does not return search

@@ -63,6 +63,19 @@ afterEach(() => {
 });
 
 describe("collections drawer", () => {
+  it("starts a new query from the exact selected collection identity", async () => {
+    vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => {
+      const url=String(input);
+      if(url.includes("/members?")) return json({collection,items:members,total:2,limit:100,offset:0});
+      if(url.endsWith("/label")) return json({ingest_id:collectionID,label:collection.label,revision:3,updated_at:collection.label_updated_at},'"3"');
+      return json({items:[collection],total:1,limit:100,offset:0});
+    });
+    const onnewquery=vi.fn();
+    render(CollectionsDrawer,{session:"session",onclose:vi.fn(),onauthfailure:vi.fn(),onopenmember:vi.fn(),onnewquery});
+    await fireEvent.click(await screen.findByRole("button",{name:"Browse collection Discovery batch"}));
+    await fireEvent.click(await screen.findByRole("button",{name:"New query for this collection"}));
+    expect(onnewquery).toHaveBeenCalledWith(collectionID);
+  });
   it("shows supported collection facts and opens an exact direct member", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

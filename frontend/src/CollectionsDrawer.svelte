@@ -29,9 +29,10 @@
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
     onopenmember: (node: Node, current: () => boolean) => void | Promise<void>;
+    onnewquery?: (id: string) => void;
   }
 
-  let { session, onclose, onauthfailure, onopenmember }: Props = $props();
+  let { session, onclose, onauthfailure, onopenmember, onnewquery }: Props = $props();
 
   let items = $state<Collection[]>([]);
   let total = $state(0);
@@ -341,6 +342,7 @@
       </section>
 
       {#if selected}
+        {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}>New query for this collection</Button>{/if}
         <section class="label-editor" aria-labelledby="collection-label-heading">
           <div class="section-heading">
             <div>

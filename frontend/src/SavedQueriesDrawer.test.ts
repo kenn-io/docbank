@@ -115,3 +115,11 @@ it("edits bounded highlight terms without offering execution", async () => {
   expect(screen.queryByRole("button", { name: /run/i })).toBeNull();
   expect(screen.queryByRole("button", { name: "Keep query draft" })).toBeNull();
 });
+
+it("opens the exact saved payload through the explicit query-editor action", async () => {
+  vi.spyOn(globalThis,"fetch").mockResolvedValue(json({items:[record],total:1,limit:100,offset:0}));
+  const onopenquery = vi.fn();
+  render(SavedQueriesDrawer,{session:"session",initialQuery:parseQuery("{}"),onload:vi.fn(),onopenquery,onclose:vi.fn(),onauthfailure:vi.fn()});
+  await fireEvent.click(await screen.findByRole("button",{name:"Open query Review PDFs"}));
+  expect(onopenquery).toHaveBeenCalledWith(JSON.parse(canonical));
+});
