@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -178,20 +179,32 @@ func (s *Server) API() huma.API         { return s.api }
 
 // Close revokes daemon-lifetime browser credentials and closes their
 // hijacked upload connections. net/http shutdown does not own WebSockets, so
-// Close also waits for their handlers to release mutation and storage
-// resources before returning.
+// Close also waits for their handlers and accepted processing jobs to release
+// mutation and storage resources before returning.
 func (s *Server) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := s.Shutdown(ctx); err != nil {
-		s.deps.Logger.Error("browser upload shutdown did not drain", "err", err)
+		s.deps.Logger.Error("API shutdown did not drain", "err", err)
+		if s.deps.Processing != nil {
+			// Storage must remain open until cancelled providers finish cleanup,
+			// even when the HTTP shutdown deadline has expired.
+			_ = s.deps.Processing.Shutdown(context.Background())
+		}
 	}
 }
 
 // Shutdown revokes browser credentials, closes every accepted upload
-// connection, and waits for its handler to return.
+// connection, cancels processing, and waits for their executions to return.
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.webSessions.closeAll(ctx)
+	if s.deps.Processing != nil {
+		s.deps.Processing.Stop()
+	}
+	err := s.webSessions.closeAll(ctx)
+	if s.deps.Processing != nil {
+		err = errors.Join(err, s.deps.Processing.Shutdown(ctx))
+	}
+	return err
 }
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive

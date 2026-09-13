@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -95,6 +96,11 @@ type Service struct {
 	lifecycle      context.Context
 	renditions     *RenditionRuntimeRegistry
 	embeddings     *EmbeddingRuntimeRegistry
+	runsMu         sync.Mutex
+	runs           int
+	stopping       bool
+	stop           context.CancelFunc
+	drained        chan struct{}
 }
 
 type processingOperationGate interface {
@@ -395,7 +401,36 @@ func NewService(config ServiceConfig) (*Service, error) {
 		}
 		service.profiles[name] = configured
 	}
+	service.lifecycle, service.stop = context.WithCancel(config.Lifecycle)
+	service.drained = make(chan struct{})
 	return service, nil
+}
+
+// Stop rejects new starts and cancels active processing, including work that
+// outlived its initiating request. Workers retain their durable recovery state.
+func (service *Service) Stop() {
+	service.runsMu.Lock()
+	defer service.runsMu.Unlock()
+	if service.stopping {
+		return
+	}
+	service.stopping = true
+	service.stop()
+	if service.runs == 0 {
+		close(service.drained)
+	}
+}
+
+// Shutdown cancels processing and waits for every start to release its resources.
+// If ctx expires, the owner must still drain before closing storage.
+func (service *Service) Shutdown(ctx context.Context) error {
+	service.Stop()
+	select {
+	case <-service.drained:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (service *Service) Profiles() []ProfileSummary {
@@ -506,10 +541,31 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 
 // StartWithProgress publishes the durable aggregate identity immediately
 // after enqueue. Once published, provider execution continues under the
-// service lifecycle rather than the initiating request lifetime.
+// service lifecycle rather than the initiating request lifetime. The owner
+// must call Shutdown before releasing the catalog, blob store, or upload lock.
 func (service *Service) StartWithProgress(ctx context.Context, request StartRequest,
 	onEnqueued func(Job),
 ) (Job, error) {
+	service.runsMu.Lock()
+	if err := service.lifecycle.Err(); err != nil {
+		service.runsMu.Unlock()
+		return Job{}, err
+	}
+	service.runs++
+	service.runsMu.Unlock()
+	defer func() {
+		service.runsMu.Lock()
+		defer service.runsMu.Unlock()
+		service.runs--
+		if service.stopping && service.runs == 0 {
+			close(service.drained)
+		}
+	}()
+	// Shutdown also cancels validation and enqueue before a job is accepted.
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(service.lifecycle, cancel)
+	defer stop()
+	defer cancel()
 	node, version, profile, err := service.resolve(ctx, request.Selector)
 	if err != nil {
 		return Job{}, err

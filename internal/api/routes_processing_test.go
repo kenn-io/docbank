@@ -175,6 +175,124 @@ func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
 	assert.Empty(t, job.RenditionJobID)
 }
 
+func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
+	inner := newProcessingTestEmbeddingProvider(t)
+	provider := &shutdownProcessingEmbeddingProvider{
+		EmbeddingProvider: inner, started: make(chan struct{}),
+		cancelled: make(chan struct{}), release: make(chan struct{}),
+	}
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	node := createFileWithContent(t, ts, catalog, "/shutdown.txt", "recover accepted processing after shutdown\n")
+	c := client.New(ts.URL, testAPIKey)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	start := api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}
+	payload, err := json.Marshal(start)
+	require.NoError(t, err)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	scanner := bufio.NewScanner(response.Body)
+	require.True(t, scanner.Scan())
+	var event api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &event))
+	require.NotNil(t, event.Job)
+	require.Len(t, event.Job.EmbeddingJobIDs, 1)
+	select {
+	case <-provider.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("accepted embedding did not reach the provider")
+	}
+	require.NoError(t, response.Body.Close())
+
+	// HTTP shutdown cannot drain the worker after this client has disconnected.
+	// The API owner must cancel it and wait for provider cleanup itself.
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, catalog.Server.Shutdown(shutdownCtx), context.DeadlineExceeded)
+	select {
+	case <-provider.cancelled:
+	default:
+		t.Fatal("shutdown did not cancel accepted processing")
+	}
+	closed := make(chan struct{})
+	go func() {
+		catalog.Server.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("server closed while the provider still owned processing resources")
+	case <-time.After(50 * time.Millisecond):
+	}
+	closeProcessingSignal(provider.release)
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server did not drain accepted processing after provider cleanup")
+	}
+
+	rejected, err := c.StartProcessing(t.Context(), start)
+	require.Error(t, err, "shutdown must reject new processing starts")
+	require.Empty(t, rejected.ID)
+
+	jobID := event.Job.EmbeddingJobIDs[0]
+	interrupted, err := catalog.EmbeddingJobByID(t.Context(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, "running", interrupted.State)
+	require.Empty(t, interrupted.FailureCode)
+	// A restarted daemon reclaims the same durable job once its lease expires.
+	runtime, err := processing.NewProviderEmbeddingRuntime(inner, catalog.Blobs, t.TempDir(),
+		func(error) (processing.EmbeddingProviderFailure, time.Duration) {
+			return processing.EmbeddingProviderInvalidResponse, 0
+		})
+	require.NoError(t, err)
+	now := time.Now().Add(10 * time.Minute)
+	worker, err := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
+		Catalog: catalog.Store, Authority: catalog.Store, Blobs: catalog.Blobs,
+		GenerationBlobs: catalog.Blobs, Runtime: runtime, Gate: api.NewOperationGate(),
+		Owner: "restarted-processing-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+		RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
+		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
+		MaxVectorBlobBytes: 64 << 20, Clock: func() time.Time { return now },
+		DescriptorFingerprints: []string{inner.Descriptor().Fingerprint},
+	})
+	require.NoError(t, err)
+	processed, err := worker.RunJob(t.Context(), jobID)
+	require.NoError(t, err)
+	require.True(t, processed)
+	recovered, err := catalog.EmbeddingJobByID(t.Context(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", recovered.State)
+}
+
+type shutdownProcessingEmbeddingProvider struct {
+	document.EmbeddingProvider
+
+	started, cancelled, release chan struct{}
+}
+
+func (provider *shutdownProcessingEmbeddingProvider) Embed(ctx context.Context,
+	inputs []document.EmbeddingInput, authorization document.EmbeddingAuthorization,
+) (document.EmbeddingResult, error) {
+	close(provider.started)
+	select {
+	case <-ctx.Done():
+		close(provider.cancelled)
+		<-provider.release
+		return document.EmbeddingResult{}, ctx.Err()
+	case <-provider.release:
+		return provider.EmbeddingProvider.Embed(ctx, inputs, authorization)
+	}
+}
+
 func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T) {
 	innerRendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
