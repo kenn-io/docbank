@@ -45,7 +45,7 @@ func ClassifyMedia(mediaType, filename string) string {
 			return "unknown"
 		}
 	}
-	if family, ok := queryFamilyByExtension[filenameExtension(filename)]; ok {
+	if family, ok := queryFamilyByExtension[FilenameExtension(filename)]; ok {
 		return family
 	}
 	return "unknown"
@@ -152,7 +152,8 @@ func invalidMIMEQuotedByte(character byte) bool {
 	return character < 0x20 && character != '\t' || character == 0x7f
 }
 
-func filenameExtension(filename string) string {
+// FilenameExtension returns an extension accepted by the query operand grammar.
+func FilenameExtension(filename string) string {
 	baseStart := strings.LastIndexAny(filename, `/\\`) + 1
 	base := filename[baseStart:]
 	dot := strings.LastIndexByte(base, '.')
@@ -160,10 +161,21 @@ func filenameExtension(filename string) string {
 		return ""
 	}
 	extension, ok := lowerASCII(base[dot+1:])
-	if !ok {
+	if !ok || !extensionPattern.MatchString(extension) {
 		return ""
 	}
 	return extension
+}
+
+// MIMEType returns a concrete query value using the stored-MIME search predicate's
+// semantics: ignore parameters, trim ordinary spaces, and lowercase ASCII.
+func MIMEType(value string) string {
+	essence, _, _ := strings.Cut(value, ";")
+	essence, ok := lowerASCII(strings.Trim(essence, " "))
+	if !ok || !validConcreteMIME(essence) {
+		return ""
+	}
+	return essence
 }
 
 func trimASCIIWhitespace(value string) string {

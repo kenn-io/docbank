@@ -23,6 +23,8 @@
     type CollectionLabel,
   } from "./collections.js";
   import { formatBytes, formatDate } from "./format.js";
+  import QualityPanel from "./QualityPanel.svelte";
+  import type { Query } from "./query.js";
 
   interface Props {
     session: string;
@@ -30,9 +32,12 @@
     onauthfailure: (cause: unknown) => void;
     onopenmember: (node: Node, current: () => boolean) => void | Promise<void>;
     onnewquery?: (id: string) => void;
+    onqualityquery?: (query: Query) => void;
   }
 
-  let { session, onclose, onauthfailure, onopenmember, onnewquery }: Props = $props();
+  let { session, onclose, onauthfailure, onopenmember, onnewquery, onqualityquery }: Props = $props();
+  let qualityOpen = $state(false);
+  let profile = $state("");
 
   let items = $state<Collection[]>([]);
   let total = $state(0);
@@ -93,6 +98,7 @@
     loading = true;
     error = "";
     if (currentSession !== loadedSession) {
+      profile = "";
       items = [];
       total = 0;
       refreshedAt = "";
@@ -342,6 +348,8 @@
       </section>
 
       {#if selected}
+        <Button onclick={()=>qualityOpen=!qualityOpen}>{qualityOpen ? "Close collection quality" : "Inspect collection quality"}</Button>
+        {#if qualityOpen}<QualityPanel {session} collectionID={selected.id} {profile} onprofile={(name)=>profile=name} onnewquery={onqualityquery} {onauthfailure}/>{/if}
         {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}>New query for this collection</Button>{/if}
         <section class="label-editor" aria-labelledby="collection-label-heading">
           <div class="section-heading">
@@ -384,7 +392,7 @@
               >Reload label</Button>
             </div>
           {/if}
-          <p class="quality-note">Quality counters are unavailable for direct collection browsing.</p>
+          <p class="quality-note">Inspect collection quality for processing coverage and document distributions.</p>
           {#if labelError}<p class="error" role="alert">{labelError}</p>{/if}
           {#if labelNotice}<p class="notice" role="status">{labelNotice}</p>{/if}
         </section>

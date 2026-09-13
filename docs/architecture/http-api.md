@@ -57,6 +57,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `GET /collections` · `GET /collections/{id}` · `GET /collections/{id}/members` · `GET\|PUT /collections/{id}/label` | browse live ingest-run membership and inspect, set, or clear its revision-fenced label | Implemented |
+| `GET /collections/{id}/quality` | inspect bounded document distributions and processing coverage for one collection | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file — see [addendum](#addendum-post-uploads) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
@@ -592,6 +593,33 @@ Watched-inbox exclusions are a separate literal contract.
 
 ## Addendum: ingest-run collections
 
+`GET /api/v1/collections/{id}/quality` returns a current aggregate receipt with
+the collection, `source_fingerprint`, dimensions, zero-byte and mismatch counts,
+duplicate-document counts, and descriptive concentrations. Optional `fields`
+accepts at most seven distinct comma-separated names: `extension`, `media_type`,
+`media_family`, `modified_month`, `size`, `text_coverage`, and `duplicates`.
+The default includes all seven. Unknown or repeated fields return 422.
+
+Only quality accepts `profile=<configured name>` and includes
+`collection.coverage`. Ordinary list, detail, and members reads do not inspect
+processing state. One profile is selected automatically; no profiles
+returns `unconfigured`, and multiple without a choice returns `profile_required`.
+These unavailable states have null counts. An unknown name returns 422.
+Configured coverage includes the selected name and fingerprint, active generation,
+and complete, partial, failed, unprocessed, and none counts over current members.
+Selection identifies policy, not runtime readiness. Retained active output wins
+over a later failed attempt; source hashes alone cannot transfer profile authority.
+
+Quality uses one source snapshot, bounded to 250,000 members, 64 MiB of projected
+census data, and five seconds. Size bounds return 413 `quality_too_large`;
+interruption or timeout returns 503 `quality_unavailable`, not partial results.
+Frequency dimensions retain the top 50 values with missing and other counts.
+Duplicate membership is vault-wide current content, counted within this collection.
+Concentrations require at least ten members and 80% of the collection.
+Each request reads current source data. Extension and MIME buckets follow the
+query operand rules; values that cannot name a concrete operand count as missing.
+MIME parameters do not affect the bucket, matching the MIME search predicate.
+
 A collection is an immutable ingest-run identity with live document
 membership. It is not a folder: moving or renaming a member leaves its run
 identity intact. Membership excludes caller-supplied `embedded:` provenance,
@@ -613,6 +641,32 @@ $ curl -sS -H "X-Api-Key: $DOCBANK_API_KEY" \
 
 $ curl -sS -H "X-Api-Key: $DOCBANK_API_KEY" \
     'http://127.0.0.1:43210/api/v1/collections/5ca58787-4608-4f69-8e67-8d5794970f77/members?limit=100&offset=0'
+```
+
+Request only extension counts when that is all you need. Coverage still describes
+all current members; without a processing profile, its counts are null.
+
+```console
+$ curl -sS -H "X-Api-Key: $DOCBANK_API_KEY" \
+    'http://127.0.0.1:43210/api/v1/collections/5ca58787-4608-4f69-8e67-8d5794970f77/quality?fields=extension'
+```
+
+```json
+{
+  "collection": {
+    "id": "5ca58787-4608-4f69-8e67-8d5794970f77",
+    "source_kind": "cli", "source_description": "/srv/import/review",
+    "started_at": "2026-09-10T09:30:00Z", "file_count": 2, "total_bytes": 31,
+    "label": "Review set", "label_revision": 1, "label_updated_at": "2026-09-10T09:30:00Z",
+    "coverage": {
+      "configuration": "unconfigured", "profile": "", "profiles": [],
+      "profile_fingerprint": "", "generation_id": "", "counts": null
+    }
+  },
+  "source_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "dimensions": [{"field": "extension", "values": [{"value": "txt", "count": 2}], "missing": 0, "other": 0}],
+  "zero_bytes": 0, "mismatches": 0, "duplicate_documents": 0, "spikes": []
+}
 ```
 
 Labels have their own resource and revision. Read that resource for its ETag,

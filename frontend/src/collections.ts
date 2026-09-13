@@ -75,7 +75,7 @@ function pageParams(offset: number, limit: number): string {
   return new URLSearchParams({ limit: String(limit), offset: String(offset) }).toString();
 }
 
-function readCollection(value: unknown): Collection {
+export function readCollection(value: unknown): Collection {
   const record = object(value);
   check(typeof record.id === "string" && uuid.test(record.id));
   check(typeof record.source_kind === "string" && record.source_kind.length > 0 &&
