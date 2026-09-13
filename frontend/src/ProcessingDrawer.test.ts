@@ -8,6 +8,61 @@ afterEach(() => {
 });
 
 describe("document processing drawer", () => {
+  it("discards the previous profile plan and coverage when a new preview fails", async () => {
+    const versionID = "11111111-1111-4111-8111-111111111111";
+    const fingerprint = "a".repeat(64);
+    let resolvePreview!: (response: Response) => void;
+    const nextPreview = new Promise<Response>((resolve) => { resolvePreview = resolve; });
+    const startedProfiles: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/v1/processing/profiles") {
+        return Response.json(["private", "hosted"].map((name) => ({ name, fingerprint, rendition: true, embedding_bindings: [] })));
+      }
+      if (path === "/api/v1/processing/plans") {
+        const { selector } = JSON.parse(String(init?.body));
+        if (selector.profile === "hosted") return nextPreview;
+        return Response.json({
+          fingerprint, vault_uid: versionID, selector, profile_fingerprint: fingerprint,
+          flow: [{ capability: "rendition", provider_id: "private-provider", trust_boundary: "local_process", input_classes: ["original_file"] }],
+          disclosed_classes: ["original_file"], retained_classes: ["sanitized_markdown"],
+          estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 0 },
+          consent_required: false, consent_state: "active", backup_consequence: "retained derivatives enter future backups",
+        });
+      }
+      if (path.startsWith("/api/v1/coverage?")) {
+        return Response.json({
+          vault_uid: versionID, profile_fingerprint: fingerprint, state: "complete",
+          renditions: { name: "rendition", required: true, state: "complete", complete: 1, unavailable: 0, stale: 0, ineligible: 0, total: 1 },
+          embeddings: [],
+        });
+      }
+      if (path === "/api/v1/processing/jobs") {
+        startedProfiles.push(JSON.parse(String(init?.body)).selector.profile);
+        return new Response(null, { status: 503 });
+      }
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(ProcessingDrawer, {
+      session: "short-lived",
+      node: { id: 42, name: "report.pdf", kind: "file", current_version_id: versionID, size: 1, revision: 1, created_at: "", modified_at: "" },
+      path: "/Reports/report.pdf", onclose: vi.fn(), onauthfailure: vi.fn(), onrendition: vi.fn(),
+    });
+
+    expect(await screen.findByText(/rendition.*complete/i)).toBeTruthy();
+    await fireEvent.change(screen.getByRole("combobox", { name: "Profile" }), { target: { value: "hosted" } });
+    expect.soft(screen.queryByText("private-provider")).toBeNull();
+    expect.soft(screen.queryByRole("region", { name: "Document processing coverage" })).toBeNull();
+
+    resolvePreview(Response.json({ detail: "The selected profile is unavailable." }, { status: 503 }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "The selected profile is unavailable.");
+    const runButton = screen.queryByRole("button", { name: "Run processing" });
+    expect.soft(runButton).toBeNull();
+    if (runButton) await fireEvent.click(runButton);
+    expect(startedProfiles).toEqual([]);
+  });
+
   it("shows reviewed flow, independent coverage, partial failure, and provenance", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const vaultID = "22222222-2222-4222-8222-222222222222";

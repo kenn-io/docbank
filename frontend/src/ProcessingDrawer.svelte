@@ -78,6 +78,8 @@
     const request = existingRequest ?? ++generation;
     loading = true;
     error = "";
+    plan = null;
+    coverage = null;
     run = null;
     searchReport = null;
     try {
@@ -88,7 +90,9 @@
       });
       if (request !== generation) return;
       plan = next;
-      coverage = await documentCoverage(session, profileName, next.vault_uid, [node.current_version_id]);
+      const nextCoverage = await documentCoverage(session, profileName, next.vault_uid, [node.current_version_id]);
+      if (request !== generation) return;
+      coverage = nextCoverage;
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
