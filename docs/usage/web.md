@@ -562,9 +562,10 @@ retry. The existing worker rejects blank provider output as a failed attempt.
 Quality reads are bounded to 250,000 members, a 64 MiB census, and five seconds;
 an exceeded limit returns an error, never a partial successful summary.
 
-Select distribution values and choose **New query** to open a collection-scoped
-draft. Multiple selected values use OR. This does not change live results or
-execute a search. Concentrations describe common values, not document defects.
+Select extensions, media types, or media families and choose **New query** to
+open a collection-scoped draft. Multiple selected values use OR. This does not
+change live results or execute a search. Concentrations describe common values,
+not document defects.
 
 ## Browser authentication
 

@@ -15,6 +15,7 @@ export interface CollectionQuality {
   duplicate_documents:number; spikes:{field:string;value:string;count:number}[];
 }
 const fields=new Set(["extension","media_type","media_family","modified_month","size","text_coverage","duplicates"]);
+export const qualitySuggestionFields=new Set(["extension","media_type","media_family"]);
 const states=["complete","partial","failed","unprocessed","none"] as const;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const digest=/^[0-9a-f]{64}$/;
@@ -64,10 +65,9 @@ export async function collectionQuality(session:string,id:string,profile:string,
 }
 
 export function qualitySuggestion(id:string,field:string,values:string[]):Query {
-  check(uuid.test(id)&&["extension","media_type","media_family","text_coverage","duplicates"].includes(field));
+  check(uuid.test(id)&&qualitySuggestionFields.has(field));
   check(values.length>0&&values.length<=32&&values.every(value=>value.length>0&&value.length<=1024));
-  if(field==="duplicates")check(values.every(value=>value==="duplicate"||value==="unique"));
-  const operand=field==="media_type"?"mime":field==="duplicates"?"has_duplicates":field;
-  const terms=values.map(value=>`${operand}:${JSON.stringify(field==="duplicates"?(value==="duplicate"?"true":"false"):value)}`);
+  const operand=field==="media_type"?"mime":field;
+  const terms=values.map(value=>`${operand}:${JSON.stringify(value)}`);
   return parseQuery(JSON.stringify({v:1,text:`(${terms.join(" OR ")})`,syntax:"advanced",mode:"lexical",filters:{collection_ids:[id]},sort:{field:"name",direction:"asc"}}));
 }

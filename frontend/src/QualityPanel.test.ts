@@ -7,10 +7,19 @@ const response=(value:unknown)=>new Response(JSON.stringify(value));
 const props=()=>({session:"session",collectionID:id,profile:"",onprofile:vi.fn(),onnewquery:vi.fn(),onauthfailure:vi.fn()});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 it("shows all states and opens a selected OR suggestion only on action",async()=>{
-  const fetch=vi.spyOn(globalThis,"fetch").mockResolvedValue(response(receipt()));
+  const value=receipt();
+  value.dimensions.push(
+    {field:"text_coverage",values:["complete","partial","failed","unprocessed","none"].map(value=>({value,count:1})),missing:0,other:0},
+    {field:"duplicates",values:[{value:"unique",count:5}],missing:0,other:0},
+  );
+  const fetch=vi.spyOn(globalThis,"fetch").mockResolvedValue(response(value));
   const p=props();render(QualityPanel,p);
   await screen.findByText("Complete: 1");
   for(const label of ["Partial: 1","Failed: 1","Unprocessed: 1","No text: 1"])expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.getByText("complete")).toBeTruthy();
+  expect(screen.getByText("unique")).toBeTruthy();
+  expect(screen.queryByRole("checkbox",{name:/Include (text_coverage|duplicates) /})).toBeNull();
+  expect(screen.queryByRole("button",{name:/New query for selected (text_coverage|duplicates)/})).toBeNull();
   await fireEvent.click(screen.getByLabelText("Include extension pdf"));
   await fireEvent.click(screen.getByLabelText("Include extension txt"));
   expect(p.onnewquery).not.toHaveBeenCalled();

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button, Checkbox, Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api.js";
-  import { collectionQuality, qualitySuggestion, type CollectionQuality } from "./collectionQuality.js";
+  import { collectionQuality, qualitySuggestion, qualitySuggestionFields, type CollectionQuality } from "./collectionQuality.js";
   import type { Query } from "./query.js";
   interface Props {session:string;collectionID:string;profile:string;onprofile:(name:string)=>void;onnewquery?:(query:Query)=>void;onauthfailure:(cause:unknown)=>void}
   let {session,collectionID,profile,onprofile,onnewquery,onauthfailure}:Props=$props();
@@ -9,7 +9,6 @@
   let error=$state("");let loading=$state(false);let revision=$state(0);
   let selected=$state<Record<string,string[]>>({});
   let generation=0;
-  const suggestible=new Set(["extension","media_type","media_family","text_coverage","duplicates"]);
   $effect(()=>{
     const activeSession=session,id=collectionID,name=profile;void revision;
     const request=++generation,abort=new AbortController();
@@ -56,14 +55,14 @@
       <details open><summary>{dimension.field}</summary>
         {#each dimension.values as bucket (bucket.value)}
           <div class="bucket">
-            {#if onnewquery&&suggestible.has(dimension.field)}
+            {#if onnewquery&&qualitySuggestionFields.has(dimension.field)}
               <Checkbox label={`Include ${dimension.field} ${bucket.value}`} checked={(selected[dimension.field]??[]).includes(bucket.value)} onchange={(checked)=>toggle(dimension.field,bucket.value,checked)}/>
             {:else}<span>{bucket.value}</span>{/if}
             <span>{bucket.count}</span>
           </div>
         {/each}
         <p>Missing: {dimension.missing}. Other: {dimension.other}.</p>
-        {#if onnewquery&&suggestible.has(dimension.field)}<Button size="sm" disabled={!(selected[dimension.field]?.length)} onclick={()=>suggest(dimension.field)}>New query for selected {dimension.field}</Button>{/if}
+        {#if onnewquery&&qualitySuggestionFields.has(dimension.field)}<Button size="sm" disabled={!(selected[dimension.field]?.length)} onclick={()=>suggest(dimension.field)}>New query for selected {dimension.field}</Button>{/if}
       </details>
     {/each}
     {#each result.spikes as spike}<p>Concentration: {spike.field} {spike.value} ({spike.count} documents).</p>{/each}

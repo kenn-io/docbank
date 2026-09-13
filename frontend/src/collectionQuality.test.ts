@@ -53,6 +53,7 @@ describe("collection quality receipts",()=>{
     expect(qualitySuggestion(id,"extension",["pdf","txt"])).toEqual({v:1,text:'(extension:"pdf" OR extension:"txt")',syntax:"advanced",mode:"lexical",filters:{collection_ids:[id]},sort:{field:"name",direction:"asc"}});
     expect(()=>qualitySuggestion(id,"extension",[])).toThrow();
     expect(()=>qualitySuggestion(id,"modified_month",["2026-09"])).toThrow();
-	  expect(()=>qualitySuggestion(id,"duplicates",["unknown"])).toThrow();
+    expect(()=>qualitySuggestion(id,"duplicates",["duplicate"])).toThrow();
+    expect(()=>qualitySuggestion(id,"text_coverage",["complete"])).toThrow();
   });
 });
