@@ -19,6 +19,9 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+// OriginalRetentionImplementationID is the version label exercised by format qualification fixtures.
+const OriginalRetentionImplementationID = "docbank-original-retention:verified-blob+ingest-authority:v1"
+
 var (
 	// ErrUploadDigestMismatch reports bytes that do not match the identity the
 	// remote writer declared. No blob row or node is committed; authority-free

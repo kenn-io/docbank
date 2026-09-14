@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/formatqualification"
 )
 
 func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
@@ -82,8 +83,23 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 			assert.Equal(t, tt.known, got.DurationKnown)
 			assert.Equal(t, tt.animated, got.Animated)
 			assert.Equal(t, tt.width*tt.height, got.Pixels())
+			_, qualified := formatqualification.Lookup(formatqualification.Query{
+				CatalogID: string(tt.wantFormat), Capability: formatqualification.CapabilityDetect,
+				Evidence:         "TestDetectBytesRecognizesSupportedContainers",
+				ImplementationID: media.DetectionImplementationID,
+				InputKind:        formatqualification.InputOriginalFile,
+			})
+			assert.True(t, qualified, "executed media detector format %s is absent from the qualification manifest", tt.wantFormat)
 		})
 	}
+}
+
+func TestDetectableFormatsEnumeratesSniffedFormatsDefensively(t *testing.T) {
+	want := []media.Format{media.FormatGIF, media.FormatJPEG, media.FormatMP4, media.FormatPNG, media.FormatWebP}
+	formats := media.DetectableFormats()
+	assert.Equal(t, want, formats)
+	formats[0] = media.FormatPNG
+	assert.Equal(t, want, media.DetectableFormats())
 }
 
 func TestDetectBytesReadsMP4CreationTime(t *testing.T) {

@@ -25,6 +25,14 @@ const MaxBytes = int64(20 << 20)
 // ErrTooLarge reports an input longer than MaxBytes.
 var ErrTooLarge = errors.New("media: input exceeds maximum size")
 
+var detectableFormats = []Format{FormatGIF, FormatJPEG, FormatMP4, FormatPNG, FormatWebP}
+
+// DetectionImplementationID is the version label exercised by format qualification fixtures.
+const DetectionImplementationID = "docbank-media-detection:jpeg+png+webp+gif+iso-bmff:v1"
+
+// DetectableFormats returns the complete set of formats recognized by sniff.
+func DetectableFormats() []Format { return slices.Clone(detectableFormats) }
+
 // Detect sniffs the container format and reads bounded metadata from reader.
 // It reads at most MaxBytes and never decodes pixels. The declared media type
 // is recorded verbatim in the result and is not used for detection.

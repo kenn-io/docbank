@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/query"
@@ -2996,6 +2997,96 @@ func (c *Client) Info(ctx context.Context) (api.VaultInfo, error) {
 	var info api.VaultInfo
 	err := c.do(ctx, http.MethodGet, "/api/v1/info", nil, nil, &info)
 	return info, err
+}
+
+func formatQuery(family, format, extension string) string {
+	query := url.Values{}
+	for key, value := range map[string]string{
+		"family": family, "format": format, "extension": extension,
+	} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	return query.Encode()
+}
+
+// FormatCapabilities reads and validates the daemon's per-format capability
+// inventory. Selectors are passed through unchanged.
+func (c *Client) FormatCapabilities(
+	ctx context.Context, family, format, extension string,
+) (api.FormatCoverageResponse, error) {
+	query := formatQuery(family, format, extension)
+	path := "/api/v1/formats/capabilities"
+	if query != "" {
+		path += "?" + query
+	}
+	var raw jsontext.Value
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &raw); err != nil {
+		return api.FormatCoverageResponse{}, err
+	}
+	var transport struct {
+		api.FormatCoverageResponse
+
+		Schema string `json:"$schema,omitzero"`
+	}
+	if err := json.Unmarshal(raw, &transport, json.RejectUnknownMembers(true)); err != nil {
+		return api.FormatCoverageResponse{}, &responseDecodeError{err: fmt.Errorf(
+			"decoding GET /api/v1/formats/capabilities response: %w", err)}
+	}
+	response := transport.FormatCoverageResponse
+	selector := format
+	if selector == "" {
+		selector = extension
+	}
+	if err := validateFormatCapabilitiesResponse(response, selector); err != nil {
+		return api.FormatCoverageResponse{}, &responseDecodeError{err: fmt.Errorf(
+			"validating GET /api/v1/formats/capabilities response: %w", err)}
+	}
+	return response, nil
+}
+
+func validateFormatCapabilitiesResponse(
+	response api.FormatCoverageResponse, selector string,
+) error {
+	if err := document.ValidateFormatCoverageV1(response.FormatCoverageV1); err != nil {
+		return err
+	}
+	if selector == "" {
+		if response.Lookup != nil {
+			return errors.New("format lookup is present without a selector")
+		}
+		return nil
+	}
+	if response.Lookup == nil {
+		return errors.New("format lookup is missing for selector")
+	}
+	lookup := response.Lookup
+	if lookup.Query != selector {
+		return fmt.Errorf("format lookup query %q does not match selector %q", lookup.Query, selector)
+	}
+	check := response.FormatCoverageV1
+	check.Formats = nil
+	check.Pending = nil
+	switch lookup.Match {
+	case document.FormatLookupFormat:
+		if lookup.Format == nil || lookup.Pending != nil {
+			return errors.New("format lookup payload does not match format result")
+		}
+		check.Formats = []document.FormatCapabilityV1{*lookup.Format}
+	case document.FormatLookupPending:
+		if lookup.Pending == nil || lookup.Format != nil {
+			return errors.New("format lookup payload does not match pending result")
+		}
+		check.Pending = []document.PendingFormatV1{*lookup.Pending}
+	case document.FormatLookupUnknown:
+		if lookup.Format != nil || lookup.Pending != nil {
+			return errors.New("unknown format lookup carries a matched payload")
+		}
+	default:
+		return fmt.Errorf("format lookup has unknown match %q", lookup.Match)
+	}
+	return document.ValidateFormatCoverageV1(check)
 }
 
 func (c *Client) StoragePack(ctx context.Context, maxBytes int64) (api.StoragePackReport, error) {

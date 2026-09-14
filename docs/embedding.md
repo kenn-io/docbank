@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-13
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
@@ -12,6 +13,28 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
+
+## Inspect format coverage
+
+`Vault.FormatCoverage` returns the immutable capability snapshot captured after
+the configured rendition providers were constructed. `Vault.LookupFormat`
+resolves a catalog ID or extension against that same snapshot:
+
+```go
+coverage, err := vault.FormatCoverage(ctx)
+if err != nil {
+    return err
+}
+lookup, err := vault.LookupFormat(ctx, "wpd")
+if err != nil {
+    return err
+}
+```
+
+Returned maps and slices are defensive copies. Changing them does not alter
+later calls. Both methods follow the normal vault lifecycle and return
+`ErrClosed` after `Vault.Close`. See [Format Coverage](architecture/format-coverage.md)
+for the seven capabilities and five states.
 
 ## Create a vault service
 

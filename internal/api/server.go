@@ -100,7 +100,6 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
-
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
 	jsonFormat := huma.Format{
@@ -141,6 +140,7 @@ func NewServer(d Deps) *Server {
 	registerCollectionQualityRoutes(humaAPI, d)
 	registerDuplicateRoutes(humaAPI, d)
 	registerInfoRoute(humaAPI, d)
+	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
 	registerStorageRegistryRoutes(humaAPI, d, g)

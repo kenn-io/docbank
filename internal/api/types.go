@@ -355,6 +355,14 @@ type SourceMetadata struct {
 	Attachment           store.SourceMetadataAttachmentFacts `json:"attachment"`
 }
 
+// FormatCoverageResponse is the flat transport shape shared by HTTP clients.
+// Lookup is present only when the request supplied a format or extension.
+type FormatCoverageResponse struct {
+	document.FormatCoverageV1
+
+	Lookup *document.FormatLookupV1 `json:"lookup,omitzero"`
+}
+
 // ContentVersionPage is one bounded newest-first version listing.
 type ContentVersionPage struct {
 	Items  []ContentVersion `json:"items"`

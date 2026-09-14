@@ -18,3 +18,6 @@ deploy/glmocr/requirements.lock -text
 deploy/glmocr/config.yaml -text
 # Embedding-input goldens are byte-for-byte oracles, not text files.
 document/testdata/chunks-*.golden.json -text
+# The format coverage fixtures are byte-for-byte oracles, not text files.
+document/testdata/format_roster.json -text
+document/testdata/format_coverage.json -text

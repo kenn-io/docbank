@@ -1,7 +1,7 @@
 ---
+last_edited: 2026-09-13
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
-last_edited: 2026-09-11
 ---
 
 # HTTP API
@@ -34,6 +34,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 |----------|---------|--------|
 | `GET /nodes/{id}` | stat by id (live or trashed) | Implemented |
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
+| `GET /formats/capabilities?family=&format=&extension=` | read the running binary's per-format capability snapshot | Implemented |
 | `GET /nodes/{id}/children` | list a directory, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/content` | stream document bytes with catalog identity and a computed digest trailer | Implemented |
 | `PUT /nodes/{id}/content` | replace raw content under revision, size, and digest preconditions — see [addendum](#addendum-put-nodesidcontent) | Implemented |
@@ -73,6 +74,21 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
 | `GET /watches` | inspect effective watched-inbox configuration and runner state | Implemented |
 | `POST /backup/init` · `POST /backup/snapshots` · `POST /backup/snapshots/stream` · `GET /backup/snapshots` | initialize a repository / create with JSON or streamed progress / list snapshots | Implemented |
+
+### Format capability coverage
+
+`GET /formats/capabilities` returns the flat `format-coverage/v1` object:
+`contract_version`, `formats`, `pending`, and `generated_by` are top-level
+members. Supplying `format` or `extension` also adds `lookup`. `family` filters
+returned format rows, while lookup still resolves against the full runtime
+snapshot. `generated_by.catalog_rows` continues to describe that complete
+source catalog.
+
+`family` and `format` are limited to 64 bytes; `extension` is limited to 16.
+Use either `format` or `extension`. Supplying both returns
+`422 invalid_format_query`. Pending and unknown queries return status 200 with
+`lookup.match` set to `pending` or `unknown_format`. See
+[Format Coverage](format-coverage.md) for the capability and state contract.
 
 Search accepts an optional `q` query. An omitted, empty, or whitespace-only
 query requires `tag_id`, `modified_since`, or `modified_before`. This is a

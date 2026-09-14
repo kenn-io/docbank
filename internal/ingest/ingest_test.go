@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/formatqualification"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
@@ -130,6 +132,35 @@ func TestDetectMimeDeclaresEMLBeforeHostRegistry(t *testing.T) {
 			})
 			require.Equal(t, "message/rfc822", got)
 			require.False(t, called)
+		})
+	}
+}
+
+func TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat(t *testing.T) {
+	ing := newTestIngester(t)
+	for _, format := range document.FormatMetadataCatalog() {
+		t.Run(format.ID, func(t *testing.T) {
+			content := []byte("synthetic retained original for " + format.ID)
+			digest := sha256.Sum256(content)
+			hash := hex.EncodeToString(digest[:])
+			prepared, err := ing.PrepareUpload(t.Context(), ing.Store.RootID(), format.ID+".synthetic",
+				format.MediaType, bytes.NewReader(content), hash, int64(len(content)))
+			require.NoError(t, err)
+			result, err := prepared.Commit(t.Context())
+			require.NoError(t, err)
+			reader, err := ing.Blobs.Open(result.Node.BlobHash)
+			require.NoError(t, err)
+			retained, readErr := io.ReadAll(reader)
+			require.NoError(t, errors.Join(readErr, reader.Close()))
+			assert.Equal(t, content, retained)
+
+			_, qualified := formatqualification.Lookup(formatqualification.Query{
+				CatalogID: format.ID, Capability: formatqualification.CapabilityRetain,
+				Evidence:         "TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat",
+				ImplementationID: OriginalRetentionImplementationID,
+				InputKind:        formatqualification.InputOriginalFile,
+			})
+			assert.True(t, qualified, "executed retention format %s is absent from the qualification manifest", format.ID)
 		})
 	}
 }

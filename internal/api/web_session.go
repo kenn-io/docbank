@@ -262,6 +262,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		}
 		return true
 	}
+	if path == "/api/v1/formats/capabilities" {
+		return boundedFormatCoverageQuery(r.URL.RawQuery)
+	}
 	if path == "/api/v1/collections" {
 		return true
 	}
@@ -313,6 +316,19 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	return len(parts) == 1 || parts[1] == "children" ||
 		parts[1] == "versions" || parts[1] == "provenance" ||
 		parts[1] == "tags"
+}
+
+func boundedFormatCoverageQuery(rawQuery string) bool {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return false
+	}
+	for key, entries := range values {
+		if (key != "family" && key != "format" && key != "extension") || len(entries) != 1 {
+			return false
+		}
+	}
+	return validateFormatQuery(values.Get("family"), values.Get("format"), values.Get("extension")) == nil
 }
 
 func collectionResourcePath(path string) (collectionID, resource string, ok bool) {

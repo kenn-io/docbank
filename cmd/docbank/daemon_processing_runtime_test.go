@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -152,6 +154,12 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 	runtime := waitForDaemon(t, root)
 	c := client.New("http://"+runtime.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	out, err := runCLI(t, "formats", "--json")
+	require.NoError(t, err)
+	var coverage api.FormatCoverageResponse
+	require.NoError(t, json.Unmarshal([]byte(out), &coverage))
+	assert.Equal(t, []string{provider.Descriptor().Fingerprint}, coverage.GeneratedBy.BoundProviders)
+
 	jobs, err := c.Jobs(t.Context())
 	require.NoError(t, err)
 	for _, job := range jobs {

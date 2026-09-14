@@ -42,6 +42,9 @@ const (
 	ooxmlContentTypesName    = "[Content_Types].xml"
 )
 
+// DetectionImplementationID is the version label exercised by format qualification fixtures.
+const DetectionImplementationID = "docbank-document-format-detection:pdf+ooxml+epub+compound+rtf+utf8-structured-text:v1"
+
 // CompoundDirectoryNames validates one legacy compound-file directory. It is
 // exported only so the Mistral compatibility suite can retain its allocation
 // regression test while format detection is shared with core inspection.
