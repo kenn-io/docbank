@@ -53,7 +53,23 @@ func TestProcessingPlanRouteIsAuthenticatedAndReturnsReviewedDisclosure(t *testi
 	assert.Contains(t, responseBody, `"original_file"`)
 	assert.Contains(t, responseBody, `"disclose_filename":true`)
 	assert.Contains(t, responseBody, `"filename":"private.txt"`)
+	var disclosure map[string]any
+	require.NoError(t, json.Unmarshal([]byte(responseBody), &disclosure))
+	flow, ok := disclosure["flow"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, flow)
+	hop, ok := flow[0].(map[string]any)
+	require.True(t, ok)
+	runtime, ok := hop["runtime_disclosure"].(map[string]any)
+	require.True(t, ok, "each provider hop must expose its complete runtime disclosure")
+	assert.Equal(t, "plaintext.in-process-v1", runtime["immediate_processor"])
+	assert.Equal(t, "plaintext.in-process-v1", runtime["ultimate_processor"])
+	assert.Equal(t, "in-process", runtime["endpoint"])
+	assert.Equal(t, []any{"byte_length", "content_hash", "detected_media_type", "sanitized_filename"},
+		runtime["metadata_classes"])
+	assert.Equal(t, []any{"normalized_evidence", "sanitized_markdown"}, runtime["retained_artifact_roles"])
 	assert.NotContains(t, responseBody, catalog.BlobsDir)
+	assert.NotContains(t, responseBody, "credential:")
 }
 
 func TestProcessingProfilesRouteListsExecutableProfilesDeterministically(t *testing.T) {
@@ -100,7 +116,7 @@ func TestProcessingClientReturnsCompletedEmbeddingIDs(t *testing.T) {
 	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
-		PlanFingerprint: plan.Fingerprint, Consent: true})
+		PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	status, err := c.ProcessingStatus(t.Context(), job.ID)
 	require.NoError(t, err)
@@ -122,7 +138,7 @@ func TestProcessingClientReportsRequiredEmbeddingFailure(t *testing.T) {
 			plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
 			require.NoError(t, err)
 			job, startErr := c.StartProcessing(t.Context(), api.StartProcessingRequest{
-				Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+				Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 			require.NotEmpty(t, job.ID)
 			status, err := c.ProcessingStatus(t.Context(), job.ID)
 			require.NoError(t, err)
@@ -144,6 +160,62 @@ func (invalidProcessingEmbeddingProvider) Embed(context.Context, []document.Embe
 	document.EmbeddingAuthorization,
 ) (document.EmbeddingResult, error) {
 	return document.EmbeddingResult{}, nil
+}
+
+func TestProcessingCoverageTracksTrashRestoreAndSupersessionEligibility(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/coverage.txt", "current retained evidence\n")
+	runProcessingForCoverage(t, ts, node)
+
+	readCoverage := func(versionID string) api.CoverageReport {
+		t.Helper()
+		response, body := get(t, ts, "/api/v1/coverage?profile=private&vault_uid="+
+			catalog.VaultID()+"&content_version_id="+versionID, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var report api.CoverageReport
+		require.NoError(t, json.Unmarshal([]byte(body), &report))
+		return report
+	}
+	assert.Equal(t, 1, readCoverage(node.CurrentVersionID).Renditions.Complete)
+
+	trashed, _, err := catalog.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	trashedCoverage := readCoverage(node.CurrentVersionID)
+	assert.Equal(t, "stale", trashedCoverage.Renditions.State)
+	assert.Equal(t, 1, trashedCoverage.Renditions.Stale)
+	assert.Zero(t, trashedCoverage.Renditions.Complete)
+
+	restored, _, err := catalog.Restore(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, 1, readCoverage(node.CurrentVersionID).Renditions.Complete)
+
+	replacementHash, replacementSize, err := catalog.Blobs.Write(strings.NewReader("replacement evidence\n"))
+	require.NoError(t, err)
+	replaced, replacement, err := catalog.ReplaceContent(t.Context(), restored.ID, restored.Revision,
+		replacementHash, replacementSize, "text/plain")
+	require.NoError(t, err)
+	assert.Equal(t, replacement.ID, replaced.CurrentVersionID)
+	superseded := readCoverage(node.CurrentVersionID)
+	assert.Equal(t, "stale", superseded.Renditions.State)
+	assert.Equal(t, 1, superseded.Renditions.Stale)
+	current := readCoverage(replacement.ID)
+	assert.Equal(t, "unavailable", current.Renditions.State)
+	assert.Equal(t, 1, current.Renditions.Unavailable)
+}
+
+func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node) api.ProcessingJob {
+	t.Helper()
+	selector := map[string]any{"node_id": node.ID,
+		"content_version_id": node.CurrentVersionID, "profile": "private"}
+	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+	jobResponse, jobBody := do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
+		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true})
+	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
+	return processingJobFromStream(t, jobBody)
 }
 
 func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *testing.T) {
@@ -239,7 +311,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 		t.Fatal("server did not drain accepted processing after provider cleanup")
 	}
 
-	rejected, err := c.StartProcessing(t.Context(), start)
+	rejected, err := c.StartProcessing(t.Context(), start, plan.ProfileFingerprint)
 	require.Error(t, err, "shutdown must reject new processing starts")
 	require.Empty(t, rejected.ID)
 
@@ -949,7 +1021,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
 	require.NoError(t, err)
 	for range 2 {
 		_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
-			PlanFingerprint: plan.Fingerprint})
+			PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 		require.ErrorIs(t, err, client.ErrProcessingConsent)
 		code, ok := client.ProblemCode(err)
 		require.True(t, ok)
@@ -965,7 +1037,7 @@ func TestDerivativePurgeReturnsCommittedReceiptWhenCleanupFails(t *testing.T) {
 	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
-		PlanFingerprint: plan.Fingerprint, Consent: true})
+		PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	purgePlan, err := c.PlanDerivativePurge(t.Context(), api.DerivativePurgePlanRequest{AttachmentIDs: []string{job.AttachmentID}})
 	require.NoError(t, err)
@@ -1003,7 +1075,7 @@ func TestDerivativePurgePreviewTracksOnlySelectedDerivatives(t *testing.T) {
 	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
-		PlanFingerprint: plan.Fingerprint, Consent: true})
+		PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	_, err = c.RunDerivativePurge(t.Context(), api.DerivativePurgeJobRequest{
 		ContentVersionIDs: versionRequest.ContentVersionIDs, PlanFingerprint: before.Fingerprint})
@@ -1021,7 +1093,7 @@ func TestDerivativePurgePreviewTracksOnlySelectedDerivatives(t *testing.T) {
 	selector = api.ProcessingSelector{NodeID: second.ID, ContentVersionID: second.CurrentVersionID, Profile: "private"}
 	plan, err = c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
 	require.NoError(t, err)
-	_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	for index, request := range requests {
 		after, err := c.PlanDerivativePurge(t.Context(), request)

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,9 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/store"
 )
+
+const processingStreamVersionID = "11111111-1111-4111-8111-111111111111"
+const processingStreamProfile = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T) {
 	const versionID = "11111111-1111-4111-8111-111111111111"
@@ -141,7 +145,7 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, profileFingerprint, grant.ProfileFingerprint)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
-		PlanFingerprint: plan.Fingerprint})
+		PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	status, err := c.ProcessingStatus(t.Context(), job.ID)
 	require.NoError(t, err)
@@ -211,7 +215,7 @@ func TestProcessingClientPreservesRenditionOutcomes(t *testing.T) {
 				_ = json.MarshalWrite(w, api.NewError(http.StatusConflict, test.code, "processing stopped"))
 			}))
 			defer server.Close()
-			_, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			_, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
 			require.ErrorIs(t, err, test.want)
 		})
 	}
@@ -228,7 +232,6 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 		{"failed", "invalid_response", nil},
 		{"failed", "input_rejected", nil},
 		{"failed", "stale_authority", nil},
-		{"failed", "", nil},
 		{"abandoned", "stale_authority", nil},
 		{"failed", "rendition_failed", store.ErrRenditionJobTerminal},
 		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired},
@@ -236,8 +239,8 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 		{"partial", "authorization", nil},
 	} {
 		t.Run(test.state+"/"+test.code, func(t *testing.T) {
-			job := api.ProcessingJob{ID: strings.Repeat("a", 64)}
-			status := api.ProcessingStatus{JobID: job.ID, State: test.state, FailureCode: test.code,
+			job := api.ProcessingJob{ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile, ID: strings.Repeat("a", 64)}
+			status := api.ProcessingStatus{JobID: job.ID, State: test.state, Phase: "embedding", FailureCode: test.code,
 				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/x-ndjson")
@@ -246,7 +249,7 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 					Sequence: 2, Type: "status", Status: &status, Terminal: true}))
 			}))
 			t.Cleanup(server.Close)
-			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
 			if test.state == "partial" {
 				require.NoError(t, err)
 			} else {
@@ -269,7 +272,7 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 func TestProcessingClientPreservesJobAfterStreamFailure(t *testing.T) {
 	for _, suffix := range []string{"", `{"sequence":2,"type":"status","status":`, `{}`} {
 		t.Run(suffix, func(t *testing.T) {
-			job := api.ProcessingJob{ID: strings.Repeat("a", 64),
+			job := api.ProcessingJob{ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile, ID: strings.Repeat("a", 64),
 				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/x-ndjson")
@@ -278,7 +281,7 @@ func TestProcessingClientPreservesJobAfterStreamFailure(t *testing.T) {
 				assert.NoError(t, err)
 			}))
 			t.Cleanup(server.Close)
-			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
 			require.Error(t, err)
 			assert.Equal(t, job, got)
 		})
@@ -290,14 +293,14 @@ func TestProcessingClientPreservesCompletedJobWhenStatusIsUnavailable(t *testing
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{
-			Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID}}))
+			Sequence: 1, Type: "job", Job: &api.ProcessingJob{ID: jobID, ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile}}))
 		_, err := io.WriteString(w, `{"sequence":2,"type":"error","terminal":true,"job":{"id":"`+jobID+
-			`","embedding_job_ids":["`+embeddingID+`"]},"error":{"status":503,"code":"processing_status_unavailable",`+
+			`","content_version_id":"`+processingStreamVersionID+`","profile_fingerprint":"`+processingStreamProfile+`","embedding_job_ids":["`+embeddingID+`"]},"error":{"status":503,"code":"processing_status_unavailable",`+
 			`"detail":"document processing status is unavailable; check the job status"}}`)
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	job, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{})
+	job, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
 	require.Error(t, err)
 	code, ok := client.ProblemCode(err)
 	require.True(t, ok)
@@ -321,4 +324,283 @@ func TestDerivativePurgeClientPreservesDeferredReceipt(t *testing.T) {
 	assert.Equal(t, "pack_retirement_deferred", code)
 	assert.Equal(t, "deferred", receipt.Outcome)
 	assert.Equal(t, 1, receipt.RemovedAttachments)
+}
+
+func TestProcessingClientDeliversDurableJobBeforeBlockedTerminal(t *testing.T) {
+	const jobID = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	terminalRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(terminalRelease) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		job := api.ProcessingJob{ID: jobID, EmbeddingJobIDs: []string{},
+			ProfileFingerprint: strings.Repeat("e", 64), ContentVersionID: "11111111-1111-4111-8111-111111111111"}
+		if !assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job})) {
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !assert.True(t, ok) {
+			return
+		}
+		flusher.Flush()
+		<-terminalRelease
+		status := api.ProcessingStatus{JobID: jobID, State: "completed", Phase: "published", EmbeddingJobIDs: []string{}}
+		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 2, Type: "status", Status: &status, Terminal: true}))
+	}))
+	t.Cleanup(server.Close)
+	stream, err := client.New(server.URL, serverKey).StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, stream.Close()) })
+
+	first, err := stream.Next()
+	require.NoError(t, err)
+	require.NotNil(t, first.Job)
+	assert.Equal(t, jobID, first.Job.ID)
+	releaseOnce.Do(func() { close(terminalRelease) })
+	second, err := stream.Next()
+	require.NoError(t, err)
+	require.NotNil(t, second.Status)
+	assert.Equal(t, "completed", second.Status.State)
+	_, err = stream.Next()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestProcessingClientRejectsMalformedAndTrailingIncrementalEvents(t *testing.T) {
+	const jobID = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	job := `{"sequence":1,"type":"job","job":{"id":"` + jobID + `","embedding_job_ids":[],"profile_fingerprint":"` +
+		strings.Repeat("e", 64) + `","content_version_id":"11111111-1111-4111-8111-111111111111"}}` + "\n"
+	for _, testCase := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "mismatched terminal job", body: job + `{"sequence":2,"type":"status","status":{"job_id":"` +
+			strings.Repeat("f", 64) + `","state":"completed","phase":"published","embedding_job_ids":[],"completed_bindings":0},"terminal":true}` + "\n",
+			want: "malformed terminal status"},
+		{name: "trailing event", body: job + `{"sequence":2,"type":"status","status":{"job_id":"` + jobID +
+			`","state":"completed","phase":"published","embedding_job_ids":[],"completed_bindings":0},"terminal":true}` + "\n" +
+			`{"sequence":3,"type":"status"}` + "\n", want: "continued after"},
+		{name: "oversized stream", body: job + strings.Repeat(" ", 64<<10), want: "too large"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				_, _ = io.WriteString(w, testCase.body)
+			}))
+			t.Cleanup(server.Close)
+			stream, err := client.New(server.URL, serverKey).StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, stream.Close()) })
+			_, err = stream.Next()
+			require.NoError(t, err)
+			_, err = stream.Next()
+			require.ErrorContains(t, err, testCase.want)
+		})
+	}
+}
+
+func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) {
+	const (
+		vaultID        = "11111111-1111-4111-8111-111111111111"
+		versionID      = "22222222-2222-4222-8222-222222222222"
+		otherVersionID = "55555555-5555-4555-8555-555555555555"
+	)
+	request := api.DocumentSearchRequest{Query: "visible", Mode: "semantic", Limit: 20,
+		Profile: "private", Fence: api.DocumentSourceFence{VaultUID: vaultID,
+			ContentVersionIDs: []string{versionID, otherVersionID}}}
+	validReport := func() api.DocumentSearchReport {
+		return api.DocumentSearchReport{RequestedMode: "semantic", ActualMode: "semantic",
+			Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
+			Degradations: []string{}, Trace: []api.DocumentSearchTrace{}, Results: []api.DocumentSearchResult{{
+				VaultUID: vaultID, NodeID: 7, ContentVersionID: versionID, Rank: 1, SemanticRank: 1,
+				Score: 0.9, Path: "/visible.pdf", Evidence: []api.DocumentEvidenceReference{{
+					Kind: "embedding", BuildID: strings.Repeat("f", 64), VectorSpaceID: strings.Repeat("a", 64),
+					EmbeddingSetID: strings.Repeat("b", 64), InputGenerationID: strings.Repeat("c", 64),
+					InputID: "chunk-000000-aaaaaaaaaaaa", InputKind: "rendition_chunk",
+					SourceManifestChecksum: strings.Repeat("d", 64),
+					TimeSpan:               &api.MediaTimeSpan{StartMS: 0, EndMS: 1000},
+				}},
+			}}}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*api.DocumentSearchReport)
+	}{
+		{name: "foreign vault", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].VaultUID = "33333333-3333-4333-8333-333333333333"
+		}},
+		{name: "outside version", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].ContentVersionID = "44444444-4444-4444-8444-444444444444"
+		}},
+		{name: "duplicate result", mutate: func(report *api.DocumentSearchReport) {
+			duplicate := report.Results[0]
+			duplicate.Rank = 2
+			duplicate.SemanticRank = 2
+			report.Results = append(report.Results, duplicate)
+		}},
+		{name: "noncanonical rank", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].Rank = 2
+		}},
+		{name: "unbounded lane rank", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].SemanticRank = 1001
+		}},
+		{name: "duplicate lane rank", mutate: func(report *api.DocumentSearchReport) {
+			duplicate := report.Results[0]
+			duplicate.NodeID, duplicate.ContentVersionID, duplicate.Rank = 8, otherVersionID, 2
+			duplicate.Evidence = append([]api.DocumentEvidenceReference(nil), duplicate.Evidence...)
+			duplicate.Evidence[0].EmbeddingSetID = strings.Repeat("e", 64)
+			report.Results = append(report.Results, duplicate)
+		}},
+		{name: "duplicate evidence", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].Evidence = append(report.Results[0].Evidence, report.Results[0].Evidence[0])
+		}},
+		{name: "unbounded evidence identity", mutate: func(report *api.DocumentSearchReport) {
+			report.RequestedMode, report.ActualMode = "lexical", "lexical"
+			report.Results[0].SemanticRank, report.Results[0].LexicalRank = 0, 1
+			report.Results[0].Evidence = []api.DocumentEvidenceReference{{
+				Kind: "rendition_segment", BuildID: strings.Repeat("e", 64), SegmentID: strings.Repeat("x", 1025),
+			}}
+		}},
+		{name: "inconsistent evidence identity", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].Evidence[0].EmbeddingSetID = ""
+		}},
+		{name: "relative path", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].Path = "visible.pdf"
+		}},
+		{name: "oversized excerpt", mutate: func(report *api.DocumentSearchReport) {
+			report.Results[0].Excerpt = strings.Repeat("e", 513)
+		}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			report := validReport()
+			testCase.mutate(&report)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(w, report))
+			}))
+			t.Cleanup(server.Close)
+			result, err := client.New(server.URL, serverKey).SearchDocuments(t.Context(), request)
+			require.ErrorContains(t, err, "search response")
+			assert.Empty(t, result.Results)
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		valid := validReport()
+		valid.Results[0].Path = "/" + strings.Repeat("p", 17000)
+		assert.NoError(t, json.MarshalWrite(w, valid))
+	}))
+	t.Cleanup(server.Close)
+	report, err := client.New(server.URL, serverKey).SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	assert.Equal(t, versionID, report.Results[0].ContentVersionID)
+}
+
+func TestProcessingClientRejectsResultRevokedFromConsumerFence(t *testing.T) {
+	const vaultID = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{
+			RequestedMode: "lexical", ActualMode: "lexical", Degradations: []string{}, Trace: []api.DocumentSearchTrace{},
+			Coverage: api.DocumentSearchCoverage{State: "unknown"}, Results: []api.DocumentSearchResult{{
+				VaultUID: vaultID, NodeID: 7, ContentVersionID: "33333333-3333-4333-8333-333333333333",
+				Rank: 1, LexicalRank: 1, Score: 1, Path: "/revoked.pdf",
+				Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}},
+			}},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	report, err := client.New(server.URL, serverKey).SearchDocuments(t.Context(), api.DocumentSearchRequest{
+		Query: "revoked", Mode: "lexical", Limit: 20, Profile: "private",
+		Fence: api.DocumentSourceFence{VaultUID: vaultID,
+			ContentVersionIDs: []string{"22222222-2222-4222-8222-222222222222"}},
+	})
+	require.ErrorContains(t, err, "search response")
+	assert.Empty(t, report.Results)
+}
+
+func TestProcessingClientValidatesStreamJobIdentities(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*api.ProcessingJob)
+	}{
+		{"matching", nil},
+		{"foreign version", func(job *api.ProcessingJob) { job.ContentVersionID = "22222222-2222-4222-8222-222222222222" }},
+		{"foreign profile", func(job *api.ProcessingJob) { job.ProfileFingerprint = strings.Repeat("f", 64) }},
+		{"malformed job", func(job *api.ProcessingJob) { job.ID = "invalid" }},
+		{"malformed rendition", func(job *api.ProcessingJob) { job.RenditionJobID = "invalid" }},
+		{"malformed attachment", func(job *api.ProcessingJob) { job.AttachmentID = "invalid" }},
+		{"malformed embedding", func(job *api.ProcessingJob) { job.EmbeddingJobIDs = []string{"invalid"} }},
+		{"duplicate embedding", func(job *api.ProcessingJob) {
+			job.EmbeddingJobIDs = []string{strings.Repeat("d", 64), strings.Repeat("d", 64)}
+		}},
+	} {
+		for _, terminal := range []bool{false, true} {
+			t.Run(test.name+"/terminal="+strconv.FormatBool(terminal), func(t *testing.T) {
+				firstJob := api.ProcessingJob{ID: strings.Repeat("a", 64), RenditionJobID: strings.Repeat("b", 64),
+					AttachmentID: strings.Repeat("c", 64), EmbeddingJobIDs: []string{strings.Repeat("d", 64)},
+					ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile}
+				lastJob := firstJob
+				if test.mutate != nil {
+					if terminal {
+						test.mutate(&lastJob)
+					} else {
+						test.mutate(&firstJob)
+					}
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/x-ndjson")
+					assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &firstJob}))
+					assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 2, Type: "error", Terminal: true,
+						Job: &lastJob, Error: api.NewError(503, "processing_status_unavailable", "Check the job status.")}))
+				}))
+				t.Cleanup(server.Close)
+				stream, err := client.New(server.URL, serverKey).StartProcessingStream(t.Context(), api.StartProcessingRequest{
+					Selector:        api.ProcessingSelector{NodeID: 7, ContentVersionID: processingStreamVersionID, Profile: "private"},
+					PlanFingerprint: strings.Repeat("c", 64), Consent: true}, processingStreamProfile)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, stream.Close()) })
+				event, err := stream.Next()
+				if terminal || test.mutate == nil {
+					require.NoError(t, err)
+					require.Equal(t, firstJob, *event.Job)
+					event, err = stream.Next()
+				}
+				require.Error(t, err)
+				if test.mutate == nil {
+					code, ok := client.ProblemCode(err)
+					require.True(t, ok)
+					assert.Equal(t, "processing_status_unavailable", code)
+					assert.Equal(t, lastJob, *event.Job)
+				} else {
+					assert.Empty(t, event, "invalid identities must never reach progress consumers")
+					_, problem := client.ProblemCode(err)
+					assert.False(t, problem, "invalid terminal jobs must not surface as valid API errors")
+				}
+			})
+		}
+	}
+}
+
+func TestProcessingClientValidatesStatusEmbeddingIdentities(t *testing.T) {
+	for _, ids := range [][]string{{"invalid"}, {strings.Repeat("a", 64), strings.Repeat("a", 64)}} {
+		t.Run(strings.Join(ids, ","), func(t *testing.T) {
+			job := api.ProcessingJob{ID: strings.Repeat("b", 64), ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
+				assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 2, Type: "status", Terminal: true,
+					Status: &api.ProcessingStatus{JobID: job.ID, State: "completed", Phase: "published", EmbeddingJobIDs: ids}}))
+			}))
+			t.Cleanup(server.Close)
+			got, err := client.New(server.URL, serverKey).StartProcessing(t.Context(), api.StartProcessingRequest{
+				Selector: api.ProcessingSelector{ContentVersionID: processingStreamVersionID}}, processingStreamProfile)
+			require.Error(t, err)
+			assert.Equal(t, job.ID, got.ID, "retain the already validated durable receipt")
+			assert.Empty(t, got.EmbeddingJobIDs, "reject unvalidated terminal identities")
+		})
+	}
 }

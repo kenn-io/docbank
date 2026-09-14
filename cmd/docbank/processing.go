@@ -177,11 +177,33 @@ func writeProcessingPlan(cmd *cobra.Command, plan api.ProcessingPlan) error {
 	for _, hop := range plan.Flow {
 		_, _ = fmt.Fprintf(flow, "%s\t%s\t%s\t%s\t%s\n", hop.Capability, hop.ProviderID,
 			hop.TrustBoundary, displayList(hop.InputClasses), hop.Filename)
+		runtime := hop.RuntimeDisclosure
+		_, _ = fmt.Fprintf(flow, "  processors\t%s -> %s\n", runtime.ImmediateProcessor, runtime.UltimateProcessor)
+		_, _ = fmt.Fprintf(flow, "  endpoint\t%s\n", runtime.Endpoint)
+		_, _ = fmt.Fprintf(flow, "  deployment\t%s\n", runtime.Deployment)
+		if runtime.Model != "" || runtime.ModelRevision != "" {
+			_, _ = fmt.Fprintf(flow, "  model\t%s\n", processingModelIdentity(runtime.Model, runtime.ModelRevision))
+		}
+		if runtime.VectorSpace != "" {
+			_, _ = fmt.Fprintf(flow, "  vector space\t%s\n", runtime.VectorSpace)
+		}
+		_, _ = fmt.Fprintf(flow, "  provider metadata\t%s\n", displayList(runtime.MetadataClasses))
+		_, _ = fmt.Fprintf(flow, "  retained artifacts\t%s\n", displayList(runtime.RetainedArtifactRoles))
 	}
 	if err := flow.Flush(); err != nil {
 		return fmt.Errorf("writing processing flow: %w", err)
 	}
 	return nil
+}
+
+func processingModelIdentity(model, revision string) string {
+	if model == "" {
+		return revision
+	}
+	if revision == "" {
+		return model
+	}
+	return model + "@" + revision
 }
 
 func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profile, fingerprint string,
@@ -194,33 +216,49 @@ func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profi
 	if err != nil {
 		return err
 	}
-	job, err := c.StartProcessing(cmd.Context(), api.StartProcessingRequest{
-		Selector: selector, PlanFingerprint: fingerprint, Consent: true,
-	})
+	plan, err := c.PlanProcessing(cmd.Context(), api.ProcessingPlanRequest{Selector: selector})
 	if err != nil {
-		if job.ID != "" {
-			return fmt.Errorf("processing job %s: %w", job.ID, err)
-		}
 		return err
 	}
+	if plan.Selector != selector || plan.Fingerprint != fingerprint {
+		return client.ErrProcessingPlanChanged
+	}
+	stream, err := c.StartProcessingStream(cmd.Context(), api.StartProcessingRequest{
+		Selector: selector, PlanFingerprint: fingerprint, Consent: true,
+	}, plan.ProfileFingerprint)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stream.Close() }()
+	jobEvent, err := stream.Next()
+	if err != nil {
+		return err
+	}
+	job := *jobEvent.Job
+	if ndjsonOutput {
+		if err := writeCLIJSON(cmd.OutOrStdout(), jobEvent); err != nil {
+			return err
+		}
+	} else if !jsonOutput {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "processing job: %s\n", job.ID)
+	}
+	statusEvent, err := stream.Next()
+	if err != nil {
+		if ndjsonOutput && statusEvent.Terminal {
+			if writeErr := writeCLIJSON(cmd.OutOrStdout(), statusEvent); writeErr != nil {
+				return writeErr
+			}
+		}
+		return fmt.Errorf("processing job %s: %w", job.ID, err)
+	}
+	status := *statusEvent.Status
+	job.EmbeddingJobIDs = status.EmbeddingJobIDs
 	if jsonOutput {
 		return writeCLIJSON(cmd.OutOrStdout(), job)
 	}
-	status, err := c.ProcessingStatus(cmd.Context(), job.ID)
-	if err != nil {
-		return fmt.Errorf("processing job %s: %w", job.ID, err)
-	}
 	if ndjsonOutput {
-		if err := writeCLIJSON(cmd.OutOrStdout(), api.ProcessingJobEvent{
-			Sequence: 1, Type: "job", Job: &job,
-		}); err != nil {
-			return err
-		}
-		return writeCLIJSON(cmd.OutOrStdout(), api.ProcessingJobEvent{
-			Sequence: 2, Type: "status", Status: &status, Terminal: true,
-		})
+		return writeCLIJSON(cmd.OutOrStdout(), statusEvent)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "processing job: %s\n", job.ID)
 	return writeProcessingStatus(cmd, status)
 }
 

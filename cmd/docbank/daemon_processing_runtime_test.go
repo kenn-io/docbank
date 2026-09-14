@@ -77,7 +77,13 @@ func TestExecutableProcessingProfilesRegistersPinnedRenditionChunkTokenizer(t *t
 			MaxTokens: 128, OverlapTokens: 8, Tokenizer: "unicode-runes", TokenizerRevision: "v1",
 			TruncationPolicy: string(document.TruncationPolicyReject)},
 		ModelInput: config.EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)},
+		Runtime: &config.EmbeddingRuntimeConfig{AdapterContract: openAIEmbeddingAdapter,
+			Endpoint: "http://embed.internal:11434", ModelRevision: "v1", DeploymentEpoch: "v1",
+			RequestTimeout: config.Duration(time.Second), MaxRequestBytes: 1 << 20,
+			AllowedCIDRs: []string{"10.0.0.0/8"}, ProxyMode: "disabled", ConnectTimeout: config.Duration(time.Second),
+			KeepAlive: config.Duration(time.Second), TLSHandshakeTimeout: config.Duration(time.Second)},
 	}
+	cfg.CredentialBindings["semantic"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_SEMANTIC_KEY"}
 	cfg.ProcessingProfiles["private-text"] = config.ProcessingProfileConfig{
 		Rendition: "plaintext", Embeddings: []string{"semantic"}, Retrieval: "lexical",
 		AttachmentPolicyFingerprint: strings.Repeat("5", 64), CompletenessFingerprint: strings.Repeat("6", 64),
@@ -101,6 +107,11 @@ func TestExecutableProcessingProfilesRegistersPinnedRenditionChunkTokenizer(t *t
 	assert.Equal(t, unicodeRuneSpec,
 		profiles["private-text"].Tokenizers["semantic"].Identity().Name+"@"+
 			profiles["private-text"].Tokenizers["semantic"].Identity().Revision)
+	disclosure := profiles["private-text"].EmbeddingDisclosures["semantic"]
+	assert.Equal(t, openAIEmbeddingAdapter, disclosure.ImmediateProcessor)
+	assert.Equal(t, descriptor.ID, disclosure.UltimateProcessor)
+	assert.Equal(t, "http://embed.internal:11434", disclosure.Endpoint)
+	assert.Equal(t, "v1", disclosure.Deployment)
 }
 
 type inertEmbeddingProvider struct{ descriptor document.EmbeddingDescriptor }

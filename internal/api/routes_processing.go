@@ -473,7 +473,8 @@ func fromProcessingJob(job processing.Job) ProcessingJob {
 func fromProcessingCoverageClass(item processing.CoverageClass) CoverageClass {
 	return CoverageClass{Name: item.Name, Required: item.Required, State: item.State,
 		Complete: item.Complete, Unavailable: item.Unavailable, Stale: item.Stale,
-		Ineligible: item.Ineligible, Total: item.Total}
+		Ineligible: item.Ineligible, Rebuilding: item.Rebuilding,
+		PreviousGenerationServing: item.PreviousServing, Total: item.Total}
 }
 
 func fromDocumentSearchReport(report processing.SearchReport, explain bool) DocumentSearchReport {
@@ -528,7 +529,15 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 	for index, hop := range plan.Flow {
 		result.Flow[index] = ProcessingFlowHop{Capability: hop.Capability,
 			ProviderID: hop.ProviderID, TrustBoundary: hop.TrustBoundary,
-			InputClasses: hop.InputClasses, DiscloseFilename: hop.DiscloseFilename, Filename: hop.Filename}
+			InputClasses: hop.InputClasses, DiscloseFilename: hop.DiscloseFilename, Filename: hop.Filename,
+			RuntimeDisclosure: ProcessingRuntimeDisclosure{
+				ImmediateProcessor: hop.RuntimeDisclosure.ImmediateProcessor,
+				UltimateProcessor:  hop.RuntimeDisclosure.UltimateProcessor,
+				Endpoint:           hop.RuntimeDisclosure.Endpoint, Deployment: hop.RuntimeDisclosure.Deployment,
+				Model: hop.RuntimeDisclosure.Model, ModelRevision: hop.RuntimeDisclosure.ModelRevision,
+				VectorSpace:           hop.RuntimeDisclosure.VectorSpace,
+				MetadataClasses:       hop.RuntimeDisclosure.MetadataClasses,
+				RetainedArtifactRoles: hop.RuntimeDisclosure.RetainedArtifactRoles}}
 	}
 	return result
 }

@@ -42,7 +42,8 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 					CompleteDocuments: 1, State: "complete"},
 				Results: []api.DocumentSearchResult{{VaultUID: vaultID, NodeID: 42,
 					ContentVersionID: processingTestVersionID, Rank: 1, Score: 0.75,
-					Path: "/docs/report.pdf", Excerpt: "synthetic match"}},
+					Path: "/docs/report.pdf", Excerpt: "synthetic match", LexicalRank: 1,
+					Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}},
 				Trace: []api.DocumentSearchTrace{{Code: "source_fence", Count: 1}},
 			}))
 		default:

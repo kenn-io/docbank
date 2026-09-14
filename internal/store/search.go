@@ -209,7 +209,7 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 	result := make([]ExplainedLexicalCandidate, len(hits))
 	for index, hit := range hits {
 		result[index] = ExplainedLexicalCandidate{Node: hit.Node, Path: hit.Path,
-			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: hit.Node.Name}
+			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: boundedExplainedSearchExcerpt(hit.Node.Name)}
 	}
 	return result
 }

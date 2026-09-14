@@ -324,7 +324,9 @@ func openVaultWithRootOpener(
 		}
 		profiles[name] = internalprocessing.ProfileConfig{Profile: profile.Profile,
 			RenditionProvider:    profile.RenditionProvider,
+			RenditionDisclosure:  toInternalRuntimeDisclosure(profile.RenditionDisclosure),
 			EmbeddingProviders:   profile.EmbeddingProviders,
+			EmbeddingDisclosures: toInternalRuntimeDisclosures(profile.EmbeddingDisclosures),
 			EmbeddingClassifiers: classifiers,
 			Tokenizers:           profile.Tokenizers}
 	}

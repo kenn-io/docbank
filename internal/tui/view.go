@@ -356,6 +356,9 @@ func (m Model) processingLines(width int) []string {
 	}
 	if m.processingJob != nil {
 		lines = appendWrapped(lines, " Processing job: "+m.processingJob.ID, width, m.styles.muted)
+		if m.processingStarting && m.processingStatus == nil {
+			lines = appendWrapped(lines, " Awaiting daemon status...", width, m.styles.muted)
+		}
 	}
 	if m.processingStatusErr != nil {
 		lines = appendWrapped(lines, " Status unavailable: "+quoted(m.processingStatusErr.Error()), width, m.styles.error)
@@ -390,6 +393,7 @@ func (m Model) processingLines(width int) []string {
 		if hop.DiscloseFilename {
 			lines = appendWrapped(lines, "   Filename: "+quoted(hop.Filename), width, m.styles.muted)
 		}
+		lines = appendProcessingRuntimeDisclosure(lines, hop.RuntimeDisclosure, width, m.styles.muted)
 		lines = appendWrapped(lines, "   "+processingBoundaryDetail(hop.TrustBoundary), width, m.styles.muted)
 	}
 	lines = append(lines, separator,
@@ -410,7 +414,7 @@ func (m Model) processingLines(width int) []string {
 	} else if m.processingCoverage != nil {
 		coverage := *m.processingCoverage
 		lines = appendWrapped(lines, " State: "+coverage.State, width, lipgloss.NewStyle())
-		if coverage.State == "rebuilding" {
+		if coverage.State == "rebuilding" && processingPreviousGenerationServing(coverage) > 0 {
 			lines = appendWrapped(lines, " Previous complete generation remains available while the rebuild runs.", width, m.styles.muted)
 		}
 		lines = append(lines, processingCoverageLine(m.styles, coverage.Renditions, width))
@@ -509,9 +513,17 @@ func processingCoverageLine(style styles, item api.CoverageClass, width int) str
 	if name == "rendition" {
 		name = "Rendition"
 	}
-	line := fmt.Sprintf(" %s · %s · %s · %d/%d complete · unavailable: %d · stale: %d · ineligible: %d",
-		name, requirement, item.State, item.Complete, item.Total, item.Unavailable, item.Stale, item.Ineligible)
+	line := fmt.Sprintf(" %s · %s · %s · %d/%d complete · rebuilding: %d · unavailable: %d · stale: %d · ineligible: %d",
+		name, requirement, item.State, item.Complete, item.Total, item.Rebuilding, item.Unavailable, item.Stale, item.Ineligible)
 	return style.muted.Render(pad(fit(line, width), width))
+}
+
+func processingPreviousGenerationServing(coverage api.CoverageReport) int {
+	total := coverage.Renditions.PreviousGenerationServing
+	for _, item := range coverage.Embeddings {
+		total += item.PreviousGenerationServing
+	}
+	return total
 }
 
 func orNone(values []string) string {
@@ -1623,6 +1635,39 @@ func (m Model) renderProcessingConfirmation(background string) string {
 	lines[0] = m.styles.modalTitle.Render(lines[0])
 	modal := m.styles.modal.Render(strings.Join(lines, "\n"))
 	return m.overlayModal(background, modal)
+}
+
+func appendProcessingRuntimeDisclosure(lines []string, runtime api.ProcessingRuntimeDisclosure,
+	width int, style lipgloss.Style,
+) []string {
+	lines = appendWrapped(lines, "   Processors: "+runtime.ImmediateProcessor+" -> "+runtime.UltimateProcessor, width, style)
+	lines = appendWrapped(lines, "   Endpoint: "+runtime.Endpoint, width, style)
+	lines = appendWrapped(lines, "   Deployment: "+runtime.Deployment, width, style)
+	if model := processingRuntimeModel(runtime); model != "-" {
+		lines = appendWrapped(lines, "   Model: "+model, width, style)
+	}
+	if runtime.VectorSpace != "" {
+		lines = appendWrapped(lines, "   Vector space: "+runtime.VectorSpace, width, style)
+	}
+	lines = appendWrapped(lines, "   Provider metadata: "+orNone(runtime.MetadataClasses), width, style)
+	return appendWrapped(lines, "   Retained artifacts: "+orNone(runtime.RetainedArtifactRoles), width, style)
+}
+
+func processingRuntimeModel(runtime api.ProcessingRuntimeDisclosure) string {
+	if runtime.Model == "" {
+		return orDash(runtime.ModelRevision)
+	}
+	if runtime.ModelRevision == "" {
+		return runtime.Model
+	}
+	return runtime.Model + "@" + runtime.ModelRevision
+}
+
+func orDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func (m Model) helpLines() []string {

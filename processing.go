@@ -157,8 +157,31 @@ func fromProcessingPlan(plan internalprocessing.Plan) ProcessingPlan {
 	for index, hop := range plan.Flow {
 		result.Flow[index] = ProcessingFlowHop{Capability: hop.Capability,
 			ProviderID: hop.ProviderID, TrustBoundary: hop.TrustBoundary,
-			InputClasses: hop.InputClasses, DiscloseFilename: hop.DiscloseFilename,
-			Filename: hop.Filename}
+			InputClasses: hop.InputClasses, DiscloseFilename: hop.DiscloseFilename, Filename: hop.Filename, RuntimeDisclosure: fromInternalRuntimeDisclosure(hop.RuntimeDisclosure)}
+	}
+	return result
+}
+
+func fromInternalRuntimeDisclosure(value internalprocessing.RuntimeDisclosure) ProcessingRuntimeDisclosure {
+	return ProcessingRuntimeDisclosure{ImmediateProcessor: value.ImmediateProcessor,
+		UltimateProcessor: value.UltimateProcessor, Endpoint: value.Endpoint,
+		Deployment: value.Deployment, Model: value.Model, ModelRevision: value.ModelRevision,
+		VectorSpace: value.VectorSpace, MetadataClasses: value.MetadataClasses,
+		RetainedArtifactRoles: value.RetainedArtifactRoles}
+}
+
+func toInternalRuntimeDisclosure(value ProcessingRuntimeDisclosure) internalprocessing.RuntimeDisclosure {
+	return internalprocessing.RuntimeDisclosure{ImmediateProcessor: value.ImmediateProcessor,
+		UltimateProcessor: value.UltimateProcessor, Endpoint: value.Endpoint,
+		Deployment: value.Deployment, Model: value.Model, ModelRevision: value.ModelRevision,
+		VectorSpace: value.VectorSpace, MetadataClasses: value.MetadataClasses,
+		RetainedArtifactRoles: value.RetainedArtifactRoles}
+}
+
+func toInternalRuntimeDisclosures(values map[string]ProcessingRuntimeDisclosure) map[string]internalprocessing.RuntimeDisclosure {
+	result := make(map[string]internalprocessing.RuntimeDisclosure, len(values))
+	for name, value := range values {
+		result[name] = toInternalRuntimeDisclosure(value)
 	}
 	return result
 }
@@ -166,7 +189,8 @@ func fromProcessingPlan(plan internalprocessing.Plan) ProcessingPlan {
 func fromCoverageClass(item internalprocessing.CoverageClass) CoverageClass {
 	return CoverageClass{Name: item.Name, Required: item.Required, State: item.State,
 		Complete: item.Complete, Unavailable: item.Unavailable, Stale: item.Stale,
-		Ineligible: item.Ineligible, Total: item.Total}
+		Ineligible: item.Ineligible, Rebuilding: item.Rebuilding,
+		PreviousGenerationServing: item.PreviousServing, Total: item.Total}
 }
 
 func fromSearchReport(report internalprocessing.SearchReport, explain bool) DocumentSearchReport {

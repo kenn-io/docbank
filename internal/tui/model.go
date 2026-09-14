@@ -49,7 +49,7 @@ type Backend interface {
 	PlanProcessing(ctx context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error)
 	DocumentCoverage(ctx context.Context, profile string, fence api.DocumentSourceFence) (api.CoverageReport, error)
 	SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error)
-	StartProcessing(ctx context.Context, request api.StartProcessingRequest) (api.ProcessingJob, error)
+	StartProcessingStream(ctx context.Context, request api.StartProcessingRequest, profileFingerprint string) (ProcessingEventStream, error)
 	ProcessingStatus(ctx context.Context, jobID string) (api.ProcessingStatus, error)
 	RenditionForSelector(ctx context.Context, selector api.ProcessingSelector, maxBytes int64) (Rendition, error)
 	TrashPage(ctx context.Context, limit, offset int) (api.TrashPage, error)
@@ -58,6 +58,13 @@ type Backend interface {
 	AuditHistory(
 		ctx context.Context, path string, nodeID int64, limit int, cursor string,
 	) (api.AuditEventPage, error)
+}
+
+// ProcessingEventStream is the bounded live processing sequence consumed by
+// the TUI. Implementations return one durable job event and one terminal event.
+type ProcessingEventStream interface {
+	Next() (api.ProcessingJobEvent, error)
+	Close() error
 }
 
 type viewMode uint8
@@ -185,7 +192,15 @@ type Rendition struct {
 }
 type processingStartedMsg struct {
 	requestID uint64
-	job       api.ProcessingJob
+	streamID  uint64
+	event     api.ProcessingJobEvent
+	stream    ProcessingEventStream
+	err       error
+}
+type processingTerminalMsg struct {
+	requestID uint64
+	streamID  uint64
+	event     api.ProcessingJobEvent
 	err       error
 }
 type processingStatusLoadedMsg struct {
@@ -352,6 +367,8 @@ type Model struct {
 	processingStarting     bool
 	processingRunID        uint64
 	processingRunErr       error
+	processingStreamID     uint64
+	processingCancel       context.CancelFunc
 	trashOpen              bool
 	trashItems             []api.Node
 	trashTotal             int
@@ -540,17 +557,44 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case processingStartedMsg:
-		if !m.processingOpen || msg.requestID != m.processingRequestID {
+		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.streamID != m.processingStreamID {
+			if msg.stream != nil {
+				_ = msg.stream.Close()
+			}
 			return m, nil
 		}
+		if msg.err != nil {
+			m.processingStarting = false
+			m.finishProcessingStream(msg.streamID)
+			m.processingRunErr = msg.err
+			return m, nil
+		}
+		if msg.event.Job == nil || msg.stream == nil {
+			m.processingStarting = false
+			m.finishProcessingStream(msg.streamID)
+			m.processingRunErr = errors.New("processing stream returned no durable job")
+			return m, nil
+		}
+		job := *msg.event.Job
+		m.processingJob = &job
+		return m, m.waitProcessingTerminal(msg.stream, msg.requestID, msg.streamID)
+	case processingTerminalMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.streamID != m.processingStreamID {
+			return m, nil
+		}
+		m.finishProcessingStream(msg.streamID)
 		m.processingStarting = false
 		m.processingRunErr = msg.err
-		if msg.job.ID == "" {
-			return m, nil
+		if msg.event.Job != nil {
+			m.processingJob = msg.event.Job
 		}
-		m.processingJob = &msg.job
-		m.processingStatus, m.processingStatusErr = nil, nil
-		commands := []tea.Cmd{m.loadProcessingStatus(msg.job.ID, msg.requestID)}
+		m.processingStatus, m.processingStatusErr = msg.event.Status, nil
+		var commands []tea.Cmd
+		if msg.event.Status != nil {
+			m.processingJob.EmbeddingJobIDs = msg.event.Status.EmbeddingJobIDs
+		} else if m.processingJob != nil {
+			commands = append(commands, m.loadProcessingStatus(m.processingJob.ID, msg.requestID))
+		}
 		if m.processingPlan != nil {
 			m.processingLoading = true
 			commands = append(commands, m.loadProcessingCoverage(*m.processingPlan, msg.requestID))
@@ -816,6 +860,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !ok || selected.node.Kind != nodeKindFile || selected.node.CurrentVersionID == "" {
 			return m, nil
 		}
+		m.cancelProcessingStream()
 		m.processingOpen = true
 		m.processingNode = selected
 		m.processingProfiles = nil
@@ -1131,6 +1176,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.processingSearching {
 		switch msg.String() {
 		case keyCtrlC:
+			m.cancelProcessingStream()
 			m.quitting = true
 			return m, tea.Quit
 		case keyEscape:
@@ -1158,12 +1204,14 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "q", keyCtrlC:
+		m.cancelProcessingStream()
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
 		return m, nil
 	case keyEscape, "backspace", "left", "h":
+		m.cancelProcessingStream()
 		m.processingOpen = false
 		m.processingStarting = false
 		m.processingLoading = false
@@ -1191,6 +1239,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.processingStarting || len(m.processingProfiles) < 2 {
 			return m, nil
 		}
+		m.cancelProcessingStream()
 		if msg.String() == "[" {
 			m.processingProfile = (m.processingProfile + len(m.processingProfiles) - 1) % len(m.processingProfiles)
 		} else {
@@ -1215,8 +1264,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.processingConfirmation = &plan
 			return m, nil
 		}
-		cmd := m.startProcessing(*m.processingPlan, m.processingRequestID, false)
-		return m, cmd
+		return m, tea.Batch(m.startSpinner(), m.beginProcessing(*m.processingPlan, m.processingRequestID, false))
 	case "R":
 		if m.processingPlan == nil {
 			return m, nil
@@ -1255,6 +1303,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateProcessingConfirmationKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", keyCtrlC:
+		m.cancelProcessingStream()
 		m.quitting = true
 		return m, tea.Quit
 	case keyEscape:
@@ -1266,8 +1315,8 @@ func (m Model) updateProcessingConfirmationKeys(msg tea.KeyPressMsg) (tea.Model,
 		}
 		plan := *m.processingConfirmation
 		m.processingConfirmation = nil
-		cmd := m.startProcessing(plan, m.processingRequestID, true)
-		return m, cmd
+		m.processingErr = nil
+		return m, tea.Batch(m.startSpinner(), m.beginProcessing(plan, m.processingRequestID, true))
 	}
 	return m, nil
 }
@@ -1554,16 +1603,65 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 	}
 }
 
-func (m *Model) startProcessing(plan api.ProcessingPlan, requestID uint64, consent bool) tea.Cmd {
+func (m *Model) beginProcessing(plan api.ProcessingPlan, requestID uint64, consent bool) tea.Cmd {
+	m.cancelProcessingStream()
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.processingCancel = cancel
 	m.processingStarting = true
 	m.processingRunID++
 	m.processingRunErr = nil
 	m.processingJob, m.processingStatus, m.processingStatusErr = nil, nil, nil
-	ctx, backend := m.ctx, m.backend
-	return tea.Batch(m.startSpinner(), func() tea.Msg {
-		job, err := backend.StartProcessing(ctx, api.StartProcessingRequest{Selector: plan.Selector, PlanFingerprint: plan.Fingerprint, Consent: consent})
-		return processingStartedMsg{requestID: requestID, job: job, err: err}
-	})
+	return m.startProcessingWithContext(ctx, plan, requestID, m.processingStreamID, consent)
+}
+
+func (m *Model) cancelProcessingStream() {
+	if m.processingCancel != nil {
+		m.processingCancel()
+		m.processingCancel = nil
+	}
+	m.processingStreamID++
+	m.processingStarting = false
+}
+
+func (m *Model) finishProcessingStream(streamID uint64) {
+	if streamID != m.processingStreamID {
+		return
+	}
+	if m.processingCancel != nil {
+		m.processingCancel()
+		m.processingCancel = nil
+	}
+	m.processingStreamID++
+}
+
+func (m Model) startProcessingWithContext(
+	ctx context.Context, plan api.ProcessingPlan, requestID, streamID uint64, consent bool,
+) tea.Cmd {
+	backend := m.backend
+	return func() tea.Msg {
+		stream, err := backend.StartProcessingStream(ctx, api.StartProcessingRequest{
+			Selector: plan.Selector, PlanFingerprint: plan.Fingerprint, Consent: consent,
+		}, plan.ProfileFingerprint)
+		if err != nil {
+			return processingStartedMsg{requestID: requestID, streamID: streamID, err: err}
+		}
+		event, err := stream.Next()
+		if err != nil {
+			_ = stream.Close()
+			return processingStartedMsg{requestID: requestID, streamID: streamID, err: err}
+		}
+		return processingStartedMsg{requestID: requestID, streamID: streamID, event: event, stream: stream}
+	}
+}
+
+func (m Model) waitProcessingTerminal(
+	stream ProcessingEventStream, requestID, streamID uint64,
+) tea.Cmd {
+	return func() tea.Msg {
+		defer func() { _ = stream.Close() }()
+		event, err := stream.Next()
+		return processingTerminalMsg{requestID: requestID, streamID: streamID, event: event, err: err}
+	}
 }
 
 func (m Model) loadProcessingStatus(jobID string, requestID uint64) tea.Cmd {

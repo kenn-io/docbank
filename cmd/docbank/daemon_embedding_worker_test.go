@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,12 +60,56 @@ func TestStartEmbeddingWorkerIfReadyUsesSupervisorCancellation(t *testing.T) {
 	require.ErrorIs(t, err, want)
 }
 
+func TestConfigureEmbeddingRuntimesDefersMissingCredentialUntilSelectedOperation(t *testing.T) {
+	serverRequests := &atomic.Int64{}
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		serverRequests.Add(1)
+	}))
+	t.Cleanup(server.Close)
+	const environmentName = "DOCBANK_TEST_MISSING_EMBEDDING_KEY"
+	t.Setenv(environmentName, "")
+	cfg, descriptor := syntheticLoopbackOpenAIConfig(t, server.URL, environmentName)
+
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err, "an unused hosted profile must not require its secret during daemon startup")
+	provider := bundle.providers["semantic"]
+	require.NotNil(t, provider)
+	_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{
+		Key: "document-1", Role: document.EmbeddingRoleDocument,
+		Kind: document.EmbeddingInputRenditionChunk, Text: "passage",
+	}}, document.EmbeddingAuthorization{ProviderID: descriptor.ID,
+		DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint,
+		MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20})
+	require.ErrorIs(t, err, openaicompat.ErrUnauthorized)
+	assert.Zero(t, serverRequests.Load(), "missing operation-time credentials must fail before provider transport")
+	for _, private := range []string{"credential:semantic", environmentName, "synthetic-secret"} {
+		assert.NotContains(t, err.Error(), private)
+	}
+}
+
 func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(server.Close)
 	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "synthetic-secret")
+	cfg, final := syntheticLoopbackOpenAIConfig(t, server.URL, "DOCBANK_TEST_EMBEDDING_KEY")
+
+	duplicate := cfg.EmbeddingProfiles["semantic"]
+	duplicate.Chunk.MaxTokens = 64
+	cfg.EmbeddingProfiles["alternate-chunks"] = duplicate
+	require.NoError(t, cfg.Validate())
+	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "")
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err)
+	assert.True(t, bundle.registry.Ready())
+	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
+	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
+	assert.Equal(t, processing.EmbeddingProviderCapacity, classification)
+}
+
+func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName string) (config.Config, document.EmbeddingDescriptor) {
+	t.Helper()
 	cfg := config.Default()
-	cfg.CredentialBindings["semantic"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_EMBEDDING_KEY"}
+	cfg.CredentialBindings["semantic"] = config.CredentialBindingConfig{EnvironmentVariable: environmentName}
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
 	require.NoError(t, err)
 	profile := config.EmbeddingProfileConfig{
@@ -79,14 +124,14 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 		Chunk: config.EmbeddingChunkConfig{ContextFingerprint: strings.Repeat("3", 64), Formatter: "synthetic/v1",
 			MaxTokens: 128, OverlapTokens: 8, Tokenizer: "synthetic", TokenizerRevision: "v1", TruncationPolicy: string(document.TruncationPolicyReject)},
 		ModelInput: config.EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)},
-		Runtime: &config.EmbeddingRuntimeConfig{AdapterContract: openAIEmbeddingAdapter, Endpoint: server.URL,
+		Runtime: &config.EmbeddingRuntimeConfig{AdapterContract: openAIEmbeddingAdapter, Endpoint: endpoint,
 			ModelRevision: "deployment-v1", DeploymentEpoch: "deployment-v1", RequestTimeout: config.Duration(time.Second),
 			MaxRequestBytes: 1 << 20, AllowedCIDRs: []string{"127.0.0.0/8"}, ProxyMode: "disabled",
 			ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second),
 			TLSHandshakeTimeout: config.Duration(time.Second)},
 	}
 	descriptor := configuredEmbeddingDescriptor(profile, contract)
-	final, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{Origin: server.URL, Descriptor: descriptor,
+	final, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{Origin: endpoint, Descriptor: descriptor,
 		ModelInput: contract, SecretBinding: profile.CredentialBinding, DeploymentEpoch: profile.Runtime.DeploymentEpoch,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxBatchItems: profile.MaxBatchItems,
 		MaxInputBytes: profile.MaxInputBytes, MaxRequestBytes: profile.Runtime.MaxRequestBytes,
@@ -95,18 +140,7 @@ func TestConfigureEmbeddingRuntimesRegistersSyntheticLoopbackOpenAI(t *testing.T
 	profile.DescriptorFingerprint = final.Fingerprint
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
-
-	duplicate := profile
-	duplicate.Chunk.MaxTokens = 64
-	cfg.EmbeddingProfiles["alternate-chunks"] = duplicate
-	require.NoError(t, cfg.Validate())
-	t.Setenv("DOCBANK_TEST_EMBEDDING_KEY", "")
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
-	require.NoError(t, err)
-	assert.True(t, bundle.registry.Ready())
-	assert.Equal(t, []string{final.Fingerprint}, bundle.registry.Fingerprints())
-	classification, _ := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
-	assert.Equal(t, processing.EmbeddingProviderCapacity, classification)
+	return cfg, final
 }
 
 func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *testing.T) {

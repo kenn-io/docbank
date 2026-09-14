@@ -275,7 +275,14 @@ func mergeVariantReports(reports []Report, limit int) (Report, error) {
 			}
 			current.Score += result.Score
 			current.Explanation = append(current.Explanation, result.Explanation...)
-			current.Evidence = append(current.Evidence, result.Evidence...)
+			// ponytail: two lanes and eight variants bound this scan; use a set if those limits grow.
+			for _, reference := range result.Evidence {
+				if !slices.ContainsFunc(current.Evidence, func(existing EvidenceReference) bool {
+					return reflect.DeepEqual(existing, reference)
+				}) {
+					current.Evidence = append(current.Evidence, reference)
+				}
+			}
 		}
 	}
 	merged.Results = make([]Result, 0, len(byDocument))

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: Document processing
 description: Preview, consent to, and run configured document derivatives without losing source authority.
 ---
@@ -32,9 +32,12 @@ docbank processing plan /inbox/notes.txt --profile <configured-profile>
 The plan names the stable node and content-version IDs, profile fingerprint,
 every provider flow and trust boundary, input classes disclosed to each flow,
 retained derivative classes, estimated source bytes and provider calls, whether
-consent is currently required, and the backup consequence. Re-run the preview
-when the document or profile changes. Consent state is advisory and does not
-change the plan fingerprint; execution checks it again.
+consent is currently required, and the backup consequence. Each flow also names
+the immediate and ultimate processor, endpoint, deployment, model and revision,
+vector space where applicable, provider-visible metadata, and retained artifact
+roles. These runtime disclosures are part of the plan fingerprint. Re-run the
+preview when the source, profile, or provider destination changes. Consent state
+is advisory and does not change the fingerprint; execution checks it again.
 
 Run only the reviewed plan:
 
@@ -50,16 +53,18 @@ preview. The CLI requires `--consent`. It grants ongoing permission for this
 profile configuration to the vault's daemon operator across documents and
 searches, with no expiry. The grant is not limited to this job. Workers check
 consent again before provider egress and before publication. The daemon
-returns a durable processing job ID.
-Use it to inspect aggregate state and any failure code:
+returns a durable processing job ID before provider work finishes. That receipt
+confirms acceptance; the daemon's later status reports progress or failure.
+Use the ID to inspect aggregate state and any failure code:
 
 ```bash
 docbank processing status <job-id>
 ```
 
 For automation, `processing profiles`, `plan`, and `status` support `--json`.
-`processing build --ndjson` writes one job event followed by one terminal status
-event. The authenticated HTTP API provides the same preview, consent, run,
+`processing build --ndjson` writes the job event immediately, followed by one
+terminal status or error event. If the stream ends early, retain the first job
+ID and query its status. The authenticated HTTP API provides the same preview, consent, run,
 status, rendition, coverage, and source-fenced search contracts; see the
 [HTTP API](../architecture/http-api.md).
 
@@ -85,7 +90,51 @@ useful shapes:
 All flows use the same immutable source identity, profile fingerprint,
 authorization, bounded upload, and catalog publication path. An embedded Go
 application supplies provider implementations through `ProcessingOptions`; it
-does not gain a path around those checks.
+does not gain a path around those checks. Embedded network providers need an
+explicit endpoint disclosure when the vault opens; see
+[Configure document processing in Go](../embedding.md#configure-document-processing).
+
+## Check a private processing deployment
+
+From a repository checkout, run
+[`scripts/test-private-processing.sh`](https://github.com/kenn-io/docbank/blob/main/scripts/test-private-processing.sh)
+against your Docling Serve and OpenAI-compatible embedding endpoints. The runner
+creates two synthetic text documents in a disposable embedded vault, retains
+their renditions and vectors, and checks lexical, semantic, and hybrid search
+with each document's exact source fence. It does not read an existing vault or
+personal corpus.
+
+The runner requires Bash, `setsid`, the repository's Go toolchain, and cached Go
+modules. Populate the module cache with `go mod download` before running it;
+the runner builds with `GOPROXY=off`. The embedding service must accept the Nomic
+document/query input format. Set the following variables to match your services;
+these loopback URLs and model values are examples:
+
+```bash
+export DOCBANK_PRIVATE_PROCESSING_DOCLING_URL='http://127.0.0.1:5001'
+export DOCBANK_PRIVATE_PROCESSING_DOCLING_ALLOWED_CIDRS='127.0.0.1/32'
+export DOCBANK_PRIVATE_PROCESSING_EMBEDDING_URL='http://127.0.0.1:8080'
+export DOCBANK_PRIVATE_PROCESSING_EMBEDDING_ALLOWED_CIDRS='127.0.0.1/32'
+export DOCBANK_PRIVATE_PROCESSING_EMBEDDING_MODEL='nomic-embed-text'
+export DOCBANK_PRIVATE_PROCESSING_EMBEDDING_REVISION='local-v1'
+export DOCBANK_PRIVATE_PROCESSING_EMBEDDING_DIMENSIONS='768'
+read -rsp 'Embedding API key: ' DOCBANK_PRIVATE_PROCESSING_EMBEDDING_API_KEY
+export DOCBANK_PRIVATE_PROCESSING_EMBEDDING_API_KEY
+scripts/test-private-processing.sh
+```
+
+Set `DOCBANK_PRIVATE_PROCESSING_DOCLING_API_KEY` too if Docling requires it.
+Endpoint URLs must be HTTP(S) origins with a literal private or loopback IP,
+without credentials, query parameters, fragments, or a path beyond `/`. Each
+endpoint must fall inside its provider's allowed CIDRs; multiple ranges may be
+comma- or whitespace-separated. Hostnames and public address ranges are rejected.
+
+The output contains aggregate provider-request and connected-address counts,
+plus the rendition and search results. It checks the connections made by
+Docbank's provider transports. It does **not** attest to onward traffic from
+those endpoints: `endpoint_onward_egress=not_attested` means the operator must
+check that separately. The runner stops its processes and removes its temporary
+vault, binary, logs, and build cache on exit, including after failure.
 
 ## Read a retained rendition
 

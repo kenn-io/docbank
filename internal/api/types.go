@@ -46,12 +46,25 @@ type ProcessingPlanRequest struct {
 }
 
 type ProcessingFlowHop struct {
-	Capability       string   `json:"capability"`
-	ProviderID       string   `json:"provider_id"`
-	TrustBoundary    string   `json:"trust_boundary"`
-	InputClasses     []string `json:"input_classes"`
-	DiscloseFilename bool     `json:"disclose_filename"`
-	Filename         string   `json:"filename,omitzero"`
+	Capability        string                      `json:"capability"`
+	ProviderID        string                      `json:"provider_id"`
+	TrustBoundary     string                      `json:"trust_boundary"`
+	InputClasses      []string                    `json:"input_classes"`
+	DiscloseFilename  bool                        `json:"disclose_filename"`
+	Filename          string                      `json:"filename,omitzero"`
+	RuntimeDisclosure ProcessingRuntimeDisclosure `json:"runtime_disclosure"`
+}
+
+type ProcessingRuntimeDisclosure struct {
+	ImmediateProcessor    string   `json:"immediate_processor" minLength:"1" maxLength:"1024"`
+	UltimateProcessor     string   `json:"ultimate_processor" minLength:"1" maxLength:"1024"`
+	Endpoint              string   `json:"endpoint" minLength:"1" maxLength:"1024"`
+	Deployment            string   `json:"deployment" minLength:"1" maxLength:"1024"`
+	Model                 string   `json:"model,omitzero" maxLength:"1024"`
+	ModelRevision         string   `json:"model_revision,omitzero" maxLength:"1024"`
+	VectorSpace           string   `json:"vector_space,omitzero" maxLength:"1024"`
+	MetadataClasses       []string `json:"metadata_classes" maxItems:"64" uniqueItems:"true"`
+	RetainedArtifactRoles []string `json:"retained_artifact_roles" maxItems:"64" uniqueItems:"true"`
 }
 
 type ProcessingEstimate struct {
@@ -189,14 +202,16 @@ type DocumentSourceFence struct {
 }
 
 type CoverageClass struct {
-	Name        string `json:"name"`
-	Required    bool   `json:"required"`
-	State       string `json:"state"`
-	Complete    int    `json:"complete" minimum:"0"`
-	Unavailable int    `json:"unavailable" minimum:"0"`
-	Stale       int    `json:"stale" minimum:"0"`
-	Ineligible  int    `json:"ineligible" minimum:"0"`
-	Total       int    `json:"total" minimum:"0"`
+	Name                      string `json:"name"`
+	Required                  bool   `json:"required"`
+	State                     string `json:"state"`
+	Complete                  int    `json:"complete" minimum:"0"`
+	Unavailable               int    `json:"unavailable" minimum:"0"`
+	Stale                     int    `json:"stale" minimum:"0"`
+	Ineligible                int    `json:"ineligible" minimum:"0"`
+	Rebuilding                int    `json:"rebuilding" minimum:"0"`
+	PreviousGenerationServing int    `json:"previous_generation_serving" minimum:"0"`
+	Total                     int    `json:"total" minimum:"0"`
 }
 
 type CoverageReport struct {
@@ -247,8 +262,8 @@ type DocumentSearchResult struct {
 	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
 	Rank             int                         `json:"rank" minimum:"1"`
 	Score            float64                     `json:"score"`
-	Path             string                      `json:"path"`
-	Excerpt          string                      `json:"excerpt,omitzero"`
+	Path             string                      `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
+	Excerpt          string                      `json:"excerpt,omitzero" maxLength:"512"`
 	LexicalRank      int                         `json:"lexical_rank,omitzero"`
 	SemanticRank     int                         `json:"semantic_rank,omitzero"`
 	Evidence         []DocumentEvidenceReference `json:"evidence"`

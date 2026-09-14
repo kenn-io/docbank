@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: Document processing search
 description: Search only the exact document versions a consumer currently authorizes.
 ---
@@ -62,7 +62,12 @@ local text and do not require query-text consent or call an embedding provider.
 Each search response reports the actual mode, degradation, and the number of
 complete documents in the supplied source set. The coverage API separately
 reports rendition and embedding state, including complete, unavailable, stale,
-and ineligible counts. A direct-file-only embedding can produce a match without an
+ineligible, and rebuilding counts. `previous_generation_serving` counts rebuilding
+documents whose previous complete result is still available. A rebuild alone
+does not establish that a previous result exists. Missing required coverage keeps
+the aggregate state `partial`, even while another result is rebuilding. See the
+[coverage contract](../architecture/http-api.md#coverage-and-source-fenced-search)
+for the fields and snapshot boundary. A direct-file-only embedding can produce a match without an
 excerpt because Docbank does not invent readable evidence that was never
 retained.
 

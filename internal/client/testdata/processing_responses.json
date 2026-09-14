@@ -1,0 +1,303 @@
+{
+  "job": {
+    "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_version_id": "11111111-1111-4111-8111-111111111111",
+    "profile_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "embedding_job_ids": []
+  },
+  "status": {
+    "job_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "completed",
+    "phase": "embedding",
+    "embedding_job_ids": [
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    ],
+    "completed_bindings": 1
+  },
+  "request": {
+    "query": "synthetic",
+    "mode": "semantic",
+    "limit": 20,
+    "profile": "private",
+    "fence": {
+      "vault_uid": "22222222-2222-4222-8222-222222222222",
+      "content_version_ids": [
+        "11111111-1111-4111-8111-111111111111"
+      ]
+    }
+  },
+  "report": {
+    "requested_mode": "semantic",
+    "actual_mode": "semantic",
+    "coverage": {
+      "binding_required": false,
+      "scoped_documents": 1,
+      "complete_documents": 1,
+      "state": "complete"
+    },
+    "degradations": [],
+    "truncated": false,
+    "trace": [],
+    "results": [
+      {
+        "vault_uid": "22222222-2222-4222-8222-222222222222",
+        "node_id": 7,
+        "content_version_id": "11111111-1111-4111-8111-111111111111",
+        "rank": 1,
+        "semantic_rank": 1,
+        "score": 1,
+        "path": "/synthetic.pdf",
+        "evidence": [
+          {
+            "kind": "embedding",
+            "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "input_id": "chunk-000000-synthetic",
+            "input_kind": "rendition_chunk",
+            "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ]
+      }
+    ]
+  },
+  "status_cases": [
+    {
+      "name": "completed",
+      "patch": {},
+      "valid": true
+    },
+    {
+      "name": "queued",
+      "patch": {
+        "state": "queued",
+        "completed_bindings": 0
+      },
+      "valid": true
+    },
+    {
+      "name": "running",
+      "patch": {
+        "state": "running",
+        "completed_bindings": 0
+      },
+      "valid": true
+    },
+    {
+      "name": "retry_wait",
+      "patch": {
+        "state": "retry_wait",
+        "completed_bindings": 0,
+        "failure_code": "provider_unavailable"
+      },
+      "valid": true
+    },
+    {
+      "name": "operator_required",
+      "patch": {
+        "state": "operator_required",
+        "completed_bindings": 0,
+        "failure_code": "provider_unavailable"
+      },
+      "valid": true
+    },
+    {
+      "name": "failed",
+      "patch": {
+        "state": "failed",
+        "completed_bindings": 0,
+        "failure_code": "provider_unavailable"
+      },
+      "valid": true
+    },
+    {
+      "name": "abandoned",
+      "patch": {
+        "state": "abandoned",
+        "completed_bindings": 0
+      },
+      "valid": true
+    },
+    {
+      "name": "partial",
+      "patch": {
+        "state": "partial",
+        "completed_bindings": 0,
+        "failure_code": "provider_unavailable"
+      },
+      "valid": true
+    },
+    {
+      "name": "running retry retains failure code",
+      "patch": {
+        "state": "running",
+        "completed_bindings": 0,
+        "failure_code": "provider_unavailable"
+      },
+      "valid": true
+    },
+    {
+      "name": "empty state",
+      "patch": {
+        "state": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown state",
+      "patch": {
+        "state": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "name": "empty phase",
+      "patch": {
+        "phase": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "blank phase",
+      "patch": {
+        "phase": " "
+      },
+      "valid": false
+    },
+    {
+      "name": "long phase",
+      "patch": {
+        "phase": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+      },
+      "valid": false
+    },
+    {
+      "name": "negative completions",
+      "patch": {
+        "completed_bindings": -1
+      },
+      "valid": false
+    },
+    {
+      "name": "excess completions",
+      "patch": {
+        "completed_bindings": 2
+      },
+      "valid": false
+    },
+    {
+      "name": "incomplete completed job",
+      "patch": {
+        "completed_bindings": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "completed with failure",
+      "patch": {
+        "failure_code": "terminal"
+      },
+      "valid": false
+    },
+    {
+      "name": "failed without code",
+      "patch": {
+        "state": "failed",
+        "completed_bindings": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown job",
+      "patch": {
+        "job_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "valid": false
+    },
+    {
+      "name": "long failure code",
+      "patch": {
+        "state": "failed",
+        "failure_code": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "completed_bindings": 0
+      },
+      "valid": false
+    }
+  ],
+  "search_cases": [
+    {
+      "name": "rendition chunk",
+      "patch": {},
+      "valid": true
+    },
+    {
+      "name": "chunk missing build",
+      "patch": {
+        "evidence": [
+          {
+            "kind": "embedding",
+            "build_id": "",
+            "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "input_id": "chunk-000000-synthetic",
+            "input_kind": "rendition_chunk",
+            "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "original file",
+      "patch": {
+        "evidence": [
+          {
+            "kind": "embedding",
+            "build_id": "",
+            "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "input_id": "chunk-000000-synthetic",
+            "input_kind": "original_file",
+            "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "original file with build",
+      "patch": {
+        "evidence": [
+          {
+            "kind": "embedding",
+            "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "input_id": "chunk-000000-synthetic",
+            "input_kind": "original_file",
+            "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "maximum lane rank",
+      "patch": {
+        "semantic_rank": 1000
+      },
+      "valid": true
+    },
+    {
+      "name": "excess lane rank",
+      "patch": {
+        "semantic_rank": 1001
+      },
+      "valid": false
+    }
+  ]
+}

@@ -5,12 +5,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
@@ -296,6 +298,86 @@ func TestProcessingServiceCoverageBeforeProfileRegistration(t *testing.T) {
 	}
 }
 
+func TestProcessingServiceCoverageMissingClassesTakePrecedenceOverRebuilding(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		renditionRequired  bool
+		rebuildingRequired bool
+		missingRequired    bool
+		want               string
+	}{
+		{"missing rendition with optional rebuilding", true, false, false, "partial"},
+		{"missing rendition with required rebuilding", true, true, false, "partial"},
+		{"missing required embedding", false, true, true, "partial"},
+		{"missing optional embedding", false, true, false, "rebuilding"},
+		{"missing optional embedding without required bindings", false, false, false, "partial"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, _, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile, "missing")
+			var portable document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+			if test.renditionRequired {
+				portable.Embeddings = portable.Embeddings[:1]
+			}
+			if !test.renditionRequired {
+				portable.Rendition = nil
+				portable.RetentionDisclosure.RetainSanitizedMarkdown = false
+				portable.RetentionDisclosure.RetainProviderMarkdown = false
+			}
+			for i := range portable.Embeddings {
+				if (portable.Embeddings[i].Name == request.BindingID && test.rebuildingRequired) ||
+					(portable.Embeddings[i].Name == "missing" && test.missingRequired) {
+					portable.Embeddings[i].Activation = document.EmbeddingRequired
+				}
+			}
+			canonical, fingerprints, err := document.CanonicalProfile(portable)
+			require.NoError(t, err)
+			request.Profile = store.ProcessingProfileRecord{
+				Fingerprint: fingerprints.Profile, CanonicalProfile: canonical,
+				RenditionRequestFingerprint:    fingerprints.RenditionRequest,
+				EvidenceLexicalFingerprint:     fingerprints.EvidenceLexical,
+				RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure,
+				AttachmentPolicyFingerprint:    portable.RetentionDisclosure.AttachmentPolicyFingerprint,
+				ConsentFingerprint:             portable.RetentionDisclosure.ConsentFingerprint,
+				TrustBoundary:                  portable.RetentionDisclosure.TrustBoundary,
+			}
+			if portable.Rendition != nil {
+				request.Profile.RenditionDisclosureFingerprint = portable.Rendition.DisclosureFingerprint
+			}
+			request.InputGeneration.ID = workerHash(test.name)
+			request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+			request.Authorization.ProfileFingerprint = fingerprints.Profile
+			// Enqueue registers the new profile before its consent check.
+			_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+			_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+				Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+				ProfileFingerprint: fingerprints.Profile, DisclosureFingerprint: request.Authorization.DisclosureFingerprint,
+				InputClasses: request.Authorization.InputClasses, RetainedArtifactClasses: request.Authorization.RetainedArtifactClasses,
+			})
+			require.NoError(t, err)
+			_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			service := &Service{catalog: fixture.catalog, profiles: map[string]configuredProfile{
+				"private": {portable: portable, record: request.Profile},
+			}}
+			coverage, err := service.Coverage(t.Context(), "private", SourceFence{
+				VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{request.ContentVersionID},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.want, coverage.State)
+			for _, binding := range coverage.Embeddings {
+				if binding.Name == request.BindingID {
+					assert.Equal(t, "rebuilding", binding.State)
+					assert.Equal(t, 1, binding.Rebuilding)
+				} else {
+					assert.Equal(t, "unavailable", binding.State)
+				}
+			}
+		})
+	}
+}
+
 func TestAggregateStatusUsesBindingActivation(t *testing.T) {
 	for _, activation := range []document.EmbeddingActivation{document.EmbeddingRequired, document.EmbeddingOptional} {
 		for _, state := range []string{"failed", "abandoned"} {
@@ -426,4 +508,147 @@ func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessingServicePlanFingerprintSealsCompleteRuntimeDisclosure(t *testing.T) {
+	plan := Plan{VaultUID: "00000000-0000-4000-8000-000000000001",
+		Selector:           Selector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Profile: "private"},
+		ProfileFingerprint: frontmatterHashForService("profile"),
+		Flow: []FlowHop{{Capability: "rendition", ProviderID: "local", TrustBoundary: "local_process",
+			InputClasses: []string{"original_file"}}}, RetainedClasses: []string{"sanitized_markdown"},
+		ConsentRequired: true}
+	encoded, err := json.Marshal(plan)
+	require.NoError(t, err)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &wire))
+	flow, ok := wire["Flow"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, flow)
+	hop, ok := flow[0].(map[string]any)
+	require.True(t, ok)
+	hop["RuntimeDisclosure"] = map[string]any{
+		"ImmediateProcessor": "docbank plaintext adapter",
+		"UltimateProcessor":  "docbank process",
+		"Endpoint":           "in-process",
+		"Deployment":         frontmatterHashForService("deployment"),
+		"Model":              "plain-text",
+		"ModelRevision":      "builtin-1",
+		"VectorSpace":        "not-applicable",
+		"MetadataClasses":    []any{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"},
+		"RetainedArtifactRoles": []any{
+			"normalized_evidence", "sanitized_markdown",
+		},
+	}
+	decode := func(value map[string]any) Plan {
+		t.Helper()
+		body, marshalErr := json.Marshal(value)
+		require.NoError(t, marshalErr)
+		var result Plan
+		require.NoError(t, json.Unmarshal(body, &result, json.RejectUnknownMembers(true)))
+		return result
+	}
+	baseline, err := planFingerprint(decode(wire))
+	require.NoError(t, err)
+
+	for _, testCase := range []struct {
+		name  string
+		field string
+		value any
+	}{
+		{name: "endpoint", field: "Endpoint", value: "https://processor.example/v2"},
+		{name: "deployment", field: "Deployment", value: frontmatterHashForService("new-deployment")},
+		{name: "model revision", field: "ModelRevision", value: "builtin-2"},
+		{name: "metadata class", field: "MetadataClasses", value: []any{"byte_length", "content_hash"}},
+		{name: "retention", field: "RetainedArtifactRoles", value: []any{"normalized_evidence"}},
+		{name: "vector space", field: "VectorSpace", value: frontmatterHashForService("vector-space")},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, marshalErr := json.Marshal(wire)
+			require.NoError(t, marshalErr)
+			var changedWire map[string]any
+			require.NoError(t, json.Unmarshal(body, &changedWire))
+			changedFlow, flowOK := changedWire["Flow"].([]any)
+			require.True(t, flowOK)
+			require.NotEmpty(t, changedFlow)
+			changedHop, hopOK := changedFlow[0].(map[string]any)
+			require.True(t, hopOK)
+			changedDisclosure, disclosureOK := changedHop["RuntimeDisclosure"].(map[string]any)
+			require.True(t, disclosureOK)
+			changedDisclosure[testCase.field] = testCase.value
+			changed, fingerprintErr := planFingerprint(decode(changedWire))
+			require.NoError(t, fingerprintErr)
+			require.NotEqual(t, baseline, changed)
+		})
+	}
+}
+
+func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)))
+	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
+	gate := newWorkerTestGate()
+	service, err := NewService(ServiceConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: gate,
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"),
+		Profiles: map[string]ProfileConfig{"private": {
+			Profile: portable, RenditionProvider: provider,
+		}},
+	})
+	require.NoError(t, err)
+	profile = service.profiles["private"].record
+	fixture.profile = profile
+	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
+	require.NoError(t, err)
+	_, err = publisher.PublishRendition(t.Context(), fixture.stage(t,
+		publicationIDs{"coverage-old-build", "coverage-old-attachment", "coverage-old-generation"},
+		"old searchable evidence", "old markdown",
+	))
+	require.NoError(t, err)
+
+	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+	grantWorkerConsent(t, fixture.catalog, request)
+	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+
+	coverage, err := service.Coverage(t.Context(), "private", SourceFence{
+		VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{fixture.versionID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "rebuilding", coverage.Renditions.State)
+	assert.Equal(t, 1, coverage.Renditions.Rebuilding)
+	assert.Equal(t, 1, coverage.Renditions.PreviousServing)
+	assert.Zero(t, coverage.Renditions.Complete)
+	assert.Equal(t, "rebuilding", coverage.State)
+
+	coverage, err = service.Coverage(t.Context(), "private", SourceFence{
+		VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{
+			fixture.versionID, "00000000-0000-4000-8000-000000000001",
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "partial", coverage.State)
+	assert.Equal(t, "rebuilding", coverage.Renditions.State)
+	assert.Equal(t, 1, coverage.Renditions.Stale)
+	assert.Equal(t, 1, coverage.Renditions.PreviousServing)
+
+	now := time.Now().UTC()
+	claim, err := fixture.catalog.ClaimRenditionJob(
+		t.Context(), job.ID, "coverage-service-test", now, 5*time.Minute,
+	)
+	require.NoError(t, err)
+	require.NoError(t, fixture.catalog.MarkRenditionJobFailed(
+		t.Context(), claim, store.RenditionFailureTerminal, now.Add(time.Second),
+	))
+	coverage, err = service.Coverage(t.Context(), "private", SourceFence{
+		VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{fixture.versionID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "complete", coverage.Renditions.State)
+	assert.Equal(t, 1, coverage.Renditions.Complete)
+	assert.Zero(t, coverage.Renditions.Rebuilding)
+	assert.Zero(t, coverage.Renditions.PreviousServing)
+	assert.Equal(t, "complete", coverage.State)
 }

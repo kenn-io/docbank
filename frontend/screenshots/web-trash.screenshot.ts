@@ -923,7 +923,7 @@ trust_boundary = "local_process"
     });
     await processing.getByRole("button", { name: "Consent and run" }).click();
     await expect(processing.getByRole("button", { name: "Read sanitized Markdown" })).toBeVisible({ timeout: 30_000 });
-    await expect(processing).toContainText(/semantic.*unavailable/i);
+    await expect(processing).toContainText(/semantic.*rebuilding/i);
     await page.screenshot({
       path: processingPartialScreenshotPath,
       fullPage: true,
