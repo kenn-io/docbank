@@ -386,8 +386,8 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 }
 
 func pptxArchiveTargetName(target string) string {
-	if strings.HasPrefix(target, "/") {
-		return strings.TrimPrefix(target, "/")
+	if target, found := strings.CutPrefix(target, "/"); found {
+		return target
 	}
 	return path.Clean(path.Join(path.Dir(pptxPresentationPath), target))
 }
