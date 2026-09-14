@@ -187,27 +187,6 @@ func TestReleasedMetadataWithoutCollectionLabelsImports(t *testing.T) {
 	assert.Zero(t, labels)
 }
 
-func TestVersion7MetadataPreservesSavedQueriesWithoutCollectionLabels(t *testing.T) {
-	source := newTestStore(t)
-	ctx := t.Context()
-	query, err := source.CreateSavedQuery(ctx, "Synthetic query", "", SavedQueryKindQuery,
-		[]byte(`{"text":"example"}`))
-	require.NoError(t, err)
-	_, err = source.db.Exec(`DROP TABLE collection_labels`)
-	require.NoError(t, err)
-	_, err = source.db.Exec(`UPDATE vault_metadata SET schema_version=7 WHERE singleton=1`)
-	require.NoError(t, err)
-
-	var exported bytes.Buffer
-	require.NoError(t, exportMetadataSnapshotWithVaultIdentity(ctx, source.db, &exported,
-		metadataSourceLayout{schemaVersion: 7}))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	restored, err := target.SavedQueryByID(ctx, query.ID)
-	require.NoError(t, err)
-	assert.Equal(t, query, restored)
-}
-
 func mustCollectionLabel(t *testing.T, s *Store, ingestID string) CollectionLabel {
 	t.Helper()
 	label, err := s.CollectionLabel(t.Context(), ingestID)

@@ -1,0 +1,10 @@
+[
+  {"display":"Ada Lovelace <Ada.Lovelace@Example.TEST>","input":"Ada.Lovelace@Example.TEST","key":"email:ada.lovelace@example.test","kind":"email","normalization":"email_idna","normalized":"ada.lovelace@example.test"},
+  {"display":"ada.lovelace+reports@example.test","input":"ada.lovelace+reports@example.test","key":"email:ada.lovelace+reports@example.test","kind":"email","normalization":"email_idna","normalized":"ada.lovelace+reports@example.test"},
+  {"display":"grace@[EXAMPLE].test","input":"grace@[EXAMPLE].test","key":"","kind":"email","normalization":"email_idna","normalized":""},
+  {"display":"+1 (555) 0100","input":"+1 (555) 0100","key":"phone:+15550100","kind":"phone","normalization":"phone_e164","normalized":"+15550100"},
+  {"display":"555-0100","input":"555-0100","key":"phone:5550100","kind":"phone","normalization":"phone_digits","normalized":"5550100"},
+  {"display":"Chat/u-0F31","input":"Chat/u-0F31","key":"handle:chat/u-0F31","kind":"handle","normalization":"handle_service_lowercase","normalized":"chat/u-0F31"},
+  {"display":"Ada  Lovelace","input":"Ada  Lovelace","key":"name_alias:ada lovelace","kind":"name_alias","normalization":"casefold","normalized":"ada lovelace"},
+  {"display":"ﬁle Clerk","input":"ﬁle Clerk","key":"name_alias:file clerk","kind":"name_alias","normalization":"casefold","normalized":"file clerk"}
+]

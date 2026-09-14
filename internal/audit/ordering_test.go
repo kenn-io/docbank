@@ -209,6 +209,25 @@ func TestAuditCollectionsRejectDuplicateSemanticIdentities(t *testing.T) {
 	), "duplicate canonical collection key")
 }
 
+func TestAuditBindingIdentityIncludesProvenanceAndVersion(t *testing.T) {
+	base := exampleRecord(t, "provenance_version_binding")
+	otherProvenance := replaceField(base, "provenance_identity", Digest(sha256.Sum256([]byte("other"))))
+	otherVersion := replaceField(base, "content_version_id",
+		mustUUID(t, "00112233-4455-4677-8899-aabbccddee00"))
+	baseIdentity, err := attachedRecordIdentity(&base)
+	require.NoError(t, err)
+	otherProvenanceIdentity, err := attachedRecordIdentity(&otherProvenance)
+	require.NoError(t, err)
+	otherVersionIdentity, err := attachedRecordIdentity(&otherVersion)
+	require.NoError(t, err)
+	assert.NotEqual(t, baseIdentity, otherProvenanceIdentity)
+	assert.NotEqual(t, baseIdentity, otherVersionIdentity)
+	require.ErrorContains(t, validateCollection([]Value{
+		Nested(base), Nested(replaceField(base, "observed_at",
+			mustTimestamp(t, "2026-07-17T12:34:56.123456789Z"))),
+	}, collectionAttachedRecord, "test.bindings"), "duplicate canonical collection key")
+}
+
 type fieldValue struct {
 	name  string
 	value Value

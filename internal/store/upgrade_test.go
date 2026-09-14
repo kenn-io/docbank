@@ -74,6 +74,19 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, upgraded.Bytes())
+			var provenance, bindings, eventState int
+			require.NoError(t, s.db.QueryRow(`SELECT
+				(SELECT COUNT(*) FROM provenance),
+				(SELECT COUNT(*) FROM provenance_version_bindings),
+				(SELECT COUNT(*) FROM document_event_state)`).Scan(
+				&provenance, &bindings, &eventState,
+			))
+			assert.Equal(t, 1, provenance, "the released fixture carries creation provenance")
+			assert.Zero(t, bindings, "released provenance must remain explicitly unbound")
+			assert.Zero(t, eventState, "released cutover keeps timeline state lazy")
+			missing, err := s.MissingDocumentEventTargetsAfter(t.Context(), fakeHash("f1"), "", 10)
+			require.NoError(t, err)
+			assert.Len(t, missing, 2, "both released versions require local timeline derivation")
 
 			loose, err := s.PhysicalContent(t.Context(), fixture.looseHash)
 			require.NoError(t, err)
@@ -225,23 +238,48 @@ func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsUnreleasedSchemaNineWithoutCutover(t *testing.T) {
+func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(path, test.driver)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`,
+				currentStorageSchemaVersion-1)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			reopened, err := Open(path, test.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "has no supported JSONL cutover")
+		})
+	}
+}
+
+func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			s, err := Open(dbPath, test.driver)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE email_generations`)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=9 WHERE singleton=1`)
-			require.NoError(t, err)
 			require.NoError(t, s.Close())
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(`DROP TABLE provenance_version_bindings`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
 
 			reopened, err := Open(dbPath, test.driver)
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
-			require.ErrorContains(t, err, "schema version 9 has no supported JSONL cutover")
+			require.ErrorContains(t, err, "unexpected provenance_version_bindings layout")
 		})
 	}
 }
@@ -828,7 +866,15 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 		packedVer    = "20000000-0000-4000-8000-000000000002"
 		looseOp      = "30000000-0000-4000-8000-000000000001"
 		packedOp     = "30000000-0000-4000-8000-000000000002"
+		ingestID     = "40000000-0000-4000-8000-000000000001"
+		provenanceAt = "2026-07-19T12:00:00Z"
 	)
+	originalMtime := provenanceAt
+	provenanceID, err := provenanceIdentity(metadataProvenance{
+		Type: metadataProvenanceType, NodeID: 2, IngestID: ingestID,
+		OriginalPath: "/synthetic/loose.txt", OriginalMTime: &originalMtime,
+	})
+	require.NoError(t, err)
 	packID := pack.NewPackID()
 	deadPackID := pack.NewPackID()
 	statements := []struct {
@@ -855,6 +901,10 @@ func createV090Fixture(t *testing.T, path string, driver docsqlite.Driver) v090F
 			recorded_at, node_revision, introduced_operation_id, transition_kind)
 			VALUES(?, 3, ?, 7, 'application/octet-stream', ?, 1, ?, 'content_create')`,
 			[]any{packedVer, packedHash, timestamp, packedOp}},
+		{`INSERT INTO ingests(id,started_at,source_kind,source_desc)
+			VALUES(?,?,'cli','Synthetic released import')`, []any{ingestID, timestamp}},
+		{`INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime)
+			VALUES(?,2,?,'/synthetic/loose.txt',?)`, []any{provenanceID, ingestID, provenanceAt}},
 		{`INSERT INTO blob_packs(pack_id, entry_count, stored_bytes, created_at)
 			VALUES(?, 1, 7, ?)`, []any{packID, timestamp}},
 		{`INSERT INTO blob_packs(pack_id, entry_count, stored_bytes, created_at)

@@ -149,11 +149,23 @@ func topologyOrigin(row auditTopologyRow, nodeID uint64) (audit.Value, error) {
 }
 
 func currentAuditAttachments(ctx context.Context, tx metadataQuerier) ([]audit.Record, error) {
+	return currentAuditAttachmentsForLayout(ctx, tx, currentMetadataLayout())
+}
+
+func currentAuditAttachmentsForLayout(
+	ctx context.Context, tx metadataQuerier, layout metadataSourceLayout,
+) ([]audit.Record, error) {
 	var records []audit.Record
 	appenders := []func(context.Context, metadataQuerier, *[]audit.Record) error{
-		appendAuditIngests, appendAuditProvenance, appendAuditTagAssignments, appendAuditTagDefinitions,
-		appendAuditDerivativePurgeSuppressions,
+		appendAuditIngests, appendAuditProvenance,
 	}
+	if layout.hasPostV3Metadata() {
+		appenders = append(appenders, appendAuditProvenanceVersionBindings)
+	}
+	appenders = append(appenders,
+		appendAuditTagAssignments, appendAuditTagDefinitions,
+		appendAuditDerivativePurgeSuppressions,
+	)
 	for _, appendRecords := range appenders {
 		if err := appendRecords(ctx, tx, &records); err != nil {
 			return nil, err
@@ -163,6 +175,30 @@ func currentAuditAttachments(ctx context.Context, tx metadataQuerier) ([]audit.R
 		return nil, fmt.Errorf("sorting current attached metadata: %w", err)
 	}
 	return records, nil
+}
+
+func appendAuditProvenanceVersionBindings(
+	ctx context.Context, tx metadataQuerier, records *[]audit.Record,
+) error {
+	rows, err := tx.QueryContext(ctx, `SELECT provenance_identity,content_version_id,
+		observed_at,basis_ref FROM provenance_version_bindings`)
+	if err != nil {
+		return fmt.Errorf("reading audit provenance version bindings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var binding ProvenanceVersionBinding
+		if err := rows.Scan(&binding.ProvenanceIdentity, &binding.ContentVersionID,
+			&binding.ObservedAt, &binding.BasisRef); err != nil {
+			return fmt.Errorf("scanning audit provenance version binding: %w", err)
+		}
+		record, err := provenanceVersionBindingAuditRecord(binding)
+		if err != nil {
+			return err
+		}
+		*records = append(*records, record)
+	}
+	return rowsError("audit provenance version bindings", rows)
 }
 
 func appendAuditIngests(ctx context.Context, tx metadataQuerier, records *[]audit.Record) error {
@@ -327,6 +363,16 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	case "provenance":
 		value, err := auditField(record, "identity")
 		return audit.Record{Kind: "provenance_identity_ref", Fields: []audit.Field{{Name: "identity", Value: value}}}, err
+	case metadataProvenanceVersionBindingType:
+		provenanceIdentity, err := auditField(record, "provenance_identity")
+		if err != nil {
+			return audit.Record{}, err
+		}
+		contentVersionID, err := auditField(record, "content_version_id")
+		return audit.Record{Kind: "provenance_version_binding_identity", Fields: []audit.Field{
+			{Name: "provenance_identity", Value: provenanceIdentity},
+			{Name: "content_version_id", Value: contentVersionID},
+		}}, err
 	case auditTagAssignmentKind:
 		tagID, err := auditField(record, "tag_id")
 		if err != nil {
@@ -369,6 +415,7 @@ func attachedAuditKey(record audit.Record) (string, error) {
 func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]audit.Record, error) {
 	selected := make([]audit.Record, 0)
 	ingests := make(map[string]bool)
+	provenanceIdentities := make(map[string]bool)
 	tags := make(map[string]bool)
 	for _, record := range records {
 		switch record.Kind {
@@ -379,6 +426,11 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 			}
 			if members[nodeID] {
 				selected = append(selected, record)
+				identity, err := auditDigestField(record, "identity")
+				if err != nil {
+					return nil, err
+				}
+				provenanceIdentities[identity] = true
 				ingestID, err := auditUUIDField(record, "ingest_id")
 				if err != nil {
 					return nil, err
@@ -416,6 +468,14 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 				return nil, err
 			}
 			if tags[id] {
+				selected = append(selected, record)
+			}
+		case metadataProvenanceVersionBindingType:
+			identity, err := auditDigestField(record, "provenance_identity")
+			if err != nil {
+				return nil, err
+			}
+			if provenanceIdentities[identity] {
 				selected = append(selected, record)
 			}
 		}

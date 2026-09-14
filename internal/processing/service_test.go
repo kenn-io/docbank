@@ -333,7 +333,7 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.NoError(t, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider},
-		Gate: newWorkerTestGate(), Owner: "rendition-waiter-test",
+		Gate: newTestOperationGate(), Owner: "rendition-waiter-test",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 	})
 	require.NoError(t, err)

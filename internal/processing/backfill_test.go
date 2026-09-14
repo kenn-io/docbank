@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -113,6 +114,47 @@ func TestBackfillRetriesAListingFailure(t *testing.T) {
 	require.NoError(t, backfill.Run(ctx))
 	assert.True(t, catalog.done["a"])
 	assert.GreaterOrEqual(t, catalog.listed, 2)
+}
+
+func TestBackfillBoundsOnlyDrainRetries(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		listing bool
+		drain   bool
+	}{
+		{name: "drain listing", listing: true, drain: true},
+		{name: "drain processing", drain: true},
+		{name: "watch listing", listing: true},
+		{name: "watch processing"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				catalog := newFakeBackfillCatalog("a")
+				if testCase.listing {
+					catalog.listErrs = 100000
+				} else {
+					catalog.failing["a"] = 100000
+				}
+				backfill := newTestBackfill(catalog, 1, testCase.drain)
+				ctx, cancel := context.WithTimeout(t.Context(), time.Hour)
+				defer cancel()
+				err := backfill.Run(ctx)
+				require.Error(t, err)
+				attempts := catalog.attempts["a"]
+				if testCase.listing {
+					attempts = catalog.listed
+				}
+				if !testCase.drain {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+					require.Greater(t, attempts, 3)
+					return
+				}
+				require.NotErrorIs(t, err, context.DeadlineExceeded,
+					"one-shot work must return its failure without depending on cancellation")
+				require.Equal(t, 3, attempts)
+			})
+		})
+	}
 }
 
 func TestBackfillKeepsWatchingWhenNotDraining(t *testing.T) {

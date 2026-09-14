@@ -175,6 +175,7 @@ func NewServer(d Deps) *Server {
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerProcessingRoutes(humaAPI, d)
 	registerEmailRoutes(mux, humaAPI, d, g)
+	registerTimelineRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)

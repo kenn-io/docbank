@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -316,6 +317,144 @@ func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	}
 	require.NoError(t, restoredBlobs.Close())
 	require.NoError(t, restoredStore.Close())
+}
+
+func TestJSONLRestoreRebuildsTimelineFromBoundProvenance(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+	run, err := fixture.metadata.BeginIngest(t.Context(), "filesystem", "Synthetic timeline source")
+	require.NoError(t, err)
+	const originalMtime = "2024-01-02T03:04:05Z"
+	observed, added, err := fixture.metadata.IngestFile(
+		t.Context(), run, fixture.metadata.RootID(), "timeline.txt", source.BlobHash,
+		int64(len(fixture.content[source.Name])), "text/plain", "/synthetic/timeline.txt", originalMtime,
+	)
+	require.NoError(t, err)
+	require.True(t, added)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{},
+	)
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target},
+	)
+	require.NoError(t, err)
+
+	restored, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	view, err := restored.DocumentEventsForVersion(t.Context(), observed.CurrentVersionID)
+	require.NoError(t, err)
+	var modified *document.DocumentEventV1
+	for index := range view.Events.Events {
+		if view.Events.Events[index].DateKind == "modified" {
+			modified = &view.Events.Events[index]
+			break
+		}
+	}
+	require.NotNil(t, modified)
+	assert.Equal(t, originalMtime, modified.RawValue)
+	assert.Equal(t, document.EventEvidenceKind("provenance_binding"), modified.EvidenceKind)
+	assert.Equal(t, "original_mtime", modified.EvidenceLocator)
+}
+
+func TestJSONLRestorePreservesAuthorityWhenAggregateTimelineOutputExceedsBound(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	recipientHeader := strings.TrimSuffix(strings.Repeat("a@b,", 900), ",")
+	require.LessOrEqual(t, len(recipientHeader), document.MaxDocumentEventActorClaimBytes)
+	original := []byte("From: Sender <sender@example.test>\r\nTo: " + recipientHeader +
+		"\r\nCc: " + recipientHeader + "\r\nBcc: " + recipientHeader +
+		"\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\nSubject: Synthetic restore\r\n\r\nbody")
+	var source store.Node
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		hash, size, err := fixture.blobs.WriteContext(t.Context(), bytes.NewReader(original))
+		if err != nil {
+			return err
+		}
+		source, err = fixture.metadata.CreateFile(
+			t.Context(), fixture.metadata.RootID(), "over-limit.eml", hash, size, "message/rfc822",
+		)
+		return err
+	}))
+
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	extracted, err := processing.ExtractSourceMetadata(t.Context(), spool, original)
+	require.NoError(t, err)
+	extractedRecipients := make(map[string]string)
+	for _, field := range extracted.Fields {
+		if field.Value.String != nil {
+			switch field.Key {
+			case "email.to", "email.cc", "email.bcc":
+				extractedRecipients[field.Key] = *field.Value.String
+			}
+		}
+	}
+	require.Equal(t, map[string]string{
+		"email.to": recipientHeader, "email.cc": recipientHeader, "email.bcc": recipientHeader,
+	}, extractedRecipients)
+	canonical, _, err := document.MarshalSourceMetadataV1(extracted)
+	require.NoError(t, err)
+	_, err = fixture.metadata.PublishSourceMetadata(
+		t.Context(), source.BlobHash, processing.SourceMetadataExtractorFingerprint, canonical,
+	)
+	require.NoError(t, err)
+	require.NoError(t, processing.RebuildDocumentEvents(t.Context(), fixture.metadata))
+	sourceCoverage, err := fixture.metadata.DocumentEventRebuildCoverage(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, sourceCoverage.Pending)
+	require.Zero(t, sourceCoverage.Failed)
+	require.Equal(t, int64(1), sourceCoverage.Unavailable)
+	_, err = fixture.metadata.DocumentEventsForVersion(t.Context(), source.CurrentVersionID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{},
+	)
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target},
+	)
+	require.NoError(t, err)
+
+	restored, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	restoredNode, err := restored.NodeByPath(t.Context(), "/over-limit.eml")
+	require.NoError(t, err)
+	require.Equal(t, source.CurrentVersionID, restoredNode.CurrentVersionID)
+	restoredMetadata, restoredF10, err := restored.ActiveSourceMetadata(t.Context(), source.BlobHash)
+	require.NoError(t, err)
+	require.Equal(t, processing.SourceMetadataExtractorFingerprint, restoredMetadata.ExtractorFingerprint)
+	restoredCanonical, _, err := document.MarshalSourceMetadataV1(restoredF10)
+	require.NoError(t, err)
+	require.Equal(t, canonical, restoredCanonical)
+
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
+	reader, err := restoredBlobs.OpenContext(t.Context(), restoredNode.BlobHash)
+	require.NoError(t, err)
+	restoredOriginal, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.Equal(t, original, restoredOriginal)
+
+	coverage, err := restored.DocumentEventRebuildCoverage(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, coverage.Pending)
+	require.Zero(t, coverage.Failed)
+	require.Equal(t, int64(1), coverage.Unavailable)
+	_, err = restored.DocumentEventsForVersion(t.Context(), source.CurrentVersionID)
+	require.ErrorIs(t, err, store.ErrNotFound, "restore must not fabricate a timeline head")
 }
 
 func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {

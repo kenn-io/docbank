@@ -26,7 +26,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationAttachedMetadata(
 		}
 		return nil
 	}
-	if creation.version == nil || count > 2 {
+	if creation.version == nil || count > 3 {
 		return errors.New("audited ingest has an invalid attached-metadata change count")
 	}
 	ingestID, err := auditUUIDField(mutation, "grouping_id")
@@ -51,7 +51,7 @@ func (replay *auditedHistoryReplay) validateNodeCreationAttachedMetadata(
 	if uint64(len(changes)) != count {
 		return errors.New("audited ingest attachment count does not match its delta")
 	}
-	var ingestRecord, provenanceRecord *audit.Record
+	var ingestRecord, provenanceRecord, bindingRecord *audit.Record
 	for index := range changes {
 		post, err := validateAuditedIngestAddition(changes[index])
 		if err != nil {
@@ -75,6 +75,11 @@ func (replay *auditedHistoryReplay) validateNodeCreationAttachedMetadata(
 				return errors.New("audited ingest adds more than one provenance record")
 			}
 			provenanceRecord = &post
+		case metadataProvenanceVersionBindingType:
+			if bindingRecord != nil {
+				return errors.New("audited ingest adds more than one provenance version binding")
+			}
+			bindingRecord = &post
 		default:
 			return fmt.Errorf("audited ingest adds unsupported %s metadata", post.Kind)
 		}
@@ -95,6 +100,26 @@ func (replay *auditedHistoryReplay) validateNodeCreationAttachedMetadata(
 		return err
 	}
 	expectedBaseline := []audit.Record{*ingestRecord, *provenanceRecord}
+	if bindingRecord != nil {
+		provenanceIdentity, err := auditDigestField(*provenanceRecord, "identity")
+		if err != nil {
+			return err
+		}
+		versionID, err := auditUUIDField(*creation.version, "version_id")
+		if err != nil {
+			return err
+		}
+		observedAt, err := auditTimestampField(*ingestRecord, "started_at")
+		if err != nil {
+			return err
+		}
+		if err := validateAuditedProvenanceVersionBinding(
+			*bindingRecord, provenanceIdentity, versionID, observedAt,
+		); err != nil {
+			return err
+		}
+		expectedBaseline = append(expectedBaseline, *bindingRecord)
+	}
 	if err := sortAuditRecordsByCanonicalIdentity(expectedBaseline, attachedAuditIdentity); err != nil {
 		return err
 	}

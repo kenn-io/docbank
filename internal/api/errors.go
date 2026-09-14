@@ -102,6 +102,8 @@ var storeErrCodes = []struct {
 	{store.ErrAuditPreviewStale, http.StatusConflict, "audit_preview_stale"},
 	{store.ErrAuditNotEnrolled, http.StatusUnprocessableEntity, "audit_not_enrolled"},
 	{store.ErrInvalidAuditCursor, http.StatusUnprocessableEntity, "invalid_audit_cursor"},
+	{store.ErrDocumentEventBuildConflict, http.StatusConflict, "conflict"},
+	{store.ErrDocumentEventsCorrupt, http.StatusInternalServerError, "timeline_index_corrupt"},
 	{store.ErrBlobStorePrimary, http.StatusConflict, "blob_store_primary"},
 	{store.ErrBlobStoreNotEmpty, http.StatusConflict, "blob_store_not_empty"},
 	{store.ErrBlobStoreState, http.StatusConflict, "blob_store_state"},

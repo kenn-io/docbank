@@ -14,7 +14,7 @@ func persistAuditedIngestObservation(
 	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
 	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
 	priorNode, resultingNode Node, ingest metadataIngest, provenance metadataProvenance,
-	ingestAdded bool,
+	binding *ProvenanceVersionBinding, ingestAdded bool,
 ) error {
 	if sourceKindIsEmbedded(ingest.SourceKind) {
 		return errors.New("audited ingest observation requires an operational source kind")
@@ -27,7 +27,7 @@ func persistAuditedIngestObservation(
 	}
 	return persistAuditedProvenanceMutation(
 		ctx, tx, vaultID, operationID, recordedAt, nodeSequence, authority, scopes,
-		priorNode, resultingNode, ingest, provenance, "ingest_observe", ingestAdded,
+		priorNode, resultingNode, ingest, provenance, binding, "ingest_observe", ingestAdded,
 	)
 }
 
@@ -55,10 +55,10 @@ func (replay *auditedHistoryReplay) validateIngestObservationDelta(
 		return replayedProvenanceMutation{}, err
 	}
 	changes, err := auditRecordListField(delta.record, "changes")
-	if err != nil || len(changes) < 1 || len(changes) > 2 {
-		return replayedProvenanceMutation{}, errors.New("ingest observation must contain one fact and an optional ingest")
+	if err != nil || len(changes) < 1 || len(changes) > 3 {
+		return replayedProvenanceMutation{}, errors.New("ingest observation must contain one fact and optional ingest and binding")
 	}
-	var provenance, ingest audit.Record
+	var provenance, ingest, binding audit.Record
 	for _, change := range changes {
 		post, err := validateAuditedIngestAddition(change)
 		if err != nil {
@@ -75,6 +75,11 @@ func (replay *auditedHistoryReplay) validateIngestObservationDelta(
 				return replayedProvenanceMutation{}, errors.New("ingest observation repeats its ingest change")
 			}
 			ingest = post
+		case metadataProvenanceVersionBindingType:
+			if binding.Kind != "" {
+				return replayedProvenanceMutation{}, errors.New("ingest observation repeats its binding change")
+			}
+			binding = post
 		default:
 			return replayedProvenanceMutation{}, fmt.Errorf(
 				"ingest observation carries unsupported attachment %q", post.Kind,
@@ -149,9 +154,36 @@ func (replay *auditedHistoryReplay) validateIngestObservationDelta(
 	if _, exists := replay.attachments[key]; exists {
 		return replayedProvenanceMutation{}, errors.New("ingest observation reuses provenance identity")
 	}
+	if binding.Kind != "" {
+		bindingKey, err := attachedAuditKey(binding)
+		if err != nil {
+			return replayedProvenanceMutation{}, err
+		}
+		if _, exists := replay.attachments[bindingKey]; exists {
+			return replayedProvenanceMutation{}, errors.New("ingest observation reuses binding identity")
+		}
+		provenanceIdentity, err := auditDigestField(provenance, "identity")
+		if err != nil {
+			return replayedProvenanceMutation{}, err
+		}
+		state := replay.states[nodeID]
+		contentVersionID, err := auditUUIDField(state, auditCurrentVersionIDField)
+		if err != nil {
+			return replayedProvenanceMutation{}, err
+		}
+		observedAt, err := auditTimestampField(mutation, auditRecordedAtField)
+		if err != nil {
+			return replayedProvenanceMutation{}, err
+		}
+		if err := validateAuditedProvenanceVersionBinding(
+			binding, provenanceIdentity, contentVersionID, observedAt,
+		); err != nil {
+			return replayedProvenanceMutation{}, err
+		}
+	}
 	usedDeltas[digest] = true
 	return replayedProvenanceMutation{
-		nodeID: nodeID, ingest: ingest, provenance: provenance,
+		nodeID: nodeID, ingest: ingest, provenance: provenance, binding: binding,
 		digest: digest, ingestAdded: ingestAdded, eventKind: "ingest_observe",
 	}, nil
 }

@@ -30,6 +30,15 @@ type initialAuditScope struct {
 func validateAuditAuthority(
 	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
 ) error {
+	return validateAuditAuthorityForLayout(
+		ctx, tx, vaultID, nodeSequence, currentMetadataLayout(),
+	)
+}
+
+func validateAuditAuthorityForLayout(
+	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
+	layout metadataSourceLayout,
+) error {
 	counts, err := auditAuthorityCounts(ctx, tx)
 	if err != nil {
 		return err
@@ -77,7 +86,7 @@ func validateAuditAuthority(
 		return err
 	}
 	return validateAuditedHistory(
-		ctx, tx, vaultID, nodeSequence, authority, scopes, scope, records, initial,
+		ctx, tx, vaultID, nodeSequence, authority, scopes, scope, records, initial, layout,
 	)
 }
 

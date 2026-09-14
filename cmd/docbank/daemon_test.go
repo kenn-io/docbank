@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,12 +18,40 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	docbank "go.kenn.io/docbank"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestDocumentEventBackfillIsRegisteredOnce(t *testing.T) {
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	logger := slog.New(slog.DiscardHandler)
+	supervisor := jobs.New(t.Context(), logger)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, supervisor.Shutdown(ctx))
+	})
+
+	require.NoError(t, startProcessingJobs(
+		supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(),
+		api.NewOperationGate(), logger,
+	))
+	registered := 0
+	for _, job := range supervisor.Snapshot() {
+		if job.Name == "derive:document-events" {
+			registered++
+		}
+	}
+	require.Equal(t, 1, registered)
+}
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
 	first, firstURL, err := listenWebOriginWithIdentity(
