@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -1049,9 +1049,11 @@ for the integrity checks and legacy compatibility limits.
 | `--json` | `false` | Write the complete machine-readable verification report to stdout. |
 
 Human output is one `valid <format> package <package-id> for archive
-<archive-id> (<package-authority> authority)` line for a valid package. An
-invalid package starts with `invalid <format> package: <n> finding(s)`, followed
-by each retained finding as `<path>: <detail> (<code>)`.
+<archive-id> (<package-authority> authority)` line for a complete valid package.
+A valid partial package starts with `valid partial` and includes a second line,
+`next_cursor: "<continuation>"`. An invalid package starts with
+`invalid <format> package: <n> finding(s)`, followed by each retained finding as
+`<path>: <detail> (<code>)`.
 
 The JSON report contains `format`, `package_id`, `archive_id`, `next_cursor`,
 `valid`, `partial`, `findings_truncated`, `findings`, `findings_total`, `counts`,
@@ -1061,11 +1063,11 @@ contains `legacy_evidence`, with `format`, `sha256`, and `bytes`, plus
 `reason`.
 
 Exit `0` means validation succeeded and the reader closed successfully. A bad
-invocation, including a missing `--archive-id` for legacy JSONL, exits `2`.
-After writing its report, any validator error or invalid report exits `6`,
-including validation cancellation and validator-spool cleanup failures. Input-
-opening or legacy-normalization errors, report-output errors, and reader-close
-errors after otherwise valid validation exit `1`.
+invocation, including a missing or malformed `--archive-id` for legacy JSONL,
+exits `2`. Invalid-package findings produce a report and exit `6`. Operational
+failures, including cancellation, spool failures, and cleanup failures, report
+their cause and exit `1` without a validation report. Input-opening,
+legacy-normalization, and report-output errors also exit `1`.
 
 ## docbank verify
 
