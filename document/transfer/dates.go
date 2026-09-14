@@ -12,6 +12,16 @@ func ValidateDate(date DateV1) error {
 
 func validateDate(date DateV1, requireKind bool) error {
 	invalid := errors.New("transfer: invalid date evidence")
+	if len(date.TimezoneName) > MaxNameBytes || len(date.Raw) > MaxDateRawBytes {
+		return invalid
+	}
+	diagnosticBytes := 0
+	for _, diagnostic := range date.Diagnostics {
+		if len(diagnostic) > MaxDateDiagnosticsBytes-diagnosticBytes {
+			return invalid
+		}
+		diagnosticBytes += len(diagnostic)
+	}
 	if requireKind && !ValidDateKind(date.Kind) || !requireKind && date.Kind != "" ||
 		!ValidPrecision(date.Precision) ||
 		!ValidTimezoneKind(date.Timezone) || !ValidOrigin(date.Origin) {

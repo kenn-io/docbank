@@ -13,7 +13,6 @@ import (
 
 const (
 	FormatV1           = "msgvault-transfer/1"
-	ReceiptFormatV1    = "msgvault-transfer-receipt/1"
 	ContractRevision   = 1
 	PersonUIDKindVCard = "vcard_uid"
 )

@@ -3,6 +3,8 @@ package transfer
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
+	"compress/flate"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -19,11 +21,7 @@ import (
 
 type IntegrityAuthority string
 
-const (
-	IntegrityZipReceipt  IntegrityAuthority = "zip_receipt"
-	IntegritySumsReceipt IntegrityAuthority = "sums_receipt"
-	IntegritySumsOnly    IntegrityAuthority = "sums_only"
-)
+const IntegritySumsOnly IntegrityAuthority = "sums_only"
 
 // ErrUnterminatedLine identifies nonempty data at EOF without the required LF.
 var ErrUnterminatedLine = errors.New("transfer: unterminated final line")
@@ -59,7 +57,7 @@ func ReadCanonicalLine(reader *bufio.Reader) ([]byte, error) {
 			if errors.Is(err, io.EOF) && len(line) > 0 {
 				return nil, ErrUnterminatedLine
 			}
-			return nil, fmt.Errorf("transfer: read line: %w", err)
+			return nil, fmt.Errorf("transfer: read line: %w", packageReadError(err))
 		}
 		if len(line) < 2 || line[len(line)-2] == '\r' {
 			return nil, errors.New("transfer: invalid LF framing")
@@ -92,29 +90,38 @@ type dirReader struct {
 	closeErr     error
 }
 
-func OpenDirectory(directory string) (PackageReader, error) {
+func OpenDirectory(ctx context.Context, directory string) (result PackageReader, resultErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
-		return nil, errors.New("transfer: cannot open package directory")
+		return nil, fmt.Errorf("transfer: cannot open package directory: %w", err)
 	}
 	reader := &dirReader{root: root}
-	if err := reader.preflight(context.Background()); err != nil {
-		_ = reader.Close()
-		return nil, errors.New("transfer: invalid package directory")
+	defer func() {
+		if resultErr != nil {
+			if err := reader.Close(); err != nil {
+				resultErr = errors.Join(resultErr, ErrValidationIncomplete, err)
+			}
+		}
+	}()
+	if err := reader.preflight(ctx); err != nil {
+		return nil, fmt.Errorf("transfer: invalid package directory: %w", err)
 	}
-	manifestRaw, err := readPackageFile(context.Background(), reader, "transfer.json", MaxManifestBytes)
+	manifestRaw, err := readPackageFile(ctx, reader, "transfer.json", MaxManifestBytes)
 	if err != nil {
-		_ = reader.Close()
-		return nil, errors.New("transfer: cannot read package manifest")
+		return nil, fmt.Errorf("transfer: cannot read package manifest: %w", err)
 	}
 	if err := CheckStructuredKeys(manifestRaw); err != nil {
-		_ = reader.Close()
 		return nil, errors.New("transfer: invalid package manifest")
 	}
 	reader.manifest, reader.manifestHash, err = DecodeManifestV1(manifestRaw)
 	if err != nil {
-		_ = reader.Close()
 		return nil, errors.New("transfer: invalid package manifest")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return reader, nil
 }
@@ -212,21 +219,30 @@ func walkDirectoryWithLimits(ctx context.Context, root *os.Root, entryLimit, bat
 	var entries int
 	var walk func(string) error
 	walk = func(directory string) (result error) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		before, err := root.Lstat(directory)
-		if err != nil || !before.IsDir() {
+		if err != nil {
+			return fmt.Errorf("transfer: inspect package directory entry: %w", err)
+		}
+		if !before.IsDir() {
 			return errors.New("transfer: inspect package directory entry")
 		}
 		opened, err := root.Open(directory)
 		if err != nil {
-			return errors.New("transfer: open package directory entry")
+			return fmt.Errorf("transfer: open package directory entry: %w", err)
 		}
 		defer func() {
 			if closeErr := opened.Close(); closeErr != nil {
-				result = errors.Join(result, errors.New("transfer: close package directory entry"))
+				result = errors.Join(result, ErrValidationIncomplete, fmt.Errorf("transfer: close package directory entry: %w", closeErr))
 			}
 		}()
 		after, err := opened.Stat()
-		if err != nil || !after.IsDir() || !os.SameFile(before, after) {
+		if err != nil {
+			return fmt.Errorf("transfer: inspect opened package directory: %w", err)
+		}
+		if !after.IsDir() || !os.SameFile(before, after) {
 			return errors.New("transfer: package directory changed during open")
 		}
 		for {
@@ -257,7 +273,7 @@ func walkDirectoryWithLimits(ctx context.Context, root *os.Root, entryLimit, bat
 				}
 				info, err := entry.Info()
 				if err != nil {
-					return errors.New("transfer: inspect package entry")
+					return fmt.Errorf("transfer: inspect package entry: %w", err)
 				}
 				if !info.Mode().IsRegular() {
 					return errors.New("transfer: linked or special package entry")
@@ -283,7 +299,7 @@ func walkDirectoryWithLimits(ctx context.Context, root *os.Root, entryLimit, bat
 				return nil
 			}
 			if readErr != nil {
-				return errors.New("transfer: read package directory entry")
+				return fmt.Errorf("transfer: read package directory entry: %w", readErr)
 			}
 		}
 	}
@@ -303,42 +319,55 @@ type zipReader struct {
 	closeErr     error
 }
 
-func OpenZip(source io.ReaderAt, size int64) (PackageReader, error) {
+func OpenZip(ctx context.Context, source io.ReaderAt, size int64) (result PackageReader, resultErr error) {
 	reader := &zipReader{}
 	if closer, ok := source.(io.Closer); ok {
 		reader.closer = closer
 	}
+	defer func() {
+		if resultErr != nil {
+			if err := reader.Close(); err != nil {
+				resultErr = errors.Join(resultErr, ErrValidationIncomplete, err)
+			}
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if source == nil || size < 0 || size > MaxExpandedBytes+MaxZipDirectoryBytes {
-		_ = reader.Close()
 		return nil, errors.New("transfer: invalid ZIP size")
 	}
-	if err := preflightZipDirectory(source, size); err != nil {
-		_ = reader.Close()
+	err := preflightZipDirectory(ctx, source, size)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, errors.Join(ctxErr, err)
+	}
+	if err != nil {
 		return nil, err
 	}
 	archive, err := zip.NewReader(source, size)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil {
-		_ = reader.Close()
 		return nil, errors.New("transfer: invalid ZIP package")
 	}
 	reader.files = archive.File
-	if err := reader.preflight(); err != nil {
-		_ = reader.Close()
-		return nil, errors.New("transfer: invalid ZIP package entries")
+	if err := reader.preflight(ctx); err != nil {
+		return nil, fmt.Errorf("transfer: invalid ZIP package entries: %w", err)
 	}
-	manifestRaw, err := readPackageFile(context.Background(), reader, "transfer.json", MaxManifestBytes)
+	manifestRaw, err := readPackageFile(ctx, reader, "transfer.json", MaxManifestBytes)
 	if err != nil {
-		_ = reader.Close()
-		return nil, errors.New("transfer: cannot read ZIP manifest")
+		return nil, fmt.Errorf("transfer: cannot read ZIP manifest: %w", err)
 	}
 	if err := CheckStructuredKeys(manifestRaw); err != nil {
-		_ = reader.Close()
 		return nil, errors.New("transfer: invalid package manifest")
 	}
 	reader.manifest, reader.manifestHash, err = DecodeManifestV1(manifestRaw)
 	if err != nil {
-		_ = reader.Close()
 		return nil, errors.New("transfer: invalid package manifest")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return reader, nil
 }
@@ -410,12 +439,18 @@ func (reader *zipReader) OpenFile(ctx context.Context, name string) (io.ReadClos
 	return opened, size, nil
 }
 
-func (reader *zipReader) preflight() error {
+func (reader *zipReader) preflight(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	sort.Slice(reader.files, func(i, j int) bool { return reader.files[i].Name < reader.files[j].Name })
 	var total uint64
 	var blobs int
 	var required [3]bool
 	for index, file := range reader.files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if index > 0 && reader.files[index-1].Name == file.Name {
 			return errors.New("transfer: duplicate ZIP entry")
 		}
@@ -469,11 +504,11 @@ func (reader *zipReader) preflight() error {
 func streamRecords(ctx context.Context, reader PackageReader, visit func(int, []byte) error) (result error) {
 	file, _, err := reader.OpenFile(ctx, "records.jsonl")
 	if err != nil {
-		return err
+		return packageReadError(err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			result = errors.Join(result, errors.New("transfer: close records stream"))
+			result = errors.Join(result, ErrValidationIncomplete, fmt.Errorf("transfer: close records stream: %w", closeErr))
 		}
 	}()
 	buffered := bufio.NewReader(file)
@@ -500,24 +535,41 @@ func streamRecords(ctx context.Context, reader PackageReader, visit func(int, []
 func readPackageFile(ctx context.Context, reader PackageReader, name string, limit int) ([]byte, error) {
 	file, size, err := reader.OpenFile(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, packageReadError(err)
 	}
 	if size < 0 || size > int64(limit) {
-		_ = file.Close()
+		if err := file.Close(); err != nil {
+			return nil, errors.Join(ErrValidationIncomplete, err)
+		}
 		return nil, errors.New("transfer: package file limit")
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	var raw bytes.Buffer
+	_, readErr := copyContext(ctx, &raw, io.LimitReader(file, int64(limit)+1))
 	closeErr := file.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
 	if closeErr != nil {
-		return nil, closeErr
+		return nil, errors.Join(ErrValidationIncomplete, packageReadError(readErr), closeErr)
 	}
-	if len(raw) > limit {
+	if readErr != nil {
+		return nil, packageReadError(readErr)
+	}
+	if raw.Len() > limit {
 		return nil, errors.New("transfer: package file limit")
 	}
-	return raw, nil
+	return raw.Bytes(), ctx.Err()
+}
+
+// Package truncation and ZIP corruption are data failures; other read failures
+// prevent the verifier from deciding whether the bytes are valid.
+func packageReadError(err error) error {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, fs.ErrNotExist) || errors.Is(err, zip.ErrFormat) ||
+		errors.Is(err, zip.ErrChecksum) || errors.Is(err, zip.ErrAlgorithm) {
+		return err
+	}
+	if _, ok := errors.AsType[flate.CorruptInputError](err); ok {
+		return err
+	}
+	return errors.Join(ErrValidationIncomplete, err)
 }
 
 func validatePortablePath(name string) error {
@@ -557,11 +609,14 @@ func isLowerHex(value string) bool {
 	return true
 }
 
-func preflightZipDirectory(source io.ReaderAt, size int64) error {
-	return preflightZipDirectoryWithLimits(source, size, MaxZipEntries, MaxZipDirectoryBytes)
+func preflightZipDirectory(ctx context.Context, source io.ReaderAt, size int64) error {
+	return preflightZipDirectoryWithLimits(ctx, source, size, MaxZipEntries, MaxZipDirectoryBytes)
 }
 
-func preflightZipDirectoryWithLimits(source io.ReaderAt, size int64, maxEntries int, maxDirectoryBytes int64) error {
+func preflightZipDirectoryWithLimits(ctx context.Context, source io.ReaderAt, size int64, maxEntries int, maxDirectoryBytes int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if source == nil || size < 0 || maxEntries < 0 || maxDirectoryBytes < 0 {
 		return errors.New("transfer: invalid ZIP directory")
 	}
@@ -569,8 +624,11 @@ func preflightZipDirectoryWithLimits(source io.ReaderAt, size int64, maxEntries 
 		return errors.New("transfer: invalid ZIP directory")
 	}
 	archiveSize := uint64(size) // #nosec G115 -- size was checked non-negative by OpenZip.
-	eocd, eocdReadOffset, err := locateZipDirectoryEnd(source, size)
+	eocd, eocdReadOffset, err := locateZipDirectoryEnd(ctx, source, size)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	eocdOffset := uint64(eocdReadOffset) // #nosec G115 -- the located EOCD is inside the non-negative archive.
@@ -629,6 +687,9 @@ func preflightZipDirectoryWithLimits(source io.ReaderAt, size int64, maxEntries 
 	offset := directoryOffset
 	var actualEntries uint64
 	for offset < directoryEnd {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if actualEntries >= uint64(maxEntries) || directoryEnd-offset < centralHeaderBytes {
 			return errors.New("transfer: ZIP entry limit")
 		}
@@ -650,11 +711,14 @@ func preflightZipDirectoryWithLimits(source io.ReaderAt, size int64, maxEntries 
 	if actualEntries != entries {
 		return errors.New("transfer: inconsistent ZIP entry count")
 	}
-	return nil
+	return ctx.Err()
 }
 
-func locateZipDirectoryEnd(source io.ReaderAt, size int64) ([]byte, int64, error) {
+func locateZipDirectoryEnd(ctx context.Context, source io.ReaderAt, size int64) ([]byte, int64, error) {
 	for attempt, requested := range []int64{1024, 65 * 1024} {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		window := min(size, requested)
 		tail := make([]byte, window)
 		if _, err := source.ReadAt(tail, size-window); err != nil && !errors.Is(err, io.EOF) {
@@ -675,4 +739,37 @@ func locateZipDirectoryEnd(source io.ReaderAt, size int64) ([]byte, int64, error
 		}
 	}
 	return nil, 0, errors.New("transfer: invalid ZIP directory")
+}
+
+func copyContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {
+	buffer := make([]byte, 64*1024)
+	var written int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		read, readErr := source.Read(buffer)
+		if read < 0 || read > len(buffer) {
+			return written, errors.New("transfer: invalid read count")
+		}
+		if read > 0 {
+			if err := ctx.Err(); err != nil {
+				return written, err
+			}
+			output, writeErr := destination.Write(buffer[:read])
+			written += int64(output)
+			if writeErr != nil {
+				return written, writeErr
+			}
+			if output != read {
+				return written, io.ErrShortWrite
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return written, nil
+			}
+			return written, readErr
+		}
+	}
 }

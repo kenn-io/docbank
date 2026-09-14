@@ -118,6 +118,9 @@ func marshalBounded[T any](value T, limit int, countLF bool) ([]byte, string, er
 		size++
 	}
 	if size > limit {
+		if !countLF {
+			return nil, "", errors.New("transfer: manifest size limit")
+		}
 		return nil, "", errors.New("transfer: line limit")
 	}
 	return raw, sha256Hex(raw), nil
@@ -130,6 +133,9 @@ func decodeBounded[T any](raw []byte, limit int, countLF bool) (T, string, error
 		size++
 	}
 	if size > limit {
+		if !countLF {
+			return zero, "", errors.New("transfer: manifest size limit")
+		}
 		return zero, "", errors.New("transfer: line limit")
 	}
 	value, err := canonical.Decode[T](raw)

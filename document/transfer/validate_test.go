@@ -2,7 +2,9 @@ package transfer
 
 import (
 	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,18 +13,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidationCleanupFailureInvalidatesSuccessfulRun(t *testing.T) {
+func TestValidationCleanupFailurePreservesCause(t *testing.T) {
 	index, err := newValidationIndex()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(index.directory)) })
-	index.removeAll = func(string) error { return errors.New("private /tmp/spool path") }
+	cleanupErr := errors.New("synthetic cleanup failure")
+	index.removeAll = func(string) error { return cleanupErr }
 	validator := &packageValidator{report: Report{}, index: index}
 	report, err := finishValidation(validator, nil, validator.close())
-	require.Error(t, err)
+	require.ErrorIs(t, err, cleanupErr)
 	require.False(t, report.Valid)
-	require.Equal(t, int64(1), report.FindingsTotal)
-	require.NotContains(t, err.Error(), "/tmp/spool")
-	require.NotContains(t, report.Findings[0].Detail, "/tmp/spool")
+	require.Zero(t, report.FindingsTotal)
+	_, err = finishValidation(validator, validator.fail("package_integrity_failed", "package", "synthetic invalid package"), cleanupErr)
+	require.ErrorIs(t, err, cleanupErr)
+	require.ErrorIs(t, err, ErrValidationIncomplete)
+	require.Equal(t, int64(1), validator.report.FindingsTotal)
+}
+
+func TestValidationPreservesSpoolWriteFailureThroughRecords(t *testing.T) {
+	reader, err := ReadLegacyExportWithArchive(t.Context(), strings.NewReader(fiveLineLegacyFixture), LegacyArchiveBinding{ArchiveID: "archive_synthetic"})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	validator, err := newPackageValidator(t.Context(), reader)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, validator.close()) })
+	runs := validator.index.relation("sources").definitions
+	runs.runKeys = 1
+	runs.directory = filepath.Join(t.TempDir(), "missing")
+	runErr := validator.run()
+	report, err := finishValidation(validator, runErr, validator.close())
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	require.Zero(t, report.FindingsTotal)
 }
 
 func TestValidationFindingsStayBounded(t *testing.T) {

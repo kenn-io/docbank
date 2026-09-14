@@ -1,10 +1,35 @@
 package transfer
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestTransferDateEvidenceByteLimits(t *testing.T) {
+	date := DateV1{
+		Kind: DateKindEventStart, Civil: "2024-01-01T12:00", Precision: PrecisionMinute,
+		Timezone: TimezoneKindNamed, Origin: OriginStartTime,
+		TimezoneName: strings.Repeat("z", 200), Raw: strings.Repeat("r", 4096),
+		Diagnostics: []string{strings.Repeat("d", 2048), strings.Repeat("e", 2048)},
+	}
+	require.NoError(t, ValidateDate(date))
+	for _, field := range []string{"timezone", "raw", "diagnostics"} {
+		t.Run(field, func(t *testing.T) {
+			oversized := date
+			switch field {
+			case "timezone":
+				oversized.TimezoneName += "z"
+			case "raw":
+				oversized.Raw += "r"
+			case "diagnostics":
+				oversized.Diagnostics = append(append([]string(nil), date.Diagnostics...), "d")
+			}
+			require.Error(t, ValidateDate(oversized))
+		})
+	}
+}
 
 func TestTransferDateValidationPreservesCivilPrecision(t *testing.T) {
 	require.Error(t, ValidateDate(DateV1{

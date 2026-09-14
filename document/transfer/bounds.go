@@ -4,7 +4,6 @@ const (
 	MaxManifestBytes                 = 1 << 20
 	MaxRecordLineBytes               = 1 << 20
 	MaxRecordLines                   = 5_000_000
-	RestartSegmentRecords            = 100_000
 	MaxBlobBytes               int64 = 2 << 30
 	MaxBlobs                         = 1_000_000
 	MaxExpandedBytes           int64 = 200 << 30
@@ -17,7 +16,6 @@ const (
 	MaxPackagePathSegmentBytes       = 64
 	MaxPackagePathBytes              = 400
 	MaxInlineFindings                = 250
-	MaxDiagnosticSpoolBytes          = 64 << 20
 
 	MaxArchiveIDBytes     = 128
 	MaxPersonUIDBytes     = 256
@@ -32,6 +30,9 @@ const (
 	MaxZipEntries         = MaxBlobs + 260
 	MaxChecksumBytes      = 128 << 20
 	MaxZipDirectoryBytes  = 512 << 20
+
+	MaxDateRawBytes         = 4096
+	MaxDateDiagnosticsBytes = 4096
 
 	MaxCallDurationMilliseconds int64 = 31 * 24 * 60 * 60 * 1000
 	MaxRecurrenceRules                = 256

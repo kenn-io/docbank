@@ -32,6 +32,9 @@ const (
 // archive identity.
 var ErrLegacyArchiveRequired = errors.New("transfer: a registered archive ID is required for legacy input")
 
+// ErrLegacyArchiveInvalid reports a supplied archive ID with an invalid shape.
+var ErrLegacyArchiveInvalid = errors.New("transfer: legacy archive ID is invalid")
+
 // PackageAuthority describes whether a package carries native producer
 // authority or a reduced legacy compatibility representation.
 type PackageAuthority string
@@ -74,12 +77,6 @@ func legacyFormatLimitations() []CapabilityEntryV1 {
 	}
 }
 
-// ReadLegacyExport is retained as a fail-closed entry point. Legacy input has
-// no archive identity, so callers must use ReadLegacyExportWithArchive.
-func ReadLegacyExport(context.Context, io.Reader) (PackageReader, error) {
-	return nil, ErrLegacyArchiveRequired
-}
-
 // ReadLegacyExportWithArchive validates and normalizes a legacy export while
 // binding it to an explicitly supplied archive identity.
 func ReadLegacyExportWithArchive(
@@ -90,25 +87,31 @@ func ReadLegacyExportWithArchive(
 	if input == nil {
 		return nil, errors.New("transfer: legacy input is required")
 	}
-	if !validArchiveID(binding.ArchiveID) || len(binding.DisplayName) > MaxNameBytes {
+	if binding.ArchiveID == "" {
 		return nil, ErrLegacyArchiveRequired
+	}
+	if !validArchiveID(binding.ArchiveID) {
+		return nil, ErrLegacyArchiveInvalid
+	}
+	if len(binding.DisplayName) > MaxNameBytes {
+		return nil, errors.New("transfer: legacy archive display name exceeds limit")
 	}
 	root, err := os.MkdirTemp("", "docbank-transfer-legacy-")
 	if err != nil {
-		return nil, errors.New("transfer: create legacy compatibility spool")
+		return nil, fmt.Errorf("transfer: create legacy compatibility spool: %w", err)
 	}
 	cleanup := true
 	defer func() {
 		if cleanup {
 			if err := os.RemoveAll(root); err != nil {
-				resultErr = errors.Join(resultErr, errors.New("transfer: remove legacy compatibility spool"))
+				resultErr = errors.Join(resultErr, fmt.Errorf("transfer: remove legacy compatibility spool: %w", err))
 			}
 		}
 	}()
 
 	packageDirectory := filepath.Join(root, "package")
 	if err := os.Mkdir(packageDirectory, 0o700); err != nil {
-		return nil, errors.New("transfer: create legacy compatibility package")
+		return nil, fmt.Errorf("transfer: create legacy compatibility package: %w", err)
 	}
 	normalizer, err := newLegacyNormalizer(ctx, root, packageDirectory, binding)
 	if err != nil {
@@ -124,9 +127,9 @@ func ReadLegacyExportWithArchive(
 		return nil, err
 	}
 
-	reader, err := OpenDirectory(packageDirectory)
+	reader, err := OpenDirectory(ctx, packageDirectory)
 	if err != nil {
-		return nil, errors.New("transfer: open normalized legacy package")
+		return nil, fmt.Errorf("transfer: open normalized legacy package: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, reader.Close())
@@ -182,7 +185,7 @@ func (reader *legacyPackageReader) OpenLegacyEvidence(ctx context.Context) (io.R
 	}
 	file, err := os.Open(filepath.Clean(reader.evidencePath))
 	if err != nil {
-		return nil, errors.New("transfer: open legacy evidence")
+		return nil, fmt.Errorf("transfer: open legacy evidence: %w", err)
 	}
 	return file, nil
 }
@@ -191,7 +194,7 @@ func (reader *legacyPackageReader) Close() error {
 	reader.closeOnce.Do(func() {
 		reader.closeErr = reader.PackageReader.Close()
 		if err := os.RemoveAll(reader.root); err != nil {
-			reader.closeErr = errors.Join(reader.closeErr, errors.New("transfer: remove legacy compatibility spool"))
+			reader.closeErr = errors.Join(reader.closeErr, fmt.Errorf("transfer: remove legacy compatibility spool: %w", err))
 		}
 	})
 	return reader.closeErr
@@ -207,30 +210,30 @@ func (reader *legacyPackageReader) verifyLegacyEvidence(ctx context.Context) err
 	}
 	file, err := os.Open(filepath.Clean(reader.evidencePath))
 	if err != nil {
-		return errors.New("transfer: legacy evidence is unavailable")
+		return errors.Join(ErrValidationIncomplete, fmt.Errorf("transfer: legacy evidence is unavailable: %w", err))
 	}
 	verifyErr := verifyLegacyEvidenceStream(ctx, reader.evidence, io.LimitReader(file, MaxExpandedBytes+1))
 	closeErr := file.Close()
 	if verifyErr != nil {
 		if closeErr != nil {
-			return errors.Join(verifyErr, errors.New("transfer: close legacy evidence"))
+			return errors.Join(verifyErr, ErrValidationIncomplete, fmt.Errorf("transfer: close legacy evidence: %w", closeErr))
 		}
 		return verifyErr
 	}
 	if closeErr != nil {
-		return errors.New("transfer: close legacy evidence")
+		return errors.Join(ErrValidationIncomplete, fmt.Errorf("transfer: close legacy evidence: %w", closeErr))
 	}
 	return nil
 }
 
 func verifyLegacyEvidenceStream(ctx context.Context, evidence LegacyEvidence, source io.Reader) error {
 	hasher := sha256.New()
-	written, err := copyLegacyContext(ctx, hasher, source)
+	written, err := copyContext(ctx, hasher, source)
 	if err != nil {
-		if contextError(err) != nil {
+		if operationalError(err) != nil {
 			return err
 		}
-		return errors.New("transfer: read legacy evidence")
+		return errors.Join(ErrValidationIncomplete, fmt.Errorf("transfer: read legacy evidence: %w", err))
 	}
 	if written != evidence.Bytes || written > MaxExpandedBytes ||
 		hex.EncodeToString(hasher.Sum(nil)) != evidence.SHA256 {
@@ -239,45 +242,12 @@ func verifyLegacyEvidenceStream(ctx context.Context, evidence LegacyEvidence, so
 	return nil
 }
 
-func copyLegacyContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {
-	buffer := make([]byte, 64*1024)
-	var written int64
-	for {
-		if err := ctx.Err(); err != nil {
-			return written, err
-		}
-		read, readErr := source.Read(buffer)
-		if read < 0 || read > len(buffer) {
-			return written, errors.New("transfer: invalid legacy spool read")
-		}
-		if read > 0 {
-			if err := ctx.Err(); err != nil {
-				return written, err
-			}
-			output, writeErr := destination.Write(buffer[:read])
-			written += int64(output)
-			if writeErr != nil {
-				return written, writeErr
-			}
-			if output != read {
-				return written, io.ErrShortWrite
-			}
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				return written, nil
-			}
-			return written, readErr
-		}
-	}
-}
-
 func copyLegacySpool(ctx context.Context, destination io.Writer, source io.Reader) error {
-	if _, err := copyLegacyContext(ctx, destination, source); err != nil {
-		if contextError(err) != nil {
+	if _, err := copyContext(ctx, destination, source); err != nil {
+		if operationalError(err) != nil {
 			return err
 		}
-		return errors.New("transfer: assemble normalized record stream")
+		return fmt.Errorf("transfer: assemble normalized record stream: %w", err)
 	}
 	return nil
 }
@@ -315,13 +285,12 @@ func newLegacyNormalizer(ctx context.Context, root, packageDirectory string, bin
 	var err error
 	normalizer.evidenceFile, err = os.OpenFile(normalizer.evidencePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return nil, errors.New("transfer: create legacy evidence spool")
+		return nil, fmt.Errorf("transfer: create legacy evidence spool: %w", err)
 	}
 	for _, recordType := range []RecordType{RecordTypeSource, RecordTypeConversation, RecordTypeRecord} {
 		file, createErr := os.OpenFile(filepath.Join(root, string(recordType)+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 		if createErr != nil {
-			_ = normalizer.close()
-			return nil, errors.New("transfer: create legacy normalization spool")
+			return nil, errors.Join(fmt.Errorf("transfer: create legacy normalization spool: %w", createErr), normalizer.close())
 		}
 		normalizer.spools[recordType] = file
 	}
@@ -356,10 +325,10 @@ func (normalizer *legacyNormalizer) run(input io.Reader) error {
 			return errors.New("transfer: legacy export byte limit")
 		}
 		if _, err := normalizer.evidenceFile.Write(raw); err != nil {
-			return errors.New("transfer: write legacy evidence spool")
+			return fmt.Errorf("transfer: write legacy evidence spool: %w", err)
 		}
 		if _, err := normalizer.evidenceFile.Write([]byte{'\n'}); err != nil {
-			return errors.New("transfer: write legacy evidence spool")
+			return fmt.Errorf("transfer: write legacy evidence spool: %w", err)
 		}
 		_, _ = hasher.Write(raw)
 		_, _ = hasher.Write([]byte{'\n'})
@@ -378,7 +347,10 @@ func (normalizer *legacyNormalizer) run(input io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if result.Duplicate || result.Missing {
+	if result.Duplicate {
+		return errors.New("transfer: duplicate legacy conversation")
+	}
+	if result.Missing {
 		return errors.New("transfer: legacy message and conversation kinds do not reconcile")
 	}
 	normalizer.evidence.Format = LegacyExportFormat
@@ -683,13 +655,13 @@ func (normalizer *legacyNormalizer) addSource(source legacySource) error {
 	if len(normalizer.sourceRefs) >= MaxManifestBytes/64 {
 		return errors.New("legacy source selection exceeds manifest bound")
 	}
-	normalizedType, route, rawType, err := normalizeLegacySourceType(source.SourceType)
+	normalizedType, rawType, err := normalizeLegacySourceType(source.SourceType)
 	if err != nil {
 		return err
 	}
 	line := SourceLineV1{
 		RecordType: RecordTypeSource, SourceRef: sourceRef, SourceType: normalizedType,
-		Route: route, Identifier: source.Identifier, SourceTypeRaw: rawType, DisplayName: source.DisplayName,
+		Identifier: source.Identifier, SourceTypeRaw: rawType, DisplayName: source.DisplayName,
 	}
 	if err := normalizer.writeLine(RecordTypeSource, line); err != nil {
 		return err
@@ -837,7 +809,7 @@ func (normalizer *legacyNormalizer) writeLine(recordType RecordType, value any) 
 		return errors.New("transfer: normalized legacy package exceeds its byte bound")
 	}
 	if _, err := normalizer.spools[recordType].Write(line); err != nil {
-		return errors.New("transfer: write legacy normalization spool")
+		return fmt.Errorf("transfer: write legacy normalization spool: %w", err)
 	}
 	normalizer.normalizedBytes += int64(len(line))
 	return nil
@@ -849,7 +821,7 @@ func (normalizer *legacyNormalizer) writePackage() error {
 	}
 	if err := normalizer.evidenceFile.Close(); err != nil {
 		normalizer.evidenceFile = nil
-		return errors.New("transfer: close legacy evidence spool")
+		return fmt.Errorf("transfer: close legacy evidence spool: %w", err)
 	}
 	normalizer.evidenceFile = nil
 	for _, spool := range normalizer.spools {
@@ -866,7 +838,7 @@ func (normalizer *legacyNormalizer) writePackage() error {
 	recordsPath := filepath.Join(normalizer.packageDirectory, "records.jsonl")
 	records, err := os.OpenFile(recordsPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return errors.New("transfer: create normalized record stream")
+		return fmt.Errorf("transfer: create normalized record stream: %w", err)
 	}
 	prefixHash := sha256.New()
 	wholeHash := sha256.New()
@@ -893,10 +865,10 @@ func (normalizer *legacyNormalizer) writePackage() error {
 	completeLine[len(completeRaw)] = '\n'
 	if _, err := io.MultiWriter(records, wholeHash).Write(completeLine); err != nil {
 		_ = records.Close()
-		return errors.New("transfer: finish normalized record stream")
+		return fmt.Errorf("transfer: finish normalized record stream: %w", err)
 	}
 	if err := records.Close(); err != nil {
-		return errors.New("transfer: close normalized record stream")
+		return fmt.Errorf("transfer: close normalized record stream: %w", err)
 	}
 	if err := normalizer.ctx.Err(); err != nil {
 		return err
@@ -920,11 +892,11 @@ func (normalizer *legacyNormalizer) writePackage() error {
 	}
 	manifestPath := filepath.Join(normalizer.packageDirectory, "transfer.json")
 	if err := os.WriteFile(manifestPath, manifestRaw, 0o600); err != nil {
-		return errors.New("transfer: write normalized manifest")
+		return fmt.Errorf("transfer: write normalized manifest: %w", err)
 	}
 	sums := fmt.Sprintf("%s  records.jsonl\n%s  transfer.json\n", hex.EncodeToString(wholeHash.Sum(nil)), sha256Hex(manifestRaw))
 	if err := os.WriteFile(filepath.Join(normalizer.packageDirectory, "SHA256SUMS"), []byte(sums), 0o600); err != nil {
-		return errors.New("transfer: write normalized checksums")
+		return fmt.Errorf("transfer: write normalized checksums: %w", err)
 	}
 	return normalizer.ctx.Err()
 }
@@ -944,7 +916,7 @@ func (normalizer *legacyNormalizer) close() error {
 		normalizer.associations = nil
 	}
 	if result != nil {
-		return errors.New("transfer: close legacy normalization spool")
+		return fmt.Errorf("transfer: close legacy normalization spool: %w", result)
 	}
 	return nil
 }
@@ -966,7 +938,7 @@ func legacyScopedRef(parts ...string) (string, error) {
 	return sha256Hex(raw), nil
 }
 
-func normalizeLegacySourceType(sourceType string) (SourceType, string, string, error) {
+func normalizeLegacySourceType(sourceType string) (SourceType, string, error) {
 	aliases := map[string]SourceType{
 		"gcal": SourceTypeGoogleCalendar, "facebook_messenger": SourceTypeMessenger,
 		"apple_messages": SourceTypeIMessage, "synctech_sms": SourceTypeSyncTech,
@@ -976,21 +948,17 @@ func normalizeLegacySourceType(sourceType string) (SourceType, string, string, e
 		normalized = alias
 	}
 	if ValidSourceType(normalized) && normalized != SourceTypeOther {
-		for _, row := range sourceQualificationRows {
-			if row.sourceType == normalized {
-				return normalized, row.route, "", nil
-			}
-		}
+		return normalized, "", nil
 	}
 	if len(sourceType) > MaxSourceTypeRawBytes || !sourceTypeRawPattern.MatchString(sourceType) {
-		return "", "", "", errors.New("transfer: legacy source type is unsupported")
+		return "", "", errors.New("transfer: legacy source type is unsupported")
 	}
-	return SourceTypeOther, sourceType, sourceType, nil
+	return SourceTypeOther, sourceType, nil
 }
 
 func legacyMessageKind(messageType string) (Kind, error) {
 	switch messageType {
-	case "", "email":
+	case "email":
 		return KindEmail, nil
 	case "sms", "mms", "whatsapp", "teams", "imessage", "slack", "discord", "beeper", "messenger", "fbmessenger", "google_voice_text":
 		return KindChatMessage, nil
@@ -1032,14 +1000,14 @@ func legacyOrderingDate(raw string) (DateV1, error) {
 		return DateV1{}, errors.New("transfer: legacy ordering timestamp is invalid")
 	}
 	fractionDigits := 0
-	if dot := strings.IndexByte(raw, '.'); dot >= 0 {
+	if separator := strings.IndexAny(raw, ".,"); separator >= 0 {
 		end := len(raw)
 		if strings.HasSuffix(raw, "Z") {
 			end--
 		} else {
 			end -= 6
 		}
-		fractionDigits = end - dot - 1
+		fractionDigits = end - separator - 1
 		if fractionDigits < 1 || fractionDigits > 9 {
 			return DateV1{}, errors.New("transfer: legacy ordering timestamp precision is invalid")
 		}

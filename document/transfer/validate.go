@@ -72,7 +72,7 @@ func ReconcileCounts(manifest, terminal, observed CountsV1) error {
 func Validate(ctx context.Context, reader PackageReader) (Report, error) {
 	validator, err := newPackageValidator(ctx, reader)
 	if err != nil {
-		return Report{}, err
+		return Report{}, errors.Join(ErrValidationIncomplete, err)
 	}
 	runErr := validator.run()
 	closeErr := validator.close()
@@ -80,23 +80,14 @@ func Validate(ctx context.Context, reader PackageReader) (Report, error) {
 }
 
 func finishValidation(validator *packageValidator, runErr, closeErr error) (Report, error) {
-	if closeErr != nil {
-		validator.report.AddFinding(Finding{Severity: "error", Code: "package_integrity_failed", Path: "package", Detail: "validation cleanup failed"})
-	}
-	if runErr != nil {
-		if validator.report.FindingsTotal == 0 {
-			validator.report.AddFinding(Finding{Severity: "error", Code: "package_integrity_failed", Path: "package", Detail: "package validation failed"})
-		}
-		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
-			if closeErr != nil {
-				return validator.report, errors.Join(runErr, errors.New("transfer: validation cleanup failed"))
-			}
-			return validator.report, runErr
-		}
-		return validator.report, errors.New("transfer: package validation failed")
+	if runErr != nil && !errors.Is(runErr, ErrInvalidPackage) {
+		runErr = errors.Join(ErrValidationIncomplete, runErr)
 	}
 	if closeErr != nil {
-		return validator.report, errors.New("transfer: validation cleanup failed")
+		closeErr = errors.Join(ErrValidationIncomplete, closeErr)
+	}
+	if err := errors.Join(runErr, closeErr); err != nil {
+		return validator.report, err
 	}
 	validator.report.Valid = true
 	return validator.report, nil
@@ -161,8 +152,8 @@ func (validator *packageValidator) run() error {
 		verifyLegacyEvidence(ctx context.Context) error
 	}); ok {
 		if err := verifier.verifyLegacyEvidence(validator.ctx); err != nil {
-			if ctxErr := contextError(err); ctxErr != nil {
-				return ctxErr
+			if opErr := operationalError(err); opErr != nil {
+				return opErr
 			}
 			return validator.fail("package_integrity_failed", "legacy evidence", "original legacy bytes do not match their retained digest")
 		}
@@ -186,7 +177,7 @@ func (validator *packageValidator) run() error {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		if errors.Is(err, errAdmissionFinding) {
+		if errors.Is(err, ErrInvalidPackage) || errors.Is(err, ErrValidationIncomplete) {
 			return err
 		}
 		return validator.fail("incomplete_package", "records.jsonl", "record stream framing or read failed")
@@ -271,8 +262,8 @@ func (validator *packageValidator) inventory() error {
 func (validator *packageValidator) loadManifest() error {
 	raw, err := readPackageFile(validator.ctx, validator.reader, "transfer.json", MaxManifestBytes)
 	if err != nil {
-		if ctxErr := contextError(err); ctxErr != nil {
-			return ctxErr
+		if opErr := operationalError(err); opErr != nil {
+			return opErr
 		}
 		return validator.fail("package_integrity_failed", "transfer.json", "manifest cannot be read")
 	}
@@ -313,8 +304,8 @@ func (validator *packageValidator) loadManifest() error {
 func (validator *packageValidator) verifyChecksums() error {
 	raw, err := readPackageFile(validator.ctx, validator.reader, "SHA256SUMS", MaxChecksumBytes)
 	if err != nil {
-		if ctxErr := contextError(err); ctxErr != nil {
-			return ctxErr
+		if opErr := operationalError(err); opErr != nil {
+			return opErr
 		}
 		return validator.fail("package_integrity_failed", "SHA256SUMS", "checksum inventory cannot be read")
 	}
@@ -337,8 +328,8 @@ func (validator *packageValidator) verifyChecksums() error {
 			return err
 		}
 		observed, observedSize, hashErr := hashPackageFile(validator.ctx, validator.reader, name, fileReadLimit(name))
-		if ctxErr := contextError(hashErr); ctxErr != nil {
-			return ctxErr
+		if opErr := operationalError(hashErr); opErr != nil {
+			return opErr
 		}
 		if hashErr != nil || observed != digest {
 			return validator.fail("package_integrity_failed", name, "file bytes do not match the checksum inventory")
@@ -368,23 +359,25 @@ func (validator *packageValidator) verifyChecksums() error {
 	return nil
 }
 
-func hashPackageFile(ctx context.Context, reader PackageReader, name string, limit int64) (string, int64, error) {
+func hashPackageFile(ctx context.Context, reader PackageReader, name string, limit int64) (digest string, total int64, resultErr error) {
 	file, declaredSize, err := reader.OpenFile(ctx, name)
 	if err != nil {
-		return "", 0, err
+		return "", 0, packageReadError(err)
 	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			resultErr = errors.Join(resultErr, ErrValidationIncomplete, fmt.Errorf("transfer: close package file: %w", err))
+		}
+	}()
 	hasher := sha256.New()
 	buffer := make([]byte, 64<<10)
-	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
-			_ = file.Close()
 			return "", total, err
 		}
 		read, readErr := file.Read(buffer)
 		if read > 0 {
 			if int64(read) > limit-total {
-				_ = file.Close()
 				return "", total, errors.New("transfer: package file limit")
 			}
 			total += int64(read)
@@ -394,12 +387,8 @@ func hashPackageFile(ctx context.Context, reader PackageReader, name string, lim
 			break
 		}
 		if readErr != nil {
-			_ = file.Close()
-			return "", total, fmt.Errorf("transfer: read package file: %w", readErr)
+			return "", total, fmt.Errorf("transfer: read package file: %w", packageReadError(readErr))
 		}
-	}
-	if err := file.Close(); err != nil {
-		return "", total, fmt.Errorf("transfer: close package file: %w", err)
 	}
 	if total != declaredSize {
 		return "", total, errors.New("transfer: package file size changed")
@@ -559,7 +548,11 @@ func (validator *packageValidator) validatePerson(person PersonV1) *semanticFind
 }
 
 func (validator *packageValidator) validateSource(source SourceLineV1) *semanticFinding {
-	if source.RecordType != RecordTypeSource || source.SourceRef == "" || len(source.SourceRef) > MaxSourceRefBytes || !ValidSourceType(source.SourceType) || source.Route == "" || len(source.Route) > 64 || source.Identifier == "" || len(source.Identifier) > 4096 || len(source.DisplayName) > MaxNameBytes || !validSourceRoute(source.SourceType, source.Route) {
+	validRoute := source.Route != "" && validSourceRoute(source.SourceType, source.Route)
+	if validator.legacyEvidence != nil {
+		validRoute = source.Route == ""
+	}
+	if source.RecordType != RecordTypeSource || source.SourceRef == "" || len(source.SourceRef) > MaxSourceRefBytes || !ValidSourceType(source.SourceType) || !validRoute || len(source.Route) > 64 || source.Identifier == "" || len(source.Identifier) > 4096 || len(source.DisplayName) > MaxNameBytes {
 		return invalidSemantic("unsupported_enum_value", "source record is invalid")
 	}
 	if source.SourceType == SourceTypeOther {
@@ -824,14 +817,22 @@ func (validator *packageValidator) decodeFailure(number int, err error) error {
 }
 
 func (validator *packageValidator) semanticFailure(number int, finding *semanticFinding) error {
+	if finding.err != nil {
+		return errors.Join(ErrValidationIncomplete, finding.err)
+	}
 	return validator.fail(finding.code, recordPath(number), finding.detail)
 }
 
-var errAdmissionFinding = errors.New("transfer: admission finding")
+// ErrInvalidPackage reports a package defect described by the report's findings.
+var ErrInvalidPackage = errors.New("transfer: package validation failed")
+
+// ErrValidationIncomplete reports an operational failure. Any findings collected
+// before it do not establish a completed validation result.
+var ErrValidationIncomplete = errors.New("transfer: validation could not complete")
 
 func (validator *packageValidator) fail(code, path, detail string) error {
 	validator.report.AddFinding(Finding{Severity: "error", Code: code, Path: path, Detail: detail})
-	return errAdmissionFinding
+	return ErrInvalidPackage
 }
 
 type semanticFinding struct {
@@ -932,12 +933,9 @@ func validatePersonFields(person PersonV1) error {
 	return nil
 }
 
-func contextError(err error) error {
-	if errors.Is(err, context.Canceled) {
-		return context.Canceled
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return context.DeadlineExceeded
+func operationalError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrValidationIncomplete) {
+		return err
 	}
 	return nil
 }
@@ -964,7 +962,7 @@ func decodeRecordHeader(raw []byte) (struct {
 }
 
 func decodeFindingCode(err error) string {
-	if strings.Contains(strings.ToLower(err.Error()), "unknown") {
+	if errors.Is(err, json.ErrUnknownName) {
 		return "unknown_field"
 	}
 	return "package_integrity_failed"

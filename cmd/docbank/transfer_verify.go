@@ -29,6 +29,10 @@ var transferVerifyCmd = &cobra.Command{
 		}
 		report, validateErr := transfer.Validate(cmd.Context(), reader)
 		closeErr := reader.Close()
+		if closeErr != nil || errors.Is(validateErr, transfer.ErrValidationIncomplete) ||
+			validateErr != nil && !errors.Is(validateErr, transfer.ErrInvalidPackage) {
+			return errors.Join(validateErr, closeErr)
+		}
 		if err := writeTransferVerification(cmd.OutOrStdout(), report, transferVerifyJSON); err != nil {
 			return err
 		}
@@ -36,10 +40,7 @@ var transferVerifyCmd = &cobra.Command{
 			if validateErr == nil {
 				validateErr = errors.New("transfer package is invalid")
 			}
-			return integrityError(errors.Join(validateErr, closeErr))
-		}
-		if closeErr != nil {
-			return closeErr
+			return integrityError(validateErr)
 		}
 		return nil
 	},
@@ -51,7 +52,7 @@ func openLocalTransfer(ctx context.Context, path, archiveID string) (transfer.Pa
 		return nil, fmt.Errorf("inspect transfer package: %w", err)
 	}
 	if info.IsDir() {
-		return transfer.OpenDirectory(path)
+		return transfer.OpenDirectory(ctx, path)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("transfer verify: package must be a regular file or directory")
@@ -63,11 +64,10 @@ func openLocalTransfer(ctx context.Context, path, archiveID string) (transfer.Pa
 	var magic [4]byte
 	read, readErr := file.ReadAt(magic[:], 0)
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		_ = file.Close()
-		return nil, errors.New("transfer verify: cannot inspect package format")
+		return nil, errors.Join(fmt.Errorf("transfer verify: cannot inspect package format: %w", readErr), file.Close())
 	}
 	if read >= 2 && bytes.Equal(magic[:2], []byte{'P', 'K'}) {
-		return transfer.OpenZip(file, info.Size())
+		return transfer.OpenZip(ctx, file, info.Size())
 	}
 	if archiveID == "" {
 		_ = file.Close()
@@ -77,11 +77,13 @@ func openLocalTransfer(ctx context.Context, path, archiveID string) (transfer.Pa
 		transfer.LegacyArchiveBinding{ArchiveID: archiveID})
 	closeErr := file.Close()
 	if normalizeErr != nil {
-		return nil, normalizeErr
+		if errors.Is(normalizeErr, transfer.ErrLegacyArchiveInvalid) {
+			return nil, usageError(normalizeErr)
+		}
+		return nil, errors.Join(normalizeErr, closeErr)
 	}
 	if closeErr != nil {
-		_ = reader.Close()
-		return nil, errors.New("transfer verify: close legacy input")
+		return nil, errors.Join(fmt.Errorf("transfer verify: close legacy input: %w", closeErr), reader.Close())
 	}
 	return reader, nil
 }
@@ -91,10 +93,19 @@ func writeTransferVerification(w io.Writer, report transfer.Report, asJSON bool)
 		return writeCLIJSON(w, report)
 	}
 	if report.Valid {
-		_, err := fmt.Fprintf(w, "valid %s package %s for archive %s (%s authority)\n",
-			report.Format, report.PackageID, report.ArchiveID, report.PackageAuthority)
+		status := "valid"
+		if report.Partial {
+			status += " partial"
+		}
+		_, err := fmt.Fprintf(w, "%s %s package %s for archive %s (%s authority)\n",
+			status, report.Format, report.PackageID, report.ArchiveID, report.PackageAuthority)
 		if err != nil {
 			return fmt.Errorf("write transfer verification: %w", err)
+		}
+		if report.Partial {
+			if _, err := fmt.Fprintf(w, "next_cursor: %q\n", report.NextCursor); err != nil {
+				return fmt.Errorf("write transfer verification: %w", err)
+			}
 		}
 		return nil
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -82,7 +83,7 @@ func ValidateSourceFields(kind Kind, raw jsontext.Value) error {
 }
 
 func safeSourceFieldsDecodeError(err error) error {
-	if strings.Contains(strings.ToLower(err.Error()), "unknown") {
+	if errors.Is(err, json.ErrUnknownName) {
 		return errUnknownSourceField
 	}
 	return errInvalidSourceFields

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,9 +30,50 @@ func TestLegacyIdentityDoesNotConcatenateUnescapedDelimiters(t *testing.T) {
 	require.NotEqual(t, a, b)
 }
 
-func TestLegacyReaderRequiresArchiveBinding(t *testing.T) {
-	_, err := ReadLegacyExport(t.Context(), bytes.NewBufferString(fiveLineLegacyFixture))
-	require.ErrorIs(t, err, ErrLegacyArchiveRequired)
+func TestLegacyReaderRejectsEmptyMessageTypes(t *testing.T) {
+	fixture := strings.NewReplacer(`"message_types":["sms"]`, `"message_types":[]`,
+		`"message_type":"sms"`, `"message_type":""`,
+		`"conversation_type":"direct_chat"`, `"conversation_type":"email_thread"`).Replace(fiveLineLegacyFixture)
+	reader, err := ReadLegacyExportWithArchive(t.Context(), strings.NewReader(fixture), LegacyArchiveBinding{ArchiveID: "archive_synthetic"})
+	if reader != nil {
+		require.NoError(t, reader.Close())
+	}
+	require.ErrorContains(t, err, "legacy message type is unsupported")
+}
+
+func TestLegacyReaderNamesDuplicateConversations(t *testing.T) {
+	lines := strings.Split(fiveLineLegacyFixture, "\n")
+	fixture := strings.Replace(fiveLineLegacyFixture, lines[2], lines[2]+"\n"+lines[2], 1)
+	fixture = strings.Replace(fixture, `"conversations":1`, `"conversations":2`, 1)
+	_, err := ReadLegacyExportWithArchive(t.Context(), strings.NewReader(fixture), LegacyArchiveBinding{ArchiveID: "archive_synthetic"})
+	require.ErrorContains(t, err, "duplicate legacy conversation")
+}
+
+func TestLegacyReaderPreservesCommaFractions(t *testing.T) {
+	for _, fraction := range []string{"0000", "1200"} {
+		t.Run(fraction, func(t *testing.T) {
+			rawDate := "2025-01-02T03:04:05," + fraction + "-07:00"
+			fixture := strings.Replace(fiveLineLegacyFixture, "2025-01-02T03:04:05.1200-07:00", rawDate, 1)
+			reader, err := ReadLegacyExportWithArchive(t.Context(), strings.NewReader(fixture), LegacyArchiveBinding{ArchiveID: "archive_synthetic"})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reader.Close()) })
+			require.NoError(t, reader.Records(t.Context(), func(_ int, raw []byte) error {
+				header, err := decodeRecordHeader(raw)
+				if err != nil || header.RecordType != RecordTypeRecord {
+					return err
+				}
+				record, _, err := DecodeRecordV1(raw)
+				require.NoError(t, err)
+				require.Len(t, record.Dates, 1)
+				assert.Equal(t, rawDate, record.Dates[0].Raw)
+				assert.Equal(t, 4, record.Dates[0].FractionDigits)
+				assert.Equal(t, PrecisionFraction, record.Dates[0].Precision)
+				return nil
+			}))
+			_, err = Validate(t.Context(), reader)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestLegacyEvidenceCopyPreservesMidstreamCancellation(t *testing.T) {
@@ -74,7 +116,7 @@ func TestLegacyAssemblyCopyPreservesMidstreamCancellation(t *testing.T) {
 
 func TestLegacyCopyPreservesDeadlineExceeded(t *testing.T) {
 	ctx := &cancelAfterChecksContext{Context: t.Context(), cancelAfter: 1, failure: context.DeadlineExceeded}
-	_, err := copyLegacyContext(ctx, io.Discard, bytes.NewBufferString("synthetic"))
+	_, err := copyContext(ctx, io.Discard, bytes.NewBufferString("synthetic"))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
@@ -108,13 +150,18 @@ func TestLegacyReaderPreservesReducedAuthorityAndOriginalEvidence(t *testing.T) 
 	}
 
 	var record RecordV1
+	var source SourceLineV1
 	require.NoError(t, reader.Records(t.Context(), func(_ int, raw []byte) error {
 		header, decodeErr := decodeRecordHeader(raw)
+		if decodeErr == nil && header.RecordType == RecordTypeSource {
+			source, _, decodeErr = DecodeSourceLineV1(raw)
+		}
 		if decodeErr == nil && header.RecordType == RecordTypeRecord {
 			record, _, decodeErr = DecodeRecordV1(raw)
 		}
 		return decodeErr
 	}))
+	assert.Empty(t, source.Route, "legacy source records carry no acquisition route")
 	assert.Equal(t, KindChatMessage, record.Kind)
 	assert.Empty(t, record.Participants, "a null legacy author carries no participant authority")
 	require.Len(t, record.Dates, 1)

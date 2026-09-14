@@ -88,7 +88,7 @@ func TestValidateAcceptsAnExplicitlyTruncatedPackageAsPartial(t *testing.T) {
 		Truncated:  true, Continuation: transfer.ContinuationV1("opaque-page-2"),
 	})
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -117,6 +117,12 @@ func TestValidateRejectsSemanticAndReferenceViolations(t *testing.T) {
 		}},
 		{"duplicate source", func(spec *transfertest.Spec) {
 			spec.Lines = append(spec.Lines[:2], append([]any{spec.Lines[1]}, spec.Lines[2:]...)...)
+		}},
+		{"native source without route", func(spec *transfertest.Spec) {
+			source, ok := spec.Lines[1].(transfer.SourceLineV1)
+			require.True(t, ok)
+			source.Route = ""
+			spec.Lines[1] = source
 		}},
 		{"unknown enum", func(spec *transfertest.Spec) {
 			record := packageRecord(t, spec)
@@ -147,7 +153,7 @@ func TestValidateRejectsSemanticAndReferenceViolations(t *testing.T) {
 			spec := clonePackageSpec(base)
 			test.mutate(&spec)
 			path := transfertest.Build(t, spec)
-			reader, err := transfer.OpenDirectory(path)
+			reader, err := transfer.OpenDirectory(t.Context(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reader.Close()) })
 			report, err := transfer.Validate(t.Context(), reader)
@@ -160,7 +166,7 @@ func TestValidateRejectsSemanticAndReferenceViolations(t *testing.T) {
 
 func TestValidateHashesFilesIndependentlyOfReaderManifest(t *testing.T) {
 	path := buildValidPackage(t, false)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -179,7 +185,7 @@ func TestValidateHashesFilesIndependentlyOfReaderManifest(t *testing.T) {
 
 func TestValidateReconcilesWalkedAndOpenedFileSizes(t *testing.T) {
 	path := buildValidPackage(t, false)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -201,7 +207,7 @@ func TestValidateBindsBlobNamesAndReferenceSizesToVerifiedBytes(t *testing.T) {
 		sums = []byte(strings.Replace(string(sums), digest+"  blobs/", sha256String(changed)+"  blobs/", 1))
 		require.NoError(t, os.WriteFile(path+"/SHA256SUMS", sums, 0o600))
 
-		reader, err := transfer.OpenDirectory(path)
+		reader, err := transfer.OpenDirectory(t.Context(), path)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, reader.Close()) })
 		report, err := transfer.Validate(t.Context(), reader)
@@ -217,7 +223,7 @@ func TestValidateBindsBlobNamesAndReferenceSizesToVerifiedBytes(t *testing.T) {
 		record.Attachment.Blob.Size = 1
 		record.NormalizedSHA256, _ = transfer.NormalizedRecordSHA256(record)
 		spec.Lines[5] = record
-		reader, err := transfer.OpenDirectory(transfertest.Build(t, spec))
+		reader, err := transfer.OpenDirectory(t.Context(), transfertest.Build(t, spec))
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, reader.Close()) })
 		report, err := transfer.Validate(t.Context(), reader)
@@ -228,7 +234,7 @@ func TestValidateBindsBlobNamesAndReferenceSizesToVerifiedBytes(t *testing.T) {
 
 func TestValidateBindsDecodedManifestToVerifiedBytes(t *testing.T) {
 	path := buildValidPackage(t, false)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	raw, err := os.ReadFile(path + "/transfer.json")
@@ -247,7 +253,7 @@ func TestValidateRejectsUnterminatedChecksumInventory(t *testing.T) {
 	_, err = file.WriteString("unframed junk")
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -259,7 +265,7 @@ func TestValidateRejectsUnterminatedChecksumInventory(t *testing.T) {
 func TestValidatePreservesCancellationFromPackageReads(t *testing.T) {
 	for _, name := range []string{"transfer.json", "SHA256SUMS", "records.jsonl"} {
 		t.Run(name, func(t *testing.T) {
-			reader, err := transfer.OpenDirectory(buildValidPackage(t, false))
+			reader, err := transfer.OpenDirectory(t.Context(), buildValidPackage(t, false))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reader.Close()) })
 			_, err = transfer.Validate(t.Context(), canceledFileReader{PackageReader: reader, name: name})
@@ -343,7 +349,7 @@ func TestValidateRejectsPersonHintFieldAndAliasConflicts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec := validPackageSpec(t, sha256String(blob), blob)
 			test.mutate(&spec)
-			reader, err := transfer.OpenDirectory(transfertest.Build(t, spec))
+			reader, err := transfer.OpenDirectory(t.Context(), transfertest.Build(t, spec))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reader.Close()) })
 			report, err := transfer.Validate(t.Context(), reader)
@@ -361,7 +367,7 @@ func TestValidateClassifiesUnknownSourceFieldWithoutEchoingIt(t *testing.T) {
 	record.NormalizedSHA256, _ = transfer.NormalizedRecordSHA256(record)
 	spec.Lines[3] = record
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -383,7 +389,7 @@ func TestValidateClassifiesUnknownKindAsUnsupportedRecordKind(t *testing.T) {
 	coverage.Kind = "message"
 	spec.Lines[6] = coverage
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -400,7 +406,7 @@ func TestValidateRejectsStructuredSecretsButLeavesBodyStringsOpaque(t *testing.T
 	record.NormalizedSHA256, _ = transfer.NormalizedRecordSHA256(record)
 	spec.Lines[3] = record
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	report, err := transfer.Validate(t.Context(), reader)
 	require.NoError(t, err)
@@ -411,7 +417,7 @@ func TestValidateRejectsStructuredSecretsButLeavesBodyStringsOpaque(t *testing.T
 	record.NormalizedSHA256, _ = transfer.NormalizedRecordSHA256(record)
 	spec.Lines[3] = record
 	path = transfertest.Build(t, spec)
-	reader, err = transfer.OpenDirectory(path)
+	reader, err = transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	report, err = transfer.Validate(t.Context(), reader)
@@ -437,7 +443,7 @@ func TestValidateRejectsPersonLinesOutsideTheSelectedClass(t *testing.T) {
 		Blobs: map[string][]byte{},
 	}
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -462,7 +468,7 @@ func TestValidateRejectsSourcesOutsideTheExactSelection(t *testing.T) {
 		Blobs: map[string][]byte{},
 	}
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -479,7 +485,7 @@ func TestValidateRejectsRecordKindsOutsideTheExactSelection(t *testing.T) {
 	record.NormalizedSHA256, _ = transfer.NormalizedRecordSHA256(record)
 	spec.Lines[3] = record
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -504,7 +510,7 @@ func TestValidateRejectsOversizedPersonParticipantReferences(t *testing.T) {
 		Blobs: map[string][]byte{},
 	}
 	path := transfertest.Build(t, spec)
-	reader, err := transfer.OpenDirectory(path)
+	reader, err := transfer.OpenDirectory(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -525,7 +531,7 @@ func buildValidPackage(t *testing.T, zipped bool) string {
 func openPackage(t *testing.T, path string, zipped bool) transfer.PackageReader {
 	t.Helper()
 	if !zipped {
-		reader, err := transfer.OpenDirectory(path)
+		reader, err := transfer.OpenDirectory(t.Context(), path)
 		require.NoError(t, err)
 		return reader
 	}
@@ -533,7 +539,7 @@ func openPackage(t *testing.T, path string, zipped bool) transfer.PackageReader 
 	require.NoError(t, err)
 	info, err := file.Stat()
 	require.NoError(t, err)
-	reader, err := transfer.OpenZip(file, info.Size())
+	reader, err := transfer.OpenZip(t.Context(), file, info.Size())
 	require.NoError(t, err)
 	return reader
 }

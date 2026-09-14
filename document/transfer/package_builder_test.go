@@ -32,9 +32,9 @@ func TestSyntheticPackageBuilderProducesReadableDirectoryAndZip(t *testing.T) {
 			require.NoError(t, openErr)
 			info, statErr := file.Stat()
 			require.NoError(t, statErr)
-			reader, err = transfer.OpenZip(file, info.Size())
+			reader, err = transfer.OpenZip(t.Context(), file, info.Size())
 		} else {
-			reader, err = transfer.OpenDirectory(path)
+			reader, err = transfer.OpenDirectory(t.Context(), path)
 		}
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, reader.Close()) })

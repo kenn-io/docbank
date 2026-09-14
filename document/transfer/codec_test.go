@@ -48,6 +48,15 @@ func TestTransferHashesBindActualBytesAndStableMeaning(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestManifestOverflowNamesItsBound(t *testing.T) {
+	manifest := testPackageManifest()
+	for range 16000 {
+		manifest.Selection.Sources = append(manifest.Selection.Sources, strings.Repeat("a", 64))
+	}
+	_, _, err := MarshalManifestV1(manifest)
+	require.ErrorContains(t, err, "manifest size limit")
+}
+
 func TestTransferCanonicalGoldenCoversEveryLineType(t *testing.T) {
 	manifest := ManifestV1{
 		Format:         FormatV1,

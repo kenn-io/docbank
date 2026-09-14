@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,7 +31,7 @@ func TestRecordsRejectsAnUnterminatedFinalLine(t *testing.T) {
 	directory := t.TempDir()
 	writeTestManifest(t, directory)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "records.jsonl"), []byte("{}\ntruncated"), 0o600))
-	reader, err := OpenDirectory(directory)
+	reader, err := OpenDirectory(t.Context(), directory)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 
@@ -53,7 +55,7 @@ func TestDirectoryReaderConfinesFilesAndStreamsRecords(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "records.jsonl"), []byte("{}\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "SHA256SUMS"), []byte{}, 0o600))
 
-	reader, err := OpenDirectory(directory)
+	reader, err := OpenDirectory(t.Context(), directory)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	require.Equal(t, manifest, reader.Manifest())
@@ -78,6 +80,13 @@ func TestDirectoryReaderConfinesFilesAndStreamsRecords(t *testing.T) {
 		{Name: "records.jsonl", Size: 3},
 		{Name: "transfer.json", Size: int64(len(manifestRaw))},
 	}, files)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	canceledReader, err := OpenDirectory(ctx, directory)
+	if canceledReader != nil {
+		require.NoError(t, canceledReader.Close())
+	}
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestDirectoryReaderRejectsUnknownAndLinkedEntries(t *testing.T) {
@@ -92,7 +101,7 @@ func TestDirectoryReaderRejectsUnknownAndLinkedEntries(t *testing.T) {
 		directory := t.TempDir()
 		writeTestManifest(t, directory)
 		setup(directory)
-		_, err := OpenDirectory(directory)
+		_, err := OpenDirectory(t.Context(), directory)
 		require.Error(t, err)
 	}
 }
@@ -107,7 +116,7 @@ func TestZipReaderRejectsDuplicateAndOverBoundCentralDirectories(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, writer.Close())
-	_, err := OpenZip(bytes.NewReader(duplicate.Bytes()), int64(duplicate.Len()))
+	_, err := OpenZip(t.Context(), bytes.NewReader(duplicate.Bytes()), int64(duplicate.Len()))
 	require.Error(t, err)
 
 	// An entry count over the package bound must fail from the fixed EOCD
@@ -127,7 +136,7 @@ func TestZipReaderRejectsDuplicateAndOverBoundCentralDirectories(t *testing.T) {
 	binary.LittleEndian.PutUint16(eocd[10:], 0xffff)
 	binary.LittleEndian.PutUint32(eocd[12:], 0xffffffff)
 	binary.LittleEndian.PutUint32(eocd[16:], 0xffffffff)
-	_, err = OpenZip(bytes.NewReader(zip64), int64(len(zip64)))
+	_, err = OpenZip(t.Context(), bytes.NewReader(zip64), int64(len(zip64)))
 	require.ErrorContains(t, err, "ZIP entry limit")
 }
 
@@ -147,9 +156,9 @@ func TestZipPreflightCountsActualCentralDirectoryHeaders(t *testing.T) {
 	binary.LittleEndian.PutUint16(raw[eocd+8:], 1)
 	binary.LittleEndian.PutUint16(raw[eocd+10:], 1)
 
-	err := preflightZipDirectoryWithLimits(bytes.NewReader(raw), int64(len(raw)), 2, MaxZipDirectoryBytes)
+	err := preflightZipDirectoryWithLimits(t.Context(), bytes.NewReader(raw), int64(len(raw)), 2, MaxZipDirectoryBytes)
 	require.Error(t, err)
-	_, err = OpenZip(bytes.NewReader(raw), int64(len(raw)))
+	_, err = OpenZip(t.Context(), bytes.NewReader(raw), int64(len(raw)))
 	require.Error(t, err)
 }
 
@@ -177,12 +186,12 @@ func TestZipPreflightAndArchiveParserSelectTheSameDirectoryEnd(t *testing.T) {
 	raw = append(raw, originalEnd...)
 	raw = append(raw, 'x')
 
-	selectedEnd, selectedOffset, err := locateZipDirectoryEnd(bytes.NewReader(raw), int64(len(raw)))
+	selectedEnd, selectedOffset, err := locateZipDirectoryEnd(t.Context(), bytes.NewReader(raw), int64(len(raw)))
 	require.NoError(t, err)
 	require.Equal(t, int64(end+22), selectedOffset)
 	require.Equal(t, uint16(3), binary.LittleEndian.Uint16(selectedEnd[10:]))
 
-	err = preflightZipDirectoryWithLimits(bytes.NewReader(raw), int64(len(raw)), 2, MaxZipDirectoryBytes)
+	err = preflightZipDirectoryWithLimits(t.Context(), bytes.NewReader(raw), int64(len(raw)), 2, MaxZipDirectoryBytes)
 	require.Error(t, err)
 }
 
@@ -195,8 +204,8 @@ func TestZipPreflightUsesSmallForcedHeaderAndByteBounds(t *testing.T) {
 	}
 	require.NoError(t, writer.Close())
 
-	require.Error(t, preflightZipDirectoryWithLimits(bytes.NewReader(archive.Bytes()), int64(archive.Len()), 2, MaxZipDirectoryBytes))
-	require.Error(t, preflightZipDirectoryWithLimits(bytes.NewReader(archive.Bytes()), int64(archive.Len()), MaxZipEntries, 64))
+	require.Error(t, preflightZipDirectoryWithLimits(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()), 2, MaxZipDirectoryBytes))
+	require.Error(t, preflightZipDirectoryWithLimits(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()), MaxZipEntries, 64))
 }
 
 func TestDirectoryEnumerationAppliesSmallBoundsByBatch(t *testing.T) {
@@ -218,7 +227,7 @@ func TestReaderConstructorsRedactManifestKeysAndValues(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "transfer.json"), privateManifest, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "records.jsonl"), nil, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "SHA256SUMS"), nil, 0o600))
-	_, err := OpenDirectory(directory)
+	_, err := OpenDirectory(t.Context(), directory)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "private-secret-key")
 	require.NotContains(t, err.Error(), "private-value")
@@ -236,7 +245,7 @@ func TestReaderConstructorsRedactManifestKeysAndValues(t *testing.T) {
 		require.NoError(t, createErr)
 	}
 	require.NoError(t, writer.Close())
-	_, err = OpenZip(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	_, err = OpenZip(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "private-secret-key")
 	require.NotContains(t, err.Error(), "private-value")
@@ -248,7 +257,7 @@ func TestReaderConstructorsRedactAttackerControlledEntryNames(t *testing.T) {
 	writeTestManifest(t, directory)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "records.jsonl"), nil, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, privateName), nil, 0o600))
-	_, err := OpenDirectory(directory)
+	_, err := OpenDirectory(t.Context(), directory)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), privateName)
 	require.NotContains(t, err.Error(), directory)
@@ -266,7 +275,7 @@ func TestReaderConstructorsRedactAttackerControlledEntryNames(t *testing.T) {
 		}
 	}
 	require.NoError(t, writer.Close())
-	_, err = OpenZip(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	_, err = OpenZip(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), privateName)
 }
@@ -282,7 +291,7 @@ func TestOpenZipClosesOwnedSourceOnConstructorFailure(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source := &trackingReaderAt{Reader: bytes.NewReader(test.body)}
-			_, err := OpenZip(source, test.size)
+			_, err := OpenZip(t.Context(), source, test.size)
 			require.Error(t, err)
 			require.True(t, source.closed)
 		})
@@ -293,6 +302,19 @@ type trackingReaderAt struct {
 	*bytes.Reader
 
 	closed bool
+	cancel context.CancelFunc
+}
+
+func (reader *trackingReaderAt) ReadAt(p []byte, offset int64) (int, error) {
+	n, err := reader.Reader.ReadAt(p, offset)
+	if reader.cancel != nil {
+		reader.cancel()
+		return n, context.Canceled
+	}
+	if err != nil {
+		return n, fmt.Errorf("read synthetic ZIP: %w", err)
+	}
+	return n, nil
 }
 
 func (reader *trackingReaderAt) Close() error {
@@ -317,7 +339,7 @@ func TestZipReaderReadsWithoutExtractingNames(t *testing.T) {
 	}
 	require.NoError(t, writer.Close())
 
-	reader, err := OpenZip(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	reader, err := OpenZip(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	require.Equal(t, manifestSHA, reader.ManifestSHA256())
@@ -328,6 +350,16 @@ func TestZipReaderReadsWithoutExtractingNames(t *testing.T) {
 	require.NoError(t, file.Close())
 	require.Equal(t, int64(3), size)
 	require.Equal(t, []byte("{}\n"), body)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	source := &trackingReaderAt{Reader: bytes.NewReader(archive.Bytes()), cancel: cancel}
+	canceledReader, err := OpenZip(ctx, source, int64(archive.Len()))
+	if canceledReader != nil {
+		require.NoError(t, canceledReader.Close())
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, source.closed)
 }
 
 func testPackageManifest() ManifestV1 {

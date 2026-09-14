@@ -57,6 +57,47 @@ func TestTransferVerifyWritesInvalidReportAndReturnsIntegrityExit(t *testing.T) 
 	assert.NotZero(t, report.FindingsTotal)
 }
 
+func TestTransferVerifyReportsSpoolFailureAsRuntimeError(t *testing.T) {
+	path := transfertest.Build(t, transfertest.Spec{
+		Manifest: transfer.ManifestV1{Archive: transfer.ArchiveV1{ArchiveID: "archive-1"}},
+		Blobs:    map[string][]byte{},
+	})
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(variable, missing)
+	}
+	var stdout, stderr bytes.Buffer
+	resetFlags(rootCmd)
+	code := runProcess([]string{"transfer", "verify", path}, &stdout, &stderr)
+	assert.Equal(t, exitGeneral, code, stderr.String())
+	assert.Contains(t, stderr.String(), "create validation spool")
+	assert.Empty(t, stdout.String())
+}
+
+func TestTransferVerifyIdentifiesPartialPackages(t *testing.T) {
+	path := transfertest.Build(t, transfertest.Spec{
+		Manifest: transfer.ManifestV1{Archive: transfer.ArchiveV1{ArchiveID: "archive-1"}},
+		Blobs:    map[string][]byte{},
+		Lines:    []any{transfer.CompleteV1{RecordType: transfer.RecordTypeComplete, Truncated: true, Continuation: "opaque-page-2"}},
+	})
+	var stdout, stderr bytes.Buffer
+	resetFlags(rootCmd)
+	code := runProcess([]string{"transfer", "verify", path}, &stdout, &stderr)
+	assert.Equal(t, exitSuccess, code, stderr.String())
+	assert.Contains(t, stdout.String(), "valid partial")
+	assert.Contains(t, stdout.String(), `next_cursor: "opaque-page-2"`)
+}
+
+func TestTransferVerifyRejectsMalformedArchiveIDAsUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(fiveLineLegacyCLIFixture), 0o600))
+	var stdout, stderr bytes.Buffer
+	resetFlags(rootCmd)
+	code := runProcess([]string{"transfer", "verify", path, "--archive-id", "bad id"}, &stdout, &stderr)
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr.String(), "archive ID is invalid")
+}
+
 func TestTransferVerifyNormalizesLegacyFileWithExplicitArchive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte(fiveLineLegacyCLIFixture), 0o600))
