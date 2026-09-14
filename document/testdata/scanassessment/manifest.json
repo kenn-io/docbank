@@ -1,0 +1,107 @@
+[
+  {
+    "name": "blank",
+    "file": "blank.pdf",
+    "media_type": "application/pdf",
+    "sha256": "08a106d35f4cf8b4c30cce26ddd909a28dfd501f6b3696bf9ca59a0d4d2a3b05",
+    "bytes": 336
+  },
+  {
+    "name": "born-digital",
+    "file": "born-digital.pdf",
+    "media_type": "application/pdf",
+    "sha256": "67942a60ba7d5153c75c0031576c3401f9bac1f4f6843739679fd8dd2cdac68d",
+    "bytes": 1344
+  },
+  {
+    "name": "encrypted",
+    "file": "encrypted.pdf",
+    "media_type": "application/pdf",
+    "sha256": "22180c311132f912ceff1fc70764a9c3afba6aac82d2f04f6793d314ae51b604",
+    "bytes": 934
+  },
+  {
+    "name": "image-only",
+    "file": "image-only.pdf",
+    "media_type": "application/pdf",
+    "sha256": "02ea5269381c17b5b98910ab5fc53220f46a243c99414a50d7db9ad5ebb55499",
+    "bytes": 3355
+  },
+  {
+    "name": "low-quality",
+    "file": "low-quality.pdf",
+    "media_type": "application/pdf",
+    "sha256": "99dc168b66bd846c48bcfefdac3ddf139c8b19951717922869f016522be886c4",
+    "bytes": 1276
+  },
+  {
+    "name": "malformed",
+    "file": "malformed.pdf",
+    "media_type": "application/pdf",
+    "sha256": "10e185f07d6bd7d99eda0d249e0e06434caaa8b7f62cccaa6963e7e2cb955908",
+    "bytes": 172
+  },
+  {
+    "name": "mixed-above-ratio",
+    "file": "mixed-above-ratio.pdf",
+    "media_type": "application/pdf",
+    "sha256": "6eb450b46dc1029aad39873505dad2be702ba4d2044816f2c8c99698030f5357",
+    "bytes": 5114
+  },
+  {
+    "name": "mixed-below-ratio",
+    "file": "mixed-below-ratio.pdf",
+    "media_type": "application/pdf",
+    "sha256": "05f0e099b8aeb540fe1ea3cd5a96adf062f951c90029ec134840046f826fda36",
+    "bytes": 1623
+  },
+  {
+    "name": "rotated",
+    "file": "rotated.pdf",
+    "media_type": "application/pdf",
+    "sha256": "d920f3e659e6ca536b4a09100b1ce2475798ee0d892d75877e49d4b563a5f4b3",
+    "bytes": 1289
+  },
+  {
+    "name": "single-image-jpeg",
+    "file": "single-image-jpeg.jpg",
+    "media_type": "image/jpeg",
+    "sha256": "3b59460f819b546610589b9d94c6bd89b18563c055763797b996f7430427a35d",
+    "bytes": 597
+  },
+  {
+    "name": "single-image-png",
+    "file": "single-image-png.png",
+    "media_type": "image/png",
+    "sha256": "bcd6082e53ec9f3f11830625e1b5e30724fb7aa88dfe256a488d1ce5e721be34",
+    "bytes": 78
+  },
+  {
+    "name": "single-image-webp",
+    "file": "single-image-webp.webp",
+    "media_type": "image/webp",
+    "sha256": "dcc24807466e415f537e4fdb00fd31425eb02570b976cd76173da99e8625f7d7",
+    "bytes": 38
+  },
+  {
+    "name": "undecodable-font",
+    "file": "undecodable-font.pdf",
+    "media_type": "application/pdf",
+    "sha256": "78ec0cf20e4740d6f925319900cc5c70a907bb9c8fd1d976da8b56f773784549",
+    "bytes": 790
+  },
+  {
+    "name": "unsupported-filter",
+    "file": "unsupported-filter.pdf",
+    "media_type": "application/pdf",
+    "sha256": "eb34dbf73c73105b21dce3d502371967765a87268ce8c002e6ea2b1b6fcf1ee9",
+    "bytes": 487
+  },
+  {
+    "name": "unsupported-format",
+    "file": "unsupported-format.wav",
+    "media_type": "audio/wav",
+    "sha256": "48f9b734687b6c7b57cbcba2b5e799706c85c770d181de055b728abb2c9ca7e6",
+    "bytes": 124
+  }
+]

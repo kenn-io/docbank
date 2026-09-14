@@ -1,0 +1,250 @@
+{
+  "MaxSourceBytes": 134217728,
+  "Measurements": [
+    {
+      "Name": "blank",
+      "Pages": 1,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 1,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "born-digital",
+      "Pages": 3,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 3,
+        "CompressedBytes": 291,
+        "ExpandedBytes": 291,
+        "Entries": 3,
+        "MaxEntryBytes": 97
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "encrypted",
+      "Pages": 0,
+      "PageError": "PDF is encrypted",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "PDF is encrypted",
+      "MetadataError": "PDF is encrypted",
+      "Unbounded": false
+    },
+    {
+      "Name": "image-only",
+      "Pages": 3,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "measure PDF stream 5: PDF stream cannot be bounded locally",
+      "MetadataError": "",
+      "Unbounded": true
+    },
+    {
+      "Name": "low-quality",
+      "Pages": 1,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "measure PDF stream 5: PDF stream cannot be bounded locally",
+      "MetadataError": "",
+      "Unbounded": true
+    },
+    {
+      "Name": "malformed",
+      "Pages": 0,
+      "PageError": "validate PDF object graph: validation error (obj#:1): document catalog: catalog Pages: page tree root: obj#99: cannot dereference page node",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "validate PDF object graph: validation error (obj#:1): document catalog: catalog Pages: page tree root: obj#99: cannot dereference page node",
+      "MetadataError": "validate PDF object graph: document catalog: catalog Pages: page tree root: obj#99: cannot dereference page node",
+      "Unbounded": false
+    },
+    {
+      "Name": "mixed-above-ratio",
+      "Pages": 10,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "measure PDF stream 21: PDF stream cannot be bounded locally",
+      "MetadataError": "",
+      "Unbounded": true
+    },
+    {
+      "Name": "mixed-below-ratio",
+      "Pages": 2,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "measure PDF stream 7: PDF stream cannot be bounded locally",
+      "MetadataError": "",
+      "Unbounded": true
+    },
+    {
+      "Name": "oversized",
+      "Skipped": "generated_input",
+      "Pages": 0,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "rotated",
+      "Pages": 1,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "measure PDF stream 5: PDF stream cannot be bounded locally",
+      "MetadataError": "",
+      "Unbounded": true
+    },
+    {
+      "Name": "single-image-jpeg",
+      "Skipped": "not_pdf",
+      "Pages": 0,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "single-image-png",
+      "Skipped": "not_pdf",
+      "Pages": 0,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "single-image-webp",
+      "Skipped": "not_pdf",
+      "Pages": 0,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "undecodable-font",
+      "Pages": 1,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 1,
+        "CompressedBytes": 159,
+        "ExpandedBytes": 159,
+        "Entries": 1,
+        "MaxEntryBytes": 159
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "unsupported-filter",
+      "Pages": 1,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "measure PDF stream 4: decode PDF stream: stream filter[0] \"UnknownDecode\": construct: invalid filter: <UnknownDecode>",
+      "MetadataError": "",
+      "Unbounded": false
+    },
+    {
+      "Name": "unsupported-format",
+      "Skipped": "not_pdf",
+      "Pages": 0,
+      "PageError": "",
+      "Inspect": {
+        "Pages": 0,
+        "CompressedBytes": 0,
+        "ExpandedBytes": 0,
+        "Entries": 0,
+        "MaxEntryBytes": 0
+      },
+      "InspectError": "",
+      "MetadataError": "",
+      "Unbounded": false
+    }
+  ]
+}
