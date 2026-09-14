@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/emailmime"
+	"go.kenn.io/docbank/internal/formatqualification"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -423,6 +424,39 @@ func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
 	words, found := sourceMetadataInteger(metadata, "office.core.word_count")
 	require.True(t, found)
 	assert.Equal(t, int64(321), words)
+}
+
+func TestExtractSourceMetadataFromSyntheticDOCX(t *testing.T) {
+	assertQualifiedOOXMLMetadata(t, "docx", "word/document.xml",
+		"TestExtractSourceMetadataFromSyntheticDOCX")
+}
+
+func TestExtractSourceMetadataFromSyntheticPPTX(t *testing.T) {
+	assertQualifiedOOXMLMetadata(t, "pptx", "ppt/presentation.xml",
+		"TestExtractSourceMetadataFromSyntheticPPTX")
+}
+
+func TestExtractSourceMetadataFromSyntheticXLSX(t *testing.T) {
+	assertQualifiedOOXMLMetadata(t, "xlsx", "xl/workbook.xml",
+		"TestExtractSourceMetadataFromSyntheticXLSX")
+}
+
+func assertQualifiedOOXMLMetadata(t *testing.T, catalogID, familyPart, evidence string) {
+	t.Helper()
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticOOXMLFamily(t, familyPart))
+	require.NoError(t, err)
+	title, found := sourceMetadataString(metadata, "title")
+	require.True(t, found)
+	assert.Equal(t, "Synthetic office", title)
+	pages, found := sourceMetadataInteger(metadata, "page_count")
+	require.True(t, found)
+	assert.Equal(t, int64(7), pages)
+	_, qualified := formatqualification.Lookup(formatqualification.Query{
+		CatalogID: catalogID, Capability: formatqualification.CapabilityMetadata,
+		Evidence: evidence, ImplementationFingerprint: SourceMetadataExtractorFingerprint,
+		InputKind: formatqualification.InputOriginalFile,
+	})
+	assert.True(t, qualified, "executed %s fixture is absent from the qualification manifest", catalogID)
 }
 
 func TestExtractSourceMetadataUsesVerifiedPDFPageTree(t *testing.T) {
@@ -1200,8 +1234,37 @@ func putSynchsafe(target []byte, value int) {
 
 func syntheticOOXML(t *testing.T) []byte {
 	t.Helper()
+	return syntheticOOXMLFamily(t, "word/document.xml")
+}
+
+func syntheticOOXMLFamily(t *testing.T, familyPart string) []byte {
+	t.Helper()
+	var contentType, familyXML string
+	switch familyPart {
+	case "word/document.xml":
+		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+		familyXML = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`
+	case "ppt/presentation.xml":
+		contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
+		familyXML = `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>`
+	case "xl/workbook.xml":
+		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+		familyXML = `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`
+	default:
+		require.FailNow(t, "unsupported synthetic OOXML family", familyPart)
+	}
 	var output bytes.Buffer
 	writer := zip.NewWriter(&output)
+	contentTypes, err := writer.Create("[Content_Types].xml")
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(contentTypes,
+		`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/%s" ContentType="%s"/></Types>`,
+		familyPart, contentType)
+	require.NoError(t, err)
+	family, err := writer.Create(familyPart)
+	require.NoError(t, err)
+	_, err = io.WriteString(family, familyXML)
+	require.NoError(t, err)
 	core, err := writer.Create("docProps/core.xml")
 	require.NoError(t, err)
 	_, err = io.WriteString(core, `<cp:coreProperties xmlns:cp="urn:cp" xmlns:dc="urn:dc" xmlns:dcterms="urn:dcterms"><dc:title>Synthetic office</dc:title><dcterms:created>2024-01-02T03:04:05Z</dcterms:created></cp:coreProperties>`)

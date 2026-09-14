@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/internal/formatdetect"
+	"go.kenn.io/docbank/internal/formatqualification"
 )
 
 func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
@@ -39,15 +41,35 @@ func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
 		{name: "YAML", content: []byte("---\nalpha: 42\n"), mediaType: "application/yaml", wantID: "yaml"},
 		{name: "LaTeX", content: []byte(`\documentclass{article}\begin{document}x\end{document}`), mediaType: "application/x-tex", wantID: "latex"},
 		{name: "EML", content: []byte("From: sender@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic\r\n\r\nBody"), mediaType: "message/rfc822", wantID: "eml"},
-		{name: "Go", content: []byte("package synthetic\n"), mediaType: "text/x-go", wantID: "go"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			format, err := DetectFormat(bytes.NewReader(test.content), int64(len(test.content)), test.mediaType)
 			require.NoError(t, err)
 			assert.Equal(t, test.wantID, format.ID)
+			_, qualified := formatqualification.Lookup(formatqualification.Query{
+				CatalogID: test.wantID, Capability: formatqualification.CapabilityDetect,
+				Evidence:                  "TestDetectFormatRecognizesBoundedDocumentFamilies",
+				ImplementationFingerprint: formatdetect.DetectionImplementationFingerprint,
+				InputKind:                 formatqualification.InputOriginalFile,
+			})
+			assert.True(t, qualified, "executed document detector format %s is absent from the qualification manifest", test.wantID)
 		})
 	}
+}
+
+func TestDetectFormatDoesNotQualifyMIMEOnlyGo(t *testing.T) {
+	content := []byte("arbitrary UTF-8 prose\n")
+	format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "text/x-go")
+	require.NoError(t, err)
+	assert.Equal(t, "go", format.ID)
+	_, qualified := formatqualification.Lookup(formatqualification.Query{
+		CatalogID: "go", Capability: formatqualification.CapabilityDetect,
+		Evidence:                  "TestDetectFormatRecognizesBoundedDocumentFamilies",
+		ImplementationFingerprint: formatdetect.DetectionImplementationFingerprint,
+		InputKind:                 formatqualification.InputOriginalFile,
+	})
+	assert.False(t, qualified, "MIME candidate acceptance is not byte recognition")
 }
 
 func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	docbank "go.kenn.io/docbank"
@@ -31,6 +32,54 @@ func TestRootPackageConstructor(t *testing.T) {
 	vault, err := docbank.New(context.Background(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
+}
+
+func TestVaultFormatCoverage(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+
+	coverage, err := vault.FormatCoverage(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, document.ValidateFormatCoverageV1(coverage))
+	require.Len(t, coverage.Formats, len(document.FormatMetadataCatalog()))
+
+	lookup, err := vault.LookupFormat(t.Context(), "wpd")
+	require.NoError(t, err)
+	assert.Equal(t, document.FormatLookupPending, lookup.Match)
+
+	original := coverage.Formats[0].Capabilities[document.CapabilityDetect]
+	coverage.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
+		State: document.CapabilityUnsupported,
+	}
+	again, err := vault.FormatCoverage(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, original, again.Formats[0].Capabilities[document.CapabilityDetect])
+
+	require.NoError(t, vault.Close())
+	_, err = vault.FormatCoverage(t.Context())
+	require.ErrorIs(t, err, docbank.ErrClosed)
+	_, err = vault.LookupFormat(t.Context(), "wpd")
+	require.ErrorIs(t, err, docbank.ErrClosed)
+}
+
+func TestVaultFormatCoverageCapturesConstructedProviders(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	descriptor := provider.Descriptor()
+	vault, err := docbank.New(t.Context(), docbank.Config{
+		Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"local": {
+				Profile: embeddedProcessingProfile(t, descriptor), RenditionProvider: provider,
+			},
+		}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	coverage, err := vault.FormatCoverage(t.Context())
+	require.NoError(t, err)
+	assert.Contains(t, coverage.GeneratedBy.BoundProviders, descriptor.Fingerprint)
 }
 
 func TestRootPackageRecoversInterruptedProcessingUploads(t *testing.T) {

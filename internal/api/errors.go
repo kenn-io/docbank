@@ -45,6 +45,15 @@ func NewError(status int, code, detail string) *Error {
 	return &Error{Title: http.StatusText(status), Status: status, Code: code, Detail: detail}
 }
 
+var errFormatQuery = errors.New("exactly one of format or extension may be set")
+
+func fromFormatQueryError(err error) error {
+	if errors.Is(err, errFormatQuery) {
+		return NewError(http.StatusUnprocessableEntity, "invalid_format_query", err.Error())
+	}
+	return FromStoreError(err)
+}
+
 // installErrorFormatter routes huma's own errors (request validation,
 // parsing) through the same envelope. Called once from NewServer.
 func installErrorFormatter() {

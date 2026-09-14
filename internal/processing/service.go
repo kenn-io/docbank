@@ -101,6 +101,7 @@ type Service struct {
 	stopping       bool
 	stop           context.CancelFunc
 	drained        chan struct{}
+	formatCoverage document.FormatCoverageV1
 }
 
 type processingOperationGate interface {
@@ -401,6 +402,18 @@ func NewService(config ServiceConfig) (*Service, error) {
 		}
 		service.profiles[name] = configured
 	}
+	descriptors := make([]document.RenditionDescriptor, 0, len(registeredRenditions))
+	for _, provider := range registeredRenditions {
+		descriptors = append(descriptors, provider.Descriptor())
+	}
+	slices.SortFunc(descriptors, func(left, right document.RenditionDescriptor) int {
+		return strings.Compare(left.Fingerprint, right.Fingerprint)
+	})
+	formatCoverage, err := FormatCoverage(descriptors)
+	if err != nil {
+		return nil, fmt.Errorf("computing format coverage: %w", err)
+	}
+	service.formatCoverage = formatCoverage
 	service.lifecycle, service.stop = context.WithCancel(config.Lifecycle)
 	service.drained = make(chan struct{})
 	return service, nil

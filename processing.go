@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"go.kenn.io/docbank/document"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 )
 
@@ -100,6 +101,26 @@ func (v *Vault) DocumentCoverage(ctx context.Context, request CoverageRequest) (
 		result.Embeddings[index] = fromCoverageClass(item)
 	}
 	return result, nil
+}
+
+// FormatCoverage reports the capability snapshot captured when the vault's
+// configured processing providers were constructed.
+func (v *Vault) FormatCoverage(_ context.Context) (document.FormatCoverageV1, error) {
+	if err := v.begin(); err != nil {
+		return document.FormatCoverageV1{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	return v.processing.FormatCoverage(), nil
+}
+
+// LookupFormat resolves a catalog id or extension against the vault's
+// constructor-frozen format coverage snapshot.
+func (v *Vault) LookupFormat(_ context.Context, query string) (document.FormatLookupV1, error) {
+	if err := v.begin(); err != nil {
+		return document.FormatLookupV1{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	return v.processing.LookupFormat(query), nil
 }
 
 func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchRequest) (DocumentSearchReport, error) {

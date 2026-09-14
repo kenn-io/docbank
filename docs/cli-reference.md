@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-13
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -39,6 +40,25 @@ reachable. Human output includes:
 restoring or moving a vault changes its path without changing its ID. Tracked
 blob totals can include content awaiting garbage collection; `storage` reports
 the files and packs currently occupying physical storage.
+
+## docbank formats
+
+```
+docbank formats [--family <family>] [--format <id> | --extension <extension>] [--json]
+```
+
+Reports what the running Docbank binary can do for each classified format.
+The human table prints `FORMAT`, `CAPABILITY`, `STATE`, and `REASON`, with one
+row for each of the seven capability keys. `--family` limits returned format
+rows. `--format` and `--extension` attach an exact lookup and return only the
+matching classified row; they cannot be used together.
+
+`--json` emits the flat `format-coverage/v1` response with `contract_version`,
+`formats`, `pending`, `generated_by`, and an optional `lookup`. A recognized
+pending extension and an unknown extension both succeed, but their lookup
+matches are `pending` and `unknown_format` respectively. See
+[Format Coverage](architecture/format-coverage.md) for the capability and
+state definitions.
 
 ## Node selectors
 
