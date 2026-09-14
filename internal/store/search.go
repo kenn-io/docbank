@@ -532,6 +532,8 @@ type SemanticSearchResolution struct {
 	Truncated              bool
 	ScopedDocuments        int
 	CompleteDocuments      int
+	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
+	NextNeighbor int
 }
 
 // SemanticSearchAuthority pins the exact persisted vector-space descriptor and
@@ -669,7 +671,7 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 // scope fencing before reducing ordered vector rows to bounded documents.
 func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID, expectedSourceManifest string,
-	neighbors []vectorindex.Neighbor, limit int, opts SearchOptions,
+	neighbors []vectorindex.Neighbor, limit int, opts SearchOptions, excludedNodes map[int64]struct{},
 ) (_ SemanticSearchResolution, retErr error) {
 	if err := validateCatalogSHA256(vectorSpaceID, "semantic search vector-space ID"); err != nil {
 		return SemanticSearchResolution{}, err
@@ -708,8 +710,8 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		if loadErr != nil {
 			return loadErr
 		}
-		result.Candidates, result.Truncated = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
-			neighbors, limit, eligible)
+		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
+			neighbors, limit, eligible, excludedNodes)
 		for index := range result.Candidates {
 			candidate := &result.Candidates[index]
 			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
@@ -786,14 +788,17 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 }
 
 func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectorindex.Neighbor,
-	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate,
-) ([]SemanticSearchCandidate, bool) {
+	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate, excludedNodes map[int64]struct{},
+) ([]SemanticSearchCandidate, bool, int) {
 	seen := make(map[int64]struct{}, limit+1)
 	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(eligible)))
-	for _, neighbor := range neighbors {
+	for index, neighbor := range neighbors {
 		entry, ok := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
 			InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
 		if !ok {
+			continue
+		}
+		if _, excluded := excludedNodes[entry.NodeID]; excluded {
 			continue
 		}
 		if _, duplicate := seen[entry.NodeID]; duplicate {
@@ -807,10 +812,10 @@ func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectori
 		candidate.Score = neighbor.Score
 		candidates = append(candidates, candidate)
 		if len(candidates) == limit+1 {
-			return candidates[:limit], true
+			return candidates[:limit], true, index
 		}
 	}
-	return candidates, false
+	return candidates, false, len(neighbors)
 }
 
 const (

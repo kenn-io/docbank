@@ -38,7 +38,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 		[]vectorindex.Neighbor{{
 			SetID: record.VectorSet.ID, InputKey: versionID,
 			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
-		10, SearchOptions{MIMEType: "application/pdf"})
+		10, SearchOptions{MIMEType: "application/pdf"}, nil)
 	require.NoError(t, err)
 	assert.False(t, resolution.Truncated)
 	assert.Equal(t, 3, resolution.ScopedDocuments)
@@ -53,9 +53,18 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 		[]vectorindex.Neighbor{{
 			SetID: record.VectorSet.ID, InputKey: versionID,
 			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
-		10, SearchOptions{MIMEType: "text/plain"})
+		10, SearchOptions{MIMEType: "text/plain"}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, filtered.Candidates, "scope filters apply before the semantic document cutoff")
+
+	filtered, err = s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{{SetID: record.VectorSet.ID, InputKey: versionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}},
+		1, SearchOptions{}, map[int64]struct{}{resolution.Candidates[0].NodeID: {}})
+	require.NoError(t, err)
+	assert.Empty(t, filtered.Candidates, "refills exclude documents already considered for this search")
+	assert.False(t, filtered.Truncated)
 }
 
 func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
@@ -105,7 +114,7 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 				record.VectorSpace.ID, source.ManifestChecksum, []vectorindex.Neighbor{{
 					SetID: record.VectorSet.ID, InputKey: versionID,
 					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9,
-				}}, 1, SearchOptions{})
+				}}, 1, SearchOptions{}, nil)
 			require.NoError(t, err)
 			if test.want {
 				require.Len(t, result.Candidates, 1)
@@ -131,7 +140,7 @@ func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
 	}))
 
 	_, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
-		record.InputKind, record.VectorSpace.ID, strings.Repeat("f", 64), nil, 10, SearchOptions{})
+		record.InputKind, record.VectorSpace.ID, strings.Repeat("f", 64), nil, 10, SearchOptions{}, nil)
 
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
@@ -283,7 +292,7 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 
 	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
-		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{})
+		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{}, nil)
 	require.NoError(t, err)
 	require.Len(t, resolution.Candidates, 1)
 	require.Equal(t, 1, resolution.CompleteDocuments)
@@ -305,7 +314,7 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 
 	resolution, err = s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
-		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{})
+		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, resolution.Candidates)
 	assert.Zero(t, resolution.CompleteDocuments)
@@ -337,9 +346,10 @@ func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing
 			InputKind: document.EmbeddingInputOriginalFile},
 	}
 
-	candidates, truncated := reduceSemanticCandidates("vault", fakeHash("space"), neighbors, 10, eligible)
+	candidates, truncated, next := reduceSemanticCandidates("vault", fakeHash("space"), neighbors, 10, eligible, nil)
 
 	assert.False(t, truncated)
+	assert.Equal(t, len(neighbors), next)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, int64(42), candidates[0].NodeID)
 	assert.InDelta(t, 0.75, candidates[0].Score, 1e-12)
@@ -356,15 +366,33 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 			InputKind: document.EmbeddingInputRenditionChunk},
 	}
 
-	candidates, truncated := reduceSemanticCandidates("vault", spaceID, []vectorindex.Neighbor{
+	thirdKey := semanticEligibilityKey{VectorSetID: "other-set", InputID: "chunk-3", InputChecksum: fakeHash("chunk-3")}
+	eligible[thirdKey] = SemanticSearchCandidate{NodeID: 43, ContentVersionID: "version-43"}
+	neighbors := []vectorindex.Neighbor{
 		{SetID: firstKey.VectorSetID, InputKey: firstKey.InputID, InputChecksum: firstKey.InputChecksum, Score: 0.9},
 		{SetID: secondKey.VectorSetID, InputKey: secondKey.InputID, InputChecksum: secondKey.InputChecksum, Score: 0.8},
-	}, 10, eligible)
+		{SetID: thirdKey.VectorSetID, InputKey: thirdKey.InputID, InputChecksum: thirdKey.InputChecksum, Score: 0.7},
+	}
+	candidates, truncated, next := reduceSemanticCandidates("vault", spaceID, neighbors, 1, eligible, nil)
 
-	assert.False(t, truncated)
+	assert.True(t, truncated)
+	require.Equal(t, 2, next, "resume at the next document after duplicate chunks")
 	require.Len(t, candidates, 1)
 	assert.Equal(t, "chunk-1", candidates[0].InputID)
 	assert.InDelta(t, 0.9, candidates[0].Score, 1e-12)
+
+	candidates, truncated, consumed := reduceSemanticCandidates("vault", spaceID, neighbors[next:], 1, eligible, nil)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, int64(43), candidates[0].NodeID)
+	assert.False(t, truncated)
+	assert.Equal(t, len(neighbors), next+consumed)
+
+	candidates, truncated, consumed = reduceSemanticCandidates("vault", spaceID, neighbors, 1, eligible,
+		map[int64]struct{}{42: {}})
+	require.Len(t, candidates, 1)
+	assert.Equal(t, int64(43), candidates[0].NodeID, "previously selected chunks cannot consume a refill page")
+	assert.False(t, truncated)
+	assert.Equal(t, len(neighbors), consumed)
 }
 
 func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testing.T) {

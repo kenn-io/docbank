@@ -51,8 +51,11 @@ func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
 			broken.MediaEvidence = store.SearchMediaEvidence{BuildID: "build", GenerationBlobHash: "missing",
 				GenerationEncodedSize: 100, GenerationChecksum: "checksum", EvidenceFingerprint: "evidence",
 				EvidenceEncodedSize: 100, InputCount: 1}
-			backend.semantic = append([]store.SemanticSearchCandidate{broken}, backend.semantic...)
-			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 10,
+			backend.semanticPages = []store.SemanticSearchResolution{
+				{Candidates: []store.SemanticSearchCandidate{broken}, Truncated: true, NextNeighbor: 2},
+				{Candidates: backend.semantic, NextNeighbor: 1},
+			}
+			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
 				ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
 				Authorization: retrievalAuthorization(descriptor)})
 			require.NoError(t, err)
@@ -60,6 +63,9 @@ func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
 			require.Equal(t, "version-semantic", report.Results[0].Document.ContentVersionID)
 			require.Equal(t, 1, report.Results[0].Rank)
 			require.True(t, report.Truncated)
+			require.Empty(t, backend.semanticPages)
+			require.Contains(t, backend.excludedNodes, broken.NodeID)
+			require.Equal(t, 1, backend.neighborCount, "refill advances through the leased neighbors")
 		})
 	}
 }
