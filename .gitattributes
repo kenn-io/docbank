@@ -21,3 +21,9 @@ document/testdata/chunks-*.golden.json -text
 # The format coverage fixtures are byte-for-byte oracles, not text files.
 document/testdata/format_roster.json -text
 document/testdata/format_coverage.json -text
+# Scan-assessment fixtures and frozen seeds must retain their exact bytes.
+document/testdata/scanassessment/* -text
+document/internal/scanfixture/testdata/* -text
+# PDF streams contain arbitrary bytes and cannot be rendered as UTF-8 diffs.
+document/testdata/scanassessment/*.pdf binary
+document/internal/scanfixture/testdata/*.pdf binary

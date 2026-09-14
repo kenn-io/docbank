@@ -67,8 +67,17 @@ func PDF() []byte {
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] >>",
 	}
+	return PDFObjects("synthetic", objects)
+}
+
+// PDFObjects writes numbered objects and their cross-reference table. Object
+// one must be the catalog. The comment is placed before the first object.
+func PDFObjects(comment string, objects []string) []byte {
 	var output bytes.Buffer
-	_, _ = output.WriteString("%PDF-1.4\n%synthetic\n")
+	output.Grow(len(comment) + 1024)
+	output.WriteString("%PDF-1.4\n%")
+	output.WriteString(comment)
+	output.WriteByte('\n')
 	offsets := make([]int, len(objects))
 	for index, object := range objects {
 		offsets[index] = output.Len()
@@ -79,7 +88,8 @@ func PDF() []byte {
 	for _, offset := range offsets {
 		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
 	}
-	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	_, _ = fmt.Fprintf(&output,
+		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
 	return output.Bytes()
 }
 
