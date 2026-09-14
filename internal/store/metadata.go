@@ -1045,6 +1045,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM derivative_pack_purge_pending)
 		    + (SELECT COUNT(*) FROM processing_consent_grants)
 		    + (SELECT COUNT(*) FROM processing_consent_revocations)
+		    + (SELECT COUNT(*) FROM package_preflights)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
 		         FROM current_processing_incarnation WHERE singleton=1)),

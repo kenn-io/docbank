@@ -16,7 +16,10 @@ const (
 	MaxMappingBytes   = 256 << 10
 )
 
-var ErrInvalidMapping = errors.New("invalid_package_mapping: mapping document is malformed or out of catalog")
+var (
+	ErrInvalidMapping   = errors.New("invalid_package_mapping: mapping document is malformed or out of catalog")
+	ErrMappingAmbiguous = errors.New("package_mapping_ambiguous: mapping requires an explicit choice")
+)
 
 type MappingColumn struct {
 	Source            string  `json:"source"`

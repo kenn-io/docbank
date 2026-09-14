@@ -79,7 +79,9 @@ func scanDecodedRows(next func() ([]string, bool, error), profile Profile, emit 
 		}
 		record, diagnostic := makeRecord(values, columns, sourceOrdinal)
 		if diagnostic != nil {
-			diagnostics = append(diagnostics, *diagnostic)
+			if err := appendDiagnosticBounded(&diagnostics, *diagnostic); err != nil {
+				return diagnostics, err
+			}
 		}
 		if err := emit(record); err != nil {
 			return diagnostics, err
@@ -106,7 +108,7 @@ func makeRecord(values, columns []string, rowOrdinal int) (Record, *Diagnostic) 
 	}
 	diagnostic := &Diagnostic{
 		Code:       "column_count_mismatch",
-		Severity:   "blocking",
+		Severity:   diagnosticSeverityBlocking,
 		RowOrdinal: rowOrdinal,
 		Detail:     fmt.Sprintf("record has %d columns; profile declares %d", len(values), len(columns)),
 	}

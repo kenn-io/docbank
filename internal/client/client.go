@@ -1193,6 +1193,30 @@ func (c *Client) TimelineCoverage(ctx context.Context) (api.DocumentEventCoverag
 	return coverage, nil
 }
 
+// PreflightPackage normalizes and validates a received load-file package.
+// An empty containerID selects the API-key-only approved-root route.
+func (c *Client) PreflightPackage(
+	ctx context.Context, containerID string, request api.PackagePreflightRequest,
+) (api.PackagePreflight, error) {
+	var result api.PackagePreflight
+	path := "/api/v1/packages/preflights"
+	if containerID != "" {
+		path = "/api/v1/packages/containers/" + url.PathEscape(containerID) + "/preflight"
+	}
+	err := c.do(ctx, http.MethodPost, path, nil, request, &result)
+	return result, err
+}
+
+// PackagePreflight reads one owner-scoped expiring package preview.
+func (c *Client) PackagePreflight(ctx context.Context, preflightID string) (api.PackagePreflight, error) {
+	var result api.PackagePreflight
+	if !validUUIDv4(preflightID) {
+		return result, errors.New("package preflight requires a canonical UUIDv4")
+	}
+	err := c.do(ctx, http.MethodGet, "/api/v1/packages/preflights/"+url.PathEscape(preflightID), nil, nil, &result)
+	return result, err
+}
+
 // AuditScopeHistory returns one stable newest-first page across every member
 // of one permanent audit scope.
 func (c *Client) AuditScopeHistory(
