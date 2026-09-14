@@ -23,12 +23,14 @@ var localUnitCounters = map[string]localUnitCounter{
 const (
 	pptxPresentationPath        = "ppt/presentation.xml"
 	pptxPresentationRelsPath    = "ppt/_rels/presentation.xml.rels"
+	pptxRootRelationshipsPath   = "_rels/.rels"
 	pptxMaxXMLBytes             = int64(1 << 20)
 	pptxPresentationNamespace   = "http://schemas.openxmlformats.org/presentationml/2006/main"
 	pptxRelationshipNamespace   = "http://schemas.openxmlformats.org/package/2006/relationships"
 	pptxRelationshipIDNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 	pptxContentTypesNamespace   = "http://schemas.openxmlformats.org/package/2006/content-types"
 	pptxMarkupCompatibilityNS   = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+	pptxOfficeDocumentRelType   = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
 	pptxRelationshipType        = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 	pptxSlideContentType        = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
 )
@@ -69,6 +71,10 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	rootRelationships, err := pptxEntry(entries, pptxRootRelationshipsPath)
+	if err != nil {
+		return 0, err
+	}
 	presentationXML, err := readPPTXXML(presentation)
 	if err != nil {
 		return 0, err
@@ -80,6 +86,13 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	contentTypesXML, err := readPPTXXML(contentTypes)
 	if err != nil {
 		return 0, err
+	}
+	rootRelationshipsXML, err := readPPTXXML(rootRelationships)
+	if err != nil {
+		return 0, err
+	}
+	if err := validatePPTXRootPresentation(rootRelationshipsXML); err != nil {
+		return 0, fmt.Errorf("validate PPTX root presentation relationship: %w", err)
 	}
 
 	relationshipIDs, err := parsePPTXSlideIDs(presentationXML)
@@ -155,6 +168,7 @@ func readPPTXXML(entry *zip.File) ([]byte, error) {
 	if int64(len(data)) > pptxMaxXMLBytes || uint64(len(data)) != entry.UncompressedSize64 {
 		return nil, fmt.Errorf("PPTX XML part %q exceeded the read bound", entry.Name)
 	}
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
 	return data, nil
 }
 
@@ -418,6 +432,37 @@ func parsePPTXRelationships(data []byte) (map[string]pptxRelationship, error) {
 		relationships[relationship.ID] = relationship
 	}
 	return relationships, nil
+}
+
+func validatePPTXRootPresentation(data []byte) error {
+	relationships, err := parsePPTXRelationships(data)
+	if err != nil {
+		return err
+	}
+	var target string
+	for _, relationship := range relationships {
+		if relationship.Type != pptxOfficeDocumentRelType {
+			continue
+		}
+		if target != "" {
+			return errors.New("PPTX root has duplicate office document relationships")
+		}
+		if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
+			return errors.New("PPTX office document relationship is external")
+		}
+		target = relationship.Target
+	}
+	if target == "" {
+		return errors.New("PPTX root has no office document relationship")
+	}
+	resolved, err := normalizePPTXPartName(target)
+	if err != nil {
+		return fmt.Errorf("resolve PPTX office document target: %w", err)
+	}
+	if pptxPathKey(resolved) != pptxPathKey(pptxPresentationPath) {
+		return fmt.Errorf("PPTX office document relationship targets %q", target)
+	}
+	return nil
 }
 
 func parsePPTXContentTypes(data []byte) (pptxContentDeclarations, error) {

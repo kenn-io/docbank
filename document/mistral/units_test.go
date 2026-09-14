@@ -146,6 +146,27 @@ func TestCountPPTXSlides(t *testing.T) {
 			wantError: true,
 		},
 		{
+			name: "root relationship selects another presentation",
+			archive: pptxArchiveWithEntries(t, []pptxTestSlide{{
+				id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
+			}}, map[string]string{
+				pptxRootRelationshipsPath: `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + pptxOfficeDocumentRelType + `" Target="ppt/other.xml"/></Relationships>`,
+			}),
+			wantError: true,
+		},
+		{
+			name: "root relationship is missing",
+			archive: documentZIP(t, map[string]string{
+				pptxPresentationPath: validPPTXPresentation(), pptxPresentationRelsPath: validPPTXRelationships(), ooxmlContentTypesName: validPPTXContentTypes(),
+			}),
+			wantError: true,
+		},
+		{
+			name:      "UTF-8 BOM in presentation and relationships",
+			archive:   pptxArchiveWithSlideXML(t, string([]byte{0xef, 0xbb, 0xbf})+validPPTXPresentation(), string([]byte{0xef, 0xbb, 0xbf})+validPPTXRelationships(), validPPTXContentTypes()),
+			wantUnits: 1,
+		},
+		{
 			name:      "missing relationship",
 			archive:   pptxArchiveWithSlideXML(t, validPPTXPresentation(), `<Relationships xmlns="`+pptxRelationshipNamespace+`"/>`, validPPTXContentTypes()),
 			wantError: true,
@@ -310,9 +331,10 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 	contentTypes := strings.Builder{}
 	contentTypes.WriteString(`<Types xmlns="` + pptxContentTypesNamespace + `"><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>`)
 	entries := map[string]string{
-		pptxPresentationPath:     presentation.String(),
-		pptxPresentationRelsPath: relationships.String(),
-		ooxmlContentTypesName:    "",
+		pptxPresentationPath:      presentation.String(),
+		pptxPresentationRelsPath:  relationships.String(),
+		pptxRootRelationshipsPath: validPPTXRootRelationships(),
+		ooxmlContentTypesName:     "",
 	}
 	for _, slide := range slides {
 		contentType := slide.contentType
@@ -349,10 +371,11 @@ func pptxArchiveTargetName(target string) string {
 func pptxArchiveWithSlideXML(t *testing.T, presentation, relationships, contentTypes string) []byte {
 	t.Helper()
 	return documentZIP(t, map[string]string{
-		pptxPresentationPath:     presentation,
-		pptxPresentationRelsPath: relationships,
-		ooxmlContentTypesName:    contentTypes,
-		"ppt/slides/slide1.xml":  `<p:sld xmlns:p="` + pptxPresentationNamespace + `"/>`,
+		pptxPresentationPath:      presentation,
+		pptxPresentationRelsPath:  relationships,
+		pptxRootRelationshipsPath: validPPTXRootRelationships(),
+		ooxmlContentTypesName:     contentTypes,
+		"ppt/slides/slide1.xml":   `<p:sld xmlns:p="` + pptxPresentationNamespace + `"/>`,
 	})
 }
 
@@ -362,6 +385,10 @@ func validPPTXPresentation() string {
 
 func validPPTXRelationships() string {
 	return `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + pptxRelationshipType + `" Target="slides/slide1.xml"/></Relationships>`
+}
+
+func validPPTXRootRelationships() string {
+	return `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + pptxOfficeDocumentRelType + `" Target="ppt/presentation.xml"/></Relationships>`
 }
 
 func validPPTXContentTypes() string {
