@@ -209,6 +209,7 @@ func (validator *packageValidator) run() error {
 			return validator.fail("incomplete_package", "records.jsonl", "partial package continuation is invalid")
 		}
 		validator.report.Partial = true
+		validator.report.NextCursor = string(validator.terminal.Continuation)
 	} else if validator.terminal.Continuation != "" {
 		return validator.fail("package_integrity_failed", "records.jsonl", "complete package carries a continuation")
 	}

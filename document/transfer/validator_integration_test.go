@@ -96,6 +96,7 @@ func TestValidateAcceptsAnExplicitlyTruncatedPackageAsPartial(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.Valid)
 	require.True(t, report.Partial)
+	require.Equal(t, "opaque-page-2", report.NextCursor)
 }
 
 func TestValidateRejectsSemanticAndReferenceViolations(t *testing.T) {
