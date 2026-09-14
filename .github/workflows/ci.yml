@@ -109,10 +109,22 @@ jobs:
         run: |
           set -eu
           name="docbank-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          image="quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+          if ! docker image inspect "$image" >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              if docker pull "$image"; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              sleep "$((attempt * 5))"
+            done
+          fi
           docker run --rm -d --name "$name" \
             -p 127.0.0.1::9000 \
             -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            "$image" \
             server /data >/dev/null
           port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
           endpoint="http://127.0.0.1:${port}"
