@@ -664,6 +664,10 @@ func (normalizer *legacyNormalizer) addSource(source legacySource) error {
 		len(source.DisplayName) > MaxNameBytes {
 		return errors.New("source is invalid")
 	}
+	if len(normalizer.manifest.Filters.Sources) > 0 && !slices.Contains(normalizer.manifest.Filters.Sources,
+		legacySourceSelector{SourceType: source.SourceType, Identifier: source.Identifier}) {
+		return errors.New("source does not match manifest filters")
+	}
 	if source.LastSuccessfulSyncAt != nil {
 		if _, err := time.Parse(time.RFC3339Nano, *source.LastSuccessfulSyncAt); err != nil {
 			return errors.New("source sync time is invalid")
@@ -745,6 +749,9 @@ func (normalizer *legacyNormalizer) addMessage(message legacyMessage) error {
 		message.ID == "" || message.ConversationID == "" || len(message.Subject) > MaxBodyTextBytes ||
 		len(message.Text) > MaxBodyTextBytes {
 		return errors.New("message is invalid")
+	}
+	if len(normalizer.manifest.Filters.MessageTypes) > 0 && !slices.Contains(normalizer.manifest.Filters.MessageTypes, message.MessageType) {
+		return errors.New("message type does not match manifest filters")
 	}
 	kind, err := legacyMessageKind(message.MessageType)
 	if err != nil {

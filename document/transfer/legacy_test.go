@@ -177,6 +177,37 @@ func TestLegacyReaderRejectsCountsUnknownFieldsAndKindMismatch(t *testing.T) {
 	}
 }
 
+func TestLegacyReaderEnforcesDeclaredFilters(t *testing.T) {
+	for _, test := range []struct {
+		name, from, to string
+		wantError      bool
+	}{
+		{"source identifier", `"identifier":"phone|primary"`, `"identifier":"another-phone"`, true},
+		{"source type", `"source_type":"synctech_sms"`, `"source_type":"slack"`, true},
+		{"message type", `"message_types":["sms"]`, `"message_types":["fbmessenger"]`, true},
+		{"empty source filter", `"sources":[{"source_type":"synctech_sms","identifier":"phone|primary"}]`, `"sources":[]`, false},
+		{"empty message filter", `"message_types":["sms"]`, `"message_types":[]`, false},
+		{"one matching message type", `"message_types":["sms"]`, `"message_types":["fbmessenger","sms"]`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := replaceLegacy(t, fiveLineLegacyFixture, test.from, test.to)
+			reader, err := ReadLegacyExportWithArchive(t.Context(), bytes.NewBufferString(fixture),
+				LegacyArchiveBinding{ArchiveID: "archive_synthetic"})
+			if reader != nil {
+				t.Cleanup(func() { require.NoError(t, reader.Close()) })
+			}
+			if test.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			report, err := Validate(t.Context(), reader)
+			require.NoError(t, err)
+			require.True(t, report.Valid)
+		})
+	}
+}
+
 func TestLegacyReaderRejectsNullForNonNullableProducerValues(t *testing.T) {
 	tests := map[string][2]string{
 		"manifest scalar":      {`"msgvault_version":"v0.1.0"`, `"msgvault_version":null`},
