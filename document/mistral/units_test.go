@@ -226,15 +226,17 @@ func TestCountPPTXSlides(t *testing.T) {
 }
 
 func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
-	escaped := pptxArchive(t, []pptxTestSlide{{
-		id: "256", relationshipID: "rId1", target: "slides/title%20page.xml",
-	}})
-	units, err := countPPTXSlides(bytes.NewReader(escaped), int64(len(escaped)))
-	if err != nil {
-		t.Fatal(err)
+	for _, encodedName := range []string{"title%20page.xml", "title%23page.xml", "title%3Fpage.xml"} {
+		escaped := pptxArchive(t, []pptxTestSlide{{
+			id: "256", relationshipID: "rId1", target: "slides/" + encodedName,
+		}})
+		units, err := countPPTXSlides(bytes.NewReader(escaped), int64(len(escaped)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 1, units)
+		t.Logf("escaped_target=%s count=%d", encodedName, units)
 	}
-	assert.Equal(t, 1, units)
-	t.Logf("escaped_target count=%d", units)
 
 	defaultContentTypes := "<Types xmlns=\"" + pptxContentTypesNamespace + "\">" +
 		"<Default Extension=\"xml\" ContentType=\"" + pptxSlideContentType + "\"/>" +
@@ -244,12 +246,12 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 	defaultTarget := pptxArchiveWithSlideXML(
 		t, validPPTXPresentation(), validPPTXRelationships(), defaultContentTypes,
 	)
-	units, err = countPPTXSlides(bytes.NewReader(defaultTarget), int64(len(defaultTarget)))
+	defaultUnits, err := countPPTXSlides(bytes.NewReader(defaultTarget), int64(len(defaultTarget)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, 1, units)
-	t.Logf("default_content_type count=%d", units)
+	assert.Equal(t, 1, defaultUnits)
+	t.Logf("default_content_type count=%d", defaultUnits)
 }
 
 type pptxTestSlide struct {

@@ -485,7 +485,7 @@ func resolvePPTXTarget(target string) (string, error) {
 	if err != nil {
 		return "", errors.New("PPTX relationship target is not a valid path")
 	}
-	if strings.ContainsAny(decoded, "\\\x00?:#") {
+	if strings.ContainsAny(decoded, "\\\x00") {
 		return "", errors.New("PPTX relationship target is not an internal path")
 	}
 	if strings.HasPrefix(target, "/") {
@@ -512,7 +512,7 @@ func normalizePPTXPartName(partName string) (string, error) {
 	if err != nil {
 		return "", errors.New("PPTX part name is not a valid path")
 	}
-	if strings.ContainsAny(decoded, "\\\x00?:#") {
+	if strings.ContainsAny(decoded, "\\\x00") {
 		return "", errors.New("PPTX part name is not an internal path")
 	}
 	partName = strings.TrimPrefix(partName, "/")
