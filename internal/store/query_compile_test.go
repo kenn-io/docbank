@@ -133,6 +133,47 @@ func TestCompileQuerySupportsEveryBoundExpressionField(t *testing.T) {
 	}
 }
 
+func TestCompileQuerySupportsCanonicalCoverageAndDuplicatePredicates(t *testing.T) {
+	for _, text := range []string{
+		`text_coverage:(complete OR partial OR failed OR unprocessed OR none OR unavailable)`,
+		`has_duplicates:(true OR false)`,
+	} {
+		compiled, err := compileQuery(t.Context(), compilerQuery(t, text), nil)
+		require.NoError(t, err)
+		_, _, err = compiled.Bind("")
+		require.ErrorContains(t, err, "matched population bindings")
+	}
+
+	for _, text := range []string{
+		`text_coverage:pending`, `has_duplicates:yes`, `has_duplicates:TRUE`,
+		`text_coverage:complete*`, `has_duplicates:true*`,
+		`text_coverage:(partial OR "complete"*)`, `has_duplicates:(true OR "false"*)`,
+	} {
+		_, err := compileQuery(t.Context(), compilerQuery(t, text), nil)
+		var expressionErr *query.ExpressionError
+		require.ErrorAs(t, err, &expressionErr)
+		require.Positive(t, expressionErr.End-expressionErr.Offset)
+	}
+}
+
+func TestCompiledQueryRelationRequirementsSurviveNegation(t *testing.T) {
+	for _, text := range []string{`NOT text_coverage:complete`, `NOT has_duplicates:true`} {
+		compiled, err := compileQuery(t.Context(), compilerQuery(t, text), nil)
+		require.NoError(t, err)
+		_, _, err = compiled.Bind("")
+		require.ErrorContains(t, err, "matched population bindings")
+	}
+}
+
+func TestCompiledQueryBindRejectsTopLevelDuplicateCollapse(t *testing.T) {
+	value := compilerQuery(t, `name:alpha`)
+	value.Filters.CollapseDuplicates = true
+	compiled, err := compileQuery(t.Context(), value, nil)
+	require.NoError(t, err)
+	_, _, err = compiled.Bind("")
+	require.ErrorContains(t, err, "matched population bindings")
+}
+
 func TestCompileQueryRetainsInheritedFieldScopeAcrossBooleanChildren(t *testing.T) {
 	compiled, err := compileQuery(t.Context(), compilerQuery(t,
 		`mime:(application/pdf OR image/png) AND NOT path:/archive`), nil)
@@ -181,9 +222,6 @@ func TestCompiledQueryBindsFacetUnionsAndExclusions(t *testing.T) {
 
 func TestCompileQueryRejectsUnsupportedFeaturesAndMalformedFieldOperands(t *testing.T) {
 	rootUnsupported := []query.Query{
-		func() query.Query { q := compilerQuery(t, ""); q.Filters.TextCoverage = []string{"complete"}; return q }(),
-		func() query.Query { q := compilerQuery(t, ""); q.Filters.HasDuplicates = true; return q }(),
-		func() query.Query { q := compilerQuery(t, ""); q.Filters.CollapseDuplicates = true; return q }(),
 		func() query.Query { q := compilerQuery(t, ""); q.Sort.Field = "relevance"; return q }(),
 		func() query.Query {
 			q := compilerQuery(t, "invalid canonical input")
@@ -197,7 +235,7 @@ func TestCompileQueryRejectsUnsupportedFeaturesAndMalformedFieldOperands(t *test
 	}
 
 	for _, text := range []string{
-		`text_coverage:complete`, `has_duplicates:true`, `path:/alpha*`, `mime:not-a-mime`,
+		`path:/alpha*`, `mime:not-a-mime`,
 		`extension:bad%`, `media_family:bogus`, `modified_after:not-a-time`, `size_min:-1`,
 		`size_max:9007199254740992`, `mime:""`, `alpha NEAR (beta OR gamma)`,
 		`modified_after:"2026-01-02T03:04:05+24:00"`,
@@ -218,10 +256,12 @@ func TestCompileQueryRejectsUnsupportedFeaturesAndMalformedFieldOperands(t *test
 func TestCompileQueryRemapsNestedSavedExpressionErrorsButPreservesBackendErrors(t *testing.T) {
 	nested := compilerQuery(t, `text_coverage:complete`)
 	text := `saved:inside`
-	_, err := compileQuery(t.Context(), compilerQuery(t, text), compilerResolver(&nested))
+	compiled, err := compileQuery(t.Context(), compilerQuery(t, text), compilerResolver(&nested))
+	require.NoError(t, err)
+	_, _, err = compiled.Bind("")
 	var expressionErr *query.ExpressionError
 	require.ErrorAs(t, err, &expressionErr)
-	assert.Equal(t, 6, expressionErr.Offset)
+	assert.Equal(t, 0, expressionErr.Offset)
 	assert.Equal(t, len(text), expressionErr.End)
 
 	nested = compilerQuery(t, "alpha")
