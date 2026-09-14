@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-11
+last_edited: 2026-09-13
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -139,7 +139,8 @@ saved definitions.
 
 A query payload uses `QueryV1`: a JSON object with version `v: 1`, search text,
 filters, and optional syntax, mode, and sort choices. A saved mode such as
-`hybrid` describes intent; it does not enable that mode in `docbank search`.
+`hybrid` describes intent. Query snapshots reject it; [processing search](search.md)
+requires an explicit processing profile and source-version fence.
 See the [payload reference](../architecture/http-api.md#saved-query-and-highlight-definitions)
 for accepted fields and limits.
 
@@ -390,10 +391,17 @@ can still find these files by name and read their stored bytes. The
 [document processing libraries](../document-understanding.md) provide additional
 processing options for applications; adding a file does not start them.
 
-The CLI, HTTP search endpoint, web application, and TUI use lexical search:
-matching words in names and indexed text. They do not expose semantic search
-by meaning, hybrid search that combines both methods, query expansion, or
-reranking. Saving those choices in QueryV1 does not run them.
+Ordinary search in the CLI, HTTP API, web app, and TUI matches words in
+names and indexed text. Processing search uses the separate workflow below.
+Saving search choices in QueryV1 does not execute either workflow.
+
+## Processing search
+
+Configured document processing adds a separate source-fenced retrieval surface
+for retained renditions and embeddings. It requires an explicit mode, profile,
+and authorized immutable source-version set; it does not change ordinary name
+and plain-text search. See [Document processing search](search.md) for modes,
+coverage, and the consumer authority contract.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the

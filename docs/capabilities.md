@@ -121,7 +121,18 @@ trust boundaries.
 See [Docbank for Agents](agents.md), the
 [Agent Integration Guide](agents/integration.md), and [Embed in Go](embedding.md).
 
-## Process documents in Go
+## Process documents and search retained results
+
+Operators can [configure a processing profile](usage/configuration.md), review
+what providers receive, grant consent, and run it for one exact document
+version. The CLI, web app, and TUI expose processing plans, job status, and
+verified retained Markdown. See the [processing workflow](usage/document-processing.md)
+and the [CLI commands](cli-reference.md#docbank-processing).
+
+[Processing search](usage/search.md) offers lexical, semantic, hybrid, and auto
+modes inside an explicit set of authorized source versions. Semantic and
+hybrid search require active consent to disclose query text. Ordinary name
+and text search remains separate; auto currently uses lexical retrieval.
 
 Go applications can use the [document packages](document-understanding.md) to
 prepare text and Markdown renditions, call OCR and embedding providers, and
@@ -137,8 +148,8 @@ These components are described in
 The daemon registers plain-text extraction and two kinds of configured
 [embedding runtime](configuration.md#embedding-workers-and-credentials).
 Installing a provider package does not register it with the daemon or prepare
-an import for semantic search. The CLI, web app, and terminal browser expose
-lexical search; they do not expose the internal hybrid retrieval pipeline.
+an import for semantic search. The default configuration has no processing
+profiles, and new imports do not automatically run this processing workflow.
 
 ## Deliberate boundaries
 

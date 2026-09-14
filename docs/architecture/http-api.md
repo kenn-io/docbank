@@ -17,6 +17,7 @@ starting point.
 | Reader question | Contract |
 | --- | --- |
 | Which operation should I call? | [Endpoint map](#shape) |
+| How do I process and search a document version? | [Document processing](#document-processing) |
 | How do I reject a stale write? | [Revisions and `If-Match`](#concurrency-resource-revisions-and-if-match) |
 | When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
 | Which credentials does a request need? | [Authentication](#auth) |
@@ -61,6 +62,12 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
 | `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and explicit `truncated` status | Implemented |
+| `GET /processing/profiles` · `POST /processing/plans` | list executable profiles / preview one exact source version and its provider disclosures | Implemented |
+| `POST /processing/jobs` · `GET /processing/jobs/{id}` | run a reviewed plan with streamed job identity / read aggregate status | Implemented |
+| `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
+| `GET /renditions/{attachment_id}` · `POST /renditions/select` | stream retained sanitized Markdown by attachment or exact source selector | Implemented |
+| `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
+| `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
 | `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
 | `GET /collections` · `GET /collections/{id}` · `GET /collections/{id}/members` · `GET\|PUT /collections/{id}/label` | browse live ingest-run membership and inspect, set, or clear its revision-fenced label | Implemented |
@@ -108,6 +115,185 @@ work before reaching `limit`. The normal `limit` and `truncated` contract
 remains in force, without a cursor. If `truncated` is true, the page is
 incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+### Document processing
+
+The routes below use the normal [API authentication](#auth). Plan and grant
+requests use an exact source selector and a reviewed plan fingerprint instead
+of `If-Match`. Browser sessions can use the built-in processing, consent,
+coverage, search, and attachment-read routes; selector reads and derivative
+purge require the master API credential.
+
+`GET /processing/profiles` returns an array of executable profiles with `name`,
+`fingerprint`, `rendition`, and `embedding_bindings`. An empty array means no
+profiles are executable. Choose one of these names; the default configuration
+has none.
+
+`POST /processing/plans` accepts a `selector`:
+
+```json
+{
+  "selector": {
+    "node_id": 231,
+    "content_version_id": "11111111-1111-4111-8111-111111111111",
+    "profile": "private"
+  }
+}
+```
+
+Replace these synthetic values with an inspected node, its immutable version,
+and an executable profile. Node IDs are positive integers; version IDs are
+canonical UUIDv4 values. Profile names have 1–128 characters, start with a
+lowercase letter, and contain only lowercase letters, digits, `_`, or `-`.
+
+The response includes `fingerprint`, `vault_uid`, `selector`,
+`profile_fingerprint`, `flow`, `disclosed_classes`, `retained_classes`,
+`estimate`, `consent_required`, `consent_state`, and `backup_consequence`.
+Each flow identifies the provider, capability, trust boundary, input classes,
+and any filename disclosure. Review it before granting consent or starting
+work. Consent state is advisory and does not enter the plan fingerprint.
+
+#### Processing consent
+
+To grant consent without running document processing, send
+`POST /processing/consent/grants` with the plan's exact `selector` and its
+`fingerprint` as `plan_fingerprint`. An optional `expires_at` must be a future
+RFC3339 timestamp; omitting it grants consent without expiry. The response
+returns `plan_fingerprint`, `profile_fingerprint`, and any `expires_at`.
+
+The grant covers this operator's use of the profile across documents and
+searches. It includes the profile's document inputs, retained classes, and
+`query_text` for providers that support query embedding. It is not limited to
+the document used for preview. The daemon uses the `daemon:operator` principal
+and `document-processing` scope for these routes.
+
+`POST /processing/consent/revocations` takes no body and returns `revoked_at`.
+It revokes this operator's processing grants across all profiles. A new grant
+must use a reviewed plan; revocation does not delete existing derivatives.
+
+Semantic and hybrid searches require active `query_text` consent for the
+selected binding's provider disclosure. Lexical and auto searches read retained
+local text without query embedding or query-text consent. Provider work checks
+consent before egress and before publication; having stored vectors alone does
+not authorize a query disclosure.
+
+#### Start work and recover its status
+
+`POST /processing/jobs` accepts `selector`, `plan_fingerprint`, and `consent`.
+The fingerprint must match the current plan. `consent: true` grants the reviewed
+profile consent without expiry before running; `false` relies on existing
+active grants. The HTTP API permits both; the CLI requires `--consent`.
+
+Once work is accepted, the response is `200 application/x-ndjson` with
+`Cache-Control: no-store`. A complete stream has two records:
+
+1. `sequence: 1`, `type: "job"`, and `job` with the durable `id`, source version,
+   profile fingerprint, and any known rendition, attachment, or embedding IDs.
+2. `sequence: 2`, `terminal: true`, and either `type: "status"` with `status`, or
+   `type: "error"` with the job and `processing_status_unavailable` error.
+
+A terminal status can report failure; HTTP 200 alone does not mean processing
+succeeded. Read `state` and `failure_code`. Once accepted, work continues under
+the daemon lifecycle after the requesting connection closes. Keep the first
+job ID if the stream ends early and call `GET /processing/jobs/{id}`. That read
+returns `job_id`, `state`, `phase`, `embedding_job_ids`, `completed_bindings`,
+and any `failure_code`. Job IDs are lowercase SHA-256 strings.
+
+#### Read a rendition
+
+`GET /renditions/{attachment_id}` reads one active sanitized-Markdown attachment.
+Its optional `max_bytes` query accepts 1–67,108,864 and defaults to 67,108,864.
+Browser sessions must omit query parameters on this route; setting `max_bytes`
+requires the master API credential.
+`POST /renditions/select` accepts `selector` and a required `max_bytes` in the
+same range, so callers can read without first discovering the attachment ID.
+Attachment IDs are lowercase SHA-256 strings.
+
+The response is `text/markdown; charset=utf-8` with `Cache-Control: no-store`.
+`X-Docbank-Rendition-Attachment`, `-Build`, `-Artifact`, `-Profile`,
+`-Completeness`, and `-Warnings` identify the result. `X-Docbank-Content-Version`,
+`X-Docbank-Blob-Hash`, and `X-Docbank-Blob-Size` identify its source version and
+complete artifact. Read to completion and compare the byte count and SHA-256
+with those headers and the base64 SHA-256 `Content-Digest` trailer before
+accepting the bytes. An incomplete stream or missing digest is not verified.
+
+The GET route accepts one `Range: bytes=...` and returns `206` with
+`Content-Range`. Artifact identity headers still describe the complete
+rendition; the digest trailer covers only the returned range. Invalid or
+unsatisfiable ranges return `416 invalid_rendition_range`.
+See the [Markdown contract](document-derivatives.md#sanitized-markdown-contract)
+for the envelope and body-relative navigation.
+
+#### Coverage and source-fenced search
+
+`GET /coverage` takes `profile`, `vault_uid`, and repeated `content_version_id`
+query parameters. It reports `profile_fingerprint`, aggregate `state`, and
+separate `renditions` and `embeddings` classes. Each class reports its name,
+required status, state, and complete, unavailable, stale, ineligible, and total
+counts. This read does not grant consent or start provider work.
+
+`POST /search` uses JSON, separately from ordinary lexical `GET /search`:
+
+```json
+{
+  "query": "renewal terms",
+  "mode": "lexical",
+  "profile": "private",
+  "limit": 50,
+  "fence": {
+    "vault_uid": "22222222-2222-4222-8222-222222222222",
+    "content_version_ids": ["11111111-1111-4111-8111-111111111111"]
+  },
+  "explain": true
+}
+```
+
+Use the actual vault UUID and 1–4,096 distinct canonical UUIDv4 versions for
+both coverage and search. A foreign vault or invalid source fence is rejected.
+Search requires nonblank `query` text of at most 8,192 characters, `profile`,
+and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
+and accepts 1–100. `binding_id` selects the embedding binding; omitting it uses
+the profile's first binding. Set it explicitly for semantic/hybrid search when
+several are configured. The CLI requires that choice. `auto` uses lexical
+retrieval. See [processing consent](#processing-consent) before choosing a mode
+that embeds query text.
+
+The response includes `requested_mode`, `actual_mode`, `coverage`,
+`degradations`, `results`, `truncated`, and `trace` (`explain: true` populates
+the trace). Each result retains its vault, node, and content-version identity
+with bounded evidence references. The source fence applies before retrieval;
+vector scoring uses only eligible rows from current, live attachments.
+Consumers still check visibility immediately before displaying a result.
+See [Processing search](../usage/search.md) for the consumer contract.
+
+#### Processing errors and derivative purge
+
+Before a stream starts, failures use the normal `application/problem+json`
+envelope. Common processing codes are:
+
+| HTTP status | Code | Meaning |
+|-------------|------|---------|
+| 428 | `processing_consent_required` | No matching grant; review and grant consent |
+| 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
+| 409 | `processing_plan_changed` | Preview the changed source or profile again |
+| 409 | `rendition_operator_required` | Processing needs operator intervention |
+| 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
+| 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
+| 422 | `rendition_failed` | Required rendition work failed |
+| 404 | `not_found` | Requested node, version, job, or active rendition is absent |
+| 503 | `processing_unavailable` | The processing service is not configured |
+| 500 | `processing_failed` | An otherwise unclassified processing failure |
+
+After the first job event, inspect the terminal event and recover through the
+status route if it is missing or reports `processing_status_unavailable`.
+
+`POST /derivatives/purge-plans` previews `content_version_ids`, `attachment_ids`,
+`build_ids`, or `all: true`. Each ID list is bounded to 1,000 entries.
+`POST /derivatives/purge-jobs` takes the same selection plus the returned
+`plan_fingerprint`. It returns one terminal NDJSON `result` event with a receipt;
+partial or deferred cleanup includes an `error` beside that receipt. Stale plans
+return `409 derivative_purge_plan_changed`; invalid selections return
+`422 invalid_derivative_purge`. Immutable backup copies remain untouched.
 
 ### Query compilation preview
 

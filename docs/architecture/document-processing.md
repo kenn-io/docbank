@@ -20,25 +20,25 @@ start with [Document Understanding in Go](../document-understanding.md).
 | Interface | Current scope |
 |-----------|---------------|
 | Public `document/*` Go packages | Evidence, rendition, OCR, upload, embedding, and provider contracts; the importing application owns orchestration and persistence |
-| Public embedded vault API | Exact-version processing and source-fenced lexical, semantic, and hybrid search, plus metadata and visual-preview reads; see [Embed in Go](../embedding.md) |
-| Daemon background jobs | Local metadata, checksum, and visual-preview work; configured embedding runtimes can resume matching retained jobs; vector indexes rebuild from retained vector sets |
-| Internal processing and storage packages | Rendition and embedding jobs, profiles, consent, publication, retention, and derivative purge |
-| Internal retrieval packages | Explained lexical, semantic, and hybrid retrieval; optional expansion and reranking; QMD export and query adapters |
-| CLI and HTTP search | Document names, extracted text, and filters through the current [search interface](../cli-reference.md#docbank-search) |
+| Public embedded vault API | Plan and run processing, read retained renditions and coverage, and search exact source versions in lexical, semantic, or hybrid mode; also process local metadata and read visual previews; see [Embed in Go](../embedding.md) |
+| Daemon background jobs | Local metadata, checksum, and visual-preview work; configured rendition and embedding jobs; vector-index rebuilding |
+| Internal processing and storage packages | Profiles, consent, publication, retention, and derivative purge |
+| Internal retrieval packages | Lexical, semantic, and hybrid retrieval; optional expansion and reranking; QMD export and query adapters |
+| CLI and HTTP | Preview and run profiles, inspect jobs, read retained renditions, and search an explicit source-version fence |
+| Web app and TUI | Preview processing, record consent, inspect jobs, and read retained sanitized renditions |
 
-The daemon creates its rendition registry without a registered provider, so it
-does not start a rendition worker. Its embedding runtime factory registers
-only the OpenAI-compatible and Voyage adapters listed in
-[Configuration](../configuration.md#embedding-workers-and-credentials).
-Adding another public provider package does not register it with the daemon.
-Configuration also does not create a processing-consent grant or enqueue work.
+The default configuration has no processing profiles. The daemon can execute
+its built-in plaintext rendition adapter and the OpenAI-compatible and Voyage
+embedding runtimes listed in [Configuration](../configuration.md#embedding-workers-and-credentials).
+Other public provider packages are available to embedded Go callers; adding a
+package does not register a daemon runtime. Configuration alone does not grant
+consent or enqueue work.
 
-The CLI and HTTP search handlers call the store's lexical search path. They do
-not expose the internal semantic, hybrid, expansion, reranking, or QMD modes.
-The current boundaries are visible in the
-[daemon setup](https://github.com/kenn-io/docbank/blob/main/cmd/docbank/daemon.go),
-[embedding runtime factory](https://github.com/kenn-io/docbank/blob/main/cmd/docbank/embedding_runtime.go),
-and [HTTP read handlers](https://github.com/kenn-io/docbank/blob/main/internal/api/routes_read.go).
+[Document processing](../usage/document-processing.md) follows the operator
+workflow from profile selection through preview, consent, execution, and reads.
+[Processing search](../usage/search.md) explains lexical, semantic, hybrid, and
+auto modes with an explicit profile and authorized source-version fence.
+Ordinary name and text search remains separate.
 
 ## From original bytes to searchable evidence
 
@@ -156,7 +156,8 @@ and [vector-index catalog](https://github.com/kenn-io/docbank/blob/main/internal
 
 The internal searcher treats omitted and `auto` modes as lexical. Explicit
 semantic and hybrid modes require compatible active vector authority and a
-query encoder. Scope is applied before the vector candidate cutoff. Results
+query encoder. The source-version fence selects eligible vectors from current, live
+attachments before scoring. Missing vector-row authority stops the search. Results
 retain source references, lexical and semantic rank contributions, coverage,
 truncation, and degradation information. Candidates are checked against current
 vault authority before they are passed to optional reranking.
@@ -228,3 +229,7 @@ derived serving authority, then leaves shared-result collection to the same
 retention rules. The [garbage collector](https://github.com/kenn-io/docbank/blob/main/internal/store/gc.go)
 and [purge suppressions](https://github.com/kenn-io/docbank/blob/main/internal/store/derivative_suppression.go)
 own these rules.
+
+The [Document derivatives](document-derivatives.md) reference describes the
+sanitized Markdown envelope, body-relative navigation, and consumer source
+identity contract.

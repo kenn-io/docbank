@@ -750,10 +750,84 @@ an explicit `truncated` boolean. A filtered report also echoes the stable
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a complete verified read. It does not automatically run PDF, Office,
-or OCR extraction. Search uses words in names and indexed text; it has no
-semantic or hybrid mode. Saved queries and highlight sets use a separate
+or OCR extraction. Ordinary search uses words in names and indexed text.
+Processing search uses the separate form below. Saved queries and highlight sets use a separate
 [HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no
 CLI management command. See [Searching](usage/searching.md).
+
+### Processing search
+
+```
+docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--explain] [--json]
+```
+
+Searches retained processing results for an explicit source-version set.
+`--mode`, an executable `--profile`, and at least one `--source-version` are
+required. Query text must not be blank. Supply at most 4,096 distinct canonical
+UUIDv4 version IDs; the CLI adds the selected daemon's vault UUID.
+
+| Flag or mode | Contract |
+|--------------|----------|
+| `lexical` | Search retained rendition text locally |
+| `semantic` | Search the selected embedding binding |
+| `hybrid` | Combine lexical and semantic results |
+| `auto` | Use lexical retrieval and report the actual mode |
+| `--binding` | Select the semantic/hybrid embedding binding; required when the profile has several, inferred when it has one; rejected for lexical/auto |
+| `--limit` | 1–100 results; default 50 |
+| `--explain` | Include bounded retrieval-stage codes and counts |
+| `--json` | Emit the processing search report, including modes, coverage, degradation, results, truncation, and trace |
+
+Processing search cannot be combined with `--tag`, `--mime-type`, `--under`,
+`--modified-since`, or `--modified-before`. Human output reports the mode,
+coverage, degradation, and ranked results inside the source fence.
+
+Semantic and hybrid search require active query-text consent; lexical and
+auto do not. Follow [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
+to grant consent through a reviewed processing build or the HTTP consent API.
+
+## docbank processing
+
+```
+docbank processing profiles [--json]
+docbank processing plan <path-or-id> --profile <name> [--json]
+docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha256> --consent [--json | --ndjson]
+docbank processing status <job-id> [--json]
+```
+
+`profiles` lists names the daemon can execute, their rendition and embedding
+bindings, and profile fingerprints. The default configuration lists none.
+
+`plan` resolves a live file's current version and reports its provider flows,
+disclosed and retained classes, estimates, consent state, and backup effect.
+Review the complete plan before running `build`. A changed source or profile
+requires a new preview and its exact lowercase SHA-256 `--plan-fingerprint`.
+
+`build` requires `--consent`, even when consent is already active. It grants
+ongoing permission for this profile's document and query operations to the
+daemon operator across documents and searches, with no expiry. It then runs
+the reviewed work and prints the durable job ID and aggregate status.
+`--json` emits the job record; `--ndjson` emits a job event followed by a
+terminal status event. These output flags are mutually exclusive. A failed
+required operation returns a nonzero exit code and includes an accepted job
+ID when available; preserve that ID after an interrupted response.
+
+`status` accepts a lowercase SHA-256 job ID and reports aggregate state, phase,
+completed embedding bindings, and any failure code. It does not start new work.
+See [Document processing](usage/document-processing.md) for the full workflow
+and [HTTP consent](architecture/http-api.md#processing-consent) for grants with
+expiry or revocation.
+
+## docbank rendition
+
+```
+docbank rendition get <attachment-id> [--max-bytes <n>]
+```
+
+Writes an active retained sanitized-Markdown attachment to stdout only after
+verifying the complete stream. The attachment ID must be lowercase SHA-256.
+`--max-bytes` accepts 1–67,108,864 and defaults to 67,108,864 (64 MiB). Missing,
+oversized, incomplete, or invalid renditions return a nonzero exit code.
+The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
 
 ## docbank tui
 
