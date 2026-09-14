@@ -106,6 +106,15 @@ func (s *Store) observeOperationalIngestTx(
 	if err != nil {
 		return Node{}, err
 	}
+	binding := ProvenanceVersionBinding{
+		ProvenanceIdentity: fact.Identity,
+		ContentVersionID:   prior.CurrentVersionID,
+		ObservedAt:         operation.recordedAt,
+		BasisRef:           provenanceVersionBindingBasis,
+	}
+	if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
+		return Node{}, fmt.Errorf("binding operational ingest observation: %w", err)
+	}
 	if err := bumpRevisionTx(tx, prior.ID, operation.recordedAt); err != nil {
 		return Node{}, err
 	}
@@ -124,7 +133,7 @@ func (s *Store) observeOperationalIngestTx(
 		}
 		if err := persistAuditedIngestObservation(
 			ctx, tx, s.vaultID, operation.operationID, operation.recordedAt,
-			nodeSequence, authority, scopes, prior, resulting, run.record, fact, ingestAdded,
+			nodeSequence, authority, scopes, prior, resulting, run.record, fact, &binding, ingestAdded,
 		); err != nil {
 			return Node{}, err
 		}

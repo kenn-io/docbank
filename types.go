@@ -23,6 +23,39 @@ const (
 	MaxRenditionBytes = internalprocessing.MaxRenditionBytes
 )
 
+// DocumentEventBuild is the durable progress receipt for one full timeline rebuild.
+type DocumentEventBuild struct {
+	OperationID        string
+	State              string
+	DeriverFingerprint string
+	TargetEpoch        int64
+	Scanned            int64
+	Published          int64
+	Failed             int64
+	Unavailable        int64
+	StartedAt          string
+	UpdatedAt          string
+	FinishedAt         *string
+}
+
+// DocumentEventCoverage reports current-file timeline derivation and safe
+// operator diagnostics.
+type DocumentEventCoverage struct {
+	Selected             int64
+	Indexed              int64
+	Pending              int64
+	Failed               int64
+	Unavailable          int64
+	MissingMetadata      int64
+	InvalidDates         int64
+	UnboundProvenance    int64
+	OperationalFallbacks int64
+	ContractVersion      string
+	DeriverFingerprint   string
+	InputEpoch           int64
+	PublicationEpoch     int64
+}
+
 // ProcessingOptions binds named portable profiles to process-local provider
 // implementations. Secrets remain inside the provider values; profiles and
 // plans contain only immutable non-secret identity.

@@ -124,11 +124,42 @@ func (s *Store) PublishSourceMetadata(
 			return errors.New("source metadata extractor identity already has different evidence")
 		}
 		generation = stored
-		_, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
+		var activeGeneration string
+		headErr := tx.QueryRowContext(ctx, `SELECT generation_id FROM source_metadata_heads
+			WHERE source_sha256=?`, sourceSHA256).Scan(&activeGeneration)
+		if headErr != nil && !errors.Is(headErr, sql.ErrNoRows) {
+			return fmt.Errorf("reading active source metadata head: %w", headErr)
+		}
+		if activeGeneration == generation.GenerationID {
+			return nil
+		}
+		if _, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
 			VALUES(?,?,?) ON CONFLICT(source_sha256) DO UPDATE SET
 			generation_id=excluded.generation_id,published_at=excluded.published_at`,
-			sourceSHA256, generation.GenerationID, nowRFC3339())
-		return execErr
+			sourceSHA256, generation.GenerationID, nowRFC3339()); execErr != nil {
+			return execErr
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT version_id FROM content_versions WHERE blob_hash=?`, sourceSHA256)
+		if err != nil {
+			return fmt.Errorf("reading source metadata versions: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		var versionIDs []string
+		for rows.Next() {
+			var versionID string
+			if err := rows.Scan(&versionID); err != nil {
+				return err
+			}
+			versionIDs = append(versionIDs, versionID)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		_, err = invalidateDocumentEventsForVersionsTx(ctx, tx, versionIDs)
+		return err
 	})
 	return generation, err
 }

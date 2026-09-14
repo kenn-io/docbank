@@ -73,19 +73,35 @@ func attachedMutationKind(
 		}
 	}
 	if len(changes) == 1 {
-		return auditTextField(changes[0], "record_kind")
+		kind, err := auditTextField(changes[0], "record_kind")
+		if err != nil {
+			return "", err
+		}
+		if kind == metadataProvenanceVersionBindingType {
+			return "", errors.New("attached-metadata mutation cannot contain only a provenance binding")
+		}
+		return kind, nil
 	}
-	if len(changes) == 2 {
-		var hasIngest, hasProvenance bool
+	if len(changes) == 2 || len(changes) == 3 {
+		var ingests, provenance, bindings int
 		for _, change := range changes {
 			kind, err := auditTextField(change, "record_kind")
 			if err != nil {
 				return "", err
 			}
-			hasIngest = hasIngest || kind == metadataIngestType
-			hasProvenance = hasProvenance || kind == metadataProvenanceType
+			switch kind {
+			case metadataIngestType:
+				ingests++
+			case metadataProvenanceType:
+				provenance++
+			case metadataProvenanceVersionBindingType:
+				bindings++
+			default:
+				return "", errors.New("attached-metadata mutation has unsupported mixed changes")
+			}
 		}
-		if hasIngest && hasProvenance {
+		if provenance == 1 && ingests <= 1 && bindings <= 1 &&
+			ingests+provenance+bindings == len(changes) {
 			return metadataProvenanceType, nil
 		}
 	}

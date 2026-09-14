@@ -54,6 +54,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Document Processing](https://docbank.ai/docs/architecture/document-processing.md): How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
 - [Source Metadata](https://docbank.ai/docs/architecture/source-metadata.md): How Docbank records bounded facts found inside original files.
 - [Format Coverage](https://docbank.ai/docs/architecture/format-coverage.md): How Docbank reports detection, retention, metadata, expansion, text, page, and transcript support from the running binary.
+- [Document Timeline](https://docbank.ai/docs/architecture/document-timeline.md): How Docbank derives date claims from retained document evidence.
 - [Visual Previews](https://docbank.ai/docs/architecture/visual-previews.md): How Docbank identifies and retains canonical visual derivatives.
 - [Storage](https://docbank.ai/docs/architecture/storage.md): The SQLite schema, blob store layout, durability discipline, and enforced invariants.
 - [Loose & Packed Content](https://docbank.ai/docs/architecture/packed-storage.md): The shared Kit packed-CAS layer and docbank's application-owned authority boundary.

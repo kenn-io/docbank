@@ -43,7 +43,7 @@ func TestHybridSearcherUsesRealStoreBindingAuthority(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
 	index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-		Catalog: fixture.catalog, Mutate: newWorkerTestGate().MutateContext,
+		Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext,
 		Owner: "retrieval-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)

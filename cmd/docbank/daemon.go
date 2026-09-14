@@ -535,6 +535,10 @@ func startProcessingJobs(
 	if err := supervisor.Start("extract:email", email.Run); err != nil {
 		return fmt.Errorf("starting email backfill: %w", err)
 	}
+	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
+	if err := supervisor.Start("derive:document-events", documentEvents.Run); err != nil {
+		return fmt.Errorf("starting document event backfill: %w", err)
+	}
 	return nil
 }
 

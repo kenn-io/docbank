@@ -281,7 +281,7 @@ type auditBaselineProjection struct {
 func validateAuditedHistory(
 	ctx context.Context, tx metadataQuerier, vaultID string, nodeSequence int64,
 	authority initialAuditAuthority, scopes []initialAuditScope, scope initialAuditScope,
-	records, initial map[string][]storedAuditRecord,
+	records, initial map[string][]storedAuditRecord, layout metadataSourceLayout,
 ) error {
 	if err := validateStoredAuditRecordSchemas(records); err != nil {
 		return err
@@ -498,7 +498,7 @@ func validateAuditedHistory(
 	if finalNodeHighWater != replay.nodeHighWater {
 		return errors.New("audit node allocation high-water mark does not match replayed history")
 	}
-	return replay.reconcileCurrentState(ctx, tx)
+	return replay.reconcileCurrentState(ctx, tx, layout)
 }
 
 func (replay *auditedHistoryReplay) applyAdditionalScopeEnrollment(
@@ -922,6 +922,7 @@ func (replay *auditedHistoryReplay) activateScope(scopeID string) error {
 
 func validateGenesisProvenanceIngests(attachments []audit.Record) error {
 	ingests := make(map[string]bool)
+	provenance := make(map[string]bool)
 	for _, record := range attachments {
 		if record.Kind != metadataIngestType {
 			continue
@@ -942,6 +943,32 @@ func validateGenesisProvenanceIngests(attachments []audit.Record) error {
 		}
 		if !ingests[ingestID] {
 			return fmt.Errorf("audit attachment genesis provenance references missing ingest %s", ingestID)
+		}
+		identity, err := auditDigestField(record, "identity")
+		if err != nil {
+			return fmt.Errorf("reading genesis provenance identity: %w", err)
+		}
+		provenance[identity] = true
+	}
+	for _, record := range attachments {
+		if record.Kind != metadataProvenanceVersionBindingType {
+			continue
+		}
+		identity, err := auditDigestField(record, "provenance_identity")
+		if err != nil {
+			return fmt.Errorf("reading genesis provenance binding identity: %w", err)
+		}
+		if !provenance[identity] {
+			return fmt.Errorf("audit attachment genesis binding references missing provenance %s", identity)
+		}
+		if _, err := auditUUIDField(record, "content_version_id"); err != nil {
+			return fmt.Errorf("reading genesis provenance binding version: %w", err)
+		}
+		if _, err := auditTimestampField(record, "observed_at"); err != nil {
+			return fmt.Errorf("reading genesis provenance binding time: %w", err)
+		}
+		if err := requireAuditText(record, "basis_ref", provenanceVersionBindingBasis); err != nil {
+			return fmt.Errorf("reading genesis provenance binding basis: %w", err)
 		}
 	}
 	return nil
@@ -1572,7 +1599,7 @@ func replaceAuditRecordField(record audit.Record, name string, value audit.Value
 }
 
 func (replay *auditedHistoryReplay) reconcileCurrentState(
-	ctx context.Context, tx metadataQuerier,
+	ctx context.Context, tx metadataQuerier, layout metadataSourceLayout,
 ) error {
 	replay.saveActiveScope()
 	if err := replay.reconcileMembershipProjection(ctx, tx); err != nil {
@@ -1614,7 +1641,7 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 	if !equalAuditRecordLists(replay.topology, currentTopology) {
 		return errors.New("replayed audit topology does not match current nodes")
 	}
-	currentAttachments, err := currentAuditAttachments(ctx, tx)
+	currentAttachments, err := currentAuditAttachmentsForLayout(ctx, tx, layout)
 	if err != nil {
 		return err
 	}

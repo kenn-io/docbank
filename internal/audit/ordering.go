@@ -325,6 +325,19 @@ func attachedRecordIdentity(record *Record) ([]byte, error) {
 			return nil, err
 		}
 		identity = Record{Kind: "provenance_identity_ref", Fields: []Field{{Name: "identity", Value: value}}}
+	case "provenance_version_binding":
+		provenanceIdentity, err := recordField(record, "provenance_identity")
+		if err != nil {
+			return nil, err
+		}
+		contentVersionID, err := recordField(record, "content_version_id")
+		if err != nil {
+			return nil, err
+		}
+		identity = Record{Kind: "provenance_version_binding_identity", Fields: []Field{
+			{Name: "provenance_identity", Value: provenanceIdentity},
+			{Name: "content_version_id", Value: contentVersionID},
+		}}
 	case "tag_assignment":
 		tagID, err := recordField(record, "tag_id")
 		if err != nil {

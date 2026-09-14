@@ -13,6 +13,7 @@ const (
 	backfillListRetryDelay  = 5 * time.Second
 	backfillBatchPause      = 100 * time.Millisecond
 	backfillMaxIdleDelay    = 10 * time.Second
+	backfillDrainAttempts   = 3
 )
 
 // Backfill walks a catalog listing in key order, processes every target under
@@ -30,6 +31,8 @@ type Backfill[T any] struct {
 	IdleDelay time.Duration
 	// DrainOnce makes Run return nil once a scan finds nothing to do and no
 	// retries are pending, for backfills that only cover pre-existing rows.
+	// Three consecutive listing failures or three failures of one target return
+	// the last error so synchronous callers do not wait indefinitely.
 	DrainOnce bool
 	// List returns targets ordered by key after the given cursor.
 	List func(ctx context.Context, after string, limit int) ([]T, error)
@@ -55,11 +58,16 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 	retries := newBackfillRetrySet()
 	cursor := ""
 	idleDelay := b.IdleDelay
+	listFailures := 0
 	for {
 		targets, err := b.List(ctx, cursor, b.Page)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			listFailures++
+			if b.DrainOnce && listFailures >= backfillDrainAttempts {
+				return err
 			}
 			b.warn("listing backfill targets will retry", "error", err)
 			if err := waitBackfill(ctx, backfillListRetryDelay); err != nil {
@@ -67,6 +75,7 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		listFailures = 0
 		if len(targets) == 0 {
 			cursor = ""
 			retries.retainSeen()
@@ -85,6 +94,13 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if b.DrainOnce {
+				for _, retry := range retries {
+					if retry.failures >= backfillDrainAttempts {
+						return err
+					}
+				}
 			}
 			b.warn("backfill will retry", "error", err)
 		}

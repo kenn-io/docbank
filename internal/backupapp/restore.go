@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -261,6 +262,9 @@ func verifyRestoredRenditionHeads(
 	}()
 	if err := metadata.VerifyRestoredRenditionBlobBytes(ctx, physical); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition bytes: %w", err)
+	}
+	if err := processing.RebuildDocumentEvents(ctx, metadata); err != nil {
+		return fmt.Errorf("backupapp: rebuilding restored timeline index: %w", err)
 	}
 	if err := metadata.RebuildRenditionLexicalProjection(ctx); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored lexical projection: %w", err)

@@ -27,7 +27,7 @@ func persistAuditedProvenanceAppend(
 	}
 	return persistAuditedProvenanceMutation(
 		ctx, tx, vaultID, operationID, recordedAt, nodeSequence, authority, scopes,
-		priorNode, resultingNode, ingest, provenance, eventKind, true,
+		priorNode, resultingNode, ingest, provenance, nil, eventKind, true,
 	)
 }
 
@@ -35,7 +35,7 @@ func persistAuditedProvenanceMutation(
 	ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string,
 	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
 	priorNode, resultingNode Node, ingest metadataIngest, provenance metadataProvenance,
-	eventKind string, ingestAdded bool,
+	binding *ProvenanceVersionBinding, eventKind string, ingestAdded bool,
 ) error {
 	sequence, err := nextAuditInteger("operation sequence", authority.sequence)
 	if err != nil {
@@ -68,7 +68,7 @@ func persistAuditedProvenanceMutation(
 	if err != nil {
 		return err
 	}
-	changes := make([]audit.Record, 0, 2)
+	changes := make([]audit.Record, 0, 3)
 	if ingestAdded {
 		ingestChange, err := makeAttachedMetadataAddition(ingestRecord)
 		if err != nil {
@@ -77,6 +77,17 @@ func persistAuditedProvenanceMutation(
 		changes = append(changes, ingestChange)
 	}
 	changes = append(changes, provenanceChange)
+	if binding != nil {
+		bindingRecord, err := provenanceVersionBindingAuditRecord(*binding)
+		if err != nil {
+			return err
+		}
+		bindingChange, err := makeAttachedMetadataAddition(bindingRecord)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, bindingChange)
+	}
 	delta, deltaDigest, err := makeAttachedMetadataDelta(values.operationID, changes)
 	if err != nil {
 		return err
@@ -241,6 +252,7 @@ type replayedProvenanceMutation struct {
 	nodeID      uint64
 	ingest      audit.Record
 	provenance  audit.Record
+	binding     audit.Record
 	digest      string
 	eventKind   string
 	ingestAdded bool
@@ -314,6 +326,9 @@ func (replay *auditedHistoryReplay) applyProvenanceMutation(
 	changeCount := uint64(1)
 	if transition.ingestAdded {
 		changeCount = 2
+	}
+	if transition.binding.Kind != "" {
+		changeCount++
 	}
 	if err := requireAuditUnsigned(mutation.record, auditAttachedMetadataChangeCountField, changeCount); err != nil {
 		return err
@@ -694,6 +709,13 @@ func (replay *auditedHistoryReplay) applyProvenanceMutationState(
 		return err
 	}
 	replay.attachments[key] = transition.provenance
+	if transition.binding.Kind != "" {
+		bindingKey, err := attachedAuditKey(transition.binding)
+		if err != nil {
+			return err
+		}
+		replay.attachments[bindingKey] = transition.binding
+	}
 	if transition.ingestAdded {
 		ingestKey, err := attachedAuditKey(transition.ingest)
 		if err != nil {

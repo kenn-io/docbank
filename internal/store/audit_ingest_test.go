@@ -2,7 +2,10 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +13,168 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/audit"
 )
+
+func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
+	s := newTestStore(t)
+	seedMetadataRoundTrip(t, s)
+	s.vaultID = "99999999-9999-4999-8999-999999999999"
+	_, err := s.db.Exec(`UPDATE vault_metadata SET vault_uid=?`, s.vaultID)
+	require.NoError(t, err)
+	scope, err := s.NodeByPath(t.Context(), "/Projects")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, scope.ID)
+
+	run := IngestRun{record: metadataIngest{
+		Type: metadataIngestType, ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		StartedAt: testAuditTimestamp, SourceKind: "cli", SourceDesc: "Synthetic legacy ingest",
+	}}
+	operation := contentVersionOperation{
+		versionID:   "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+		operationID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		recordedAt:  testAuditTimestamp,
+	}
+	var created Node
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		prior, err := liveDirTx(tx, scope.ID)
+		if err != nil {
+			return err
+		}
+		authority, scopes, _, err := loadAuditedNodeAuthority(t.Context(), tx, scope.ID)
+		if err != nil {
+			return err
+		}
+		ingestAdded, err := ensureIngestRunTx(t.Context(), tx, run)
+		if err != nil {
+			return err
+		}
+		var version ContentVersion
+		created, version, err = s.createFileWithOperationTx(
+			t.Context(), tx, scope.ID, "legacy-ingest.txt", fakeHash("ad0"), 13,
+			"text/plain", operation,
+		)
+		if err != nil {
+			return err
+		}
+		originalMtime := "2026-07-16T08:00:00Z"
+		provenance := metadataProvenance{
+			Type: metadataProvenanceType, NodeID: created.ID, IngestID: run.ID(),
+			OriginalPath: "/synthetic/legacy-ingest.txt", OriginalMTime: &originalMtime,
+		}
+		provenance.Identity, err = provenanceIdentity(provenance)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`INSERT INTO provenance(
+			identity,node_id,ingest_id,original_path,original_mtime,supersedes
+		) VALUES(?,?,?,?,?,?)`, provenance.Identity, provenance.NodeID, provenance.IngestID,
+			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
+			return err
+		}
+		resulting, err := nodeByIDTx(tx, scope.ID)
+		if err != nil {
+			return err
+		}
+		legacy, err := makeLegacyAuditedIngestCreationMetadata(
+			run.record, provenance, ingestAdded, operation.operationID,
+		)
+		if err != nil {
+			return err
+		}
+		return persistAuditedNodeCreation(
+			t.Context(), tx, s.vaultID, authority, scopes, prior, resulting,
+			created, version, operation.operationID, operation.recordedAt, &legacy,
+		)
+	}))
+	require.NoError(t, s.ValidateMetadata(t.Context()))
+
+	var bindings int64
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance_version_bindings`).Scan(&bindings))
+	assert.Zero(t, bindings)
+	records, err := loadInitialAuditRecords(t.Context(), s.db)
+	require.NoError(t, err)
+	mutations, err := auditRecordsByOptionalSequence(records["canonical_mutation"], 2)
+	require.NoError(t, err)
+	attachmentCount, err := auditUnsignedField(
+		mutations[2].record, auditAttachedMetadataChangeCountField,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(2), attachmentCount,
+		"pre-binding creation history carries only ingest and provenance attachments")
+
+	var exported, auditBefore bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	require.NoError(t, exportAuditRecords(
+		t.Context(), s.db, newMetadataJSONWriter(&auditBefore),
+	))
+	assert.Equal(t, "32555732f581b4973572fc1186f8368c2c1b2c3779175513e87f621bed2dc40a",
+		fmt.Sprintf("%x", sha256.Sum256(auditBefore.Bytes())))
+
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.db.QueryRow(
+		`SELECT COUNT(*) FROM provenance_version_bindings`,
+	).Scan(&bindings))
+	assert.Zero(t, bindings)
+	var roundTrip, auditAfter bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(t.Context(), &roundTrip))
+	assert.Equal(t, exported.Bytes(), roundTrip.Bytes())
+	require.NoError(t, exportAuditRecords(
+		t.Context(), restored.db, newMetadataJSONWriter(&auditAfter),
+	))
+	assert.Equal(t, auditBefore.Bytes(), auditAfter.Bytes(), "legacy audit hashes must survive import")
+	restoredCreated, err := restored.NodeByPath(t.Context(), "/Projects/legacy-ingest.txt")
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, restoredCreated.ID)
+}
+
+func makeLegacyAuditedIngestCreationMetadata(
+	ingest metadataIngest, provenance metadataProvenance, ingestAdded bool, operationID string,
+) (auditedCreationMetadata, error) {
+	ingestRecord, err := ingestAuditRecord(ingest)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	provenanceRecord, err := provenanceAuditRecord(
+		provenance.Identity, provenance.NodeID, provenance.IngestID,
+		provenance.OriginalPath, nullString(provenance.OriginalMTime), nullString(provenance.Supersedes),
+	)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	baseline := []audit.Record{ingestRecord, provenanceRecord}
+	if err := sortAuditRecordsByCanonicalIdentity(baseline, attachedAuditIdentity); err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	changes := make([]audit.Record, 0, 2)
+	if ingestAdded {
+		change, err := makeAttachedMetadataAddition(ingestRecord)
+		if err != nil {
+			return auditedCreationMetadata{}, err
+		}
+		changes = append(changes, change)
+	}
+	provenanceChange, err := makeAttachedMetadataAddition(provenanceRecord)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	changes = append(changes, provenanceChange)
+	operationValue, err := audit.UUID(operationID)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	delta, digest, err := makeAttachedMetadataDelta(operationValue, changes)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	groupingID, err := audit.UUID(ingest.ID)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	return auditedCreationMetadata{
+		groupingID: groupingID, baselineRecords: baseline, changes: changes,
+		delta: delta, deltaDigest: digest, provenance: provenanceRecord,
+	}, nil
+}
 
 func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
@@ -81,7 +246,14 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 		attachmentCounts = append(attachmentCounts, count)
 	}
 	require.NoError(t, rows.Err())
-	assert.Equal(t, []uint64{2, 1}, attachmentCounts)
+	assert.Equal(t, []uint64{3, 2}, attachmentCounts)
+	for _, node := range []Node{first, second} {
+		bindings, err := s.ProvenanceVersionBindings(t.Context(), node.CurrentVersionID)
+		require.NoError(t, err)
+		require.Len(t, bindings, 1)
+		assert.Equal(t, run.record.StartedAt, bindings[0].ObservedAt)
+		assert.Equal(t, provenanceVersionBindingBasis, bindings[0].BasisRef)
+	}
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
@@ -92,6 +264,10 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 	var roundTrip bytes.Buffer
 	require.NoError(t, restored.ExportMetadata(t.Context(), &roundTrip))
 	assert.Equal(t, exported.Bytes(), roundTrip.Bytes())
+	assert.Contains(t, exported.String(), `"type":"provenance_version_binding"`)
+	restoredBindings, err := restored.ProvenanceVersionBindings(t.Context(), first.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Len(t, restoredBindings, 1)
 }
 
 func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
@@ -104,6 +280,8 @@ func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 	seedInitialAuditAuthority(t, s, scope.ID)
 	run, err := s.BeginIngest(t.Context(), "cli", "/source")
 	require.NoError(t, err)
+	var dirtyRowsBefore int64
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM document_event_dirty`).Scan(&dirtyRowsBefore))
 	_, err = s.db.Exec(`CREATE TRIGGER reject_ingest_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audited ingest failure'); END`)
@@ -116,14 +294,23 @@ func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 	require.ErrorContains(t, err, "forced audited ingest failure")
 	_, err = s.NodeByPath(t.Context(), "/Projects/rollback.txt")
 	require.ErrorIs(t, err, ErrNotFound)
-	var ingestRows, provenanceRows int64
+	var ingestRows, provenanceRows, bindingRows, dirtyRows, orphanDirtyRows int64
 	require.NoError(t, s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM ingests WHERE id=?),
-		(SELECT COUNT(*) FROM provenance WHERE ingest_id=?)`,
-		run.ID(), run.ID(),
-	).Scan(&ingestRows, &provenanceRows))
+		(SELECT COUNT(*) FROM provenance WHERE ingest_id=?),
+		(SELECT COUNT(*) FROM provenance_version_bindings b
+		 JOIN provenance p ON p.identity=b.provenance_identity WHERE p.ingest_id=?),
+		(SELECT COUNT(*) FROM document_event_dirty),
+		(SELECT COUNT(*) FROM document_event_dirty d LEFT JOIN content_versions cv
+		 ON cv.version_id=d.content_version_id WHERE cv.version_id IS NULL)`,
+		run.ID(), run.ID(), run.ID(),
+	).Scan(&ingestRows, &provenanceRows, &bindingRows, &dirtyRows, &orphanDirtyRows))
 	assert.Zero(t, ingestRows)
 	assert.Zero(t, provenanceRows)
+	assert.Zero(t, bindingRows)
+	assert.Equal(t, dirtyRowsBefore, dirtyRows,
+		"a rejected creation must roll back the new version's dirty row")
+	assert.Zero(t, orphanDirtyRows)
 }
 
 func TestAuditedIngestImportRejectsOmittedProvenance(t *testing.T) {

@@ -31,7 +31,7 @@ func auditedCreationBaselineAttachments(metadata *auditedCreationMetadata) []aud
 
 func makeAuditedIngestCreationMetadata(
 	ingest metadataIngest, provenance metadataProvenance, ingestAdded bool,
-	operationID string,
+	binding ProvenanceVersionBinding, operationID string,
 ) (auditedCreationMetadata, error) {
 	ingestRecord, err := ingestAuditRecord(ingest)
 	if err != nil {
@@ -45,11 +45,15 @@ func makeAuditedIngestCreationMetadata(
 	if err != nil {
 		return auditedCreationMetadata{}, err
 	}
-	baseline := []audit.Record{ingestRecord, provenanceRecord}
+	bindingRecord, err := provenanceVersionBindingAuditRecord(binding)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	baseline := []audit.Record{ingestRecord, provenanceRecord, bindingRecord}
 	if err := sortAuditRecordsByCanonicalIdentity(baseline, attachedAuditIdentity); err != nil {
 		return auditedCreationMetadata{}, fmt.Errorf("sorting audited ingest baseline metadata: %w", err)
 	}
-	changes := make([]audit.Record, 0, 2)
+	changes := make([]audit.Record, 0, 3)
 	if ingestAdded {
 		change, err := makeAttachedMetadataAddition(ingestRecord)
 		if err != nil {
@@ -62,6 +66,11 @@ func makeAuditedIngestCreationMetadata(
 		return auditedCreationMetadata{}, err
 	}
 	changes = append(changes, provenanceChange)
+	bindingChange, err := makeAttachedMetadataAddition(bindingRecord)
+	if err != nil {
+		return auditedCreationMetadata{}, err
+	}
+	changes = append(changes, bindingChange)
 	operationValue, err := audit.UUID(operationID)
 	if err != nil {
 		return auditedCreationMetadata{}, err

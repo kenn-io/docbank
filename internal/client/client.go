@@ -1148,6 +1148,51 @@ func (c *Client) AuditHistory(
 	return page, nil
 }
 
+// TimelineRebuild starts or replays one durable timeline rebuild.
+func (c *Client) TimelineRebuild(
+	ctx context.Context, operationID string,
+) (api.TimelineBuild, error) {
+	var build api.TimelineBuild
+	if !validUUIDv4(operationID) {
+		return build, errors.New("timeline rebuild requires a canonical UUIDv4 operation ID")
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/timeline/rebuilds", nil,
+		api.TimelineRebuildRequest{OperationID: operationID}, &build); err != nil {
+		return build, err
+	}
+	if build.OperationID != operationID {
+		return api.TimelineBuild{}, errors.New("timeline rebuild response has an unexpected operation ID")
+	}
+	return build, nil
+}
+
+// TimelineRebuildStatus reads one durable timeline rebuild receipt.
+func (c *Client) TimelineRebuildStatus(
+	ctx context.Context, operationID string,
+) (api.TimelineBuild, error) {
+	var build api.TimelineBuild
+	if !validUUIDv4(operationID) {
+		return build, errors.New("timeline rebuild status requires a canonical UUIDv4 operation ID")
+	}
+	requestPath := "/api/v1/timeline/rebuilds/" + url.PathEscape(operationID)
+	if err := c.do(ctx, http.MethodGet, requestPath, nil, nil, &build); err != nil {
+		return build, err
+	}
+	if build.OperationID != operationID {
+		return api.TimelineBuild{}, errors.New("timeline rebuild status response has an unexpected operation ID")
+	}
+	return build, nil
+}
+
+// TimelineCoverage reads current-file timeline derivation coverage.
+func (c *Client) TimelineCoverage(ctx context.Context) (api.DocumentEventCoverage, error) {
+	var coverage api.DocumentEventCoverage
+	if err := c.do(ctx, http.MethodGet, "/api/v1/timeline/coverage", nil, nil, &coverage); err != nil {
+		return coverage, err
+	}
+	return coverage, nil
+}
+
 // AuditScopeHistory returns one stable newest-first page across every member
 // of one permanent audit scope.
 func (c *Client) AuditScopeHistory(

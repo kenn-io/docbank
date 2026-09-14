@@ -100,6 +100,11 @@ func (s *Store) AppendNodeProvenance(
 			provenance.OriginalPath, nullString(provenance.OriginalMTime), nullString(provenance.Supersedes)); err != nil {
 			return fmt.Errorf("recording appended provenance: %w", err)
 		}
+		if provenance.Supersedes != nil {
+			if err := invalidateSupersededProvenanceEventsTx(ctx, tx, *provenance.Supersedes); err != nil {
+				return err
+			}
+		}
 		if err := bumpRevisionTx(tx, input.NodeID, run.record.StartedAt); err != nil {
 			return err
 		}

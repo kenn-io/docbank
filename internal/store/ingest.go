@@ -541,6 +541,15 @@ func (s *Store) ingestFile(
 			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
 		}
+		binding := ProvenanceVersionBinding{
+			ProvenanceIdentity: provenance.Identity,
+			ContentVersionID:   version.ID,
+			ObservedAt:         run.record.StartedAt,
+			BasisRef:           provenanceVersionBindingBasis,
+		}
+		if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
+			return fmt.Errorf("binding provenance for %q: %w", finalName, err)
+		}
 		if run.operationalWatch {
 			if err := insertWatchSourceTx(
 				tx, run.record.SourceDesc, provenance.OriginalPath,
@@ -555,7 +564,7 @@ func (s *Store) ingestFile(
 				return err
 			}
 			metadata, err := makeAuditedIngestCreationMetadata(
-				run.record, provenance, ingestAdded, operation.operationID,
+				run.record, provenance, ingestAdded, binding, operation.operationID,
 			)
 			if err != nil {
 				return err

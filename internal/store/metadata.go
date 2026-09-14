@@ -324,23 +324,10 @@ func (layout metadataSourceLayout) legacyV090() bool {
 	return layout.schemaVersion == 1
 }
 
-// hasDerivativeCatalog reports whether the source records auxiliary checksums,
-// source metadata, visual previews, and the processing catalog. Released
-// layouts before schema v4 predate all of them.
-func (layout metadataSourceLayout) hasDerivativeCatalog() bool {
-	return layout.schemaVersion >= 4
-}
-
-func (layout metadataSourceLayout) hasCollectionLabels() bool {
-	return layout.schemaVersion >= 8
-}
-
-func (layout metadataSourceLayout) hasSavedQueryRuns() bool {
-	return layout.schemaVersion >= 11
-}
-
-func (layout metadataSourceLayout) hasBatchTagReceipts() bool {
-	return layout.schemaVersion >= 9
+// hasPostV3Metadata separates the new metadata from the released layouts used
+// through v0.14.0. Intermediate development layouts have no source readers.
+func (layout metadataSourceLayout) hasPostV3Metadata() bool {
+	return layout.schemaVersion > 3
 }
 
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
@@ -389,7 +376,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportBlobs(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
-	if layout.hasDerivativeCatalog() {
+	if layout.hasPostV3Metadata() {
 		if err := exportBlobChecksums(ctx, tx, write, backupScoped); err != nil {
 			return err
 		}
@@ -403,7 +390,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportIngests(ctx, tx, write); err != nil {
 		return err
 	}
-	if layout.hasCollectionLabels() {
+	if layout.hasPostV3Metadata() {
 		if err := exportCollectionLabels(ctx, tx, write); err != nil {
 			return err
 		}
@@ -411,7 +398,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
 	}
-	if layout.hasDerivativeCatalog() {
+	if layout.hasPostV3Metadata() {
 		if err := exportVisualPreviews(ctx, tx, write); err != nil {
 			return err
 		}
@@ -419,18 +406,21 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportProvenance(ctx, tx, write); err != nil {
 		return err
 	}
+	if layout.hasPostV3Metadata() {
+		if err := exportProvenanceVersionBindings(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportTags(ctx, tx, write); err != nil {
 		return err
 	}
-	if layout.schemaVersion >= 7 {
+	if layout.hasPostV3Metadata() {
 		if err := exportSavedQueries(ctx, tx, write); err != nil {
 			return err
 		}
-	}
-	if layout.hasSavedQueryRuns() {
 		if err := exportSavedQueryRuns(ctx, tx, write); err != nil {
 			return err
 		}
@@ -438,7 +428,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
 	}
-	if layout.hasBatchTagReceipts() {
+	if layout.hasPostV3Metadata() {
 		if err := exportBatchTagReceipts(ctx, tx, write); err != nil {
 			return err
 		}
@@ -449,7 +439,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportAuditMetadata(ctx, tx, write); err != nil {
 		return err
 	}
-	if !layout.hasDerivativeCatalog() {
+	if !layout.hasPostV3Metadata() {
 		return nil
 	}
 	if err := exportProcessingMetadata(ctx, tx, write); err != nil {
@@ -461,10 +451,8 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
 		return err
 	}
-	if layout.schemaVersion >= 7 {
-		if err := exportEmailMetadata(ctx, tx, write); err != nil {
-			return err
-		}
+	if err := exportEmailMetadata(ctx, tx, write); err != nil {
+		return err
 	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
@@ -1008,6 +996,13 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
 		    + (SELECT COUNT(*) FROM visual_preview_heads)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
+		    + (SELECT COUNT(*) FROM provenance_version_bindings)
+		    + (SELECT COUNT(*) FROM document_event_state)
+		    + (SELECT COUNT(*) FROM document_event_generations)
+		    + (SELECT COUNT(*) FROM document_event_heads)
+		    + (SELECT COUNT(*) FROM document_event_builds)
+		    + (SELECT COUNT(*) FROM document_event_dirty)
+		    + (SELECT COUNT(*) FROM document_event_attempts)
 		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
@@ -1317,6 +1312,12 @@ func (s *Store) importMetadataRecord(
 		) VALUES(?,?,?,?,?,?)`, v.Identity, v.NodeID, v.IngestID, v.OriginalPath,
 			v.OriginalMTime, v.Supersedes)
 		return err
+	case metadataProvenanceVersionBindingType:
+		var v metadataProvenanceVersionBinding
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importProvenanceVersionBinding(ctx, tx, v)
 	case metadataWatchSourceType:
 		var v metadataWatchSource
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1432,6 +1433,7 @@ const (
 	auditEventField                       = "event"
 	metadataIngestType                    = "ingest"
 	metadataProvenanceType                = "provenance"
+	metadataProvenanceVersionBindingType  = "provenance_version_binding"
 	metadataWatchSourceType               = "watch_source"
 	metadataTagRecordType                 = "tag"
 	metadataSavedQueryType                = "saved_query"
@@ -1466,6 +1468,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataCollectionLabelType:            {metadataTypeField, "ingest_id", "label", "revision", "updated_at"},
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	metadataProvenanceVersionBindingType:   {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
 	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", "revision", metadataCreatedAtField, "updated_at"},
@@ -1872,35 +1875,32 @@ func validateMetadataStateWithVaultIdentity(
 	if err := validateMetadataRelations(ctx, tx); err != nil {
 		return err
 	}
+	if layout.hasPostV3Metadata() {
+		if err := validateProvenanceVersionBindingRelations(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if err := validateWatchSourceRelations(ctx, tx); err != nil {
 		return err
 	}
-	if layout.hasCollectionLabels() {
+	if layout.hasPostV3Metadata() {
 		if err := validateCollectionLabelMetadataState(ctx, tx); err != nil {
 			return err
 		}
-	}
-	if layout.hasSavedQueryRuns() {
 		if err := validateSavedQueryRunMetadataState(ctx, tx); err != nil {
 			return err
 		}
-	}
-	if layout.hasBatchTagReceipts() {
 		if err := validateBatchTagReceiptMetadataState(ctx, tx); err != nil {
 			return err
 		}
-	}
-	if layout.hasDerivativeCatalog() {
 		if err := validateProcessingMetadataState(ctx, tx); err != nil {
 			return err
 		}
 		if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
 			return err
 		}
-		if layout.schemaVersion >= 7 {
-			if err := validateEmailMetadataState(ctx, tx); err != nil {
-				return err
-			}
+		if err := validateEmailMetadataState(ctx, tx); err != nil {
+			return err
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
 			return err
@@ -1913,7 +1913,7 @@ func validateMetadataStateWithVaultIdentity(
 	if err := validateAuditTrashOrigins(topology); err != nil {
 		return err
 	}
-	if err := validateAuditAuthority(ctx, tx, vaultID, nodeSequence); err != nil {
+	if err := validateAuditAuthorityForLayout(ctx, tx, vaultID, nodeSequence, layout); err != nil {
 		return err
 	}
 	var maxNodeID int64

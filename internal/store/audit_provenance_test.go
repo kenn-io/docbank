@@ -525,12 +525,41 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 				const operationID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 				if observation {
 					return persistAuditedIngestObservation(ctx, tx, s.vaultID, operationID, testAuditTimestamp,
-						sequence, authority, scopes, node, resulting, run.record, fact, ingestAdded)
+						sequence, authority, scopes, node, resulting, run.record, fact, nil, ingestAdded)
 				}
 				return persistAuditedProvenanceAppend(ctx, tx, s.vaultID, operationID, testAuditTimestamp,
 					sequence, authority, scopes, node, resulting, run.record, fact)
 			}))
 			require.NoError(t, s.ValidateMetadata(ctx))
+			var bindings int64
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance_version_bindings`).Scan(&bindings))
+			assert.Zero(t, bindings, "legacy audited provenance histories remain explicitly unbound")
+			if observation {
+				wantCount := uint64(2)
+				if operation == "observe existing" {
+					wantCount = 1
+				}
+				records, err := loadInitialAuditRecords(ctx, s.db)
+				require.NoError(t, err)
+				mutations, err := auditRecordsByOptionalSequence(records["canonical_mutation"], 2)
+				require.NoError(t, err)
+				count, err := auditUnsignedField(mutations[2].record, auditAttachedMetadataChangeCountField)
+				require.NoError(t, err)
+				assert.Equal(t, wantCount, count)
+
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &exported))
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+				var restoredBindings int64
+				require.NoError(t, restored.db.QueryRow(
+					`SELECT COUNT(*) FROM provenance_version_bindings`,
+				).Scan(&restoredBindings))
+				assert.Zero(t, restoredBindings)
+				var roundTrip bytes.Buffer
+				require.NoError(t, restored.ExportMetadata(ctx, &roundTrip))
+				assert.Equal(t, exported.Bytes(), roundTrip.Bytes())
+			}
 			var records bytes.Buffer
 			require.NoError(t, exportAuditRecords(ctx, s.db, newMetadataJSONWriter(&records)))
 			assert.Equal(t, want, fmt.Sprintf("%x", sha256.Sum256(records.Bytes())))
