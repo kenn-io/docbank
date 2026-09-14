@@ -97,6 +97,7 @@ type Service struct {
 	lifecycle      context.Context
 	renditions     *RenditionRuntimeRegistry
 	embeddings     *EmbeddingRuntimeRegistry
+	mediaEvidence  *retrieval.MediaEvidenceResolver
 	runsMu         sync.Mutex
 	runs           int
 	stopping       bool
@@ -300,7 +301,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 		principal:      config.Principal,
 		scope:          config.Scope,
 		spoolDirectory: config.SpoolDirectory, clock: config.Clock, lifecycle: config.Lifecycle,
-		renditions: renditionRuntimes, embeddings: NewEmbeddingRuntimeRegistry()}
+		renditions: renditionRuntimes, embeddings: NewEmbeddingRuntimeRegistry(),
+		mediaEvidence: retrieval.NewMediaEvidenceResolver(config.Blobs)}
 	registeredRenditions := make(map[string]document.RenditionProvider)
 	registeredEmbeddings := make(map[string]document.EmbeddingProvider)
 	for name, supplied := range config.Profiles {
@@ -1267,7 +1269,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
-		MediaEvidence: service.blobs}
+		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
 		binding, bindingErr := selectEmbeddingBinding(profile.portable, request.BindingID)

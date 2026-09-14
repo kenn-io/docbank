@@ -211,18 +211,15 @@ func TestSearcherRerankingReceivesOnlyBoundedAuthorizedCandidatePayload(t *testi
 		EvidenceBytesTotalLimit:        maxRerankingEvidenceBytes}, authorizer.operations[0])
 }
 
-func TestRerankingEvidenceKeepsTimedLanesWithoutInternalResolutionAuthority(t *testing.T) {
+func TestRerankingEvidenceKeepsIndependentTimedLanes(t *testing.T) {
 	t.Parallel()
 
 	lexicalSpan := &MediaTimeSpan{StartMS: 0, EndMS: 1000}
 	semanticSpan := &MediaTimeSpan{StartMS: 7000, EndMS: 9500}
 	references := []EvidenceReference{
-		{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment", TimeSpan: lexicalSpan,
-			mediaLocator: &document.EvidenceLocatorV1{Kind: document.EvidenceLocatorSegment,
-				IndexOrigin: document.EvidenceIndexOriginZero, Start: 0, End: 1000}},
+		{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment", TimeSpan: lexicalSpan},
 		{Kind: "embedding", BuildID: "build", InputGenerationID: "generation", InputID: "input",
-			InputKind: document.EmbeddingInputRenditionChunk, TimeSpan: semanticSpan,
-			mediaArtifacts: &store.SearchMediaEvidence{BuildID: "build", GenerationBlobHash: "private"}},
+			InputKind: document.EmbeddingInputRenditionChunk, TimeSpan: semanticSpan},
 	}
 
 	bounded := boundedRerankingEvidence(references)

@@ -167,7 +167,13 @@ input generation and source unit from retained canonical artifacts. Both paths
 return the same optional `time_span` shape and the exact build identity.
 Direct-file embeddings and untimed evidence omit `time_span`; zero is a valid
 segment start and remains present in JSON. Hybrid results retain each lane's
-separate evidence reference instead of combining disjoint spans.
+separate evidence reference instead of combining disjoint spans. The daemon HTTP
+API preserves these spans for CLI and web clients.
+
+The processing service caches verified timing mappings for up to 100,000 inputs.
+A cold lookup still reads the retained generation and evidence artifacts. If an
+artifact cannot be read or verified, search omits the affected semantic hit and
+marks the report `truncated`; other documents remain available.
 
 Query expansion produces bounded alternate queries. Reranking reorders an
 already authorized candidate list from bounded excerpts and evidence

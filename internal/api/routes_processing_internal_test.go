@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -9,7 +10,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval"
 )
+
+func TestDocumentSearchResponsePreservesTimedEvidence(t *testing.T) {
+	report := processing.SearchReport{Results: []retrieval.Result{{
+		Evidence: []retrieval.EvidenceReference{
+			{Kind: "rendition_segment", TimeSpan: &retrieval.MediaTimeSpan{StartMS: 0, EndMS: 1000}},
+			{Kind: "embedding_input", TimeSpan: &retrieval.MediaTimeSpan{StartMS: 7000, EndMS: 9500}},
+			{Kind: "rendition_segment"},
+		},
+	}}}
+
+	response := fromDocumentSearchReport(report, false)
+	body, err := json.Marshal(response.Results[0].Evidence)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"kind":"rendition_segment","time_span":{"start_ms":0,"end_ms":1000}},
+		{"kind":"embedding_input","time_span":{"start_ms":7000,"end_ms":9500}},
+		{"kind":"rendition_segment"}
+	]`, string(body))
+}
 
 func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
 	job := processing.Job{ID: strings.Repeat("a", 64), AttachmentID: strings.Repeat("b", 64),

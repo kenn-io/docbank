@@ -369,8 +369,6 @@ func boundedRerankingEvidence(references []EvidenceReference) []EvidenceReferenc
 }
 
 func rerankingEvidenceReference(reference EvidenceReference) EvidenceReference {
-	reference.mediaLocator = nil
-	reference.mediaArtifacts = nil
 	if reference.TimeSpan != nil {
 		span := *reference.TimeSpan
 		reference.TimeSpan = &span

@@ -56,8 +56,6 @@ type EvidenceReference struct {
 	BlobHash               string
 	SourceManifestChecksum string
 	TimeSpan               *MediaTimeSpan
-	mediaLocator           *document.EvidenceLocatorV1
-	mediaArtifacts         *store.SearchMediaEvidence
 }
 
 type Candidate struct {

@@ -53,7 +53,7 @@ type SearcherConfig struct {
 	Clock         func() time.Time
 	Expansion     ExpansionConfig
 	Reranking     RerankingConfig
-	MediaEvidence MediaEvidenceBlobReader
+	MediaEvidence *MediaEvidenceResolver
 }
 
 type Searcher struct {
@@ -64,7 +64,7 @@ type Searcher struct {
 	clock         func() time.Time
 	expansion     ExpansionConfig
 	reranking     RerankingConfig
-	mediaEvidence MediaEvidenceBlobReader
+	mediaEvidence *MediaEvidenceResolver
 }
 
 func NewSearcher(config SearcherConfig) (*Searcher, error) {
@@ -130,7 +130,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if expansionDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, expansionDegradation)
 	}
-	if searcher.expansion.Enabled || searcher.reranking.Enabled || searcher.mediaEvidence != nil {
+	if searcher.expansion.Enabled || searcher.reranking.Enabled {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -139,18 +139,9 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 			if searcher.expansion.Enabled {
 				return Report{}, ErrExpandedSearchFailed
 			}
-			if searcher.reranking.Enabled {
-				return Report{}, ErrRerankingFailed
-			}
-			return Report{}, err
+			return Report{}, ErrRerankingFailed
 		}
 		report = revalidated
-	}
-	if searcher.mediaEvidence != nil {
-		report, err = searcher.attachMediaEvidence(ctx, report)
-		if err != nil {
-			return Report{}, err
-		}
 	}
 	report, rerankingReceipt, rerankingDegradation, err := searcher.rerank(ctx, query, report)
 	if err != nil {
@@ -448,8 +439,8 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		resolved = resolved[:query.VectorLimit]
 		truncated = true
 	}
-	candidates := make([]Candidate, len(resolved))
-	for index, item := range resolved {
+	candidates := make([]Candidate, 0, len(resolved))
+	for _, item := range resolved {
 		if item.VectorSpaceID != authority.VectorSpace.ID {
 			return nil, coverage, false, errors.New("semantic result escaped the active vector space")
 		}
@@ -459,14 +450,22 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			InputGenerationID: item.InputGenerationID, InputID: item.InputID,
 			InputKind: item.InputKind, BuildID: item.MediaEvidence.BuildID,
 			SourceManifestChecksum: resolution.SourceManifestChecksum}
-		if item.InputKind == document.EmbeddingInputRenditionChunk {
-			media := item.MediaEvidence
-			reference.mediaArtifacts = &media
+		if item.InputKind == document.EmbeddingInputRenditionChunk && searcher.mediaEvidence != nil {
+			span, err := searcher.mediaEvidence.resolve(ctx, item.MediaEvidence, item.InputID)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, coverage, false, ctx.Err()
+				}
+				// A damaged artifact invalidates this hit, not the other documents.
+				truncated = true
+				continue
+			}
+			reference.TimeSpan = span
 		}
-		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
+		candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
 			NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
-			Rank: index + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
-			Evidence: []EvidenceReference{reference}}
+			Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
+			Evidence: []EvidenceReference{reference}})
 	}
 	return candidates, coverage, truncated || resolution.Truncated, nil
 }
@@ -511,10 +510,11 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 		reference := EvidenceReference{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
 			BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}
-		if hit.Locator.Kind != "" {
-			locator := hit.Locator
-			reference.mediaLocator = &locator
+		span, err := mediaTimeSpan(hit.Locator)
+		if err != nil {
+			return nil, false, err
 		}
+		reference.TimeSpan = span
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
 			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,

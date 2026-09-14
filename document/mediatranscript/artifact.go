@@ -3,13 +3,10 @@
 package mediatranscript
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -95,29 +92,13 @@ func Marshal(artifact ArtifactV1) ([]byte, string, error) {
 
 // Unmarshal accepts only the exact canonical byte form of a bounded artifact.
 func Unmarshal(raw []byte) (ArtifactV1, error) {
-	var artifact ArtifactV1
 	if len(raw) > MaxArtifactBytes {
-		return artifact, errors.New("transcript byte_limit")
+		return ArtifactV1{}, errors.New("transcript byte_limit")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&artifact); err != nil {
-		return ArtifactV1{}, err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("transcript has trailing content")
-		}
-		return ArtifactV1{}, err
-	}
-	canonicalBytes, _, err := Marshal(artifact)
-	if err != nil {
-		return ArtifactV1{}, err
-	}
-	if !bytes.Equal(raw, canonicalBytes) {
-		return ArtifactV1{}, errors.New("transcript is not canonical")
-	}
-	return artifact, nil
+	return canonical.DecodeWith(raw, func(artifact ArtifactV1) ([]byte, error) {
+		encoded, _, err := Marshal(artifact)
+		return encoded, err
+	})
 }
 
 // Build maps a timed artifact to provider-neutral segment evidence while

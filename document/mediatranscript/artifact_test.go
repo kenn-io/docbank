@@ -24,7 +24,8 @@ func TestTimedArtifactRejectsDuplicatesAndPreservesSpeaker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, a, b)
 
-	_, err = Unmarshal([]byte(`{"contract_version":"media-transcript/v1","origin":"supplied","origin":"generated"}`))
+	_, err = Unmarshal([]byte(strings.Replace(string(raw),
+		`"origin":"supplied"`, `"origin":"supplied","origin":"supplied"`, 1)))
 	require.Error(t, err)
 
 	a.Segments[0].EndMS = 0
@@ -57,8 +58,10 @@ func TestTimedArtifactCodecEnforcesCanonicalBounds(t *testing.T) {
 	)
 
 	invalidRaw := map[string][]byte{
-		"unknown field":  append(raw[:len(raw)-1], []byte(`,"unexpected":true}`)...),
+		"unknown field":  []byte(string(raw[:len(raw)-1]) + `,"unexpected":true}`),
 		"trailing bytes": append(append([]byte(nil), raw...), ' '),
+		"trailing value": []byte(string(raw) + `{}`),
+		"invalid span":   []byte(strings.Replace(string(raw), `"end_ms":1000`, `"end_ms":0`, 1)),
 		"noncanonical":   []byte(`{"origin":"generated","contract_version":"media-transcript/v1","provider":"synthetic","segments":[{"order":0,"start_ms":0,"end_ms":1000,"text":"first"}]}`),
 		"oversize":       []byte(strings.Repeat("x", MaxArtifactBytes+1)),
 	}

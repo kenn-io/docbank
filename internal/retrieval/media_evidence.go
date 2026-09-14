@@ -1,7 +1,6 @@
 package retrieval
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -30,52 +31,70 @@ func mediaTimeSpan(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
 	return &MediaTimeSpan{StartMS: locator.Start, EndMS: locator.End}, nil
 }
 
-func (searcher *Searcher) attachMediaEvidence(ctx context.Context, report Report) (Report, error) {
-	for resultIndex := range report.Results {
-		references := report.Results[resultIndex].Evidence
-		projected := make([]EvidenceReference, 0, len(references))
-		for _, reference := range references {
-			resolved, err := searcher.resolveMediaEvidence(ctx, reference)
-			if err != nil {
-				return Report{}, fmt.Errorf("resolving %s search evidence: %w", reference.Kind, err)
-			}
-			projected = append(projected, resolved...)
-		}
-		report.Results[resultIndex].Evidence = projected
-	}
-	return report, nil
+// MediaEvidenceResolver projects verified immutable artifacts into search locators.
+// One resolver belongs to one vault's processing service.
+type MediaEvidenceResolver struct {
+	blobs  MediaEvidenceBlobReader
+	mu     sync.Mutex
+	cache  map[store.SearchMediaEvidence]map[string]*MediaTimeSpan
+	inputs int
 }
 
-func (searcher *Searcher) resolveMediaEvidence(
-	ctx context.Context, reference EvidenceReference,
-) ([]EvidenceReference, error) {
-	if reference.mediaLocator != nil {
-		span, err := mediaTimeSpan(*reference.mediaLocator)
+const maxCachedMediaInputs = 100_000
+
+func NewMediaEvidenceResolver(blobs MediaEvidenceBlobReader) *MediaEvidenceResolver {
+	return &MediaEvidenceResolver{blobs: blobs, cache: make(map[store.SearchMediaEvidence]map[string]*MediaTimeSpan)}
+}
+
+func (resolver *MediaEvidenceResolver) resolve(ctx context.Context, artifacts store.SearchMediaEvidence,
+	inputID string,
+) (*MediaTimeSpan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	resolver.mu.Lock()
+	locators := resolver.cache[artifacts]
+	resolver.mu.Unlock()
+	if locators == nil {
+		var err error
+		locators, err = resolver.load(ctx, artifacts)
 		if err != nil {
 			return nil, err
 		}
-		reference.TimeSpan = span
-		reference.mediaLocator = nil
-		return []EvidenceReference{reference}, nil
+		resolver.mu.Lock()
+		if resolver.cache[artifacts] == nil && len(locators) <= maxCachedMediaInputs {
+			// ponytail: clear at the input ceiling; use LRU if large working sets churn it.
+			if resolver.inputs+len(locators) > maxCachedMediaInputs {
+				clear(resolver.cache)
+				resolver.inputs = 0
+			}
+			resolver.cache[artifacts] = locators
+			resolver.inputs += len(locators)
+		}
+		resolver.mu.Unlock()
 	}
-	if reference.InputKind != document.EmbeddingInputRenditionChunk {
-		return []EvidenceReference{reference}, nil
+	span, ok := locators[inputID]
+	if !ok {
+		return nil, errors.New("embedding input is absent from its exact retained generation")
 	}
-	if reference.mediaArtifacts == nil {
-		return nil, errors.New("rendition-chunk evidence lacks exact retained artifact authority")
+	if span == nil {
+		return nil, nil //nolint:nilnil // Untimed inputs have no media interval.
 	}
-	artifacts := *reference.mediaArtifacts
+	return new(*span), nil
+}
+
+func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store.SearchMediaEvidence) (map[string]*MediaTimeSpan, error) {
 	if artifacts.BuildID == "" || artifacts.GenerationBlobHash == "" || artifacts.GenerationEncodedSize <= 0 ||
 		artifacts.GenerationChecksum == "" || artifacts.EvidenceFingerprint == "" ||
 		artifacts.EvidenceEncodedSize <= 0 || artifacts.InputCount <= 0 {
 		return nil, errors.New("rendition-chunk evidence artifact authority is incomplete")
 	}
-	generationBytes, err := readExactSearchBlob(ctx, searcher.mediaEvidence,
+	generationBytes, err := readExactSearchBlob(ctx, resolver.blobs,
 		artifacts.GenerationBlobHash, artifacts.GenerationEncodedSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading embedding generation: %w", err)
 	}
-	evidenceBytes, err := readExactSearchBlob(ctx, searcher.mediaEvidence,
+	evidenceBytes, err := readExactSearchBlob(ctx, resolver.blobs,
 		artifacts.EvidenceFingerprint, artifacts.EvidenceEncodedSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading normalized evidence: %w", err)
@@ -96,33 +115,18 @@ func (searcher *Searcher) resolveMediaEvidence(
 	if err := json.Unmarshal(evidenceBytes, &evidence, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("decoding normalized evidence: %w", err)
 	}
-	canonicalEvidence, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
-	if err != nil {
-		return nil, err
-	}
-	if checksum != artifacts.EvidenceFingerprint || !bytes.Equal(canonicalEvidence, evidenceBytes) {
-		return nil, errors.New("normalized evidence is not the exact canonical retained artifact")
-	}
 	if err := generation.ValidateEvidence(evidence); err != nil {
 		return nil, err
 	}
+	locators := make(map[string]*MediaTimeSpan, len(generation.Inputs))
 	for _, input := range generation.Inputs {
-		if input.Key != reference.InputID {
-			continue
-		}
-		if input.SourceSpan.UnitIndex < 0 || input.SourceSpan.UnitIndex >= len(evidence.Units) {
-			return nil, errors.New("embedding input names a missing evidence unit")
-		}
 		span, err := mediaTimeSpan(evidence.Units[input.SourceSpan.UnitIndex].Locator)
 		if err != nil {
 			return nil, err
 		}
-		reference.BuildID = artifacts.BuildID
-		reference.TimeSpan = span
-		reference.mediaArtifacts = nil
-		return []EvidenceReference{reference}, nil
+		locators[input.Key] = span
 	}
-	return nil, errors.New("embedding input is absent from its exact retained generation")
+	return locators, nil
 }
 
 func readExactSearchBlob(

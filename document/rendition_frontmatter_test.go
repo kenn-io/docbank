@@ -55,6 +55,38 @@ func TestEnvelopeRenditionV1KeepsNavigationBodyRelative(t *testing.T) {
 	require.Equal(t, body, parsedBody)
 }
 
+func TestEnvelopeRenditionV1AcceptsTimedNavigation(t *testing.T) {
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
+		ContractVersion: SourceEvidenceContractV1, Family: "audio",
+		Completeness: EvidencePartial, UnitKind: EvidenceUnitSegment,
+		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField,
+			Field: "non_speech_content", Reason: "speech transcript does not describe non-speech content"}},
+		Units: []SourceEvidenceUnitV1{{Order: 0, Text: "synthetic cue",
+			Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorSegment,
+				IndexOrigin: EvidenceIndexOriginZero, Start: 1000, End: 2000}}},
+	})
+	policy, err := NewRenditionPolicy(testRenditionLimits(1000))
+	require.NoError(t, err)
+	rendition, err := BuildRenditionV1(evidence, policy)
+	require.NoError(t, err)
+	rendered, _, err := EnvelopeRenditionV1(rendition, RenditionEnvelopeV1{
+		BuildID: frontmatterHash("build"), SourceSHA256: frontmatterHash("source"),
+		SourceFormat: "wav", SourceMediaType: "audio/wav",
+		RenditionRequestFingerprint: frontmatterHash("request"),
+		EvidenceLexicalFingerprint:  frontmatterHash("lexical"),
+		NormalizedEvidenceContract:  NormalizedEvidenceContractV1, UnitKind: EvidenceUnitSegment,
+	})
+	require.NoError(t, err)
+
+	frontmatter, body, err := ParseRenditionFrontMatterV1(rendered.Markdown)
+	require.NoError(t, err)
+	require.Equal(t, "synthetic cue\n", string(body))
+	require.Equal(t, EvidenceUnitSegment, frontmatter.Document.UnitKind)
+	require.Equal(t, []RenditionNavigationEntryV1{{
+		Key: evidence.Units[0].ID, Kind: EvidenceLocatorSegment, Line: 1, Byte: 0,
+	}}, frontmatter.Navigation.Entries)
+}
+
 func TestParseRenditionFrontMatterV1RejectsCorruptBodyAndNavigation(t *testing.T) {
 	body := []byte("# First\n\nAlpha\n")
 	rendition := RenditionV1{ContractVersion: RenditionContractV1,
