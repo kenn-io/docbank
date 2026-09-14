@@ -49,10 +49,11 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	}
 	entries := make(map[string]*zip.File, len(archive.File))
 	for _, entry := range archive.File {
-		if _, exists := entries[entry.Name]; exists {
+		key := pptxPathKey(entry.Name)
+		if _, exists := entries[key]; exists {
 			return 0, fmt.Errorf("PPTX ZIP contains duplicate entry %q", entry.Name)
 		}
-		entries[entry.Name] = entry
+		entries[key] = entry
 	}
 
 	presentation, err := pptxEntry(entries, pptxPresentationPath)
@@ -109,11 +110,12 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("resolve PPTX slide relationship %q: %w", relationshipID, err)
 		}
-		if _, exists := seenTargets[target]; exists {
+		targetKey := pptxPathKey(target)
+		if _, exists := seenTargets[targetKey]; exists {
 			return 0, fmt.Errorf("PPTX slide relationship target %q is duplicated", target)
 		}
-		seenTargets[target] = struct{}{}
-		entry, ok := entries[target]
+		seenTargets[targetKey] = struct{}{}
+		entry, ok := entries[targetKey]
 		if !ok || entry.FileInfo().IsDir() {
 			return 0, fmt.Errorf("PPTX slide target %q is missing", target)
 		}
@@ -126,7 +128,7 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 }
 
 func pptxEntry(entries map[string]*zip.File, name string) (*zip.File, error) {
-	entry, ok := entries[name]
+	entry, ok := entries[pptxPathKey(name)]
 	if !ok {
 		return nil, fmt.Errorf("PPTX ZIP is missing %q", name)
 	}
@@ -186,11 +188,21 @@ type pptxContentDeclarations struct {
 }
 
 func (declarations pptxContentDeclarations) forPart(name string) (string, bool) {
-	if contentType, ok := declarations.overrides[name]; ok {
+	key := pptxPathKey(name)
+	if contentType, ok := declarations.overrides[key]; ok {
 		return contentType, true
 	}
 	contentType, ok := declarations.defaults[strings.ToLower(path.Ext(name))]
 	return contentType, ok
+}
+
+func pptxPathKey(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, value)
 }
 
 type pptxDefaultType struct {
@@ -415,10 +427,11 @@ func parsePPTXContentTypes(data []byte) (pptxContentDeclarations, error) {
 		if err != nil {
 			return pptxContentDeclarations{}, err
 		}
-		if _, exists := overrides[partName]; exists {
+		key := pptxPathKey(partName)
+		if _, exists := overrides[key]; exists {
 			return pptxContentDeclarations{}, fmt.Errorf("PPTX content type for %q is duplicated", partName)
 		}
-		overrides[partName] = contentType.ContentType
+		overrides[key] = contentType.ContentType
 	}
 	return pptxContentDeclarations{defaults: defaults, overrides: overrides}, nil
 }

@@ -97,6 +97,14 @@ func TestCountPPTXSlides(t *testing.T) {
 			wantUnits: 1,
 		},
 		{
+			name: "case-insensitive part names",
+			archive: pptxArchiveWithEntries(t, []pptxTestSlide{{
+				id: "256", relationshipID: "rId1", target: "slides/SLIDE1.XML",
+				entryName: "ppt/slides/slide1.xml", contentTypeName: "/ppt/slides/slide1.xml",
+			}}, nil),
+			wantUnits: 1,
+		},
+		{
 			name:      "empty slide list",
 			archive:   pptxArchiveWithSlideXML(t, `<p:presentation xmlns:p="`+pptxPresentationNamespace+`" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst/></p:presentation>`, validPPTXRelationships(), validPPTXContentTypes()),
 			wantError: true,
@@ -255,12 +263,14 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 }
 
 type pptxTestSlide struct {
-	id             string
-	relationshipID string
-	target         string
-	targetMode     string
-	contentType    string
-	hidden         bool
+	id              string
+	relationshipID  string
+	target          string
+	entryName       string
+	contentTypeName string
+	targetMode      string
+	contentType     string
+	hidden          bool
 }
 
 func pptxArchive(t *testing.T, slides []pptxTestSlide) []byte {
@@ -306,8 +316,16 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 		}
 		target := pptxArchiveTargetName(slide.target)
 		if target != "" {
-			fmt.Fprintf(&contentTypes, `<Override PartName="/%s" ContentType="%s"/>`, target, contentType)
-			entries[target] = `<p:sld xmlns:p="` + pptxPresentationNamespace + `"/>`
+			contentTypeName := "/" + target
+			if slide.contentTypeName != "" {
+				contentTypeName = slide.contentTypeName
+			}
+			fmt.Fprintf(&contentTypes, `<Override PartName="%s" ContentType="%s"/>`, contentTypeName, contentType)
+			entryName := target
+			if slide.entryName != "" {
+				entryName = slide.entryName
+			}
+			entries[entryName] = `<p:sld xmlns:p="` + pptxPresentationNamespace + `"/>`
 		}
 	}
 	contentTypes.WriteString(`</Types>`)
