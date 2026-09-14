@@ -40,9 +40,38 @@ type ExplainedLexicalCandidate struct {
 	SegmentID    string
 	BlobHash     string
 	Excerpt      string
+	Locator      document.EvidenceLocatorV1
+}
+
+// SearchMediaEvidence retains the exact immutable artifacts needed to map one
+// rendition-chunk embedding back to its normalized evidence unit.
+type SearchMediaEvidence struct {
+	BuildID               string
+	GenerationBlobHash    string
+	GenerationEncodedSize int64
+	GenerationChecksum    string
+	EvidenceFingerprint   string
+	EvidenceEncodedSize   int64
+	InputCount            int
 }
 
 const maxExplainedSearchExcerptRunes = 512
+
+// currentRenditionChunkAuthoritySQL is the shared serving predicate for a
+// rendition-chunk embedding. Every caller supplies embedding_sets as es and
+// embedding_input_generations as eig.
+const currentRenditionChunkAuthoritySQL = `EXISTS (
+	SELECT 1 FROM rendition_heads current_rh
+	JOIN rendition_attachments current_ra ON current_ra.attachment_id=current_rh.attachment_id
+	 AND current_ra.content_version_id=current_rh.content_version_id
+	 AND current_ra.profile_fingerprint=current_rh.profile_fingerprint
+	JOIN rendition_builds current_rb ON current_rb.build_id=current_ra.build_id
+	JOIN blobs current_evidence_blob ON current_evidence_blob.hash=eig.evidence_fingerprint
+	WHERE current_rh.content_version_id=es.content_version_id
+	 AND current_rh.profile_fingerprint=es.profile_fingerprint
+	 AND current_rh.attachment_id=eig.attachment_id
+	 AND current_rb.evidence_checksum=eig.evidence_fingerprint
+)`
 
 // SearchExplainedLexicalCandidates preserves SearchPageWithOptions file ordering.
 // Content selection and evidence resolution share one lexical-generation read.
@@ -95,7 +124,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	queryContent := func(queryer metadataQuerier, generationID string) (retErr error) {
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
-			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt
+			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
 			FROM content_fts JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
 			JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
 			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
@@ -104,10 +133,14 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
 			contentQuery = `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
-				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24)
+				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
+				 ru.locator_json
 				FROM rendition_lexical_fts
 				JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
+				JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
+				 AND ls.segment_id=rendition_lexical_fts.segment_id
+				JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
 				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
@@ -186,11 +219,17 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 
 func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
 	var node Node
+	var locatorJSON string
 	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
 		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
 		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt); err != nil {
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON); err != nil {
 		return Node{}, err
+	}
+	if locatorJSON != "" {
+		if err := json.Unmarshal([]byte(locatorJSON), &candidate.Locator); err != nil {
+			return Node{}, fmt.Errorf("decoding lexical evidence locator: %w", err)
+		}
 	}
 	candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
 	return node, nil
@@ -429,11 +468,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				 AND es.profile_fingerprint=? AND es.binding_id=?
 				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
 				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
-				 AND (es.input_kind='original_file' OR EXISTS (
-					SELECT 1 FROM rendition_heads current_rh
-					WHERE current_rh.content_version_id=es.content_version_id
-					 AND current_rh.profile_fingerprint=es.profile_fingerprint
-					 AND current_rh.attachment_id=eig.attachment_id)))
+				 AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`))
 			ELSE 1 END
 		) ORDER BY scoped.position`, args...)
 		if queryErr != nil {
@@ -486,6 +521,7 @@ type SemanticSearchCandidate struct {
 	InputID           string
 	InputKind         document.EmbeddingInputKind
 	Score             float64
+	MediaEvidence     SearchMediaEvidence
 }
 
 // SemanticSearchResolution binds ranked candidates and coverage to the same
@@ -624,12 +660,8 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 		WHERE n.kind='file' AND n.trashed_at IS NULL
 		  AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=?
 		  AND eh.vector_space_id=?
-		  AND (eh.input_kind='original_file' OR EXISTS(
-		    SELECT 1 FROM rendition_heads rh
-		    WHERE rh.content_version_id=eh.content_version_id
-		      AND rh.profile_fingerprint=eh.profile_fingerprint
-		      AND rh.attachment_id=eig.attachment_id
-		  )) `+filterSQL, args...).Scan(&complete)
+		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`) `+filterSQL,
+		args...).Scan(&complete)
 	return required, complete, err
 }
 
@@ -708,7 +740,10 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
 	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
 			es.embedding_set_id,es.input_generation_id,es.input_kind,
-			evr.vector_set_id,evr.input_id,evr.checksum
+			evr.vector_set_id,evr.input_id,evr.checksum,
+			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
+			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
+			COALESCE(evidence_blob.size,0),eig.input_count
 		FROM `+nodeFrom+`
 		JOIN embedding_sets es ON es.content_version_id=cv.version_id
 		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
@@ -719,15 +754,13 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 		JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
 		 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
 		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+		LEFT JOIN rendition_attachments ra ON ra.attachment_id=eig.attachment_id
+		 AND ra.content_version_id=es.content_version_id AND ra.profile_fingerprint=es.profile_fingerprint
+		LEFT JOIN blobs evidence_blob ON evidence_blob.hash=eig.evidence_fingerprint
 		WHERE es.vector_space_id=?
 		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
 		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR EXISTS(
-		    SELECT 1 FROM rendition_heads rh
-		    WHERE rh.content_version_id=es.content_version_id
-		      AND rh.profile_fingerprint=es.profile_fingerprint
-		      AND rh.attachment_id=eig.attachment_id
-		  ))
+		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`)
 		  `+filterSQL, args...)
 	if err != nil {
 		return nil, err
@@ -740,7 +773,11 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 			key   semanticEligibilityKey
 		)
 		if err := rows.Scan(&entry.NodeID, &entry.NodeRevision, &entry.ContentVersionID, &entry.EmbeddingSetID,
-			&entry.InputGenerationID, &entry.InputKind, &key.VectorSetID, &key.InputID, &key.InputChecksum); err != nil {
+			&entry.InputGenerationID, &entry.InputKind, &key.VectorSetID, &key.InputID, &key.InputChecksum,
+			&entry.MediaEvidence.BuildID, &entry.MediaEvidence.GenerationBlobHash,
+			&entry.MediaEvidence.GenerationEncodedSize, &entry.MediaEvidence.GenerationChecksum,
+			&entry.MediaEvidence.EvidenceFingerprint, &entry.MediaEvidence.EvidenceEncodedSize,
+			&entry.MediaEvidence.InputCount); err != nil {
 			return nil, err
 		}
 		eligible[key] = entry

@@ -265,6 +265,59 @@ func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
+func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID,
+			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime, FencingToken: 1,
+	}))
+	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.NoError(t, err)
+	neighbor := vectorindex.Neighbor{SetID: record.VectorSet.ID,
+		InputKey:      record.InputGeneration.Inputs[0].ID,
+		InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.9}
+
+	resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{})
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	require.Equal(t, 1, resolution.CompleteDocuments)
+
+	var nodeID, nodeRevision int64
+	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv
+		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID, &nodeRevision))
+	requested := []SearchCandidateIdentity{{NodeID: nodeID, NodeRevision: nodeRevision,
+		ContentVersionID: versionID, Evidence: []SearchEvidenceIdentity{{Kind: "embedding",
+			VectorSpaceID: record.VectorSpace.ID, EmbeddingSetID: record.ID,
+			InputGenerationID: record.InputGeneration.ID, InputID: record.InputGeneration.Inputs[0].ID,
+			InputKind: record.InputKind, SourceManifestChecksum: source.ManifestChecksum}}}}
+
+	_, err = s.db.Exec(`DROP TRIGGER rendition_builds_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
+		SELECT build_id FROM rendition_attachments WHERE attachment_id=?)`, fakeHash("inconsistent"), attachmentID)
+	require.NoError(t, err)
+
+	resolution, err = s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
+		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, resolution.Candidates)
+	assert.Zero(t, resolution.CompleteDocuments)
+
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
+		profile.Fingerprint, record.BindingID)
+	require.NoError(t, err)
+	assert.Empty(t, revalidation.Candidates)
+	require.NotNil(t, revalidation.Coverage)
+	assert.Zero(t, revalidation.Coverage.CompleteDocuments)
+}
+
 func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing.T) {
 	const missed = 10_000
 	neighbors := make([]vectorindex.Neighbor, missed+1)

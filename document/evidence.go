@@ -32,6 +32,7 @@ const (
 	EvidenceUnitMessage EvidenceUnitKind = "message"
 	EvidenceUnitPage    EvidenceUnitKind = "page"
 	EvidenceUnitRecord  EvidenceUnitKind = "record"
+	EvidenceUnitSegment EvidenceUnitKind = "segment"
 	EvidenceUnitSection EvidenceUnitKind = "section"
 	EvidenceUnitSheet   EvidenceUnitKind = "sheet"
 	EvidenceUnitSlide   EvidenceUnitKind = "slide"
@@ -47,6 +48,7 @@ const (
 	EvidenceLocatorMessage EvidenceLocatorKind = "message"
 	EvidenceLocatorPage    EvidenceLocatorKind = "page"
 	EvidenceLocatorRecord  EvidenceLocatorKind = "record"
+	EvidenceLocatorSegment EvidenceLocatorKind = "segment"
 	EvidenceLocatorSection EvidenceLocatorKind = "section"
 	EvidenceLocatorSheet   EvidenceLocatorKind = "sheet"
 	EvidenceLocatorSlide   EvidenceLocatorKind = "slide"
@@ -250,6 +252,7 @@ type SourceEvidenceUnitV1 struct {
 	Order       int                         `json:"order"`
 	ProviderID  string                      `json:"provider_id,omitempty"`
 	Regions     []SourceEvidenceRegionV1    `json:"regions,omitempty"`
+	Speaker     string                      `json:"speaker,omitempty"`
 	Tables      []SourceEvidenceTableV1     `json:"tables,omitempty"`
 	Text        string                      `json:"text"`
 }
@@ -358,6 +361,7 @@ type NormalizedEvidenceUnitV1 struct {
 	Omissions   []EvidenceOmissionV1         `json:"omissions,omitempty"`
 	Order       int                          `json:"order"`
 	Regions     []NormalizedEvidenceRegionV1 `json:"regions,omitempty"`
+	Speaker     string                       `json:"speaker,omitempty"`
 	Tables      []NormalizedEvidenceTableV1  `json:"tables,omitempty"`
 	Text        string                       `json:"text"`
 }

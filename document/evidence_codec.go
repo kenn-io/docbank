@@ -22,6 +22,7 @@ const (
 	maxEvidenceIdentifierBytes  = 1 << 10
 	maxEvidencePointerBytes     = 1 << 10
 	maxEvidenceReasonBytes      = 1 << 12
+	maxEvidenceSpeakerBytes     = 128
 	maxEvidenceTextBytes        = 256 << 20
 	maxEvidenceCoordinate       = int64(1_000_000_000_000_000)
 	maxEvidenceArtifacts        = 10_000
@@ -170,6 +171,14 @@ func validateSourceUnit(
 			return fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 	}
+	if unit.Speaker != "" {
+		if err := validateBoundedUTF8(unit.Speaker, maxEvidenceSpeakerBytes, "unit speaker"); err != nil {
+			return fmt.Errorf("source evidence unit %d: %w", index, err)
+		}
+		if strings.ContainsRune(unit.Speaker, '\x00') {
+			return fmt.Errorf("source evidence unit %d speaker contains NUL", index)
+		}
+	}
 	if err := validateSourceLocator(source.Family, source.UnitKind, source.Completeness, unit.Locator); err != nil {
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
@@ -215,6 +224,13 @@ func validateSourceLocator(
 			return err
 		}
 	}
+	if locator.Kind == EvidenceLocatorSegment {
+		if locator.IndexOrigin != EvidenceIndexOriginZero || locator.Start < 0 ||
+			locator.End <= locator.Start || locator.End > maxEvidenceCoordinate {
+			return errors.New("segment requires a nonempty half-open time span")
+		}
+		return nil
+	}
 	if locator.Kind == EvidenceLocatorGeneric || locator.Kind == EvidenceLocatorMessage ||
 		locator.Kind == EvidenceLocatorSection {
 		if locator.IndexOrigin != EvidenceIndexOriginNone || locator.Start != 0 || locator.End != 0 {
@@ -255,6 +271,22 @@ type evidenceLocatorSequence struct {
 
 func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 	if locator.Kind == EvidenceLocatorGeneric {
+		return nil
+	}
+	if locator.Kind == EvidenceLocatorSegment {
+		if locator.IndexOrigin != EvidenceIndexOriginZero || locator.Start < 0 || locator.End <= locator.Start {
+			return errors.New("segment requires a nonempty half-open time span")
+		}
+		if sequence.seen {
+			if sequence.previous.Kind != locator.Kind || sequence.previous.IndexOrigin != locator.IndexOrigin {
+				return errors.New("locator sequence changes kind or origin")
+			}
+			if locator.Start < sequence.previous.Start {
+				return errors.New("segment start regresses")
+			}
+		}
+		sequence.previous = locator
+		sequence.seen = true
 		return nil
 	}
 	if locator.Kind == EvidenceLocatorMessage || locator.Kind == EvidenceLocatorSection {
@@ -315,6 +347,9 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 }
 
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
+	if sequence.seen && sequence.previous.Kind == EvidenceLocatorSegment {
+		return nil
+	}
 	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
 		sequence.previous.Kind == EvidenceLocatorSection) {
 		if len(omitted) > 0 && sequence.unnamed {
@@ -469,6 +504,8 @@ func validateFamilyUnitKind(family string, unitKind EvidenceUnitKind) error {
 		allowed = unitKind == EvidenceUnitSection || unitKind == EvidenceUnitLine
 	case "mail":
 		allowed = unitKind == EvidenceUnitMessage
+	case "audio", "video":
+		allowed = unitKind == EvidenceUnitSegment
 	}
 	if !allowed {
 		return fmt.Errorf("document family %q cannot use unit kind %q", family, unitKind)
@@ -896,6 +933,7 @@ func normalizeEvidenceUnit(
 		Omissions: omissions,
 		Order:     source.Order,
 		Regions:   regions,
+		Speaker:   canonicalEvidenceString(source.Speaker),
 		Tables:    tables,
 		Text:      text,
 	}
@@ -1128,6 +1166,12 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		}
 		if !norm.NFC.IsNormalString(unit.Text) || strings.Contains(unit.Text, "\r") {
 			return fmt.Errorf("normalized evidence unit %d text is not canonical", index)
+		}
+		if unit.Speaker != "" {
+			if err := validateBoundedUTF8(unit.Speaker, maxEvidenceSpeakerBytes, "unit speaker"); err != nil ||
+				canonicalEvidenceString(unit.Speaker) != unit.Speaker || strings.ContainsRune(unit.Speaker, '\x00') {
+				return fmt.Errorf("normalized evidence unit %d speaker is not canonical", index)
+			}
 		}
 		if canonicalEvidenceString(unit.Locator.Name) != unit.Locator.Name {
 			return fmt.Errorf("normalized evidence unit %d locator name is not canonical", index)
@@ -1632,6 +1676,13 @@ func validateOmissionLocator(locator EvidenceLocatorV1, canonical bool) error {
 		}
 		return nil
 	}
+	if locator.Kind == EvidenceLocatorSegment {
+		if locator.IndexOrigin != EvidenceIndexOriginZero || locator.Start < 0 ||
+			locator.End <= locator.Start || locator.End > maxEvidenceCoordinate {
+			return errors.New("omitted segment locator has an invalid half-open range")
+		}
+		return nil
+	}
 	if locator.Kind != EvidenceLocatorLine && locator.Kind != EvidenceLocatorPage &&
 		locator.Kind != EvidenceLocatorRecord && locator.Kind != EvidenceLocatorSheet &&
 		locator.Kind != EvidenceLocatorSlide && locator.Kind != EvidenceLocatorSpine {
@@ -1982,7 +2033,7 @@ func validEvidenceCompleteness(value EvidenceCompleteness) bool {
 func validEvidenceUnitKind(value EvidenceUnitKind) bool {
 	return slices.Contains([]EvidenceUnitKind{
 		EvidenceUnitGeneric, EvidenceUnitLine, EvidenceUnitMessage, EvidenceUnitPage, EvidenceUnitRecord,
-		EvidenceUnitSection, EvidenceUnitSheet, EvidenceUnitSlide, EvidenceUnitSpine,
+		EvidenceUnitSegment, EvidenceUnitSection, EvidenceUnitSheet, EvidenceUnitSlide, EvidenceUnitSpine,
 	}, value)
 }
 

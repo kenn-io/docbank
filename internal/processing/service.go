@@ -1266,7 +1266,8 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return retrieval.Report{}, errors.New("document search limit is invalid")
 	}
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
-		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute}
+		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
+		MediaEvidence: service.blobs}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
 		binding, bindingErr := selectEmbeddingBinding(profile.portable, request.BindingID)

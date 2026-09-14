@@ -69,6 +69,26 @@ func TestBuildTranscriptSourceEvidenceV1(t *testing.T) {
 	assert.Equal(t, expectedArtifact, artifact)
 }
 
+func TestSuppliedTranscriptPayloadRemainsStable(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(10_000)
+	require.NoError(t, err)
+	source, artifact, err := document.BuildTranscriptSourceEvidenceV1(document.SuppliedTranscript{
+		Provider: "synthetic",
+		Text:     "telescope delivery arrives Friday at three",
+	}, policy)
+	require.NoError(t, err)
+	require.Equal(t, //nolint:testifylint // Existing artifact bytes are a compatibility contract.
+		`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":"telescope delivery arrives Friday at three"}`,
+		string(artifact.Payload),
+	)
+	require.Empty(t, source.Units[0].Speaker)
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	raw, _, err := document.MarshalNormalizedEvidenceV1(normalized)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"speaker"`)
+}
+
 func TestBuildTranscriptSourceEvidenceV1RejectsInvalidInput(t *testing.T) {
 	policy, err := document.NewEvidencePolicy(4)
 	require.NoError(t, err)

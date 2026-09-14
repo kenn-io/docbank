@@ -53,6 +53,7 @@ type SearcherConfig struct {
 	Clock         func() time.Time
 	Expansion     ExpansionConfig
 	Reranking     RerankingConfig
+	MediaEvidence MediaEvidenceBlobReader
 }
 
 type Searcher struct {
@@ -63,6 +64,7 @@ type Searcher struct {
 	clock         func() time.Time
 	expansion     ExpansionConfig
 	reranking     RerankingConfig
+	mediaEvidence MediaEvidenceBlobReader
 }
 
 func NewSearcher(config SearcherConfig) (*Searcher, error) {
@@ -86,7 +88,7 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 	}
 	return &Searcher{backend: config.Backend, encoders: config.Encoders, owner: config.Owner,
 		leaseDuration: config.LeaseDuration, clock: config.Clock, expansion: config.Expansion,
-		reranking: config.Reranking}, nil
+		reranking: config.Reranking, mediaEvidence: config.MediaEvidence}, nil
 }
 
 func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, error) {
@@ -128,7 +130,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if expansionDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, expansionDegradation)
 	}
-	if searcher.expansion.Enabled || searcher.reranking.Enabled {
+	if searcher.expansion.Enabled || searcher.reranking.Enabled || searcher.mediaEvidence != nil {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -137,9 +139,18 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 			if searcher.expansion.Enabled {
 				return Report{}, ErrExpandedSearchFailed
 			}
-			return Report{}, ErrRerankingFailed
+			if searcher.reranking.Enabled {
+				return Report{}, ErrRerankingFailed
+			}
+			return Report{}, err
 		}
 		report = revalidated
+	}
+	if searcher.mediaEvidence != nil {
+		report, err = searcher.attachMediaEvidence(ctx, report)
+		if err != nil {
+			return Report{}, err
+		}
 	}
 	report, rerankingReceipt, rerankingDegradation, err := searcher.rerank(ctx, query, report)
 	if err != nil {
@@ -442,14 +453,20 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		if item.VectorSpaceID != authority.VectorSpace.ID {
 			return nil, coverage, false, errors.New("semantic result escaped the active vector space")
 		}
+		reference := EvidenceReference{Kind: "embedding", VaultID: item.VaultID,
+			NodeID: item.NodeID, NodeRevision: item.NodeRevision, ContentVersionID: item.ContentVersionID,
+			VectorSpaceID: item.VectorSpaceID, EmbeddingSetID: item.EmbeddingSetID,
+			InputGenerationID: item.InputGenerationID, InputID: item.InputID,
+			InputKind: item.InputKind, BuildID: item.MediaEvidence.BuildID,
+			SourceManifestChecksum: resolution.SourceManifestChecksum}
+		if item.InputKind == document.EmbeddingInputRenditionChunk {
+			media := item.MediaEvidence
+			reference.mediaArtifacts = &media
+		}
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
 			NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
 			Rank: index + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
-			Evidence: []EvidenceReference{{Kind: "embedding", VaultID: item.VaultID,
-				NodeID: item.NodeID, NodeRevision: item.NodeRevision, ContentVersionID: item.ContentVersionID,
-				VectorSpaceID: item.VectorSpaceID, EmbeddingSetID: item.EmbeddingSetID,
-				InputGenerationID: item.InputGenerationID, InputID: item.InputID,
-				InputKind: item.InputKind, SourceManifestChecksum: resolution.SourceManifestChecksum}}}
+			Evidence: []EvidenceReference{reference}}
 	}
 	return candidates, coverage, truncated || resolution.Truncated, nil
 }
@@ -491,12 +508,17 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 	}
 	candidates := make([]Candidate, len(hits))
 	for index, hit := range hits {
+		reference := EvidenceReference{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
+			NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
+			BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}
+		if hit.Locator.Kind != "" {
+			locator := hit.Locator
+			reference.mediaLocator = &locator
+		}
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
 			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,
-			Evidence: []EvidenceReference{{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
-				NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
-				BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}}}
+			Evidence: []EvidenceReference{reference}}
 	}
 	return candidates, truncated, nil
 }

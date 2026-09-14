@@ -1234,6 +1234,12 @@ func validateCatalogLocatorV1(locator document.EvidenceLocatorV1) error {
 			return fmt.Errorf("%s locator must not claim an index", locator.Kind)
 		}
 		return nil
+	case document.EvidenceLocatorSegment:
+		if locator.IndexOrigin != document.EvidenceIndexOriginZero || locator.Start < 0 ||
+			locator.End <= locator.Start || locator.End > maxCatalogLocatorCoordinate {
+			return errors.New("segment locator requires a bounded nonempty half-open zero-origin range")
+		}
+		return nil
 	case document.EvidenceLocatorLine, document.EvidenceLocatorPage, document.EvidenceLocatorRecord,
 		document.EvidenceLocatorSheet, document.EvidenceLocatorSlide, document.EvidenceLocatorSpine:
 	default:

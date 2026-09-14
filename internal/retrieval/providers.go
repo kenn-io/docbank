@@ -357,6 +357,7 @@ func boundedRerankingEvidence(references []EvidenceReference) []EvidenceReferenc
 	bounded := make([]EvidenceReference, 0, min(len(references), maxRerankingEvidenceReferences))
 	bytes := 0
 	for _, reference := range references {
+		reference = rerankingEvidenceReference(reference)
 		size := rerankingEvidenceBytes(reference)
 		if len(bounded) == maxRerankingEvidenceReferences || size > maxRerankingEvidenceBytes-bytes {
 			break
@@ -367,12 +368,27 @@ func boundedRerankingEvidence(references []EvidenceReference) []EvidenceReferenc
 	return bounded
 }
 
+func rerankingEvidenceReference(reference EvidenceReference) EvidenceReference {
+	reference.mediaLocator = nil
+	reference.mediaArtifacts = nil
+	if reference.TimeSpan != nil {
+		span := *reference.TimeSpan
+		reference.TimeSpan = &span
+	}
+	return reference
+}
+
 func rerankingEvidenceBytes(reference EvidenceReference) int {
-	return len(reference.Kind) + len(reference.VaultID) + len(reference.ContentVersionID) +
+	size := len(reference.Kind) + len(reference.VaultID) + len(reference.ContentVersionID) +
 		len(strconv.FormatInt(reference.NodeRevision, 10)) +
 		len(reference.VectorSpaceID) + len(reference.EmbeddingSetID) + len(reference.InputGenerationID) +
 		len(reference.InputID) + len(reference.InputKind) + len(reference.BuildID) + len(reference.SegmentID) +
 		len(reference.BlobHash) + len(reference.SourceManifestChecksum)
+	if reference.TimeSpan != nil {
+		size += len(strconv.FormatInt(reference.TimeSpan.StartMS, 10)) +
+			len(strconv.FormatInt(reference.TimeSpan.EndMS, 10))
+	}
+	return size
 }
 
 func boundedProviderTotal(perCandidate, candidateCount int) int {

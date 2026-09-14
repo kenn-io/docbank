@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-13
 title: Document Processing
 description: How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
 ---
@@ -19,7 +20,7 @@ start with [Document Understanding in Go](../document-understanding.md).
 | Interface | Current scope |
 |-----------|---------------|
 | Public `document/*` Go packages | Evidence, rendition, OCR, upload, embedding, and provider contracts; the importing application owns orchestration and persistence |
-| Public embedded vault API | Explicit local source-metadata processing and exact-version metadata and visual-preview reads; see [Embed in Go](../embedding.md) |
+| Public embedded vault API | Exact-version processing and source-fenced lexical, semantic, and hybrid search, plus metadata and visual-preview reads; see [Embed in Go](../embedding.md) |
 | Daemon background jobs | Local metadata, checksum, and visual-preview work; configured embedding runtimes can resume matching retained jobs; vector indexes rebuild from retained vector sets |
 | Internal processing and storage packages | Rendition and embedding jobs, profiles, consent, publication, retention, and derivative purge |
 | Internal retrieval packages | Explained lexical, semantic, and hybrid retrieval; optional expansion and reranking; QMD export and query adapters |
@@ -59,8 +60,9 @@ flowchart TD
 Canonical evidence records what the extractor found and where it came from.
 It includes ordered units, source locators, regions, headings, artifacts, and
 explicit omissions. A partial or degraded result retains that status instead
-of claiming complete document coverage. A supplied transcript follows the same
-contract but carries no invented timestamps or speaker identities.
+of claiming complete document coverage. Timed transcript units retain optional
+speaker identity and half-open millisecond spans. Untimed supplied transcripts
+follow the same contract without invented timestamps or speaker identities.
 
 A rendition contains sanitized Markdown and model-independent text segments
 for keyword search. Embedding input generation reads canonical evidence, not
@@ -158,6 +160,14 @@ query encoder. Scope is applied before the vector candidate cutoff. Results
 retain source references, lexical and semantic rank contributions, coverage,
 truncation, and degradation information. Candidates are checked against current
 vault authority before they are passed to optional reranking.
+
+For a timed rendition segment, lexical evidence resolves the exact lexical
+segment to its build unit. Rendition-chunk semantic evidence resolves the exact
+input generation and source unit from retained canonical artifacts. Both paths
+return the same optional `time_span` shape and the exact build identity.
+Direct-file embeddings and untimed evidence omit `time_span`; zero is a valid
+segment start and remains present in JSON. Hybrid results retain each lane's
+separate evidence reference instead of combining disjoint spans.
 
 Query expansion produces bounded alternate queries. Reranking reorders an
 already authorized candidate list from bounded excerpts and evidence
