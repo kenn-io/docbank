@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +25,7 @@ import (
 
 	docbank "go.kenn.io/docbank"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/mediatranscript"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -935,6 +938,102 @@ func TestEmbeddedProcessingBuildsChunkEmbeddingsFromNormalizedEvidence(t *testin
 	require.Equal(t, "rendition_chunk", report.Results[0].Evidence[0].InputKind)
 }
 
+func TestEmbeddedProcessingPreservesTimedEvidenceAcrossSearchLanes(t *testing.T) {
+	renditionProvider := newTimedTranscriptRenditionProvider(t)
+	embeddingProvider := newSyntheticEmbeddingProvider(t)
+	profile := embeddedProcessingProfile(t, renditionProvider.Descriptor())
+	profile.Rendition.AdapterContract = "timed-transcript.in-process/v1"
+	profile.Rendition.Name = "timed-transcript"
+	profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
+	profile.RetentionDisclosure.RetainTypedArtifacts = true
+	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embeddingProvider.descriptor)}
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"timed": {Profile: profile, RenditionProvider: renditionProvider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embeddingProvider},
+				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	process := func(path, body string) docbank.PutReceipt {
+		t.Helper()
+		receipt, putErr := vault.Put(t.Context(), path, bytes.NewReader(syntheticWAV(body)),
+			docbank.PutOptions{MediaType: "audio/wav"})
+		require.NoError(t, putErr)
+		selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+			ContentVersionID: receipt.Version.ID, Profile: "timed"}
+		plan, planErr := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+		require.NoError(t, planErr)
+		_, startErr := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+			PlanRequest:     docbank.ProcessingPlanRequest{Selector: selector},
+			PlanFingerprint: plan.Fingerprint, Consent: true,
+		})
+		require.NoError(t, startErr)
+		return receipt
+	}
+	timed := process("/timed.wav", "timed source")
+	untimed := process("/untimed.wav", "untimed source")
+	stale := process("/stale.wav", "timed stale source")
+
+	assertSpan := func(reference docbank.DocumentEvidenceReference, start, end int64) {
+		t.Helper()
+		require.NotNil(t, reference.TimeSpan)
+		require.Equal(t, start, reference.TimeSpan.StartMS)
+		require.Equal(t, end, reference.TimeSpan.EndMS)
+		require.NotEmpty(t, reference.BuildID)
+		raw, marshalErr := json.Marshal(reference, json.Deterministic(true))
+		require.NoError(t, marshalErr)
+		require.Contains(t, string(raw), `"time_span":{`)
+		require.Contains(t, string(raw), fmt.Sprintf(`"start_ms":%d`, start))
+		require.Contains(t, string(raw), fmt.Sprintf(`"end_ms":%d`, end))
+	}
+	timedFence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{timed.Version.ID}}
+	for _, mode := range []docbank.DocumentSearchMode{docbank.DocumentSearchLexical,
+		docbank.DocumentSearchSemantic, docbank.DocumentSearchHybrid} {
+		report, searchErr := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+			Query: "needle", Mode: mode, Profile: "timed", BindingID: "chunks", Fence: timedFence,
+		})
+		require.NoError(t, searchErr)
+		require.Len(t, report.Results, 1)
+		require.Equal(t, timed.Version.ID, report.Results[0].ContentVersionID)
+		for _, reference := range report.Results[0].Evidence {
+			assertSpan(reference, 0, 1000)
+		}
+	}
+
+	vectorOnly, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "semantic-only", Mode: docbank.DocumentSearchSemantic, Profile: "timed",
+		BindingID: "chunks", Fence: timedFence,
+	})
+	require.NoError(t, err)
+	require.Len(t, vectorOnly.Results, 1)
+	require.NotContains(t, vectorOnly.Results[0].Excerpt, "semantic-only")
+	assertSpan(vectorOnly.Results[0].Evidence[0], 7000, 9500)
+
+	untimedReport, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "untimed", Mode: docbank.DocumentSearchLexical, Profile: "timed",
+		Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{untimed.Version.ID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, untimedReport.Results, 1)
+	require.Nil(t, untimedReport.Results[0].Evidence[0].TimeSpan)
+	untimedJSON, err := json.Marshal(untimedReport.Results[0].Evidence[0], json.Deterministic(true))
+	require.NoError(t, err)
+	require.NotContains(t, string(untimedJSON), `"time_span"`)
+
+	replacement, err := vault.Put(t.Context(), "/stale.wav", bytes.NewReader(syntheticWAV("replacement source")),
+		docbank.PutOptions{MediaType: "audio/wav", IfRevision: stale.Node.Revision})
+	require.NoError(t, err)
+	require.NotEqual(t, stale.Version.ID, replacement.Version.ID)
+	staleReport, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+		Query: "needle", Mode: docbank.DocumentSearchLexical, Profile: "timed", BindingID: "chunks",
+		Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{stale.Version.ID}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, staleReport.Results)
+}
+
 func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *testing.T) {
 	embeddingProvider := newSyntheticEmbeddingProvider(t)
 	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
@@ -973,6 +1072,7 @@ func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *te
 		Query: "needle", Mode: docbank.DocumentSearchSemantic, Profile: "direct", BindingID: "direct", Fence: fence})
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
+	require.Nil(t, report.Results[0].Evidence[0].TimeSpan)
 }
 
 func TestEmbeddedProcessingRejectsConflictingProvidersForOneDescriptor(t *testing.T) {
@@ -998,6 +1098,104 @@ func TestEmbeddedProcessingRejectsConflictingProvidersForOneDescriptor(t *testin
 	vault, err := docbank.New(t.Context(), config(first))
 	require.NoError(t, err)
 	require.NoError(t, vault.Close())
+}
+
+type timedTranscriptRenditionProvider struct {
+	descriptor document.RenditionDescriptor
+	policy     document.EvidencePolicy
+}
+
+func syntheticWAV(label string) []byte {
+	payload := []byte(label)
+	if len(payload)%2 != 0 {
+		payload = append(payload, 0)
+	}
+	result := make([]byte, 44+len(payload))
+	copy(result[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(result[4:8], uint32(len(result)-8))
+	copy(result[8:12], "WAVE")
+	copy(result[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(result[16:20], 16)
+	binary.LittleEndian.PutUint16(result[20:22], 1)
+	binary.LittleEndian.PutUint16(result[22:24], 1)
+	binary.LittleEndian.PutUint32(result[24:28], 8000)
+	binary.LittleEndian.PutUint32(result[28:32], 8000)
+	binary.LittleEndian.PutUint16(result[32:34], 1)
+	binary.LittleEndian.PutUint16(result[34:36], 8)
+	copy(result[36:40], "data")
+	binary.LittleEndian.PutUint32(result[40:44], uint32(len(payload)))
+	copy(result[44:], payload)
+	return result
+}
+
+func newTimedTranscriptRenditionProvider(t *testing.T) *timedTranscriptRenditionProvider {
+	t.Helper()
+	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+		ID: "timed-transcript.synthetic-v1", ContractVersion: document.RenditionProviderContractVersion,
+		PolicyFingerprint: embeddedHash("timed-transcript-policy"),
+		TrustBoundary:     document.RenditionTrustLocalProcess,
+		SupportedFormats: []document.RenditionFormatCapability{{
+			MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile,
+		}},
+		ReturnsStructured: true,
+		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
+	})
+	require.NoError(t, err)
+	policy, err := document.NewEvidencePolicy(1_000_000)
+	require.NoError(t, err)
+	return &timedTranscriptRenditionProvider{descriptor: descriptor, policy: policy}
+}
+
+func (provider *timedTranscriptRenditionProvider) Descriptor() document.RenditionDescriptor {
+	return provider.descriptor
+}
+
+func (provider *timedTranscriptRenditionProvider) Render(
+	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	startedAt := time.Now().UTC()
+	data, err := io.ReadAll(upload)
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	var evidence document.SourceEvidenceV1
+	var artifact document.RenditionArtifact
+	if strings.Contains(string(data), "untimed") {
+		evidence, artifact, err = document.BuildTranscriptSourceEvidenceV1(document.SuppliedTranscript{
+			Provider: "synthetic", Text: "untimed supplied evidence",
+		}, provider.policy)
+	} else {
+		evidence, artifact, err = mediatranscript.Build(mediatranscript.ArtifactV1{
+			ContractVersion: "media-transcript/v1", Origin: "generated", Provider: "synthetic",
+			Segments: []mediatranscript.Segment{
+				{Order: 0, StartMS: 0, EndMS: 1000, Speaker: "Speaker 1", Text: "needle first phrase"},
+				{Order: 1, StartMS: 7000, EndMS: 9500, Speaker: "Speaker 2", Text: "second vector phrase"},
+			},
+		}, authorization.MediaFamily, provider.policy)
+	}
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	authorizationFingerprint, err := authorization.Fingerprint()
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	completedAt := time.Now().UTC()
+	const timestampForm = "2006-01-02T15:04:05.000000000Z"
+	return document.RenditionResult{
+		Evidence: evidence, Artifacts: []document.RenditionArtifact{artifact},
+		Receipt: document.RenditionReceipt{
+			ProviderID: provider.descriptor.ID, DescriptorFingerprint: provider.descriptor.Fingerprint,
+			PolicyFingerprint:           authorization.PolicyFingerprint,
+			RenditionRequestFingerprint: authorization.RenditionRequestFingerprint,
+			AuthorizationFingerprint:    authorizationFingerprint, SourceSHA256: authorization.SourceSHA256,
+			OperationID: "timed-" + authorization.RenditionRequestFingerprint,
+			StartedAt:   startedAt.Format(timestampForm), CompletedAt: completedAt.Format(timestampForm),
+			Warnings: []string{"degraded_provenance"},
+			Usage: document.RenditionUsage{Requests: 1, InputBytes: int64(len(data)),
+				OutputBytes: int64(len(artifact.Payload)), Units: int64(len(evidence.Units))},
+		},
+	}, nil
 }
 
 func plaintextDescriptorForProfile(t *testing.T) document.RenditionDescriptor {

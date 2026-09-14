@@ -34,6 +34,12 @@ type DocumentIdentity struct {
 	ContentVersionID string
 }
 
+// MediaTimeSpan is one exact half-open interval in retained media.
+type MediaTimeSpan struct {
+	StartMS int64 `json:"start_ms"`
+	EndMS   int64 `json:"end_ms"`
+}
+
 type EvidenceReference struct {
 	Kind                   string
 	VaultID                string
@@ -49,6 +55,7 @@ type EvidenceReference struct {
 	SegmentID              string
 	BlobHash               string
 	SourceManifestChecksum string
+	TimeSpan               *MediaTimeSpan
 }
 
 type Candidate struct {

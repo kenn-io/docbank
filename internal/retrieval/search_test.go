@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -381,6 +382,8 @@ type retrievalBackendStub struct {
 	lexical                []store.ExplainedLexicalCandidate
 	authority              store.SemanticSearchAuthority
 	semantic               []store.SemanticSearchCandidate
+	semanticPages          []store.SemanticSearchResolution
+	excludedNodes          map[int64]struct{}
 	acquireErr             error
 	neighborCount          int
 	sourceManifest         string
@@ -405,11 +408,18 @@ func (backend *retrievalBackendStub) AcquireSemanticSearchAuthority(_ context.Co
 
 func (backend *retrievalBackendStub) ResolveSemanticCandidates(_ context.Context, _, _ string,
 	_ document.EmbeddingInputKind, _, sourceManifest string, neighbors []vectorindex.Neighbor,
-	limit int, _ store.SearchOptions,
+	limit int, _ store.SearchOptions, excludedNodes map[int64]struct{},
 ) (store.SemanticSearchResolution, error) {
 	backend.vectorLimit = limit
+	backend.excludedNodes = maps.Clone(excludedNodes)
 	backend.neighborCount = len(neighbors)
 	backend.sourceManifest = sourceManifest
+	if len(backend.semanticPages) != 0 {
+		page := backend.semanticPages[0]
+		backend.semanticPages = backend.semanticPages[1:]
+		page.SourceManifestChecksum = sourceManifest
+		return page, nil
+	}
 	scoped, complete := backend.finalScopedDocuments, backend.finalCompleteDocuments
 	if !backend.finalCoverageSet {
 		scoped, complete = backend.authority.ScopedDocuments, backend.authority.CompleteDocuments
@@ -537,7 +547,7 @@ func TestSearcherHybridReportsLaneAndFusionTruncation(t *testing.T) {
 				Node: store.Node{ID: 5, CurrentVersionID: "version-lexical"}, Path: "/notes.pdf",
 			}}
 			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeHybrid,
-				Limit: test.limit, Authorization: retrievalAuthorization(descriptor)})
+				Limit: test.limit, VectorLimit: 1, Authorization: retrievalAuthorization(descriptor)})
 			require.NoError(t, err)
 			assert.True(t, report.Truncated)
 			assert.Len(t, report.Results, min(test.limit, 2))

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-13
 title: Document Understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
@@ -18,6 +19,7 @@ canonical evidence is the validated text and source locations behind it.
 | Your application needs to… | Package under `go.kenn.io/docbank/` |
 |----------------------------|-------------------------------------|
 | Validate evidence, build renditions, and prepare embedding inputs | `document` |
+| Build or validate a canonical timed transcript artifact | `document/mediatranscript` |
 | Identify provider destinations and define retrieval policy | `document/embedding` |
 | Compare retrieval approaches | `document/embedding/eval` |
 | Use a provider-neutral OCR interface or local GLM-OCR | `document/ocr`, `document/glmocr` |
@@ -72,7 +74,10 @@ Use `NormalizeEvidenceV1` when an extractor can report source locations and
 structure. It validates `SourceEvidenceV1` and produces
 `NormalizedEvidenceV1` with stable identities for ordered units, regions,
 artifacts, and omissions. Locators distinguish pages, slides, sheets, records,
-messages, lines, and other document units. Completeness explicitly reports
+messages, lines, media segments, and other document units. Media segments use
+half-open millisecond intervals: the start is included and the end is excluded.
+Adjacent and overlapping segments are valid, and an absent time remains absent.
+Completeness explicitly reports
 `complete`, `partial`, or `degraded_provenance`; readable text alone does not
 prove complete source coverage.
 
@@ -159,6 +164,14 @@ sealed audio digest as its key. The provider identity includes the caller's
 source binding. Use a different binding for each transcript source to give it
 a distinct descriptor. Docbank cannot verify that the binding identifies the
 `Source` implementation or the transcripts it returns.
+
+Use `document/mediatranscript` when the source supplies segment timing. Its
+`media-transcript/v1` artifact retains ordered text, exact start and end
+milliseconds, and an optional speaker for each segment. `Build` converts that
+artifact into audio or video source evidence and a retained transcript
+artifact. Segment starts must not regress, but adjacent and overlapping cues
+remain distinct. Speaker text participates in evidence identity when present;
+omitting it keeps the untimed and speakerless forms free of invented values.
 
 ## Run Mistral OCR safely
 

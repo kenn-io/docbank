@@ -227,7 +227,7 @@ func renditionFrontMatterLocatorKind(value EvidenceLocatorKind) bool {
 	switch value {
 	case EvidenceLocatorGeneric, EvidenceLocatorLine, EvidenceLocatorMessage,
 		EvidenceLocatorPage, EvidenceLocatorRecord, EvidenceLocatorSection,
-		EvidenceLocatorSheet, EvidenceLocatorSlide, EvidenceLocatorSpine:
+		EvidenceLocatorSegment, EvidenceLocatorSheet, EvidenceLocatorSlide, EvidenceLocatorSpine:
 		return true
 	default:
 		return false

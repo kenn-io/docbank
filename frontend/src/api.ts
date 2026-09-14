@@ -187,7 +187,13 @@ export interface DocumentSearchResult {
   score: number;
   path: string;
   excerpt?: string;
-  evidence: Array<{ kind: string; build_id?: string; segment_id?: string; vector_space_id?: string }>;
+  evidence: Array<{
+    kind: string;
+    build_id?: string;
+    segment_id?: string;
+    vector_space_id?: string;
+    time_span?: { start_ms: number; end_ms: number };
+  }>;
 }
 
 export interface DocumentSearchReport {

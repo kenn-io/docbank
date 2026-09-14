@@ -25,9 +25,9 @@ Key assumptions reviewers MUST account for:
    CI pins that line via go-version-file) — do not flag a missing
    `mkdir -p dist` in the release workflow.
 
-3. BUILD TAGS: everything builds and tests with `-tags fts5` and CGO
-   enabled (`make test`). A failure of an untagged `go build`/`go test`
-   is not a finding.
+3. BUILD TAGS: supported Go builds and tests use `-tags fts5` in both CGO
+   mode (mattn SQLite) and `CGO_ENABLED=0` mode (modernc SQLite). A failure
+   of an untagged `go build` or `go test` is not a finding.
 
 4. AUTH MODEL: the daemon always enforces an API key. An empty
    configured `api_key` means the daemon generates an ephemeral per-run

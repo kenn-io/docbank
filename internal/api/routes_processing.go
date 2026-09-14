@@ -491,11 +491,17 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		for evidenceIndex, evidence := range item.Evidence {
-			converted.Evidence[evidenceIndex] = DocumentEvidenceReference{Kind: evidence.Kind,
+			convertedEvidence := DocumentEvidenceReference{Kind: evidence.Kind,
 				BuildID: evidence.BuildID, SegmentID: evidence.SegmentID,
 				VectorSpaceID: evidence.VectorSpaceID, EmbeddingSetID: evidence.EmbeddingSetID,
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
+			if evidence.TimeSpan != nil {
+				convertedEvidence.TimeSpan = &MediaTimeSpan{
+					StartMS: evidence.TimeSpan.StartMS, EndMS: evidence.TimeSpan.EndMS,
+				}
+			}
+			converted.Evidence[evidenceIndex] = convertedEvidence
 		}
 		result.Results[index] = converted
 	}

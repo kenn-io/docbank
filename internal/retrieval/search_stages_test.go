@@ -211,6 +211,30 @@ func TestSearcherRerankingReceivesOnlyBoundedAuthorizedCandidatePayload(t *testi
 		EvidenceBytesTotalLimit:        maxRerankingEvidenceBytes}, authorizer.operations[0])
 }
 
+func TestRerankingEvidenceKeepsIndependentTimedLanes(t *testing.T) {
+	t.Parallel()
+
+	lexicalSpan := &MediaTimeSpan{StartMS: 0, EndMS: 1000}
+	semanticSpan := &MediaTimeSpan{StartMS: 7000, EndMS: 9500}
+	references := []EvidenceReference{
+		{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment", TimeSpan: lexicalSpan},
+		{Kind: "embedding", BuildID: "build", InputGenerationID: "generation", InputID: "input",
+			InputKind: document.EmbeddingInputRenditionChunk, TimeSpan: semanticSpan},
+	}
+
+	bounded := boundedRerankingEvidence(references)
+	require.Equal(t, []EvidenceReference{
+		{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment",
+			TimeSpan: &MediaTimeSpan{StartMS: 0, EndMS: 1000}},
+		{Kind: "embedding", BuildID: "build", InputGenerationID: "generation", InputID: "input",
+			InputKind: document.EmbeddingInputRenditionChunk,
+			TimeSpan:  &MediaTimeSpan{StartMS: 7000, EndMS: 9500}},
+	}, bounded)
+
+	bounded[0].TimeSpan.EndMS = 2000
+	require.Equal(t, int64(1000), references[0].TimeSpan.EndMS)
+}
+
 func TestSearcherRerankingAuthorizationBindsPerCandidateAndTotalPayloadLimits(t *testing.T) {
 	t.Parallel()
 

@@ -37,7 +37,7 @@ type SemanticBackend interface {
 		duration time.Duration, options store.SearchOptions) (store.SemanticSearchAuthority, error)
 	ResolveSemanticCandidates(ctx context.Context, profile, binding string, inputKind document.EmbeddingInputKind,
 		vectorSpace, sourceManifest string, neighbors []vectorindex.Neighbor, limit int,
-		options store.SearchOptions) (store.SemanticSearchResolution, error)
+		options store.SearchOptions, excludedNodes map[int64]struct{}) (store.SemanticSearchResolution, error)
 	ReleaseVectorIndexGeneration(ctx context.Context, leaseID string, fencingToken int64, at time.Time) error
 }
 
@@ -53,6 +53,7 @@ type SearcherConfig struct {
 	Clock         func() time.Time
 	Expansion     ExpansionConfig
 	Reranking     RerankingConfig
+	MediaEvidence *MediaEvidenceResolver
 }
 
 type Searcher struct {
@@ -63,6 +64,7 @@ type Searcher struct {
 	clock         func() time.Time
 	expansion     ExpansionConfig
 	reranking     RerankingConfig
+	mediaEvidence *MediaEvidenceResolver
 }
 
 func NewSearcher(config SearcherConfig) (*Searcher, error) {
@@ -86,7 +88,7 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 	}
 	return &Searcher{backend: config.Backend, encoders: config.Encoders, owner: config.Owner,
 		leaseDuration: config.LeaseDuration, clock: config.Clock, expansion: config.Expansion,
-		reranking: config.Reranking}, nil
+		reranking: config.Reranking, mediaEvidence: config.MediaEvidence}, nil
 }
 
 func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, error) {
@@ -417,41 +419,71 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	if err != nil {
 		return nil, coverage, false, err
 	}
-	resolution, err := backend.ResolveSemanticCandidates(ctx, query.ProcessingProfileFingerprint,
-		query.BindingID, authority.InputKind, authority.VectorSpace.ID, stored.SourceManifestChecksum,
-		neighbors, query.VectorLimit, query.Scope)
-	if err != nil {
-		return nil, coverage, false, err
-	}
-	if resolution.SourceManifestChecksum != stored.SourceManifestChecksum {
-		return nil, coverage, false, store.ErrVectorIndexSourceStale
-	}
-	coverage.ScopedDocuments = resolution.ScopedDocuments
-	coverage.CompleteDocuments = resolution.CompleteDocuments
-	coverage.State = CoverageComplete
-	if coverage.CompleteDocuments != coverage.ScopedDocuments {
-		coverage.State = CoverageIncomplete
-	}
-	resolved := resolution.Candidates
-	if len(resolved) > query.VectorLimit {
-		resolved = resolved[:query.VectorLimit]
-		truncated = true
-	}
-	candidates := make([]Candidate, len(resolved))
-	for index, item := range resolved {
-		if item.VectorSpaceID != authority.VectorSpace.ID {
-			return nil, coverage, false, errors.New("semantic result escaped the active vector space")
+	candidates := make([]Candidate, 0, min(query.VectorLimit, len(neighbors)))
+	seen := make(map[int64]struct{})
+	pageLimit := query.VectorLimit
+	for {
+		resolution, err := backend.ResolveSemanticCandidates(ctx, query.ProcessingProfileFingerprint,
+			query.BindingID, authority.InputKind, authority.VectorSpace.ID, stored.SourceManifestChecksum,
+			neighbors, pageLimit, query.Scope, seen)
+		if err != nil {
+			return nil, coverage, false, err
 		}
-		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
-			NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
-			Rank: index + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
-			Evidence: []EvidenceReference{{Kind: "embedding", VaultID: item.VaultID,
+		if resolution.SourceManifestChecksum != stored.SourceManifestChecksum {
+			return nil, coverage, false, store.ErrVectorIndexSourceStale
+		}
+		coverage.ScopedDocuments = resolution.ScopedDocuments
+		coverage.CompleteDocuments = resolution.CompleteDocuments
+		coverage.State = CoverageComplete
+		if coverage.CompleteDocuments != coverage.ScopedDocuments {
+			coverage.State = CoverageIncomplete
+		}
+		truncated = truncated || resolution.Truncated
+		for _, item := range resolution.Candidates {
+			if len(candidates) == query.VectorLimit {
+				truncated = true
+				break
+			}
+			if _, duplicate := seen[item.NodeID]; duplicate {
+				continue
+			}
+			seen[item.NodeID] = struct{}{}
+			if item.VectorSpaceID != authority.VectorSpace.ID {
+				return nil, coverage, false, errors.New("semantic result escaped the active vector space")
+			}
+			reference := EvidenceReference{Kind: "embedding", VaultID: item.VaultID,
 				NodeID: item.NodeID, NodeRevision: item.NodeRevision, ContentVersionID: item.ContentVersionID,
 				VectorSpaceID: item.VectorSpaceID, EmbeddingSetID: item.EmbeddingSetID,
 				InputGenerationID: item.InputGenerationID, InputID: item.InputID,
-				InputKind: item.InputKind, SourceManifestChecksum: resolution.SourceManifestChecksum}}}
+				InputKind: item.InputKind, BuildID: item.MediaEvidence.BuildID,
+				SourceManifestChecksum: resolution.SourceManifestChecksum}
+			if item.InputKind == document.EmbeddingInputRenditionChunk && searcher.mediaEvidence != nil {
+				span, err := searcher.mediaEvidence.resolve(ctx, item.MediaEvidence, item.InputID)
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil, coverage, false, ctx.Err()
+					}
+					// A damaged artifact invalidates this hit, not the other documents.
+					truncated = true
+					continue
+				}
+				reference.TimeSpan = span
+			}
+			candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
+				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
+				Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
+				Evidence: []EvidenceReference{reference}})
+		}
+		if len(candidates) == query.VectorLimit || !resolution.Truncated {
+			break
+		}
+		if resolution.NextNeighbor <= 0 || resolution.NextNeighbor >= len(neighbors) {
+			return nil, coverage, false, errors.New("semantic candidate page did not advance through neighbors")
+		}
+		neighbors = neighbors[resolution.NextNeighbor:]
+		pageLimit = min(pageLimit*2, document.MaxRetrievalCandidateLimit)
 	}
-	return candidates, coverage, truncated || resolution.Truncated, nil
+	return candidates, coverage, truncated, nil
 }
 
 func normalizeQuery(query Query) (Query, error) {
@@ -491,12 +523,18 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 	}
 	candidates := make([]Candidate, len(hits))
 	for index, hit := range hits {
+		reference := EvidenceReference{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
+			NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
+			BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}
+		span, err := mediaTimeSpan(hit.Locator)
+		if err != nil {
+			return nil, false, err
+		}
+		reference.TimeSpan = span
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
 			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,
-			Evidence: []EvidenceReference{{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
-				NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
-				BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}}}
+			Evidence: []EvidenceReference{reference}}
 	}
 	return candidates, truncated, nil
 }

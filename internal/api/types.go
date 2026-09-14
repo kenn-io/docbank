@@ -217,16 +217,23 @@ type DocumentSearchRequest struct {
 	Explain   bool                `json:"explain,omitzero"`
 }
 
+// MediaTimeSpan identifies one exact half-open interval in retained media.
+type MediaTimeSpan struct {
+	StartMS int64 `json:"start_ms" minimum:"0"`
+	EndMS   int64 `json:"end_ms" minimum:"1"`
+}
+
 type DocumentEvidenceReference struct {
-	Kind                   string `json:"kind"`
-	BuildID                string `json:"build_id,omitzero"`
-	SegmentID              string `json:"segment_id,omitzero"`
-	VectorSpaceID          string `json:"vector_space_id,omitzero"`
-	EmbeddingSetID         string `json:"embedding_set_id,omitzero"`
-	InputGenerationID      string `json:"input_generation_id,omitzero"`
-	InputID                string `json:"input_id,omitzero"`
-	InputKind              string `json:"input_kind,omitzero"`
-	SourceManifestChecksum string `json:"source_manifest_checksum,omitzero"`
+	Kind                   string         `json:"kind"`
+	BuildID                string         `json:"build_id,omitzero"`
+	SegmentID              string         `json:"segment_id,omitzero"`
+	VectorSpaceID          string         `json:"vector_space_id,omitzero"`
+	EmbeddingSetID         string         `json:"embedding_set_id,omitzero"`
+	InputGenerationID      string         `json:"input_generation_id,omitzero"`
+	InputID                string         `json:"input_id,omitzero"`
+	InputKind              string         `json:"input_kind,omitzero"`
+	SourceManifestChecksum string         `json:"source_manifest_checksum,omitzero"`
+	TimeSpan               *MediaTimeSpan `json:"time_span,omitzero"`
 }
 
 type DocumentSearchTrace struct {
