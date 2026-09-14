@@ -117,7 +117,8 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 		if !ok || entry.FileInfo().IsDir() {
 			return 0, fmt.Errorf("PPTX slide target %q is missing", target)
 		}
-		if contentDeclarations[target] != pptxSlideContentType {
+		declaredType, declared := contentDeclarations.forPart(target)
+		if !declared || declaredType != pptxSlideContentType {
 			return 0, fmt.Errorf("PPTX slide target %q has the wrong content type", target)
 		}
 	}
@@ -175,7 +176,26 @@ type pptxRelationshipDocument struct {
 
 type pptxContentTypesDocument struct {
 	XMLName   xml.Name          `xml:"Types"`
+	Defaults  []pptxDefaultType `xml:"http://schemas.openxmlformats.org/package/2006/content-types Default"`
 	Overrides []pptxContentType `xml:"http://schemas.openxmlformats.org/package/2006/content-types Override"`
+}
+
+type pptxContentDeclarations struct {
+	defaults  map[string]string
+	overrides map[string]string
+}
+
+func (declarations pptxContentDeclarations) forPart(name string) (string, bool) {
+	if contentType, ok := declarations.overrides[name]; ok {
+		return contentType, true
+	}
+	contentType, ok := declarations.defaults[strings.ToLower(path.Ext(name))]
+	return contentType, ok
+}
+
+type pptxDefaultType struct {
+	Extension   string `xml:"Extension,attr"`
+	ContentType string `xml:"ContentType,attr"`
 }
 
 type pptxContentType struct {
@@ -272,6 +292,31 @@ func (contentType *pptxContentType) UnmarshalXML(decoder *xml.Decoder, start xml
 	return nil
 }
 
+func (contentType *pptxDefaultType) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement) error {
+	if start.Name.Space != pptxContentTypesNamespace || start.Name.Local != "Default" {
+		return errors.New("PPTX content types have an unexpected element")
+	}
+	extension, ok, err := pptxAttribute(start.Attr, "", "Extension")
+	if err != nil {
+		return err
+	}
+	if !ok || extension == "" {
+		return errors.New("PPTX content type extension is missing")
+	}
+	value, ok, err := pptxAttribute(start.Attr, "", "ContentType")
+	if err != nil {
+		return err
+	}
+	if !ok || value == "" {
+		return fmt.Errorf("PPTX default content type for %q is missing", extension)
+	}
+	if err := decoder.Skip(); err != nil {
+		return fmt.Errorf("skip PPTX default content type: %w", err)
+	}
+	contentType.Extension, contentType.ContentType = extension, value
+	return nil
+}
+
 func pptxAttribute(attributes []xml.Attr, space, local string) (string, bool, error) {
 	var value string
 	found := false
@@ -342,29 +387,40 @@ func parsePPTXRelationships(data []byte) (map[string]pptxRelationship, error) {
 	return relationships, nil
 }
 
-func parsePPTXContentTypes(data []byte) (map[string]string, error) {
+func parsePPTXContentTypes(data []byte) (pptxContentDeclarations, error) {
 	var document pptxContentTypesDocument
 	if err := decodePPTXXML(data, &document); err != nil {
-		return nil, err
+		return pptxContentDeclarations{}, err
 	}
 	if document.XMLName.Space != pptxContentTypesNamespace || document.XMLName.Local != "Types" {
-		return nil, errors.New("PPTX content types have the wrong root element")
+		return pptxContentDeclarations{}, errors.New("PPTX content types have the wrong root element")
 	}
-	declarations := make(map[string]string, len(document.Overrides))
+	defaults := make(map[string]string, len(document.Defaults))
+	for _, contentType := range document.Defaults {
+		extension := "." + strings.ToLower(strings.TrimSpace(contentType.Extension))
+		if extension == "." || contentType.ContentType == "" {
+			return pptxContentDeclarations{}, errors.New("PPTX default content type is incomplete")
+		}
+		if _, exists := defaults[extension]; exists {
+			return pptxContentDeclarations{}, fmt.Errorf("PPTX default content type for %q is duplicated", extension)
+		}
+		defaults[extension] = contentType.ContentType
+	}
+	overrides := make(map[string]string, len(document.Overrides))
 	for _, contentType := range document.Overrides {
 		if contentType.PartName == "" || contentType.ContentType == "" {
-			return nil, errors.New("PPTX content type is incomplete")
+			return pptxContentDeclarations{}, errors.New("PPTX content type is incomplete")
 		}
 		partName, err := normalizePPTXPartName(contentType.PartName)
 		if err != nil {
-			return nil, err
+			return pptxContentDeclarations{}, err
 		}
-		if _, exists := declarations[partName]; exists {
-			return nil, fmt.Errorf("PPTX content type for %q is duplicated", partName)
+		if _, exists := overrides[partName]; exists {
+			return pptxContentDeclarations{}, fmt.Errorf("PPTX content type for %q is duplicated", partName)
 		}
-		declarations[partName] = contentType.ContentType
+		overrides[partName] = contentType.ContentType
 	}
-	return declarations, nil
+	return pptxContentDeclarations{defaults: defaults, overrides: overrides}, nil
 }
 
 func decodePPTXXML(data []byte, value any) error {
@@ -414,42 +470,55 @@ func validatePPTXXMLStructure(data []byte) error {
 }
 
 func resolvePPTXTarget(target string) (string, error) {
+	if target == "" {
+		return "", errors.New("PPTX relationship target is not an internal path")
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return "", errors.New("PPTX relationship target is not a valid URI")
+	}
+	if parsed.Scheme != "" || parsed.Host != "" || strings.HasPrefix(target, "//") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("PPTX relationship target is external")
+	}
 	decoded, err := url.PathUnescape(target)
 	if err != nil {
 		return "", errors.New("PPTX relationship target is not a valid path")
 	}
-	if decoded == "" || strings.ContainsAny(decoded, "\\\x00?:#") {
+	if strings.ContainsAny(decoded, "\\\x00?:#") {
 		return "", errors.New("PPTX relationship target is not an internal path")
 	}
-	parsed, err := url.Parse(decoded)
-	if err != nil || parsed.Scheme != "" || parsed.Host != "" || strings.HasPrefix(decoded, "//") ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("PPTX relationship target is external")
-	}
-	if strings.HasPrefix(decoded, "/") {
-		decoded, _ = strings.CutPrefix(decoded, "/")
+	if strings.HasPrefix(target, "/") {
+		target, _ = strings.CutPrefix(target, "/")
 	} else {
-		decoded = path.Join(path.Dir(pptxPresentationPath), decoded)
+		target = path.Join(path.Dir(pptxPresentationPath), target)
 	}
-	return normalizePPTXPartName(decoded)
+	return normalizePPTXPartName(target)
 }
 
 func normalizePPTXPartName(partName string) (string, error) {
+	if partName == "" {
+		return "", errors.New("PPTX part name is not an internal path")
+	}
+	parsed, err := url.Parse(partName)
+	if err != nil {
+		return "", errors.New("PPTX part name is not a valid URI")
+	}
+	if parsed.Scheme != "" || parsed.Host != "" || strings.HasPrefix(partName, "//") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("PPTX part name is external")
+	}
 	decoded, err := url.PathUnescape(partName)
 	if err != nil {
 		return "", errors.New("PPTX part name is not a valid path")
 	}
-	if decoded == "" || strings.ContainsAny(decoded, "\\\x00?:#") {
+	if strings.ContainsAny(decoded, "\\\x00?:#") {
 		return "", errors.New("PPTX part name is not an internal path")
 	}
-	parsed, err := url.Parse(decoded)
-	if err != nil || parsed.Scheme != "" || parsed.Host != "" || strings.HasPrefix(decoded, "//") ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("PPTX part name is external")
-	}
-	decoded = strings.TrimPrefix(decoded, "/")
-	cleaned := path.Clean(decoded)
-	if cleaned == "." || path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+	partName = strings.TrimPrefix(partName, "/")
+	cleaned := path.Clean(partName)
+	decodedCleaned := path.Clean(strings.TrimPrefix(decoded, "/"))
+	if cleaned == "." || path.IsAbs(cleaned) || decodedCleaned == ".." || strings.HasPrefix(decodedCleaned, "../") {
 		return "", errors.New("PPTX part name escapes the package root")
 	}
 	return cleaned, nil

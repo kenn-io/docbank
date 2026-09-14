@@ -148,6 +148,19 @@ func TestValidateProbeFixturesIsLocalAndCleansItsSpool(t *testing.T) {
 	requireOnlySpoolReservationFile(t, spoolDirectory)
 }
 
+func TestPPTXProbeFixtureCountsThroughPrepare(t *testing.T) {
+	fixtureConfig := generatedProbeFixtureConfig(t)
+	policy := testPolicy(t, 1<<20, 10)
+	fixtures, err := loadProbeFixtures(t.Context(), policy, fixtureConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, releaseProbeFixtures(fixtures)) })
+
+	snapshot, err := fixtures["pptx"].snapshot()
+	require.NoError(t, err)
+	assert.Equal(t, 1, snapshot.localUnits)
+	t.Logf("prepared_pptx local_units=%d", snapshot.localUnits)
+}
+
 func writeNativeSeeds(t *testing.T) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "seeds")

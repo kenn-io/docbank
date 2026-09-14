@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLocalUnitCounterRegistryIsMistralOwnedAndBounded(t *testing.T) {
@@ -222,6 +225,33 @@ func TestCountPPTXSlides(t *testing.T) {
 	}
 }
 
+func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
+	escaped := pptxArchive(t, []pptxTestSlide{{
+		id: "256", relationshipID: "rId1", target: "slides/title%20page.xml",
+	}})
+	units, err := countPPTXSlides(bytes.NewReader(escaped), int64(len(escaped)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, 1, units)
+	t.Logf("escaped_target count=%d", units)
+
+	defaultContentTypes := "<Types xmlns=\"" + pptxContentTypesNamespace + "\">" +
+		"<Default Extension=\"xml\" ContentType=\"" + pptxSlideContentType + "\"/>" +
+		"<Override PartName=\"/ppt/presentation.xml\" " +
+		"ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/>" +
+		"</Types>"
+	defaultTarget := pptxArchiveWithSlideXML(
+		t, validPPTXPresentation(), validPPTXRelationships(), defaultContentTypes,
+	)
+	units, err = countPPTXSlides(bytes.NewReader(defaultTarget), int64(len(defaultTarget)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, 1, units)
+	t.Logf("default_content_type count=%d", units)
+}
+
 type pptxTestSlide struct {
 	id             string
 	relationshipID string
@@ -272,7 +302,8 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 		if contentType == "" {
 			contentType = pptxSlideContentType
 		}
-		if target, err := resolvePPTXTarget(slide.target); err == nil {
+		target := pptxArchiveTargetName(slide.target)
+		if target != "" {
 			fmt.Fprintf(&contentTypes, `<Override PartName="/%s" ContentType="%s"/>`, target, contentType)
 			entries[target] = `<p:sld xmlns:p="` + pptxPresentationNamespace + `"/>`
 		}
@@ -281,6 +312,13 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 	entries[ooxmlContentTypesName] = contentTypes.String()
 	maps.Copy(entries, extra)
 	return documentZIP(t, entries)
+}
+
+func pptxArchiveTargetName(target string) string {
+	if strings.HasPrefix(target, "/") {
+		return strings.TrimPrefix(target, "/")
+	}
+	return path.Clean(path.Join(path.Dir(pptxPresentationPath), target))
 }
 
 func pptxArchiveWithSlideXML(t *testing.T, presentation, relationships, contentTypes string) []byte {
