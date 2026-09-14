@@ -13,8 +13,17 @@ import (
 func TestResolverRejectsCaseFoldCollision(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "VOL001"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "a.pdf"), []byte("a"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "A.PDF"), []byte("b"), 0o600))
+	lowerPath := filepath.Join(root, "VOL001", "a.pdf")
+	upperPath := filepath.Join(root, "VOL001", "A.PDF")
+	require.NoError(t, os.WriteFile(lowerPath, []byte("a"), 0o600))
+	require.NoError(t, os.WriteFile(upperPath, []byte("b"), 0o600))
+	lowerInfo, err := os.Stat(lowerPath)
+	require.NoError(t, err)
+	upperInfo, err := os.Stat(upperPath)
+	require.NoError(t, err)
+	if os.SameFile(lowerInfo, upperInfo) {
+		t.Skip("filesystem cannot represent a case-fold collision")
+	}
 	resolver, err := NewResolver(root, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, resolver.Close()) })

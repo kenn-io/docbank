@@ -41,11 +41,9 @@ func TestPackagePreflightCLIRequiresDeclaredCodec(t *testing.T) {
 func TestPackagePreflightSourceMakesDirectoryAbsolute(t *testing.T) {
 	workingDirectory, err := os.Getwd()
 	require.NoError(t, err)
-	relative, err := filepath.Rel(workingDirectory, t.TempDir())
-	require.NoError(t, err)
-	kind, reference, containerID, err := packagePreflightSource(relative)
+	kind, reference, containerID, err := packagePreflightSource(".")
 	require.NoError(t, err)
 	assert.Equal(t, "root", kind)
-	assert.True(t, filepath.IsAbs(reference))
+	assert.Equal(t, workingDirectory, reference)
 	assert.Empty(t, containerID)
 }
