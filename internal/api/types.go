@@ -165,6 +165,13 @@ type ProcessingStatus struct {
 	CompletedBindings int      `json:"completed_bindings" minimum:"0"`
 }
 
+// RenditionSelectorRequest reads the active rendition for one exact source
+// selector without requiring callers to discover its attachment identity.
+type RenditionSelectorRequest struct {
+	Selector ProcessingSelector `json:"selector"`
+	MaxBytes int64              `json:"max_bytes" minimum:"1" maximum:"67108864"`
+}
+
 // ProcessingJobEvent is one bounded NDJSON event. A successful stream contains
 // one job event followed by one terminal status or status-read error event.
 type ProcessingJobEvent struct {

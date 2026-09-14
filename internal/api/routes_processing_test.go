@@ -432,6 +432,12 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	invalidRange, invalidBody := get(t, ts, "/api/v1/renditions/"+job.AttachmentID, map[string]string{"Range": "bytes=999999999-"})
 	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, invalidRange.StatusCode, invalidBody)
 
+	selectorResponse, selectorBody := do(t, ts, http.MethodPost, "/api/v1/renditions/select", nil,
+		map[string]any{"selector": selector, "max_bytes": len(renditionBody)})
+	require.Equal(t, http.StatusOK, selectorResponse.StatusCode, selectorBody)
+	assert.Equal(t, renditionBody, selectorBody)
+	assert.Equal(t, job.AttachmentID, selectorResponse.Header.Get("X-Docbank-Rendition-Attachment"))
+
 	coverageResponse, coverageBody := get(t, ts, "/api/v1/coverage?profile=private&vault_uid="+
 		catalog.VaultID()+"&content_version_id="+node.CurrentVersionID, nil)
 	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageBody)
