@@ -80,7 +80,10 @@ const (
 type EmbeddingErrorClassifier func(error) (EmbeddingFailureClass, time.Duration)
 
 // ProcessingProfileConfig supplies the exact providers executable for one
-// named portable profile. EmbeddingProviders is keyed by binding name.
+// named portable profile. EmbeddingProviders and EmbeddingDisclosures are keyed
+// by binding name. Every operator_network or hosted_provider provider requires
+// an explicit Endpoint in its disclosure; New rejects missing or invalid
+// endpoints. A local_process provider may use a zero disclosure.
 type ProcessingProfileConfig struct {
 	Profile              document.ProcessingProfileV1
 	RenditionProvider    document.RenditionProvider
@@ -114,7 +117,12 @@ type ProcessingFlowHop struct {
 }
 
 // ProcessingRuntimeDisclosure is the complete non-secret runtime identity and
-// provider-visible data policy reviewed for one processing hop.
+// provider-visible data policy reviewed for one processing hop. When configuring
+// a network provider, Endpoint must name its HTTP(S) destination without URL
+// credentials, query parameters, or a fragment. Local providers accept only an
+// empty Endpoint or "in-process". Docbank fills omitted processor and deployment
+// identities from the provider and profile and derives metadata and retention
+// classes. Disclosures are included in the reviewed processing plan fingerprint.
 type ProcessingRuntimeDisclosure struct {
 	ImmediateProcessor    string   `json:"immediate_processor"`
 	UltimateProcessor     string   `json:"ultimate_processor"`

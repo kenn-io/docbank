@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -150,8 +150,18 @@ The response includes `fingerprint`, `vault_uid`, `selector`,
 `profile_fingerprint`, `flow`, `disclosed_classes`, `retained_classes`,
 `estimate`, `consent_required`, `consent_state`, and `backup_consequence`.
 Each flow identifies the provider, capability, trust boundary, input classes,
-and any filename disclosure. Review it before granting consent or starting
-work. Consent state is advisory and does not enter the plan fingerprint.
+any filename disclosure, and a `runtime_disclosure` object. Review it before
+granting consent or starting work. The runtime disclosure contains:
+
+| Field | Meaning |
+|-------|---------|
+| `immediate_processor`, `ultimate_processor` | The adapter or processor receiving the input and the processor it ultimately uses |
+| `endpoint`, `deployment` | The configured destination and deployment identity; a local provider reports `in-process` |
+| `model`, `model_revision`, `vector_space` | Model and vector-space identities, when applicable |
+| `metadata_classes` | Metadata disclosed alongside the content or query |
+| `retained_artifact_roles` | Artifacts retained for this hop; query embedding retains none |
+
+These values enter the plan fingerprint. Consent state is advisory and does not.
 
 #### Processing consent
 
@@ -193,7 +203,8 @@ Once work is accepted, the response is `200 application/x-ndjson` with
    `type: "error"` with the job and `processing_status_unavailable` error.
 
 A terminal status can report failure; HTTP 200 alone does not mean processing
-succeeded. Read `state` and `failure_code`. Once accepted, work continues under
+succeeded. The first job receipt does not report a state or phase. Read `state`
+and `failure_code` from a status response. Once accepted, work continues under
 the daemon lifecycle after the requesting connection closes. Keep the first
 job ID if the stream ends early and call `GET /processing/jobs/{id}`. That read
 returns `job_id`, `state`, `phase`, `embedding_job_ids`, `completed_bindings`,
@@ -230,7 +241,14 @@ for the envelope and body-relative navigation.
 query parameters. It reports `profile_fingerprint`, aggregate `state`, and
 separate `renditions` and `embeddings` classes. Each class reports its name,
 required status, state, and complete, unavailable, stale, ineligible, and total
-counts. This read does not grant consent or start provider work.
+counts, plus `rebuilding` and `previous_generation_serving`. A rebuilding cell
+is not also counted as complete; `previous_generation_serving` is the subset of
+rebuilding cells whose prior complete result remains available. A queued first
+build therefore has `rebuilding: 1` and `previous_generation_serving: 0`.
+The rendition and embedding counts come from one catalog snapshot, including
+current source visibility and serving evidence. Missing required coverage keeps
+the aggregate state `partial` even if another class is rebuilding. This read
+does not grant consent or start provider work.
 
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 

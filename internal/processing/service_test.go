@@ -298,6 +298,86 @@ func TestProcessingServiceCoverageBeforeProfileRegistration(t *testing.T) {
 	}
 }
 
+func TestProcessingServiceCoverageMissingClassesTakePrecedenceOverRebuilding(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		renditionRequired  bool
+		rebuildingRequired bool
+		missingRequired    bool
+		want               string
+	}{
+		{"missing rendition with optional rebuilding", true, false, false, "partial"},
+		{"missing rendition with required rebuilding", true, true, false, "partial"},
+		{"missing required embedding", false, true, true, "partial"},
+		{"missing optional embedding", false, true, false, "rebuilding"},
+		{"missing optional embedding without required bindings", false, false, false, "partial"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, _, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile, "missing")
+			var portable document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+			if test.renditionRequired {
+				portable.Embeddings = portable.Embeddings[:1]
+			}
+			if !test.renditionRequired {
+				portable.Rendition = nil
+				portable.RetentionDisclosure.RetainSanitizedMarkdown = false
+				portable.RetentionDisclosure.RetainProviderMarkdown = false
+			}
+			for i := range portable.Embeddings {
+				if (portable.Embeddings[i].Name == request.BindingID && test.rebuildingRequired) ||
+					(portable.Embeddings[i].Name == "missing" && test.missingRequired) {
+					portable.Embeddings[i].Activation = document.EmbeddingRequired
+				}
+			}
+			canonical, fingerprints, err := document.CanonicalProfile(portable)
+			require.NoError(t, err)
+			request.Profile = store.ProcessingProfileRecord{
+				Fingerprint: fingerprints.Profile, CanonicalProfile: canonical,
+				RenditionRequestFingerprint:    fingerprints.RenditionRequest,
+				EvidenceLexicalFingerprint:     fingerprints.EvidenceLexical,
+				RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure,
+				AttachmentPolicyFingerprint:    portable.RetentionDisclosure.AttachmentPolicyFingerprint,
+				ConsentFingerprint:             portable.RetentionDisclosure.ConsentFingerprint,
+				TrustBoundary:                  portable.RetentionDisclosure.TrustBoundary,
+			}
+			if portable.Rendition != nil {
+				request.Profile.RenditionDisclosureFingerprint = portable.Rendition.DisclosureFingerprint
+			}
+			request.InputGeneration.ID = workerHash(test.name)
+			request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+			request.Authorization.ProfileFingerprint = fingerprints.Profile
+			// Enqueue registers the new profile before its consent check.
+			_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+			_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+				Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+				ProfileFingerprint: fingerprints.Profile, DisclosureFingerprint: request.Authorization.DisclosureFingerprint,
+				InputClasses: request.Authorization.InputClasses, RetainedArtifactClasses: request.Authorization.RetainedArtifactClasses,
+			})
+			require.NoError(t, err)
+			_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			service := &Service{catalog: fixture.catalog, profiles: map[string]configuredProfile{
+				"private": {portable: portable, record: request.Profile},
+			}}
+			coverage, err := service.Coverage(t.Context(), "private", SourceFence{
+				VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{request.ContentVersionID},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.want, coverage.State)
+			for _, binding := range coverage.Embeddings {
+				if binding.Name == request.BindingID {
+					assert.Equal(t, "rebuilding", binding.State)
+					assert.Equal(t, 1, binding.Rebuilding)
+				} else {
+					assert.Equal(t, "unavailable", binding.State)
+				}
+			}
+		})
+	}
+}
+
 func TestAggregateStatusUsesBindingActivation(t *testing.T) {
 	for _, activation := range []document.EmbeddingActivation{document.EmbeddingRequired, document.EmbeddingOptional} {
 		for _, state := range []string{"failed", "abandoned"} {
@@ -541,6 +621,18 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	assert.Equal(t, 1, coverage.Renditions.Rebuilding)
 	assert.Equal(t, 1, coverage.Renditions.PreviousServing)
 	assert.Zero(t, coverage.Renditions.Complete)
+	assert.Equal(t, "rebuilding", coverage.State)
+
+	coverage, err = service.Coverage(t.Context(), "private", SourceFence{
+		VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{
+			fixture.versionID, "00000000-0000-4000-8000-000000000001",
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "partial", coverage.State)
+	assert.Equal(t, "rebuilding", coverage.Renditions.State)
+	assert.Equal(t, 1, coverage.Renditions.Stale)
+	assert.Equal(t, 1, coverage.Renditions.PreviousServing)
 
 	now := time.Now().UTC()
 	claim, err := fixture.catalog.ClaimRenditionJob(
@@ -558,4 +650,5 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	assert.Equal(t, 1, coverage.Renditions.Complete)
 	assert.Zero(t, coverage.Renditions.Rebuilding)
 	assert.Zero(t, coverage.Renditions.PreviousServing)
+	assert.Equal(t, "complete", coverage.State)
 }

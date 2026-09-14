@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,52 @@ import (
 
 	"go.kenn.io/docbank/document"
 )
+
+func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	const total = 4096
+	ids := []string{versionID}
+	for i := 1; i < total-1; i++ {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("coverage-%04d.pdf", i), catalogSourceHash, 20, "application/pdf")
+		require.NoError(t, err)
+		ids = append(ids, node.CurrentVersionID)
+	}
+	ids = append(ids, "00000000-0000-4000-8000-000000000001")
+	for _, id := range ids[:2] {
+		record := embeddingSetFixture(s, id, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: id, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
+			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+		}))
+	}
+	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: chunk.BindingID, InputKind: chunk.InputKind},
+		SetID: chunk.ID, VectorSpaceID: chunk.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	for _, id := range []string{ids[0], ids[2]} {
+		_, err := s.EnqueueEmbeddingJob(t.Context(), embeddingJobTestRequest(t, s, id, profile, "coverage-rebuild-"+id))
+		require.NoError(t, err)
+	}
+	started := time.Now()
+	coverage, err := s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{
+		ContentVersionIDs: ids, ProcessingProfileFingerprint: profile.Fingerprint,
+		Bindings: []ProcessingCoverageBinding{{BindingID: "optional"}, {BindingID: "chunk"}},
+	})
+	require.NoError(t, err)
+	t.Logf("coverage of %d versions and 2 bindings: %s", total, time.Since(started))
+	assert.Equal(t, ProcessingClassCoverage{Name: "rendition", State: "partial", Total: total,
+		Complete: 1, Stale: 1, Unavailable: total - 2}, coverage.Renditions)
+	require.Len(t, coverage.Embeddings, 2)
+	assert.Equal(t, ProcessingClassCoverage{Name: "optional", State: "rebuilding", Total: total,
+		Complete: 1, Stale: 1, Unavailable: total - 4, Rebuilding: 2, PreviousGenerationServing: 1}, coverage.Embeddings[0])
+	assert.Equal(t, ProcessingClassCoverage{Name: "chunk", State: "partial", Total: total,
+		Complete: 1, Stale: 1, Unavailable: total - 2}, coverage.Embeddings[1])
+}
 
 func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)

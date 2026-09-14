@@ -232,7 +232,6 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 		{"failed", "invalid_response", nil},
 		{"failed", "input_rejected", nil},
 		{"failed", "stale_authority", nil},
-		{"failed", "", nil},
 		{"abandoned", "stale_authority", nil},
 		{"failed", "rendition_failed", store.ErrRenditionJobTerminal},
 		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired},
@@ -241,7 +240,7 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 	} {
 		t.Run(test.state+"/"+test.code, func(t *testing.T) {
 			job := api.ProcessingJob{ContentVersionID: processingStreamVersionID, ProfileFingerprint: processingStreamProfile, ID: strings.Repeat("a", 64)}
-			status := api.ProcessingStatus{JobID: job.ID, State: test.state, FailureCode: test.code,
+			status := api.ProcessingStatus{JobID: job.ID, State: test.state, Phase: "embedding", FailureCode: test.code,
 				EmbeddingJobIDs: []string{strings.Repeat("b", 64)}}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/x-ndjson")
@@ -468,9 +467,6 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 		{name: "relative path", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Path = "visible.pdf"
 		}},
-		{name: "oversized path", mutate: func(report *api.DocumentSearchReport) {
-			report.Results[0].Path = "/" + strings.Repeat("p", (16<<10)+1)
-		}},
 		{name: "oversized excerpt", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Excerpt = strings.Repeat("e", 513)
 		}},
@@ -492,7 +488,9 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.MarshalWrite(w, validReport()))
+		valid := validReport()
+		valid.Results[0].Path = "/" + strings.Repeat("p", 17000)
+		assert.NoError(t, json.MarshalWrite(w, valid))
 	}))
 	t.Cleanup(server.Close)
 	report, err := client.New(server.URL, serverKey).SearchDocuments(t.Context(), request)

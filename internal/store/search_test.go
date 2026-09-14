@@ -492,6 +492,20 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
 }
 
+func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
+	s := newTestStore(t)
+	name := "alpha-" + strings.Repeat("é", 9000) + ".pdf"
+	_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("long-name"), 1, "application/pdf")
+	require.NoError(t, err)
+
+	candidates, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, "/"+name, candidates[0].Path)
+	assert.Equal(t, string([]rune(name)[:maxExplainedSearchExcerptRunes]), candidates[0].Excerpt)
+}
+
 func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

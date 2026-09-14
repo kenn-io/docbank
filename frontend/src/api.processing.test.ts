@@ -1,3 +1,4 @@
+import contract from "../../internal/client/testdata/processing_responses.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
@@ -75,7 +76,7 @@ describe("document processing browser API", () => {
     }
   });
 
-  it("validates navigation across a large multilingual rendition", async () => {
+  it.each(["byte", "default"])("validates a large multilingual rendition from a %s stream", async (mode) => {
     const chunk = "# α\n" + "x".repeat(10480) + "\n";
     const body = chunk.repeat(500);
     const entries = Array.from({ length: 500 }, (_, index) => ({
@@ -91,7 +92,10 @@ describe("document processing browser API", () => {
       navigation: { offset_base: "body", complete: true, entries },
     } };
     const artifact = `---\n${JSON.stringify(metadata)}\n---\n${body}`;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(artifact, { headers: {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(mode === "byte" ? artifact : new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(utf8ToBytes(artifact));
+      controller.close();
+    } }), { headers: {
       "Content-Type": "text/markdown", "X-Docbank-Rendition-Attachment": attachmentID,
       "X-Docbank-Rendition-Build": buildID, "X-Docbank-Rendition-Artifact": "f".repeat(64),
       "X-Docbank-Content-Version": "11111111-1111-4111-8111-111111111111",
@@ -252,7 +256,7 @@ describe("document processing browser API", () => {
       degradations: [], truncated: false, trace: [],
       results: [{ vault_uid: vaultID, node_id: 7, content_version_id: versionID, rank: 1,
         semantic_rank: 1, score: 0.9, path: "/visible.pdf", excerpt: "Synthetic match", evidence: [{
-          kind: "embedding", vector_space_id: "a".repeat(64), embedding_set_id: "b".repeat(64),
+          kind: "embedding", build_id: "f".repeat(64), vector_space_id: "a".repeat(64), embedding_set_id: "b".repeat(64),
           input_generation_id: "c".repeat(64), input_id: "chunk-000000-aaaaaaaaaaaa",
           input_kind: "rendition_chunk", source_manifest_checksum: "d".repeat(64),
         }] }],
@@ -269,7 +273,6 @@ describe("document processing browser API", () => {
       (report: ReturnType<typeof valid>) => { report.results[0]!.evidence.push({ ...report.results[0]!.evidence[0]! }); },
       (report: ReturnType<typeof valid>) => { report.results[0]!.evidence[0]!.input_generation_id = ""; },
       (report: ReturnType<typeof valid>) => { report.results[0]!.path = "visible.pdf"; },
-      (report: ReturnType<typeof valid>) => { report.results[0]!.path = `/${"p".repeat((16 * 1024) + 1)}`; },
       (report: ReturnType<typeof valid>) => { report.results[0]!.excerpt = "e".repeat(513); },
     ];
     const fetchMock = vi.spyOn(globalThis, "fetch");
@@ -279,7 +282,9 @@ describe("document processing browser API", () => {
       fetchMock.mockResolvedValueOnce(Response.json(report));
       await expect(documentSearch("session", request)).rejects.toThrow(/search response/i);
     }
-    fetchMock.mockResolvedValueOnce(Response.json(valid()));
+    const longPath = valid();
+    longPath.results[0]!.path = `/${"p".repeat(17000)}`;
+    fetchMock.mockResolvedValueOnce(Response.json(longPath));
     await expect(documentSearch("session", request)).resolves.toMatchObject({
       results: [{ content_version_id: versionID }],
     });
@@ -320,20 +325,10 @@ describe("document processing browser API", () => {
     const attachmentID = "a".repeat(64);
     let pulls = 0;
     let cancelled = false;
-    let delivered = 0;
-    const body = new ReadableStream({
-      type: "bytes",
+    const body = new ReadableStream<Uint8Array>({
       pull(controller) {
         pulls += 1;
-        if (controller.byobRequest) {
-          const view = controller.byobRequest.view as Uint8Array;
-          view.fill(0);
-          delivered += view.byteLength;
-          controller.byobRequest.respond(view.byteLength);
-          return;
-        }
-        const oversized = new Uint8Array(64 * 1024 * 1024 + 1);
-        delivered += oversized.byteLength;
+        const oversized = new Uint8Array(4);
         controller.enqueue(oversized);
       },
       cancel() {
@@ -358,6 +353,30 @@ describe("document processing browser API", () => {
     await expect(renditionArtifact("session", attachmentID)).rejects.toThrow(/rendition size/i);
     expect(cancelled).toBe(true);
     expect(pulls).toBe(1);
-    expect(delivered).toBe(4);
+  });
+});
+
+// Shared wire examples exercise the same daemon contract in Go and TypeScript.
+describe("shared processing response contract", () => {
+  it.each(contract.status_cases)("status: $name", async ({ patch, valid }) => {
+    const status = { ...contract.status, ...patch };
+    const events = `${JSON.stringify({ sequence: 1, type: "job", job: contract.job })}\n${JSON.stringify({ sequence: 2, type: "status", terminal: true, status })}\n`;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(events, { headers: { "Content-Type": "application/x-ndjson" } }));
+    const onProgress = vi.fn();
+    const run = startProcessing("session", { node_id: 7, content_version_id: contract.job.content_version_id, profile: "private" },
+      "c".repeat(64), contract.job.profile_fingerprint, true, onProgress);
+    if (valid) await expect(run).resolves.toMatchObject({ status });
+    else {
+      await expect(run).rejects.toThrow(/malformed processing progress/);
+      expect(onProgress.mock.calls.map(([event]) => event.type)).toEqual(["job"]);
+    }
+  });
+
+  it.each(contract.search_cases)("search: $name", async ({ patch, valid }) => {
+    const report = { ...contract.report, results: [{ ...contract.report.results[0], ...patch }] };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(report));
+    const result = documentSearch("session", { ...contract.request, mode: "semantic" });
+    if (valid) await expect(result).resolves.toEqual(report);
+    else await expect(result).rejects.toThrow(/search response/);
   });
 });

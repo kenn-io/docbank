@@ -1218,32 +1218,30 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	if profile.portable.Rendition != nil {
 		report.Renditions = toClass(snapshot.Renditions)
 		report.Renditions.Name, report.Renditions.Required = "rendition", true
-		if report.Renditions.State == "rebuilding" {
-			report.State = "rebuilding"
-		} else if report.Renditions.State != "complete" {
+		if report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total {
 			report.State = "partial"
+		} else if report.Renditions.Rebuilding > 0 {
+			report.State = "rebuilding"
 		}
 	}
-	required, completeRequired := 0, 0
-	requiredRebuilding, optionalRebuilding, optionalIncomplete := false, false, false
+	required, requiredIncomplete, requiredRebuilding := false, false, false
+	optionalRebuilding, optionalIncomplete := false, false
 	for _, coverage := range snapshot.Embeddings {
 		item := toClass(coverage)
 		report.Embeddings = append(report.Embeddings, item)
 		if item.Required {
-			required++
-			if item.State == "complete" {
-				completeRequired++
-			}
-			requiredRebuilding = requiredRebuilding || item.State == "rebuilding"
+			required = true
+			requiredIncomplete = requiredIncomplete || item.Complete+item.Rebuilding != item.Total
+			requiredRebuilding = requiredRebuilding || item.Rebuilding > 0
 		} else {
-			optionalIncomplete = optionalIncomplete || item.State != "complete"
-			optionalRebuilding = optionalRebuilding || item.State == "rebuilding"
+			optionalIncomplete = optionalIncomplete || item.Complete+item.Rebuilding != item.Total
+			optionalRebuilding = optionalRebuilding || item.Rebuilding > 0
 		}
 	}
-	if requiredRebuilding || (required == 0 && optionalRebuilding) {
-		report.State = "rebuilding"
-	} else if report.State != "rebuilding" && (completeRequired != required || (required == 0 && optionalIncomplete)) {
+	if report.State == "partial" || requiredIncomplete || (!required && optionalIncomplete) {
 		report.State = "partial"
+	} else if requiredRebuilding || (!required && optionalRebuilding) {
+		report.State = "rebuilding"
 	}
 	return report, nil
 }

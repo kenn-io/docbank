@@ -577,10 +577,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		job := *msg.event.Job
 		m.processingJob = &job
-		m.processingStatus = &api.ProcessingStatus{
-			JobID: job.ID, State: "running", Phase: "queued",
-			EmbeddingJobIDs: append([]string(nil), job.EmbeddingJobIDs...),
-		}
 		return m, m.waitProcessingTerminal(msg.stream, msg.requestID, msg.streamID)
 	case processingTerminalMsg:
 		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.streamID != m.processingStreamID {

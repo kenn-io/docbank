@@ -797,11 +797,17 @@ function isProcessingJob(value: unknown, selector: ProcessingSelector, profileFi
 
 function isProcessingStatus(value: unknown): value is ProcessingStatus {
   if (!isRecord(value)) return false;
-  return canonicalHash(value.job_id) && processingState(value.state) &&
-    typeof value.phase === "string" && value.phase.length > 0 &&
-    (value.failure_code === undefined || typeof value.failure_code === "string") &&
-    canonicalHashArray(value.embedding_job_ids) && Number.isInteger(value.completed_bindings) &&
-    Number(value.completed_bindings) >= 0;
+  if (!canonicalHash(value.job_id) || !processingState(value.state) ||
+      !boundedSearchIdentity(value.phase, 128) || value.phase.trim() === "" ||
+      (value.failure_code !== undefined && value.failure_code !== "" &&
+        (!boundedSearchIdentity(value.failure_code, 128) || value.failure_code.trim() === "")) ||
+      !canonicalHashArray(value.embedding_job_ids) || !nonnegativeInteger(value.completed_bindings) ||
+      Number(value.completed_bindings) > value.embedding_job_ids.length) return false;
+  const failureCode = value.failure_code ?? "";
+  if (value.state === "completed") return failureCode === "" && value.completed_bindings === value.embedding_job_ids.length;
+  if (["failed", "operator_required", "retry_wait"].includes(value.state)) return failureCode !== "";
+  // Running retries can retain a failure code; abandoned work may have none.
+  return true;
 }
 
 function processingState(value: unknown): value is ProcessingState {
@@ -896,7 +902,7 @@ function validateDocumentSearchReport(value: unknown, request: DocumentSearchReq
         !versions.has(result.content_version_id) || !canonicalUUID(result.content_version_id) ||
         !positiveInteger(result.node_id) || result.rank !== index + 1 ||
         typeof result.score !== "number" || !Number.isFinite(result.score) ||
-        !boundedDocumentSearchPath(result.path) ||
+        !validDocumentSearchPath(result.path) ||
         (result.excerpt !== undefined && !boundedDocumentSearchExcerpt(result.excerpt))) invalid();
     const item = result as UnknownRecord;
     const documentKey = String(item.content_version_id);
@@ -954,7 +960,7 @@ function validateDocumentEvidenceIdentity(evidence: UnknownRecord): boolean {
   if (evidence.kind === "embedding") {
     const renditionChunk = field("input_kind") === "rendition_chunk";
     return field("segment_id") === "" &&
-      (field("build_id") === "" || (renditionChunk && canonicalHash(field("build_id")))) &&
+      (renditionChunk ? canonicalHash(field("build_id")) : field("build_id") === "") &&
       (evidence.time_span === undefined || (renditionChunk && canonicalHash(field("build_id")))) &&
       canonicalHash(field("vector_space_id")) && canonicalHash(field("embedding_set_id")) &&
       canonicalHash(field("input_generation_id")) && boundedSearchIdentity(field("input_id"), 1024) &&
@@ -972,8 +978,8 @@ function boundedSearchIdentity(value: unknown, maximum: number): value is string
   return typeof value === "string" && value.length > 0 && utf8ToBytes(value).length <= maximum;
 }
 
-function boundedDocumentSearchPath(value: unknown): value is string {
-  if (typeof value !== "string" || value.length < 2 || utf8ToBytes(value).length > 16 * 1024 ||
+function validDocumentSearchPath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 2 ||
       !value.startsWith("/") || value.endsWith("/")) return false;
   return value.slice(1).split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
 }
@@ -990,8 +996,11 @@ function nonnegativeInteger(value: unknown): boolean {
   return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
+// Shared Go/browser response examples check both sides of document.MaxRetrievalCandidateLimit.
+const maxRetrievalCandidateLimit = 1000;
+
 function boundedLaneRank(value: unknown): boolean {
-  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1000;
+  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= maxRetrievalCandidateLimit;
 }
 
 export async function renditionArtifact(session: string, attachmentID: string): Promise<RenditionArtifact> {
@@ -1046,19 +1055,12 @@ export async function renditionArtifact(session: string, attachmentID: string): 
 
 async function readBoundedRendition(response: Response, declaredSize: number): Promise<Uint8Array> {
   if (!response.body) throw new Error("The daemon returned an empty rendition body.");
-  let reader: ReadableStreamBYOBReader;
-  try {
-    reader = response.body.getReader({ mode: "byob" });
-  } catch (error) {
-    await response.body.cancel(error);
-    throw new Error("The daemon returned a rendition stream that cannot be read safely.");
-  }
+  const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   try {
     while (true) {
-      const remaining = declaredSize + 1 - received;
-      const { done, value } = await reader.read(new Uint8Array(Math.min(64 * 1024, remaining)));
+      const { done, value } = await reader.read();
       if (value && value.byteLength > 0) {
         received += value.byteLength;
       }

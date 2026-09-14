@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: Document Processing
 description: How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
 ---
@@ -105,6 +105,14 @@ issues a one-shot authorized reader. Provider adapters receive that reader,
 not arbitrary access to the vault. The outbound transport checks the declared
 origin and allowed network ranges when establishing the actual connection.
 
+Before granting consent, the caller reviews each flow's runtime disclosure:
+immediate and ultimate processor, endpoint, deployment, model and revision,
+vector space, provider-visible metadata, and retained artifact roles. The plan
+fingerprint seals those values alongside the exact source and portable profile.
+Embedded callers supply endpoint disclosures for network providers when opening
+the vault; [Embed in Go](../embedding.md#configure-document-processing) describes
+the configuration contract.
+
 A durable consent grant records the principal, scope, processing-profile and
 disclosure fingerprints, permitted input classes, retained artifact classes,
 and optional expiry. A worker checks the grant before provider egress and
@@ -145,6 +153,14 @@ Vector values live in validated blob artifacts; SQLite records their identity
 and membership. The vector-index worker builds disposable generations from
 those retained sets and publishes only against the source membership it read.
 Reader leases keep a selected generation available during a query.
+
+Coverage reads source visibility, serving heads, and replacement jobs in one
+catalog snapshot. A replacement counts as `rebuilding`; the separate
+`previous_generation_serving` count records whether a complete prior result
+remains available. Those documents are not also counted as `complete`. Embedding
+coverage uses the same current attachment and evidence checks as search. A
+missing required result keeps aggregate coverage `partial` even if other work
+is rebuilding. See the [HTTP coverage contract](http-api.md#coverage-and-source-fenced-search).
 
 The owning implementations are the
 [rendition worker](https://github.com/kenn-io/docbank/blob/main/internal/processing/rendition_worker.go),

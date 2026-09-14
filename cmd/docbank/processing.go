@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"text/tabwriter"
 
@@ -240,14 +239,8 @@ func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profi
 		if err := writeCLIJSON(cmd.OutOrStdout(), jobEvent); err != nil {
 			return err
 		}
-		if err := flushProcessingOutput(cmd.OutOrStdout()); err != nil {
-			return err
-		}
 	} else if !jsonOutput {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "processing job: %s\n", job.ID)
-		if err := flushProcessingOutput(cmd.OutOrStdout()); err != nil {
-			return err
-		}
 	}
 	statusEvent, err := stream.Next()
 	if err != nil {
@@ -267,18 +260,6 @@ func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profi
 		return writeCLIJSON(cmd.OutOrStdout(), statusEvent)
 	}
 	return writeProcessingStatus(cmd, status)
-}
-
-func flushProcessingOutput(writer io.Writer) error {
-	if flusher, ok := writer.(interface{ Flush() error }); ok {
-		if err := flusher.Flush(); err != nil {
-			return fmt.Errorf("flushing processing progress: %w", err)
-		}
-	}
-	if flusher, ok := writer.(interface{ Flush() }); ok {
-		flusher.Flush()
-	}
-	return nil
 }
 
 func validateProcessingBuild(fingerprint string, consent bool) error {

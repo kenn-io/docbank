@@ -67,6 +67,12 @@ func TestSearcherExpansionUsesVariantsWithoutBroadeningScope(t *testing.T) {
 			Profile: ExpansionProfile{ID: "expansion", MaxVariants: 2}, Provider: expander,
 			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
 	})
+	backend.hits = []store.ExplainedLexicalCandidate{
+		{Node: store.Node{ID: 1, CurrentVersionID: "version-1"}, Path: "/one", EvidenceKind: "rendition_segment",
+			BuildID: "build-1", SegmentID: "segment-1", Locator: document.EvidenceLocatorV1{
+				Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero, Start: 0, End: 1000}},
+		{Node: store.Node{ID: 2, CurrentVersionID: "version-2"}, Path: "/two", EvidenceKind: "node_name"},
+	}
 	scope := store.SearchOptions{TagID: "tag", MIMEType: "text/plain", UnderNodeID: 7,
 		ModifiedSince: "2026-01-01T00:00:00Z", ModifiedBefore: "2026-12-31T00:00:00Z"}
 
@@ -75,6 +81,9 @@ func TestSearcherExpansionUsesVariantsWithoutBroadeningScope(t *testing.T) {
 	assert.Equal(t, []string{"original", "alpha", "zeta"}, backend.queries)
 	assert.Equal(t, []store.SearchOptions{scope, scope, scope}, backend.scopes)
 	assert.LessOrEqual(t, len(report.Results), 2)
+	for _, result := range report.Results {
+		assert.Len(t, result.Evidence, 1)
+	}
 	assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageExpansion,
 		Outcome: ProviderOutcomeApplied, VariantCount: 2}}, report.Receipts)
 }

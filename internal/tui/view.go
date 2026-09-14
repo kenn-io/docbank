@@ -356,6 +356,9 @@ func (m Model) processingLines(width int) []string {
 	}
 	if m.processingJob != nil {
 		lines = appendWrapped(lines, " Processing job: "+m.processingJob.ID, width, m.styles.muted)
+		if m.processingStarting && m.processingStatus == nil {
+			lines = appendWrapped(lines, " Awaiting daemon status...", width, m.styles.muted)
+		}
 	}
 	if m.processingStatusErr != nil {
 		lines = appendWrapped(lines, " Status unavailable: "+quoted(m.processingStatusErr.Error()), width, m.styles.error)

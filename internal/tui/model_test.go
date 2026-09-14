@@ -1925,8 +1925,10 @@ func TestProcessingRunExposesDurableJobBeforeBlockedTerminalStatus(t *testing.T)
 	model, terminalCmd := updateModel(t, model, startMsg)
 	require.NotNil(t, model.processingJob)
 	assert.Equal(t, backend.processingJob.ID, model.processingJob.ID)
-	require.NotNil(t, model.processingStatus)
-	assert.Equal(t, "running", model.processingStatus.State)
+	content := strings.Join(model.processingLines(100), "\n")
+	assert.Contains(t, content, "Processing job: "+backend.processingJob.ID)
+	assert.Contains(t, content, "Awaiting daemon status")
+	assert.NotContains(t, content, "Processing status:")
 	require.NotNil(t, terminalCmd)
 
 	close(terminalRelease)
@@ -1934,6 +1936,9 @@ func TestProcessingRunExposesDurableJobBeforeBlockedTerminalStatus(t *testing.T)
 	require.NotNil(t, model.processingStatus)
 	assert.Equal(t, "completed", model.processingStatus.State)
 	assert.Equal(t, "published", model.processingStatus.Phase)
+	content = strings.Join(model.processingLines(100), "\n")
+	assert.Contains(t, content, "Processing status: completed · published")
+	assert.NotContains(t, content, "Awaiting daemon status")
 }
 
 func TestClosingProcessingViewCancelsBlockedTerminalStatus(t *testing.T) {

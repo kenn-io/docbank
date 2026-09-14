@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
@@ -176,6 +176,67 @@ retention policy for external references themselves.
 `ContentIdentity` always describes decoded document bytes, regardless of
 whether those bytes are stored raw, zstd-compressed, or in a pack. SHA-256 is
 the canonical logical identity, not a digest of a physical storage file.
+
+## Configure document processing
+
+Pass named `ProcessingProfileConfig` values through `Config.Processing.Profiles`.
+Each value binds a canonical portable profile to its provider implementations.
+`EmbeddingProviders`, `EmbeddingDisclosures`, and `Tokenizers` use the embedding
+binding names from that profile.
+
+Every provider with an `operator_network` or `hosted_provider` trust boundary
+requires an explicit `ProcessingRuntimeDisclosure.Endpoint` when `docbank.New`
+opens the vault. Set `RenditionDisclosure` for a rendition provider and an entry
+in `EmbeddingDisclosures` for each network embedding binding. Opening fails if
+an endpoint is missing or invalid. Docbank cannot infer it from a provider
+interface.
+
+The endpoint must describe the provider's configured HTTP(S) destination and
+contain no URL credentials, query parameters, or fragment. A `local_process`
+provider accepts an empty endpoint or `in-process`. Docbank fills omitted
+processor and deployment identities from the provider and profile, and derives
+metadata classes and retained artifact roles. Review the resulting
+`PlanProcessing` response before granting consent; these disclosures are part
+of its fingerprint.
+
+For example, given a canonical `profile` with a rendition provider and a
+`text` embedding binding, the matching constructed providers, and that
+binding's tokenizer:
+
+```go
+vault, err := docbank.New(ctx, docbank.Config{
+    Root: root,
+    Processing: docbank.ProcessingOptions{
+        Profiles: map[string]docbank.ProcessingProfileConfig{
+            "private": {
+                Profile: profile,
+                RenditionProvider: renditionProvider,
+                RenditionDisclosure: docbank.ProcessingRuntimeDisclosure{
+                    Endpoint: "http://127.0.0.1:5001",
+                },
+                EmbeddingProviders: map[string]document.EmbeddingProvider{
+                    "text": embeddingProvider,
+                },
+                EmbeddingDisclosures: map[string]docbank.ProcessingRuntimeDisclosure{
+                    "text": {Endpoint: "http://127.0.0.1:8080"},
+                },
+                Tokenizers: map[string]document.Tokenizer{"text": tokenizer},
+            },
+        },
+    },
+})
+if err != nil {
+    return err
+}
+defer vault.Close()
+```
+
+Use the same endpoints when constructing the providers; a disclosure names a
+destination but does not configure its transport. Import `document` from
+`go.kenn.io/docbank/document`. See [Document Understanding in Go](document-understanding.md)
+for provider construction and [Document processing](usage/document-processing.md)
+for planning, consent, retained results, and the private-deployment acceptance
+runner.
 
 ## Extract and read source metadata
 

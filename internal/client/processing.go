@@ -32,7 +32,6 @@ var (
 const (
 	maxProcessingEventStreamBytes int64 = 64 << 10
 	maxRenditionResponseBytes     int64 = 64 << 20
-	maxDocumentSearchPathBytes          = 16 << 10
 	maxDocumentSearchExcerptRunes       = 512
 	maxDocumentSearchExcerptBytes       = 4 * maxDocumentSearchExcerptRunes
 )
@@ -165,7 +164,7 @@ func (stream *ProcessingEventStream) Next() (api.ProcessingJobEvent, error) {
 	switch event.Type {
 	case "status":
 		if event.Job != nil || event.Status == nil || event.Error != nil || event.Status.JobID != stream.jobID ||
-			!validProcessingEmbeddingIDs(event.Status.EmbeddingJobIDs) {
+			!validProcessingStatus(*event.Status) {
 			_ = stream.Close()
 			return api.ProcessingJobEvent{}, errors.New("processing stream returned malformed terminal status")
 		}
@@ -226,6 +225,28 @@ func validProcessingEmbeddingIDs(ids []string) bool {
 		seen[id] = struct{}{}
 	}
 	return true
+}
+
+// Stream and standalone status responses use the same aggregate contract.
+func validProcessingStatus(status api.ProcessingStatus) bool {
+	if !validSHA256Hex(status.JobID) || !validProcessingEmbeddingIDs(status.EmbeddingJobIDs) ||
+		!validBoundedSearchIdentity(status.Phase, 128) || strings.TrimSpace(status.Phase) == "" ||
+		status.CompletedBindings < 0 || status.CompletedBindings > len(status.EmbeddingJobIDs) ||
+		(status.FailureCode != "" && (!validBoundedSearchIdentity(status.FailureCode, 128) || strings.TrimSpace(status.FailureCode) == "")) {
+		return false
+	}
+	switch status.State {
+	case "completed":
+		return status.FailureCode == "" && status.CompletedBindings == len(status.EmbeddingJobIDs)
+	case "failed", "operator_required", "retry_wait":
+		return status.FailureCode != ""
+	case "queued", "running", "abandoned", "partial":
+		// A reclaimed embedding job can retain its previous failure code;
+		// abandoning obsolete work need not publish a failure at all.
+		return true
+	default:
+		return false
+	}
 }
 
 type boundedReadCloser struct {
@@ -339,8 +360,13 @@ func (c *Client) ProcessingStatus(ctx context.Context, jobID string) (api.Proces
 		return api.ProcessingStatus{}, errors.New("processing job ID must be lowercase SHA-256")
 	}
 	var result api.ProcessingStatus
-	err := c.do(ctx, http.MethodGet, "/api/v1/processing/jobs/"+jobID, nil, nil, &result)
-	return result, err
+	if err := c.do(ctx, http.MethodGet, "/api/v1/processing/jobs/"+jobID, nil, nil, &result); err != nil {
+		return api.ProcessingStatus{}, err
+	}
+	if result.JobID != jobID || !validProcessingStatus(result) {
+		return api.ProcessingStatus{}, errors.New("processing response returned malformed status")
+	}
+	return result, nil
 }
 
 func (c *Client) DocumentCoverage(ctx context.Context, profile string,
@@ -467,7 +493,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 }
 
 func validDocumentSearchPath(value string) bool {
-	return len(value) >= 2 && len(value) <= maxDocumentSearchPathBytes && utf8.ValidString(value) &&
+	return len(value) >= 2 && utf8.ValidString(value) &&
 		strings.HasPrefix(value, "/") && pathpkg.Clean(value) == value
 }
 

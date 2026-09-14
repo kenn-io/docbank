@@ -74,75 +74,96 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		return ProcessingCoverageSnapshot{}, profileErr
 	}
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
-	live := make(map[string]bool, len(opts.ContentVersionIDs))
-	for _, versionID := range opts.ContentVersionIDs {
-		var current bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v
-			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-			WHERE v.version_id=? AND n.kind='file')`, versionID).Scan(&current); err != nil {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
+		EXISTS(SELECT 1 FROM rendition_job_waiters w
+			JOIN rendition_jobs j ON j.job_id=w.job_id
+			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND w.state='waiting'
+			AND j.state IN ('queued','running','retry_wait'))
+		FROM `+nodeFrom+`
+		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=?
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
+		append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...)...)
+	if err != nil {
+		return ProcessingCoverageSnapshot{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	type renditionHead struct {
+		attachmentID string
+		rebuilding   bool
+	}
+	var heads []renditionHead
+	for rows.Next() {
+		var head renditionHead
+		if err := rows.Scan(&head.attachmentID, &head.rebuilding); err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
-		live[versionID] = current
-		if !current {
-			result.Renditions.Stale++
-			continue
-		}
-		complete, err := processingRenditionAvailableTx(ctx, tx, versionID, scope.ProcessingProfileFingerprint)
+		heads = append(heads, head)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return ProcessingCoverageSnapshot{}, err
+	}
+	result.Renditions.Stale = len(opts.ContentVersionIDs) - len(heads)
+	for _, head := range heads {
+		complete, err := processingRenditionAvailableTx(ctx, tx, head.attachmentID)
 		if err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
-		var rebuilding bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rendition_job_waiters w
-			JOIN rendition_jobs j ON j.job_id=w.job_id
-			WHERE w.content_version_id=? AND w.profile_fingerprint=? AND w.state='waiting'
-			AND j.state IN ('queued','running','retry_wait'))`, versionID, scope.ProcessingProfileFingerprint).Scan(&rebuilding); err != nil {
-			return ProcessingCoverageSnapshot{}, err
-		}
-		countProcessingCoverage(&result.Renditions, complete, rebuilding)
+		countProcessingCoverage(&result.Renditions, complete, head.rebuilding)
 	}
 	result.Renditions.State = processingCoverageClassState(result.Renditions)
 	for _, requested := range scope.Bindings {
-		item := ProcessingClassCoverage{Name: requested.BindingID, Required: requested.Required, Total: len(opts.ContentVersionIDs)}
-		var binding document.EmbeddingBindingV1
-		var vectorSpace string
+		item := ProcessingClassCoverage{Name: requested.BindingID, Required: requested.Required,
+			Total: len(opts.ContentVersionIDs), Stale: result.Renditions.Stale, Unavailable: len(heads)}
 		if profileErr == nil {
-			resolved, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx,
+			binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx,
 				scope.ProcessingProfileFingerprint, requested.BindingID)
 			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}
-			binding = resolved
 			if (binding.Activation == document.EmbeddingRequired) != requested.Required {
 				return ProcessingCoverageSnapshot{}, errors.New("coverage binding does not match processing profile authority")
 			}
-			vectorSpace = fingerprints.VectorSpace[binding.Name]
-		}
-		for _, versionID := range opts.ContentVersionIDs {
-			if !live[versionID] {
-				item.Stale++
-				continue
-			}
-			if profileErr != nil {
-				item.Unavailable++
-				continue
-			}
+			vectorSpace := fingerprints.VectorSpace[binding.Name]
 			_, complete, err := semanticSearchCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint,
-				binding.Name, binding.InputKind, vectorSpace, SearchOptions{ContentVersionIDs: []string{versionID}})
+				binding.Name, binding.InputKind, vectorSpace, opts)
 			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}
-			var rebuilding bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs j
+			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT cv.version_id FROM `+nodeFrom+`
+				JOIN embedding_jobs j ON j.content_version_id=cv.version_id
 				JOIN embedding_input_generations g ON g.generation_id=j.generation_id
-				WHERE j.content_version_id=? AND j.profile_fingerprint=? AND j.binding_id=?
+				WHERE n.kind='file' AND n.trashed_at IS NULL AND j.profile_fingerprint=? AND j.binding_id=?
 				AND j.input_kind=? AND j.vector_space_id=? AND j.state IN ('queued','running','retry_wait')
 				AND (j.input_kind='original_file' OR EXISTS (
 					SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
-					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id)))`,
-				versionID, scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace).Scan(&rebuilding); err != nil {
+					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id)) `+filterSQL,
+				append([]any{scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace}, filterArgs...)...)
+			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}
-			countProcessingCoverage(&item, complete == 1, rebuilding)
+			defer func() { _ = rows.Close() }()
+			var rebuildingIDs []string
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					return ProcessingCoverageSnapshot{}, err
+				}
+				rebuildingIDs = append(rebuildingIDs, id)
+			}
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return ProcessingCoverageSnapshot{}, err
+			}
+			item.Rebuilding = len(rebuildingIDs)
+			if item.Rebuilding > 0 {
+				_, item.PreviousGenerationServing, err = semanticSearchCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint,
+					binding.Name, binding.InputKind, vectorSpace, SearchOptions{ContentVersionIDs: rebuildingIDs})
+				if err != nil {
+					return ProcessingCoverageSnapshot{}, err
+				}
+			}
+			item.Complete = complete - item.PreviousGenerationServing
+			item.Unavailable -= item.Complete + item.Rebuilding
 		}
 		item.State = processingCoverageClassState(item)
 		result.Embeddings = append(result.Embeddings, item)
@@ -153,15 +174,9 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	return result, nil
 }
 
-func processingRenditionAvailableTx(ctx context.Context, tx *sql.Tx, versionID, profile string) (bool, error) {
-	var attachmentID string
-	err := tx.QueryRowContext(ctx, `SELECT attachment_id FROM rendition_heads
-		WHERE content_version_id=? AND profile_fingerprint=?`, versionID, profile).Scan(&attachmentID)
-	if errors.Is(err, sql.ErrNoRows) {
+func processingRenditionAvailableTx(ctx context.Context, tx *sql.Tx, attachmentID string) (bool, error) {
+	if attachmentID == "" {
 		return false, nil
-	}
-	if err != nil {
-		return false, err
 	}
 	attachment, err := loadRenditionAttachment(ctx, tx, attachmentID)
 	if err != nil {
