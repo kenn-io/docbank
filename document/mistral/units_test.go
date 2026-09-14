@@ -2,14 +2,18 @@ package mistral
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"maps"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLocalUnitCounterRegistryIsMistralOwnedAndBounded(t *testing.T) {
@@ -286,6 +290,26 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 	}
 	assert.Equal(t, 1, defaultUnits)
 	t.Logf("default_content_type count=%d", defaultUnits)
+}
+
+func TestPrepareAcceptsBOMPPTX(t *testing.T) {
+	bom := string([]byte{0xef, 0xbb, 0xbf})
+	source := pptxArchiveWithSlideXML(t, bom+validPPTXPresentation(), bom+validPPTXRelationships(), bom+validPPTXContentTypes())
+	policy := testPolicy(t, 1<<20, 10)
+	candidate, found := CandidateFormatByID("pptx")
+	require.True(t, found)
+	digest := sha256.Sum256(source)
+	spool := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, spool)
+	prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(source)), policy, PrepareOptions{
+		Directory: spool, DeclaredMediaType: candidate.MediaType,
+		ExpectedSize: int64(len(source)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: 1 << 20, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
+	assert.Equal(t, 1, prepared.localUnits)
+	t.Logf("prepared_bom_pptx local_units=%d", prepared.localUnits)
 }
 
 type pptxTestSlide struct {
