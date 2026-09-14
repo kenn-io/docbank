@@ -9,9 +9,25 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func TestComputeRecognizesMarkdownWithoutAnArtifactRole(t *testing.T) {
+	descriptor := syntheticMarkdownDescriptor(t)
+	descriptor.ArtifactRoles = nil
+	descriptor.Fingerprint = ""
+	descriptor, err := document.NewRenditionDescriptor(descriptor)
+	require.NoError(t, err)
+	sources := DefaultSources()
+	sources.ExtractorID = "synthetic-extractor/v1"
+	sources.BoundProviders = []document.RenditionDescriptor{descriptor}
+	record, err := Compute(sources)
+	require.NoError(t, err)
+	state := formatByID(t, record, "pdf").Capabilities[document.CapabilityText]
+	assert.Equal(t, document.CapabilityUnqualified, state.State)
+	assert.Equal(t, descriptor.Fingerprint, state.ProviderFingerprint)
+}
+
 func TestComputeRequiresRuntimeIdentities(t *testing.T) {
 	_, err := Compute(DefaultSources())
-	require.ErrorContains(t, err, "extractor fingerprint")
+	require.ErrorContains(t, err, "extractor identity")
 }
 
 func TestDefaultSourcesEnumeratesOnlyFixtureQualifiedDetection(t *testing.T) {
@@ -31,16 +47,8 @@ func TestDefaultSourcesEnumeratesOnlyFixtureQualifiedDetection(t *testing.T) {
 func TestComputeJoinsOnlyQualifiedSameDescriptorRoles(t *testing.T) {
 	provider := syntheticMarkdownDescriptor(t)
 	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
-	sources.KnownProviders = []document.RenditionDescriptor{provider}
+	sources.ExtractorID = "synthetic-extractor/v1"
 	sources.BoundProviders = []document.RenditionDescriptor{provider}
-	sources.Qualifications = []Qualification{{
-		DescriptorFingerprint: provider.Fingerprint,
-		CatalogID:             "pdf",
-		Capability:            document.CapabilityText,
-		InputKind:             document.RenditionInputOriginalFile,
-		Evidence:              "TestSyntheticMarkdownPDFOutput",
-	}}
 
 	record, err := Compute(sources)
 	require.NoError(t, err)
@@ -48,26 +56,18 @@ func TestComputeJoinsOnlyQualifiedSameDescriptorRoles(t *testing.T) {
 	assert.Equal(t, document.CapabilityQualified, pdf.Capabilities[document.CapabilityText].State)
 	assert.Equal(t, provider.ID, pdf.Capabilities[document.CapabilityText].Provider)
 	assert.NotEqual(t, document.CapabilityQualified, pdf.Capabilities[document.CapabilityPages].State,
-		"pages also requires an image role and verified page-frame machinery")
+		"text evidence does not qualify pages")
 	assert.Equal(t, document.CapabilityUnsupported,
 		formatByID(t, record, "dwg").Capabilities[document.CapabilityText].State)
 
 	unbound := sources
 	unbound.BoundProviders = nil
-	providerRequired, err := Compute(unbound)
+	withoutProviders, err := Compute(unbound)
 	require.NoError(t, err)
-	assert.Equal(t, document.CapabilityProviderRequired,
-		formatByID(t, providerRequired, "pdf").Capabilities[document.CapabilityText].State)
-
-	withoutQualification := sources
-	withoutQualification.Qualifications = nil
-	unqualified, err := Compute(withoutQualification)
-	require.NoError(t, err)
-	assert.Equal(t, document.CapabilityUnqualified,
-		formatByID(t, unqualified, "pdf").Capabilities[document.CapabilityText].State)
+	assert.Equal(t, document.CapabilityUnsupported,
+		formatByID(t, withoutProviders, "pdf").Capabilities[document.CapabilityText].State)
 
 	wrongRole := syntheticImageDescriptor(t)
-	sources.KnownProviders = []document.RenditionDescriptor{wrongRole}
 	sources.BoundProviders = []document.RenditionDescriptor{wrongRole}
 	roleMismatch, err := Compute(sources)
 	require.NoError(t, err)
@@ -98,13 +98,8 @@ func TestComputePreservesProviderAlternativesDeterministically(t *testing.T) {
 	first := syntheticMarkdownDescriptor(t)
 	second := syntheticImageDescriptor(t)
 	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
-	sources.KnownProviders = []document.RenditionDescriptor{second, first}
+	sources.ExtractorID = "synthetic-extractor/v1"
 	sources.BoundProviders = []document.RenditionDescriptor{second, first}
-	sources.Qualifications = []Qualification{
-		{DescriptorFingerprint: first.Fingerprint, CatalogID: "pdf", Capability: document.CapabilityText,
-			InputKind: document.RenditionInputOriginalFile, Evidence: "TestSyntheticMarkdownPDFOutput"},
-	}
 
 	record, err := Compute(sources)
 	require.NoError(t, err)
@@ -123,36 +118,17 @@ func TestComputePreservesProviderAlternativesDeterministically(t *testing.T) {
 	assert.Equal(t, document.CapabilityQualified, pdf.Capabilities[document.CapabilityText].State)
 	assert.Equal(t, first.Fingerprint, pdf.Capabilities[document.CapabilityText].ProviderFingerprint)
 
-	sources.KnownProviders = []document.RenditionDescriptor{first, second}
 	sources.BoundProviders = []document.RenditionDescriptor{first, second}
 	reordered, err := Compute(sources)
 	require.NoError(t, err)
 	assert.Equal(t, record, reordered)
 }
 
-func TestComputeAppliesOnlyCompiledDispatchAsUnqualifiedExpansion(t *testing.T) {
-	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
-	sources.Dispatch = []DispatchEntry{
-		{CatalogID: "zip", Compiled: true, DispatchFormat: "zip", Evidence: "not-independent-proof"},
-		{CatalogID: "rar", Compiled: false, DispatchFormat: "rar", Evidence: "not-independent-proof"},
-	}
-
-	record, err := Compute(sources)
-	require.NoError(t, err)
-	zip := formatByID(t, record, "zip").Capabilities[document.CapabilityExpand]
-	assert.Equal(t, document.CapabilityUnqualified, zip.State)
-	assert.Empty(t, zip.Evidence)
-	assert.Equal(t, document.CapabilityUnsupported,
-		formatByID(t, record, "rar").Capabilities[document.CapabilityExpand].State)
-	assert.Equal(t, []string{"zip"}, record.GeneratedBy.DecoderFormats)
-}
-
 func TestComputePreservesTranscriptFamilyApplicability(t *testing.T) {
 	provider := syntheticTranscriptDescriptor(t)
 	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
-	sources.KnownProviders = []document.RenditionDescriptor{provider}
+	sources.ExtractorID = "synthetic-extractor/v1"
+	sources.BoundProviders = []document.RenditionDescriptor{provider}
 
 	record, err := Compute(sources)
 	require.NoError(t, err)
@@ -165,7 +141,7 @@ func TestComputePreservesTranscriptFamilyApplicability(t *testing.T) {
 
 func TestComputeRejectsConflictingMetadataDeclarationsInAnyOrder(t *testing.T) {
 	qualified := MetadataCapability{
-		CatalogID: "pdf", Evidence: "fixture", ImplementationFingerprint: strings.Repeat("e", 64),
+		CatalogID: "pdf", Evidence: "fixture", ImplementationID: strings.Repeat("e", 64),
 	}
 	notApplicable := MetadataCapability{CatalogID: "pdf", NotApplicable: true}
 	for _, metadata := range [][]MetadataCapability{
@@ -173,7 +149,7 @@ func TestComputeRejectsConflictingMetadataDeclarationsInAnyOrder(t *testing.T) {
 		{notApplicable, qualified},
 	} {
 		sources := DefaultSources()
-		sources.ExtractorFingerprint = strings.Repeat("a", 64)
+		sources.ExtractorID = "synthetic-extractor/v1"
 		sources.Metadata = metadata
 		_, err := Compute(sources)
 		require.ErrorContains(t, err, "conflicting metadata declarations for pdf")
@@ -184,27 +160,16 @@ func TestComputeRejectsMutatedProviderIdentity(t *testing.T) {
 	provider := syntheticMarkdownDescriptor(t)
 	provider.ID = "forged-provider-id"
 	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
-	sources.KnownProviders = []document.RenditionDescriptor{provider}
+	sources.ExtractorID = "synthetic-extractor/v1"
 	sources.BoundProviders = []document.RenditionDescriptor{provider}
 
 	_, err := Compute(sources)
 	require.ErrorContains(t, err, "descriptor")
 }
 
-func TestComputeRejectsBoundProviderAbsentFromKnownSet(t *testing.T) {
-	provider := syntheticMarkdownDescriptor(t)
-	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
-	sources.BoundProviders = []document.RenditionDescriptor{provider}
-
-	_, err := Compute(sources)
-	require.ErrorContains(t, err, "known provider")
-}
-
 func TestLookupPrefersCatalogAndPreservesTheOriginalQuery(t *testing.T) {
 	sources := DefaultSources()
-	sources.ExtractorFingerprint = strings.Repeat("a", 64)
+	sources.ExtractorID = "synthetic-extractor/v1"
 	record, err := Compute(sources)
 	require.NoError(t, err)
 

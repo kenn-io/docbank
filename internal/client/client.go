@@ -21,8 +21,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
-	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -3001,10 +2999,7 @@ func (c *Client) Info(ctx context.Context) (api.VaultInfo, error) {
 	return info, err
 }
 
-func formatQuery(family, format, extension string) (string, error) {
-	if format != "" && extension != "" {
-		return "", errors.New("exactly one of --format or --extension may be set")
-	}
+func formatQuery(family, format, extension string) string {
 	query := url.Values{}
 	for key, value := range map[string]string{
 		"family": family, "format": format, "extension": extension,
@@ -3013,7 +3008,7 @@ func formatQuery(family, format, extension string) (string, error) {
 			query.Set(key, value)
 		}
 	}
-	return query.Encode(), nil
+	return query.Encode()
 }
 
 // FormatCapabilities reads and validates the daemon's per-format capability
@@ -3021,10 +3016,7 @@ func formatQuery(family, format, extension string) (string, error) {
 func (c *Client) FormatCapabilities(
 	ctx context.Context, family, format, extension string,
 ) (api.FormatCoverageResponse, error) {
-	query, err := formatQuery(family, format, extension)
-	if err != nil {
-		return api.FormatCoverageResponse{}, err
-	}
+	query := formatQuery(family, format, extension)
 	path := "/api/v1/formats/capabilities"
 	if query != "" {
 		path += "?" + query
@@ -3043,7 +3035,11 @@ func (c *Client) FormatCapabilities(
 			"decoding GET /api/v1/formats/capabilities response: %w", err)}
 	}
 	response := transport.FormatCoverageResponse
-	if err := validateFormatCapabilitiesResponse(response, family, format, extension); err != nil {
+	selector := format
+	if selector == "" {
+		selector = extension
+	}
+	if err := validateFormatCapabilitiesResponse(response, selector); err != nil {
 		return api.FormatCoverageResponse{}, &responseDecodeError{err: fmt.Errorf(
 			"validating GET /api/v1/formats/capabilities response: %w", err)}
 	}
@@ -3051,19 +3047,10 @@ func (c *Client) FormatCapabilities(
 }
 
 func validateFormatCapabilitiesResponse(
-	response api.FormatCoverageResponse, family, format, extension string,
+	response api.FormatCoverageResponse, selector string,
 ) error {
 	if err := document.ValidateFormatCoverageV1(response.FormatCoverageV1); err != nil {
 		return err
-	}
-	for _, row := range response.Formats {
-		if family != "" && row.QueryFamily != family {
-			return fmt.Errorf("format %q is outside requested family %q", row.ID, family)
-		}
-	}
-	selector := format
-	if selector == "" {
-		selector = extension
 	}
 	if selector == "" {
 		if response.Lookup != nil {
@@ -3078,73 +3065,28 @@ func validateFormatCapabilitiesResponse(
 	if lookup.Query != selector {
 		return fmt.Errorf("format lookup query %q does not match selector %q", lookup.Query, selector)
 	}
-	normalized := strings.ToLower(strings.TrimPrefix(selector, "."))
+	check := response.FormatCoverageV1
+	check.Formats = nil
+	check.Pending = nil
 	switch lookup.Match {
 	case document.FormatLookupFormat:
 		if lookup.Format == nil || lookup.Pending != nil {
 			return errors.New("format lookup payload does not match format result")
 		}
-		if normalized != lookup.Format.ID && !slices.Contains(lookup.Format.Extensions, normalized) {
-			return errors.New("format lookup payload does not match its query")
-		}
-		check := document.CloneFormatCoverageV1(response.FormatCoverageV1)
 		check.Formats = []document.FormatCapabilityV1{*lookup.Format}
-		check.Pending = []document.PendingFormatV1{}
-		if err := document.ValidateFormatCoverageV1(check); err != nil {
-			return err
-		}
-		if family != "" && lookup.Format.QueryFamily != family {
-			if len(response.Formats) != 0 {
-				return errors.New("family-excluded format lookup must return no format rows")
-			}
-			return nil
-		}
-		if len(response.Formats) != 1 {
-			return errors.New("format lookup must return exactly one filtered format row")
-		}
-		if !reflect.DeepEqual(response.Formats[0], *lookup.Format) {
-			return errors.New("filtered format row does not match lookup payload")
-		}
-		return nil
 	case document.FormatLookupPending:
 		if lookup.Pending == nil || lookup.Format != nil {
 			return errors.New("format lookup payload does not match pending result")
 		}
-		if normalized != strings.ToLower(lookup.Pending.Label) &&
-			!slices.Contains(lookup.Pending.Extensions, normalized) {
-			return errors.New("pending format lookup payload does not match its query")
-		}
-		check := document.CloneFormatCoverageV1(response.FormatCoverageV1)
-		check.Formats = []document.FormatCapabilityV1{}
 		check.Pending = []document.PendingFormatV1{*lookup.Pending}
-		if err := document.ValidateFormatCoverageV1(check); err != nil {
-			return err
-		}
-		if len(response.Formats) != 0 {
-			return errors.New("pending format lookup must return no format rows")
-		}
-		if !slices.ContainsFunc(response.Pending, func(pending document.PendingFormatV1) bool {
-			return reflect.DeepEqual(pending, *lookup.Pending)
-		}) {
-			return errors.New("pending lookup does not match pending inventory")
-		}
-		return nil
 	case document.FormatLookupUnknown:
 		if lookup.Format != nil || lookup.Pending != nil {
 			return errors.New("unknown format lookup carries a matched payload")
 		}
-		if len(response.Formats) != 0 {
-			return errors.New("unknown format lookup must return no format rows")
-		}
-		if slices.ContainsFunc(response.Pending, func(pending document.PendingFormatV1) bool {
-			return normalized == strings.ToLower(pending.Label) || slices.Contains(pending.Extensions, normalized)
-		}) {
-			return errors.New("unknown format lookup is contradicted by pending inventory")
-		}
-		return nil
 	default:
 		return fmt.Errorf("format lookup has unknown match %q", lookup.Match)
 	}
+	return document.ValidateFormatCoverageV1(check)
 }
 
 func (c *Client) StoragePack(ctx context.Context, maxBytes int64) (api.StoragePackReport, error) {

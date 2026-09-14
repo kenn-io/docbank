@@ -3,9 +3,7 @@ package media
 import (
 	"bytes"
 	"cmp"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -29,14 +27,8 @@ var ErrTooLarge = errors.New("media: input exceeds maximum size")
 
 var detectableFormats = []Format{FormatGIF, FormatJPEG, FormatMP4, FormatPNG, FormatWebP}
 
-const detectionImplementationDescriptor = "docbank-media-detection:jpeg+png+webp+gif+iso-bmff:v1"
-
-// DetectionImplementationFingerprint pins the byte detector implementation
-// exercised by the format qualification fixtures.
-var DetectionImplementationFingerprint = func() string {
-	digest := sha256.Sum256([]byte(detectionImplementationDescriptor))
-	return hex.EncodeToString(digest[:])
-}()
+// DetectionImplementationID is the version label exercised by format qualification fixtures.
+const DetectionImplementationID = "docbank-media-detection:jpeg+png+webp+gif+iso-bmff:v1"
 
 // DetectableFormats returns the complete set of formats recognized by sniff.
 func DetectableFormats() []Format { return slices.Clone(detectableFormats) }

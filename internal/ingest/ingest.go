@@ -4,8 +4,6 @@ package ingest
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,14 +19,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const originalRetentionImplementationDescriptor = "docbank-original-retention:verified-blob+ingest-authority:v1"
-
-// OriginalRetentionImplementationFingerprint pins the verified blob and
-// catalog-authority path exercised by format retention qualifications.
-var OriginalRetentionImplementationFingerprint = func() string {
-	digest := sha256.Sum256([]byte(originalRetentionImplementationDescriptor))
-	return hex.EncodeToString(digest[:])
-}()
+// OriginalRetentionImplementationID is the version label exercised by format qualification fixtures.
+const OriginalRetentionImplementationID = "docbank-original-retention:verified-blob+ingest-authority:v1"
 
 var (
 	// ErrUploadDigestMismatch reports bytes that do not match the identity the

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -77,7 +76,6 @@ func canonicalFormatCoverageV1(value FormatCoverageV1) (FormatCoverageV1, error)
 
 func cloneFormatCoverageV1(value FormatCoverageV1) FormatCoverageV1 {
 	value.GeneratedBy.BoundProviders = slices.Clone(value.GeneratedBy.BoundProviders)
-	value.GeneratedBy.DecoderFormats = slices.Clone(value.GeneratedBy.DecoderFormats)
 	value.Formats = slices.Clone(value.Formats)
 	for formatIndex := range value.Formats {
 		format := &value.Formats[formatIndex]
@@ -98,9 +96,6 @@ func cloneFormatCoverageV1(value FormatCoverageV1) FormatCoverageV1 {
 func canonicalizeCoverageSlices(value *FormatCoverageV1) {
 	if value.GeneratedBy.BoundProviders == nil {
 		value.GeneratedBy.BoundProviders = []string{}
-	}
-	if value.GeneratedBy.DecoderFormats == nil {
-		value.GeneratedBy.DecoderFormats = []string{}
 	}
 	if value.Formats == nil {
 		value.Formats = []FormatCapabilityV1{}
@@ -131,13 +126,10 @@ func validateFormatCoverageV1(value FormatCoverageV1) error {
 	if value.GeneratedBy.CatalogRows < len(value.Formats) || value.GeneratedBy.CatalogRows > MaxFormatCoverageRows {
 		return fmt.Errorf("format coverage catalog rows must be between the returned format count and %d", MaxFormatCoverageRows)
 	}
-	if !canonical.IsSHA256Hex(value.GeneratedBy.ExtractorFingerprint) {
-		return errors.New("format coverage extractor fingerprint must be a lowercase SHA-256 value")
-	}
-	if err := validateSortedCoverageStrings(value.GeneratedBy.BoundProviders, "bound provider", true); err != nil {
+	if err := validateCoverageText(value.GeneratedBy.ExtractorID, "extractor identity", false); err != nil {
 		return err
 	}
-	if err := validateSortedCoverageStrings(value.GeneratedBy.DecoderFormats, "decoder format", false); err != nil {
+	if err := validateSortedCoverageStrings(value.GeneratedBy.BoundProviders, "bound provider", true); err != nil {
 		return err
 	}
 	if len(value.Formats) > MaxFormatCoverageRows {
@@ -234,17 +226,17 @@ func validateCapabilityMap(value FormatCoverageV1, catalogID string, capabilitie
 		if state.ProviderFingerprint != "" && !canonical.IsSHA256Hex(state.ProviderFingerprint) {
 			return fmt.Errorf("capability %q provider fingerprint must be a lowercase SHA-256 value", key)
 		}
-		if state.Provider == "" && state.ProviderFingerprint != "" {
-			return fmt.Errorf("capability %q provider fingerprint requires a provider", key)
+		if (state.Provider == "") != (state.ProviderFingerprint == "") {
+			return fmt.Errorf("capability %q requires both provider and provider fingerprint", key)
+		}
+		if state.Provider != "" && !slices.Contains(value.GeneratedBy.BoundProviders, state.ProviderFingerprint) {
+			return fmt.Errorf("capability %q must name a bound provider", key)
 		}
 		if state.State != CapabilityQualified {
 			continue
 		}
 		if state.Evidence == "" {
 			return fmt.Errorf("qualified capability %q requires evidence", key)
-		}
-		if state.Provider != "" && state.ProviderFingerprint == "" {
-			return fmt.Errorf("qualified capability %q provider fingerprint is required", key)
 		}
 		if !registeredCoverageClaim(value, catalogID, key, state) {
 			return fmt.Errorf("qualified capability %q evidence is not registered for format %q", key, catalogID)
@@ -265,12 +257,12 @@ func registeredCoverageClaim(value FormatCoverageV1, catalogID string, key Capab
 				return true
 			}
 		default:
-			if qualification.ImplementationFingerprint == "" || qualification.DescriptorFingerprint != "" ||
+			if qualification.ImplementationID == "" || qualification.DescriptorFingerprint != "" ||
 				qualification.InputKind != formatqualification.InputOriginalFile {
 				continue
 			}
 			if key != CapabilityMetadata ||
-				qualification.ImplementationFingerprint == value.GeneratedBy.ExtractorFingerprint {
+				qualification.ImplementationID == value.GeneratedBy.ExtractorID {
 				return true
 			}
 		}
@@ -280,12 +272,6 @@ func registeredCoverageClaim(value FormatCoverageV1, catalogID string, key Capab
 
 func validateVariants(value FormatCoverageV1, catalogID string, variants []FormatVariantCapabilityV1) error {
 	for index, variant := range variants {
-		if err := validateCoverageText(variant.Container, "variant container", true); err != nil {
-			return fmt.Errorf("variant %d: %w", index, err)
-		}
-		if err := validateCoverageText(variant.Codec, "variant codec", true); err != nil {
-			return fmt.Errorf("variant %d: %w", index, err)
-		}
 		if err := validateCapabilityMap(value, catalogID, variant.Capabilities); err != nil {
 			return fmt.Errorf("variant %d: %w", index, err)
 		}
@@ -300,19 +286,13 @@ func validateVariants(value FormatCoverageV1, catalogID string, variants []Forma
 		case order == 0:
 			return errors.New("variant rows contain an exact duplicate")
 		case order > 0:
-			return errors.New("variant rows must be sorted by container, codec, and capabilities")
+			return errors.New("variant rows must be sorted by capabilities")
 		}
 	}
 	return nil
 }
 
 func compareFormatVariants(left, right FormatVariantCapabilityV1) (int, error) {
-	if order := strings.Compare(left.Container, right.Container); order != 0 {
-		return order, nil
-	}
-	if order := strings.Compare(left.Codec, right.Codec); order != 0 {
-		return order, nil
-	}
 	leftCapabilities, err := canonical.Marshal(left.Capabilities)
 	if err != nil {
 		return 0, fmt.Errorf("encoding left variant capabilities: %w", err)

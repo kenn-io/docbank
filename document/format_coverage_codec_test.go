@@ -64,7 +64,7 @@ func TestFormatCoverageValidationRequiresCompleteRegisteredClaims(t *testing.T) 
 			value.Formats[0].Capabilities[CapabilityMetadata] = CapabilityStateV1{State: CapabilityQualified, Evidence: "TestNameIsNotQualification"}
 		}},
 		{name: "mismatched implementation", want: "registered", mutate: func(value *FormatCoverageV1) {
-			value.GeneratedBy.ExtractorFingerprint = strings.Repeat("b", 64)
+			value.GeneratedBy.ExtractorID = strings.Repeat("b", 64)
 		}},
 		{name: "provider without fingerprint", want: "provider fingerprint", mutate: func(value *FormatCoverageV1) {
 			state := value.Formats[0].Capabilities[CapabilityMetadata]
@@ -114,6 +114,9 @@ func TestFormatCoverageValidationBindsProviderEvidenceToItsDescriptor(t *testing
 	decoded, err := DecodeFormatCoverageV1(encoded)
 	require.NoError(t, err)
 	assert.Equal(t, identified, decoded)
+
+	identified.GeneratedBy.BoundProviders = nil
+	require.ErrorContains(t, ValidateFormatCoverageV1(identified), "bound provider")
 }
 
 func TestFormatCoverageValidationKeepsOrderedProviderAlternatives(t *testing.T) {
@@ -122,8 +125,8 @@ func TestFormatCoverageValidationKeepsOrderedProviderAlternatives(t *testing.T) 
 	unqualified[CapabilityDetect] = CapabilityStateV1{State: CapabilityUnqualified}
 	unsupported := completeCapabilityStates(CapabilityUnsupported)
 	record.Formats[0].Variants = []FormatVariantCapabilityV1{
-		{Capabilities: unqualified, Codec: "", Container: "zip"},
-		{Capabilities: unsupported, Codec: "", Container: "zip"},
+		{Capabilities: unqualified},
+		{Capabilities: unsupported},
 	}
 	require.NoError(t, ValidateFormatCoverageV1(record))
 
@@ -166,8 +169,8 @@ func validFormatCoverageRecord() FormatCoverageV1 {
 			Variants: []FormatVariantCapabilityV1{},
 		}},
 		GeneratedBy: CoverageSourcesV1{
-			BoundProviders: []string{}, CatalogRows: 1, DecoderFormats: []string{},
-			ExtractorFingerprint: qualifiedMetadataFingerprint,
+			BoundProviders: []string{}, CatalogRows: 1,
+			ExtractorID: qualifiedMetadataFingerprint,
 		},
 		Pending: []PendingFormatV1{},
 	}

@@ -19,8 +19,8 @@ import (
 // Compute joins the document catalog to explicit, fixture-backed source
 // capabilities. It performs no I/O and does not construct providers.
 func Compute(sources Sources) (document.FormatCoverageV1, error) {
-	if sources.ExtractorFingerprint == "" {
-		return document.FormatCoverageV1{}, errors.New("format coverage extractor fingerprint is required")
+	if sources.ExtractorID == "" {
+		return document.FormatCoverageV1{}, errors.New("format coverage extractor identity is required")
 	}
 	if err := validateMetadataCapabilities(sources.Metadata); err != nil {
 		return document.FormatCoverageV1{}, err
@@ -30,37 +30,27 @@ func Compute(sources Sources) (document.FormatCoverageV1, error) {
 	slices.SortFunc(catalog, func(left, right document.FormatMetadata) int {
 		return strings.Compare(left.ID, right.ID)
 	})
-	bound, err := providerSet(sources.BoundProviders)
+	providers, err := canonicalProviders(sources.BoundProviders)
 	if err != nil {
 		return document.FormatCoverageV1{}, err
 	}
-	known, err := canonicalProviders(sources.KnownProviders)
-	if err != nil {
-		return document.FormatCoverageV1{}, err
-	}
-	knownFingerprints := make(map[string]bool, len(known))
-	for _, descriptor := range known {
-		knownFingerprints[descriptor.Fingerprint] = true
-	}
-	for fingerprint := range bound {
-		if !knownFingerprints[fingerprint] {
-			return document.FormatCoverageV1{}, fmt.Errorf("bound provider %s is absent from the known provider set", fingerprint)
-		}
+	bound := make([]string, 0, len(providers))
+	for _, descriptor := range providers {
+		bound = append(bound, descriptor.Fingerprint)
 	}
 
 	record := document.FormatCoverageV1{
 		ContractVersion: document.FormatCoverageContractV1,
 		Formats:         make([]document.FormatCapabilityV1, 0, len(catalog)),
 		GeneratedBy: document.CoverageSourcesV1{
-			BoundProviders:       sortedKeys(bound),
-			CatalogRows:          len(catalog),
-			DecoderFormats:       compiledDecoderFormats(sources.Dispatch),
-			ExtractorFingerprint: sources.ExtractorFingerprint,
+			BoundProviders: bound,
+			CatalogRows:    len(catalog),
+			ExtractorID:    sources.ExtractorID,
 		},
 		Pending: clonePending(sources.Pending),
 	}
 	for _, metadata := range catalog {
-		record.Formats = append(record.Formats, computeFormat(metadata, sources, known, bound))
+		record.Formats = append(record.Formats, computeFormat(metadata, sources, providers))
 	}
 	slices.SortFunc(record.Pending, func(left, right document.PendingFormatV1) int {
 		return strings.Compare(left.Label, right.Label)
@@ -72,17 +62,16 @@ func Compute(sources Sources) (document.FormatCoverageV1, error) {
 }
 
 func computeFormat(
-	metadata document.FormatMetadata, sources Sources, known []document.RenditionDescriptor,
-	bound map[string]bool,
+	metadata document.FormatMetadata, sources Sources, providers []document.RenditionDescriptor,
 ) document.FormatCapabilityV1 {
 	localCapabilities := baselineCapabilities(metadata)
 	applyLocalCapabilities(metadata.ID, sources, localCapabilities)
 	capabilities := maps.Clone(localCapabilities)
 
-	providerVariants := make([]document.FormatVariantCapabilityV1, 0, len(known))
-	for _, descriptor := range known {
+	providerVariants := make([]document.FormatVariantCapabilityV1, 0, len(providers))
+	for _, descriptor := range providers {
 		variant, eligible := providerVariant(
-			metadata, sources, descriptor, bound[descriptor.Fingerprint], localCapabilities,
+			metadata, descriptor, localCapabilities,
 		)
 		if !eligible {
 			continue
@@ -138,13 +127,13 @@ func applyLocalCapabilities(
 ) {
 	for _, candidate := range sources.Detect {
 		if candidate.CatalogID == catalogID && localQualification(catalogID, document.CapabilityDetect,
-			candidate.Evidence, candidate.ImplementationFingerprint) {
+			candidate.Evidence, candidate.ImplementationID) {
 			capabilities[document.CapabilityDetect] = qualifiedLocal(candidate.Evidence)
 		}
 	}
 	for _, candidate := range sources.Retain {
 		if candidate.CatalogID == catalogID && localQualification(catalogID, document.CapabilityRetain,
-			candidate.Evidence, candidate.ImplementationFingerprint) {
+			candidate.Evidence, candidate.ImplementationID) {
 			capabilities[document.CapabilityRetain] = qualifiedLocal(candidate.Evidence)
 		}
 	}
@@ -157,18 +146,10 @@ func applyLocalCapabilities(
 			continue
 		}
 		if localQualification(catalogID, document.CapabilityMetadata,
-			candidate.Evidence, candidate.ImplementationFingerprint) {
+			candidate.Evidence, candidate.ImplementationID) {
 			capabilities[document.CapabilityMetadata] = qualifiedLocal(candidate.Evidence)
 		} else {
 			capabilities[document.CapabilityMetadata] = document.CapabilityStateV1{State: document.CapabilityUnqualified}
-		}
-	}
-	for _, candidate := range sources.Dispatch {
-		if candidate.CatalogID == catalogID && candidate.Compiled {
-			capabilities[document.CapabilityExpand] = document.CapabilityStateV1{
-				State: document.CapabilityUnqualified,
-				Note:  "Compiled dispatch declaration lacks independent fixture qualification.",
-			}
 		}
 	}
 }
@@ -185,10 +166,10 @@ func validateMetadataCapabilities(values []MetadataCapability) error {
 	return nil
 }
 
-func localQualification(catalogID string, capability document.CapabilityKey, evidence, fingerprint string) bool {
+func localQualification(catalogID string, capability document.CapabilityKey, evidence, implementationID string) bool {
 	_, found := formatqualification.Lookup(formatqualification.Query{
 		CatalogID: catalogID, Capability: formatqualification.Capability(capability), Evidence: evidence,
-		ImplementationFingerprint: fingerprint, InputKind: formatqualification.InputOriginalFile,
+		ImplementationID: implementationID, InputKind: formatqualification.InputOriginalFile,
 	})
 	return found
 }
@@ -198,8 +179,8 @@ func qualifiedLocal(evidence string) document.CapabilityStateV1 {
 }
 
 func providerVariant(
-	metadata document.FormatMetadata, sources Sources, descriptor document.RenditionDescriptor,
-	bound bool, baseline map[document.CapabilityKey]document.CapabilityStateV1,
+	metadata document.FormatMetadata, descriptor document.RenditionDescriptor,
+	baseline map[document.CapabilityKey]document.CapabilityStateV1,
 ) (document.FormatVariantCapabilityV1, bool) {
 	capabilities := maps.Clone(baseline)
 	eligible := false
@@ -214,18 +195,9 @@ func providerVariant(
 			State: document.CapabilityUnqualified, Provider: descriptor.ID,
 			ProviderFingerprint: descriptor.Fingerprint,
 		}
-		if capability == document.CapabilityPages && !sources.PageFramesAvailable {
-			state.Note = "Verified page-frame machinery is unavailable."
-			capabilities[capability] = state
-			continue
-		}
-		if qualification, found := providerQualification(sources.Qualifications, descriptor, metadata.ID, capability); found {
+		if qualification, found := providerQualification(descriptor, metadata.ID, capability); found {
 			state.Evidence = qualification.Evidence
-			if bound {
-				state.State = document.CapabilityQualified
-			} else {
-				state.State = document.CapabilityProviderRequired
-			}
+			state.State = document.CapabilityQualified
 		}
 		capabilities[capability] = state
 	}
@@ -252,10 +224,7 @@ func descriptorSupports(
 	var role document.EvidenceArtifactRole
 	switch capability {
 	case document.CapabilityText:
-		if !descriptor.ReturnsMarkdown {
-			return false
-		}
-		role = document.EvidenceArtifactMarkdown
+		return descriptor.ReturnsMarkdown
 	case document.CapabilityPages:
 		role = document.EvidenceArtifactImage
 	case document.CapabilityTranscript:
@@ -267,24 +236,16 @@ func descriptorSupports(
 }
 
 func providerQualification(
-	qualifications []Qualification, descriptor document.RenditionDescriptor, catalogID string,
-	capability document.CapabilityKey,
-) (Qualification, bool) {
-	for _, qualification := range qualifications {
-		if qualification.DescriptorFingerprint != descriptor.Fingerprint || qualification.CatalogID != catalogID ||
-			qualification.Capability != capability || qualification.InputKind != document.RenditionInputOriginalFile {
-			continue
-		}
-		_, found := formatqualification.Lookup(formatqualification.Query{
-			CatalogID: catalogID, Capability: formatqualification.Capability(capability),
-			Evidence: qualification.Evidence, DescriptorFingerprint: descriptor.Fingerprint,
-			InputKind: formatqualification.InputOriginalFile,
-		})
-		if found {
+	descriptor document.RenditionDescriptor, catalogID string, capability document.CapabilityKey,
+) (formatqualification.Qualification, bool) {
+	for _, qualification := range formatqualification.All() {
+		if qualification.DescriptorFingerprint == descriptor.Fingerprint && qualification.CatalogID == catalogID &&
+			qualification.Capability == formatqualification.Capability(capability) &&
+			qualification.InputKind == formatqualification.InputOriginalFile {
 			return qualification, true
 		}
 	}
-	return Qualification{}, false
+	return formatqualification.Qualification{}, false
 }
 
 func betterCapability(candidate, current document.CapabilityStateV1) bool {
@@ -302,8 +263,6 @@ func capabilityRank(state document.CapabilityState) int {
 	switch state {
 	case document.CapabilityQualified:
 		return 4
-	case document.CapabilityProviderRequired:
-		return 3
 	case document.CapabilityUnqualified:
 		return 2
 	case document.CapabilityUnsupported:
@@ -332,44 +291,7 @@ func canonicalProviders(values []document.RenditionDescriptor) ([]document.Rendi
 	return result, nil
 }
 
-func providerSet(values []document.RenditionDescriptor) (map[string]bool, error) {
-	result := make(map[string]bool, len(values))
-	for _, descriptor := range values {
-		canonical, err := document.NewRenditionDescriptor(descriptor)
-		if err != nil || !reflect.DeepEqual(canonical, descriptor) {
-			return nil, fmt.Errorf("bound provider %q descriptor identity is invalid", descriptor.ID)
-		}
-		result[descriptor.Fingerprint] = true
-	}
-	return result, nil
-}
-
-func sortedKeys(values map[string]bool) []string {
-	result := make([]string, 0, len(values))
-	for value := range values {
-		result = append(result, value)
-	}
-	slices.Sort(result)
-	return result
-}
-
-func compiledDecoderFormats(entries []DispatchEntry) []string {
-	seen := map[string]bool{}
-	for _, entry := range entries {
-		if entry.Compiled {
-			seen[entry.DispatchFormat] = true
-		}
-	}
-	return sortedKeys(seen)
-}
-
 func compareVariants(left, right document.FormatVariantCapabilityV1) int {
-	if order := strings.Compare(left.Container, right.Container); order != 0 {
-		return order
-	}
-	if order := strings.Compare(left.Codec, right.Codec); order != 0 {
-		return order
-	}
 	leftBytes, _ := canonical.Marshal(left.Capabilities)
 	rightBytes, _ := canonical.Marshal(right.Capabilities)
 	return bytes.Compare(leftBytes, rightBytes)

@@ -156,9 +156,9 @@ func TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat(t *testing.T) {
 
 			_, qualified := formatqualification.Lookup(formatqualification.Query{
 				CatalogID: format.ID, Capability: formatqualification.CapabilityRetain,
-				Evidence:                  "TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat",
-				ImplementationFingerprint: OriginalRetentionImplementationFingerprint,
-				InputKind:                 formatqualification.InputOriginalFile,
+				Evidence:         "TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat",
+				ImplementationID: OriginalRetentionImplementationID,
+				InputKind:        formatqualification.InputOriginalFile,
 			})
 			assert.True(t, qualified, "executed retention format %s is absent from the qualification manifest", format.ID)
 		})

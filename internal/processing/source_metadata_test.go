@@ -453,7 +453,7 @@ func assertQualifiedOOXMLMetadata(t *testing.T, catalogID, familyPart, evidence 
 	assert.Equal(t, int64(7), pages)
 	_, qualified := formatqualification.Lookup(formatqualification.Query{
 		CatalogID: catalogID, Capability: formatqualification.CapabilityMetadata,
-		Evidence: evidence, ImplementationFingerprint: SourceMetadataExtractorFingerprint,
+		Evidence: evidence, ImplementationID: SourceMetadataExtractorFingerprint,
 		InputKind: formatqualification.InputOriginalFile,
 	})
 	assert.True(t, qualified, "executed %s fixture is absent from the qualification manifest", catalogID)

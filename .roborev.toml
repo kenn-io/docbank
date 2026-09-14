@@ -6,16 +6,12 @@ multi-user, multi-tenant, or internet-facing deployment.
 
 Key assumptions reviewers MUST account for:
 
-1. REVIEW THE IMMUTABLE TARGET AND REUSE ACTUAL EVIDENCE. Read committed
-   review ranges with `git show`, `git diff`, or an archive at the exact
-   target HEAD. Reuse recorded commit, command, result, and failure evidence;
-   never assume or claim a package or full suite ran. Run an additional
-   focused test only for a named unresolved risk, in an isolated checkout at
-   the exact target HEAD, and remove that checkout afterward. Never probe,
-   mutate, or test the live implementation worktree, index, or branch. Do not
-   repeat package or full suites without a named unresolved risk. If code
-   looks syntactically impossible, verify against the go.mod language version
-   before flagging (see 2), and prefer flagging logic over legality.
+1. COMPILATION IS CI'S JOB. The tree is gated by `go build`, `go vet`,
+   and the full test suite with `-tags fts5` and CGO on Linux, macOS,
+   and Windows before any review runs. Do not report "this does not
+   compile" findings; if code looks syntactically impossible, verify
+   against the go.mod language version before flagging (see 2), and
+   prefer flagging logic over legality.
 
 2. GO VERSION: go.mod pins Go 1.27+. Go 1.26 added value-form `new(v)`,
    which returns `*T` pointing to v — e.g. `new("clean")` is valid and
@@ -29,9 +25,9 @@ Key assumptions reviewers MUST account for:
    CI pins that line via go-version-file) — do not flag a missing
    `mkdir -p dist` in the release workflow.
 
-3. BUILD TAGS: supported Go builds and tests use `-tags fts5` in both CGO
-   mode (mattn SQLite) and `CGO_ENABLED=0` mode (modernc SQLite). A failure
-   of an untagged `go build` or `go test` is not a finding.
+3. BUILD TAGS: everything builds and tests with `-tags fts5` and CGO
+   enabled (`make test`). A failure of an untagged `go build`/`go test`
+   is not a finding.
 
 4. AUTH MODEL: the daemon always enforces an API key. An empty
    configured `api_key` means the daemon generates an ephemeral per-run

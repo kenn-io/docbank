@@ -9,11 +9,11 @@ import (
 func TestCapabilityVocabulariesAreClosed(t *testing.T) {
 	assert.Equal(t, []CapabilityKey{"detect", "retain", "metadata", "expand", "text", "pages", "transcript"},
 		AllCapabilityKeys())
-	assert.Equal(t, []CapabilityState{"qualified", "provider_required", "unqualified", "unsupported", "not_applicable"},
+	assert.Equal(t, []CapabilityState{"qualified", "unqualified", "unsupported", "not_applicable"},
 		AllCapabilityStates())
 	assert.True(t, ValidCapabilityKey(CapabilityExpand))
 	assert.False(t, ValidCapabilityKey("ocr"))
-	assert.True(t, ValidCapabilityState(CapabilityProviderRequired))
+	assert.True(t, ValidCapabilityState(CapabilityQualified))
 	assert.False(t, ValidCapabilityState("maybe"))
 	assert.Equal(t, "format-coverage/v1", FormatCoverageContractV1)
 }

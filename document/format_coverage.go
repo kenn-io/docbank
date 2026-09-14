@@ -46,16 +46,14 @@ func ValidCapabilityKey(key CapabilityKey) bool { return slices.Contains(allCapa
 type CapabilityState string
 
 const (
-	CapabilityQualified        CapabilityState = "qualified"
-	CapabilityProviderRequired CapabilityState = "provider_required"
-	CapabilityUnqualified      CapabilityState = "unqualified"
-	CapabilityUnsupported      CapabilityState = "unsupported"
-	CapabilityNotApplicable    CapabilityState = "not_applicable"
+	CapabilityQualified     CapabilityState = "qualified"
+	CapabilityUnqualified   CapabilityState = "unqualified"
+	CapabilityUnsupported   CapabilityState = "unsupported"
+	CapabilityNotApplicable CapabilityState = "not_applicable"
 )
 
 var allCapabilityStates = []CapabilityState{
 	CapabilityQualified,
-	CapabilityProviderRequired,
 	CapabilityUnqualified,
 	CapabilityUnsupported,
 	CapabilityNotApplicable,
@@ -88,8 +86,6 @@ type CapabilityStateV1 struct {
 
 type FormatVariantCapabilityV1 struct {
 	Capabilities map[CapabilityKey]CapabilityStateV1 `json:"capabilities"`
-	Codec        string                              `json:"codec"`
-	Container    string                              `json:"container"`
 }
 
 type FormatCapabilityV1 struct {
@@ -110,10 +106,9 @@ type PendingFormatV1 struct {
 }
 
 type CoverageSourcesV1 struct {
-	BoundProviders       []string `json:"bound_providers"`
-	CatalogRows          int      `json:"catalog_rows"`
-	DecoderFormats       []string `json:"decoder_formats"`
-	ExtractorFingerprint string   `json:"extractor_fingerprint"`
+	BoundProviders []string `json:"bound_providers"`
+	CatalogRows    int      `json:"catalog_rows"`
+	ExtractorID    string   `json:"extractor_id"`
 }
 
 type FormatCoverageV1 struct {

@@ -1,11 +1,9 @@
 package api_test
 
 import (
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +11,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
-	internalprocessing "go.kenn.io/docbank/internal/processing"
 )
 
 func TestFormatCapabilitiesFiltersAndLooksUp(t *testing.T) {
@@ -92,17 +89,16 @@ func TestFormatCapabilitiesLookupUsesFullSnapshotBeforeFamilyFilter(t *testing.T
 }
 
 func TestFormatCapabilitiesSnapshotIsFrozenAndDeepCopied(t *testing.T) {
-	snapshot, err := internalprocessing.FormatCoverage(nil)
-	require.NoError(t, err)
+	configure := configureProcessingTestService(t)
+	var snapshot document.FormatCoverageV1
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		configure(d)
+		snapshot = d.Processing.FormatCoverage()
+	})
 	originalCount := len(snapshot.Formats)
 	originalState := snapshot.Formats[0].Capabilities[document.CapabilityDetect]
-	var calls atomic.Int64
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.FormatCoverage = func(context.Context) (document.FormatCoverageV1, error) {
-			calls.Add(1)
-			return snapshot, nil
-		}
-	})
+	require.Len(t, snapshot.GeneratedBy.BoundProviders, 1)
+	boundProvider := snapshot.GeneratedBy.BoundProviders[0]
 
 	snapshot.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
 		State: document.CapabilityUnsupported, Note: "mutated after construction",
@@ -120,7 +116,7 @@ func TestFormatCapabilitiesSnapshotIsFrozenAndDeepCopied(t *testing.T) {
 	assert.Equal(t, originalState, got.Formats[0].Capabilities[document.CapabilityDetect])
 	assert.NotContains(t, got.Formats[0].Extensions, "mutated")
 	assert.NotContains(t, got.GeneratedBy.BoundProviders, strings.Repeat("f", 64))
-	assert.EqualValues(t, 1, calls.Load(), "coverage is captured once by NewServer")
+	assert.Equal(t, []string{boundProvider}, got.GeneratedBy.BoundProviders)
 }
 
 func TestFormatsRouteRequiresAuthentication(t *testing.T) {

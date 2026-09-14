@@ -9,12 +9,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/coverage"
+	internalformatcoverage "go.kenn.io/docbank/internal/formatcoverage"
 )
 
 var updateFormatCoverage = flag.Bool("update", false, "update the pinned format coverage fixture")
 
 func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
-	record, err := FormatCoverage(nil)
+	record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	encoded, _, err := document.MarshalFormatCoverageV1(record)
 	require.NoError(t, err)
@@ -28,11 +30,10 @@ func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
 }
 
 func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.T) {
-	record, err := FormatCoverage(nil)
+	record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	assert.Len(t, record.Formats, 52)
-	assert.Equal(t, SourceMetadataExtractorFingerprint, record.GeneratedBy.ExtractorFingerprint)
-	assert.Empty(t, record.GeneratedBy.DecoderFormats)
+	assert.Equal(t, SourceMetadataExtractorFingerprint, record.GeneratedBy.ExtractorID)
 
 	qualifiedDetect := map[string]bool{
 		"csv": true, "doc": true, "docx": true, "eml": true, "epub": true,
@@ -65,13 +66,22 @@ func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.
 
 func TestFormatCoverageUsesExecutedSyntheticProviderQualification(t *testing.T) {
 	descriptor := syntheticMarkdownCoverageDescriptor(t)
-	record, err := FormatCoverage([]document.RenditionDescriptor{descriptor})
+	record, err := internalformatcoverage.Compute([]document.RenditionDescriptor{descriptor}, SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	text := processingFormatByID(t, record, "pdf").Capabilities[document.CapabilityText]
 	assert.Equal(t, document.CapabilityQualified, text.State)
 	assert.Equal(t, descriptor.ID, text.Provider)
 	assert.Equal(t, descriptor.Fingerprint, text.ProviderFingerprint)
 	assert.Equal(t, "TestSyntheticMarkdownPDFOutput", text.Evidence)
+}
+
+func TestFormatCoverageRequiresTheActiveMetadataExtractorQualification(t *testing.T) {
+	record, err := internalformatcoverage.Compute(nil, "synthetic-extractor/v2")
+	require.NoError(t, err)
+	assert.Equal(t, "synthetic-extractor/v2", record.GeneratedBy.ExtractorID)
+	pdf := processingFormatByID(t, record, "pdf")
+	assert.Equal(t, document.CapabilityUnqualified, pdf.Capabilities[document.CapabilityMetadata].State)
+	assert.Equal(t, document.CapabilityQualified, pdf.Capabilities[document.CapabilityDetect].State)
 }
 
 func TestLookupFormatDistinguishesCatalogPendingAndUnknown(t *testing.T) {
@@ -83,8 +93,9 @@ func TestLookupFormatDistinguishesCatalogPendingAndUnknown(t *testing.T) {
 		{query: "wpd", match: document.FormatLookupPending},
 		{query: "qqq", match: document.FormatLookupUnknown},
 	} {
-		lookup, err := LookupFormat(nil, testCase.query)
+		record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
 		require.NoError(t, err)
+		lookup := coverage.Lookup(record, testCase.query)
 		assert.Equal(t, testCase.match, lookup.Match)
 		assert.Equal(t, testCase.query, lookup.Query)
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,18 +13,16 @@ import (
 	documentcoverage "go.kenn.io/docbank/document/coverage"
 	"go.kenn.io/docbank/internal/api"
 	internalformatcoverage "go.kenn.io/docbank/internal/formatcoverage"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestFormatQueryKeepsUnknownSelector(t *testing.T) {
-	got, err := formatQuery("archive", "", "qqq")
-	require.NoError(t, err)
+	got := formatQuery("archive", "", "qqq")
 	require.Equal(t, "extension=qqq&family=archive", got)
-	_, err = formatQuery("", "zip", "zip")
-	require.Error(t, err)
 }
 
 func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "wpd")
 	snapshot.Formats = []document.FormatCapabilityV1{}
@@ -48,7 +45,7 @@ func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "pdf")
 	snapshot.Formats = []document.FormatCapabilityV1{}
@@ -64,7 +61,7 @@ func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesRejectsInvalidDomainPayload(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	snapshot.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
 		State: "invented_state",
@@ -82,7 +79,7 @@ func TestClientFormatCapabilitiesRejectsInvalidDomainPayload(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesRejectsMismatchedLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "wpd")
 	lookup.Query = "wrong"
@@ -100,82 +97,8 @@ func TestClientFormatCapabilitiesRejectsMismatchedLookup(t *testing.T) {
 	assert.ErrorContains(t, err, "lookup query")
 }
 
-func TestClientFormatCapabilitiesRejectsInconsistentLookupInventory(t *testing.T) {
-	base, err := internalformatcoverage.Compute(nil)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name      string
-		family    string
-		format    string
-		extension string
-		response  func() api.FormatCoverageResponse
-		want      string
-	}{
-		{
-			name: "format lookup carries extra rows", format: "zip", want: "exactly one filtered format row",
-			response: func() api.FormatCoverageResponse {
-				lookup := documentcoverage.Lookup(base, "zip")
-				return api.FormatCoverageResponse{FormatCoverageV1: document.CloneFormatCoverageV1(base), Lookup: &lookup}
-			},
-		},
-		{
-			name: "format row conflicts with lookup", format: "zip", want: "does not match lookup payload",
-			response: func() api.FormatCoverageResponse {
-				lookup := documentcoverage.Lookup(base, "zip")
-				independent := documentcoverage.Lookup(base, "zip")
-				row := *independent.Format
-				state := lookup.Format.Capabilities[document.CapabilityDetect]
-				state.Note = "different but independently valid lookup payload"
-				lookup.Format.Capabilities[document.CapabilityDetect] = state
-				coverage := document.CloneFormatCoverageV1(base)
-				coverage.Formats = []document.FormatCapabilityV1{row}
-				return api.FormatCoverageResponse{FormatCoverageV1: coverage, Lookup: &lookup}
-			},
-		},
-		{
-			name: "pending lookup carries format rows", extension: "wpd", want: "must return no format rows",
-			response: func() api.FormatCoverageResponse {
-				lookup := documentcoverage.Lookup(base, "wpd")
-				return api.FormatCoverageResponse{FormatCoverageV1: document.CloneFormatCoverageV1(base), Lookup: &lookup}
-			},
-		},
-		{
-			name: "pending lookup conflicts with inventory", extension: "wpd", want: "does not match pending inventory",
-			response: func() api.FormatCoverageResponse {
-				lookup := documentcoverage.Lookup(base, "wpd")
-				coverage := document.CloneFormatCoverageV1(base)
-				coverage.Formats = []document.FormatCapabilityV1{}
-				coverage.Pending = slices.DeleteFunc(coverage.Pending, func(row document.PendingFormatV1) bool {
-					return row.Label == "WPD"
-				})
-				return api.FormatCoverageResponse{FormatCoverageV1: coverage, Lookup: &lookup}
-			},
-		},
-		{
-			name: "unknown lookup contradicted by pending inventory", extension: "wpd", want: "contradicted by pending inventory",
-			response: func() api.FormatCoverageResponse {
-				coverage := document.CloneFormatCoverageV1(base)
-				coverage.Formats = []document.FormatCapabilityV1{}
-				lookup := document.FormatLookupV1{Match: document.FormatLookupUnknown, Query: "wpd"}
-				return api.FormatCoverageResponse{FormatCoverageV1: coverage, Lookup: &lookup}
-			},
-		},
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			server := serveFormatCapabilities(t, testCase.response())
-			_, err := New(server.URL, "").FormatCapabilities(
-				t.Context(), testCase.family, testCase.format, testCase.extension)
-			require.Error(t, err)
-			assert.True(t, IsResponseDecodeError(err))
-			assert.ErrorContains(t, err, testCase.want)
-		})
-	}
-}
-
 func TestClientFormatCapabilitiesStrictResponseJSON(t *testing.T) {
-	base, err := internalformatcoverage.Compute(nil)
+	base, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(base, "zip")
 	base.Formats = []document.FormatCapabilityV1{*lookup.Format}

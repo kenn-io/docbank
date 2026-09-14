@@ -85,9 +85,9 @@ func TestDetectBytesRecognizesSupportedContainers(t *testing.T) {
 			assert.Equal(t, tt.width*tt.height, got.Pixels())
 			_, qualified := formatqualification.Lookup(formatqualification.Query{
 				CatalogID: string(tt.wantFormat), Capability: formatqualification.CapabilityDetect,
-				Evidence:                  "TestDetectBytesRecognizesSupportedContainers",
-				ImplementationFingerprint: media.DetectionImplementationFingerprint,
-				InputKind:                 formatqualification.InputOriginalFile,
+				Evidence:         "TestDetectBytesRecognizesSupportedContainers",
+				ImplementationID: media.DetectionImplementationID,
+				InputKind:        formatqualification.InputOriginalFile,
 			})
 			assert.True(t, qualified, "executed media detector format %s is absent from the qualification manifest", tt.wantFormat)
 		})

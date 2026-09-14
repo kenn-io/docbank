@@ -3,10 +3,8 @@ package formatdetect
 import (
 	"archive/zip"
 	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
-	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/xml"
 	"errors"
@@ -44,14 +42,8 @@ const (
 	ooxmlContentTypesName    = "[Content_Types].xml"
 )
 
-const detectionImplementationDescriptor = "docbank-document-format-detection:pdf+ooxml+epub+compound+rtf+utf8-structured-text:v1"
-
-// DetectionImplementationFingerprint pins the shared byte detector exercised
-// by document-provider qualification fixtures.
-var DetectionImplementationFingerprint = func() string {
-	digest := sha256.Sum256([]byte(detectionImplementationDescriptor))
-	return hex.EncodeToString(digest[:])
-}()
+// DetectionImplementationID is the version label exercised by format qualification fixtures.
+const DetectionImplementationID = "docbank-document-format-detection:pdf+ooxml+epub+compound+rtf+utf8-structured-text:v1"
 
 // CompoundDirectoryNames validates one legacy compound-file directory. It is
 // exported only so the Mistral compatibility suite can retain its allocation

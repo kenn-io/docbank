@@ -49,9 +49,9 @@ func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
 			assert.Equal(t, test.wantID, format.ID)
 			_, qualified := formatqualification.Lookup(formatqualification.Query{
 				CatalogID: test.wantID, Capability: formatqualification.CapabilityDetect,
-				Evidence:                  "TestDetectFormatRecognizesBoundedDocumentFamilies",
-				ImplementationFingerprint: formatdetect.DetectionImplementationFingerprint,
-				InputKind:                 formatqualification.InputOriginalFile,
+				Evidence:         "TestDetectFormatRecognizesBoundedDocumentFamilies",
+				ImplementationID: formatdetect.DetectionImplementationID,
+				InputKind:        formatqualification.InputOriginalFile,
 			})
 			assert.True(t, qualified, "executed document detector format %s is absent from the qualification manifest", test.wantID)
 		})
@@ -65,9 +65,9 @@ func TestDetectFormatDoesNotQualifyMIMEOnlyGo(t *testing.T) {
 	assert.Equal(t, "go", format.ID)
 	_, qualified := formatqualification.Lookup(formatqualification.Query{
 		CatalogID: "go", Capability: formatqualification.CapabilityDetect,
-		Evidence:                  "TestDetectFormatRecognizesBoundedDocumentFamilies",
-		ImplementationFingerprint: formatdetect.DetectionImplementationFingerprint,
-		InputKind:                 formatqualification.InputOriginalFile,
+		Evidence:         "TestDetectFormatRecognizesBoundedDocumentFamilies",
+		ImplementationID: formatdetect.DetectionImplementationID,
+		InputKind:        formatqualification.InputOriginalFile,
 	})
 	assert.False(t, qualified, "MIME candidate acceptance is not byte recognition")
 }

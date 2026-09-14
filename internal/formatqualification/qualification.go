@@ -33,12 +33,12 @@ const InputOriginalFile InputKind = "original_file"
 // implementation or provider descriptor identity. Exactly matching this tuple
 // is the only way runtime composition can consume a qualification.
 type Qualification struct {
-	CatalogID                 string
-	Capability                Capability
-	Evidence                  string
-	ImplementationFingerprint string
-	DescriptorFingerprint     string
-	InputKind                 InputKind
+	CatalogID             string
+	Capability            Capability
+	Evidence              string
+	ImplementationID      string
+	DescriptorFingerprint string
+	InputKind             InputKind
 }
 
 // Query is the exact typed lookup key for a qualification.
@@ -54,44 +54,44 @@ type EvidenceQuery struct {
 }
 
 const (
-	documentDetectionEvidence          = "TestDetectFormatRecognizesBoundedDocumentFamilies"
-	documentDetectionFingerprint       = "836ada67f9a06eb28104fbb3904f7ed515334bfa2f689b8ccecf0ccc685b533b"
-	mediaDetectionFingerprint          = "35a30f43ede7fd57f21ddf7cf91077845a6d12af412092f273b189ecc3ffe95c"
-	originalRetentionFingerprint       = "7a751666119ce2e31e056ef728c98c9e916914ef20eb40157ce14b817042d4bc"
-	sourceMetadataExtractorFingerprint = "42b01ef9219b3b35dedf49ef98d311b21772da27631c3ca90597f28363de1ec5"
+	documentDetectionEvidence = "TestDetectFormatRecognizesBoundedDocumentFamilies"
+	documentDetectionID       = "docbank-document-format-detection:pdf+ooxml+epub+compound+rtf+utf8-structured-text:v1"
+	mediaDetectionID          = "docbank-media-detection:jpeg+png+webp+gif+iso-bmff:v1"
+	originalRetentionID       = "docbank-original-retention:verified-blob+ingest-authority:v1"
+	sourceMetadataExtractorID = "42b01ef9219b3b35dedf49ef98d311b21772da27631c3ca90597f28363de1ec5"
 )
 
 var baseQualifications = []Qualification{
-	{CatalogID: "calendar", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticFormats", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "csv", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "doc", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "docx", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "docx", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticDOCX", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "eml", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "eml", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticFormats", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "epub", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "gif", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationFingerprint: mediaDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "gif", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "jpeg", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationFingerprint: mediaDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "jpeg", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticFormats", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "json", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "jsonl", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "latex", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "mp3", Capability: CapabilityMetadata, Evidence: "TestExtractID3TextEncodingsAndFrameBoundary", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "mp4", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationFingerprint: mediaDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "mp4", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsMP4CreationTime", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "pdf", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "pdf", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataUsesAuthoritativePDFInfo", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
+	{CatalogID: "calendar", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticFormats", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "csv", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "doc", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "docx", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "docx", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticDOCX", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "eml", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "eml", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticFormats", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "epub", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "gif", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationID: mediaDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "gif", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "jpeg", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationID: mediaDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "jpeg", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticFormats", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "json", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "jsonl", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "latex", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "mp3", Capability: CapabilityMetadata, Evidence: "TestExtractID3TextEncodingsAndFrameBoundary", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "mp4", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationID: mediaDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "mp4", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsMP4CreationTime", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "pdf", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "pdf", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataUsesAuthoritativePDFInfo", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
 	{CatalogID: "pdf", Capability: CapabilityText, Evidence: "TestSyntheticMarkdownPDFOutput", DescriptorFingerprint: "129bea875ffc3ab1511ef447c82379298c1d358923bec6af91433786148cbc95", InputKind: InputOriginalFile},
-	{CatalogID: "png", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationFingerprint: mediaDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "png", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "pptx", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticPPTX", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "tiff", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsTIFFPhotoFacts", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "webp", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationFingerprint: mediaDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "webp", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "xml", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "xlsx", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticXLSX", ImplementationFingerprint: sourceMetadataExtractorFingerprint, InputKind: InputOriginalFile},
-	{CatalogID: "yaml", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationFingerprint: documentDetectionFingerprint, InputKind: InputOriginalFile},
+	{CatalogID: "png", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationID: mediaDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "png", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "pptx", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticPPTX", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "tiff", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsTIFFPhotoFacts", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "webp", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationID: mediaDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "webp", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "xml", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
+	{CatalogID: "xlsx", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataFromSyntheticXLSX", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "yaml", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
 }
 
 var retainedCatalogIDs = []string{
@@ -109,8 +109,8 @@ func makeQualifications() []Qualification {
 	for _, catalogID := range retainedCatalogIDs {
 		result = append(result, Qualification{
 			CatalogID: catalogID, Capability: CapabilityRetain,
-			Evidence:                  "TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat",
-			ImplementationFingerprint: originalRetentionFingerprint, InputKind: InputOriginalFile,
+			Evidence:         "TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat",
+			ImplementationID: originalRetentionID, InputKind: InputOriginalFile,
 		})
 	}
 	slices.SortFunc(result, compareQualifications)
@@ -120,7 +120,7 @@ func makeQualifications() []Qualification {
 func compareQualifications(left, right Qualification) int {
 	for _, pair := range [][2]string{
 		{left.CatalogID, right.CatalogID}, {string(left.Capability), string(right.Capability)},
-		{left.Evidence, right.Evidence}, {left.ImplementationFingerprint, right.ImplementationFingerprint},
+		{left.Evidence, right.Evidence}, {left.ImplementationID, right.ImplementationID},
 		{left.DescriptorFingerprint, right.DescriptorFingerprint}, {string(left.InputKind), string(right.InputKind)},
 	} {
 		if order := strings.Compare(pair[0], pair[1]); order != 0 {

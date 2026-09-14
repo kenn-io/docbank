@@ -16,7 +16,6 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -50,24 +49,23 @@ type EnsureEmailFunc func(
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
-	Store          *store.Store
-	Blobs          *blob.Store
-	VaultRoot      string // live vault root; backup restore must remain disjoint
-	Cfg            config.Config
-	Logger         *slog.Logger // nil → slog.Default()
-	StartedAt      time.Time
-	ShutdownToken  string           // "" disables the shutdown route
-	Shutdown       func()           // called (async) by the shutdown route
-	Tracker        *ActivityTracker // nil → no idle tracking
-	Jobs           *jobs.Supervisor // nil → no registered background jobs
-	Gate           *OperationGate   // nil → a server-private gate
-	VerifyPage     VerifyPageFunc   // nil → shared bounded maintenance service
-	RepackPage     RepackPageFunc   // nil → shared bounded maintenance service
-	EnsureEmail    EnsureEmailFunc  // required only by POST /versions/{id}/email
-	WebURL         string           // fresh per-daemon loopback origin; empty disables browser sessions
-	BlobRegistry   *blob.Registry   // nil keeps storage-registry routes read-only to the primary
-	Processing     *processing.Service
-	FormatCoverage func(context.Context) (document.FormatCoverageV1, error)
+	Store         *store.Store
+	Blobs         *blob.Store
+	VaultRoot     string // live vault root; backup restore must remain disjoint
+	Cfg           config.Config
+	Logger        *slog.Logger // nil → slog.Default()
+	StartedAt     time.Time
+	ShutdownToken string           // "" disables the shutdown route
+	Shutdown      func()           // called (async) by the shutdown route
+	Tracker       *ActivityTracker // nil → no idle tracking
+	Jobs          *jobs.Supervisor // nil → no registered background jobs
+	Gate          *OperationGate   // nil → a server-private gate
+	VerifyPage    VerifyPageFunc   // nil → shared bounded maintenance service
+	RepackPage    RepackPageFunc   // nil → shared bounded maintenance service
+	EnsureEmail   EnsureEmailFunc  // required only by POST /versions/{id}/email
+	WebURL        string           // fresh per-daemon loopback origin; empty disables browser sessions
+	BlobRegistry  *blob.Registry   // nil keeps storage-registry routes read-only to the primary
+	Processing    *processing.Service
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -102,8 +100,6 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
-	d = freezeFormatCoverage(d)
-
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
 	jsonFormat := huma.Format{

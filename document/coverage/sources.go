@@ -7,51 +7,32 @@ import (
 	"go.kenn.io/docbank/internal/formatqualification"
 )
 
-type DispatchEntry struct {
-	CatalogID      string
-	Compiled       bool
-	DispatchFormat string
-	Evidence       string
-}
-
 type DetectCapability struct {
-	CatalogID                 string
-	Evidence                  string
-	ImplementationFingerprint string
+	CatalogID        string
+	Evidence         string
+	ImplementationID string
 }
 
 type RetainCapability struct {
-	CatalogID                 string
-	Evidence                  string
-	ImplementationFingerprint string
+	CatalogID        string
+	Evidence         string
+	ImplementationID string
 }
 
 type MetadataCapability struct {
-	CatalogID                 string
-	Evidence                  string
-	ImplementationFingerprint string
-	NotApplicable             bool
-}
-
-type Qualification struct {
-	DescriptorFingerprint string
-	CatalogID             string
-	Capability            document.CapabilityKey
-	InputKind             document.RenditionInputKind
-	Evidence              string
+	CatalogID        string
+	Evidence         string
+	ImplementationID string
+	NotApplicable    bool
 }
 
 type Sources struct {
-	BoundProviders       []document.RenditionDescriptor
-	KnownProviders       []document.RenditionDescriptor
-	Qualifications       []Qualification
-	Detect               []DetectCapability
-	Retain               []RetainCapability
-	Dispatch             []DispatchEntry
-	ExtractorFingerprint string
-	Metadata             []MetadataCapability
-	PageFramesAvailable  bool
-	Pending              []document.PendingFormatV1
+	BoundProviders []document.RenditionDescriptor
+	Detect         []DetectCapability
+	Retain         []RetainCapability
+	ExtractorID    string
+	Metadata       []MetadataCapability
+	Pending        []document.PendingFormatV1
 }
 
 // DefaultSources returns only dependency-free compiled inputs. Runtime owners
@@ -70,14 +51,14 @@ func DefaultSources() Sources {
 		if qualification.Capability != formatqualification.CapabilityDetect {
 			continue
 		}
-		matchesMedia := qualification.ImplementationFingerprint == media.DetectionImplementationFingerprint &&
+		matchesMedia := qualification.ImplementationID == media.DetectionImplementationID &&
 			mediaFormats[qualification.CatalogID]
-		matchesDocument := qualification.ImplementationFingerprint == formatdetect.DetectionImplementationFingerprint &&
+		matchesDocument := qualification.ImplementationID == formatdetect.DetectionImplementationID &&
 			documentFormats[qualification.CatalogID]
 		if matchesMedia || matchesDocument {
 			detect = append(detect, DetectCapability{
 				CatalogID: qualification.CatalogID, Evidence: qualification.Evidence,
-				ImplementationFingerprint: qualification.ImplementationFingerprint,
+				ImplementationID: qualification.ImplementationID,
 			})
 		}
 	}

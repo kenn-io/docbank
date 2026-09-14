@@ -323,14 +323,12 @@ func boundedFormatCoverageQuery(rawQuery string) bool {
 	if err != nil {
 		return false
 	}
-	maximum := map[string]int{"family": 64, "format": 64, "extension": 16}
 	for key, entries := range values {
-		limit, known := maximum[key]
-		if !known || len(entries) != 1 || len(entries[0]) > limit {
+		if (key != "family" && key != "format" && key != "extension") || len(entries) != 1 {
 			return false
 		}
 	}
-	return true
+	return validateFormatQuery(values.Get("family"), values.Get("format"), values.Get("extension")) == nil
 }
 
 func collectionResourcePath(path string) (collectionID, resource string, ok bool) {
