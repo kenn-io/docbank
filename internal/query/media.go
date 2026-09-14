@@ -51,6 +51,21 @@ func ClassifyMedia(mediaType, filename string) string {
 	return "unknown"
 }
 
+// NormalizeMediaType returns the lowercase concrete MIME essence used by
+// QueryV1 ordering. Invalid, missing, and generic media types have an empty
+// key; ClassifyMedia still owns their filename fallback behavior.
+func NormalizeMediaType(mediaType string) string {
+	trimmed := trimASCIIWhitespace(mediaType)
+	if trimmed == "" {
+		return ""
+	}
+	essence, ok := parseConcreteMediaType(trimmed)
+	if !ok || essence == "application/octet-stream" {
+		return ""
+	}
+	return essence
+}
+
 // parseConcreteMediaType accepts a concrete RFC 2045 type/subtype followed by
 // zero or more syntactically valid token or quoted-string parameters. Parameter
 // values do not affect classification.

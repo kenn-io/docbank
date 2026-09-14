@@ -17,9 +17,17 @@ const (
 
 type compiledGenerationArgument struct{}
 
+type compiledQueryRelations uint8
+
+const (
+	compiledRelationCurrentContent compiledQueryRelations = 1 << iota
+	compiledRelationProcessingCoverage
+)
+
 type compiledQueryFragment struct {
-	sql  string
-	args []any
+	sql       string
+	args      []any
+	relations compiledQueryRelations
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -48,7 +56,7 @@ func compileQuery(
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
 		predicate: predicate,
 	}
-	if _, _, err := compiled.Bind(""); err != nil {
+	if _, err := compiled.bind(""); err != nil {
 		return CompiledQuery{}, err
 	}
 	return compiled, nil
@@ -59,19 +67,6 @@ func compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, 
 		return compiledQueryFragment{},
 			compileExpressionError(0, len(resolved.Query.Text), "relevance sort is not supported by bound queries")
 	}
-	if len(resolved.Query.Filters.TextCoverage) != 0 {
-		return compiledQueryFragment{},
-			compileExpressionError(0, len(resolved.Query.Text), "text_coverage is not supported by bound queries")
-	}
-	if resolved.Query.Filters.HasDuplicates {
-		return compiledQueryFragment{},
-			compileExpressionError(0, len(resolved.Query.Text), "has_duplicates is not supported by bound queries")
-	}
-	if resolved.Query.Filters.CollapseDuplicates {
-		return compiledQueryFragment{},
-			compileExpressionError(0, len(resolved.Query.Text), "duplicate collapsing is not supported by bound queries")
-	}
-
 	var expression compiledQueryFragment
 	var err error
 	if resolved.Query.Syntax == "simple" {
@@ -96,6 +91,19 @@ func compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, 
 
 // Bind renders the predicate for one caller-selected lexical generation.
 func (compiled CompiledQuery) Bind(generationID string) (string, []any, error) {
+	predicate, err := compiled.bind(generationID)
+	if err != nil {
+		return "", nil, err
+	}
+	if predicate.relations != 0 || compiled.Query.Filters.CollapseDuplicates {
+		return "", nil, compileExpressionError(
+			0, len(compiled.Query.Text), "compiled query requires matched population bindings",
+		)
+	}
+	return predicate.sql, predicate.args, nil
+}
+
+func (compiled CompiledQuery) bind(generationID string) (compiledQueryFragment, error) {
 	predicate := joinCompiledFragments([]compiledQueryFragment{{
 		sql: `n.kind='file' AND n.trashed_at IS NULL AND cv.node_id=n.id AND cv.version_id=n.current_version_id`,
 	}, compiled.predicate}, ` AND `)
@@ -108,11 +116,12 @@ func (compiled CompiledQuery) Bind(generationID string) (string, []any, error) {
 		}
 	}
 	if len(predicate.sql) > maxCompiledQuerySQL || len(args) > maxCompiledQueryArgs {
-		return "", nil, compileExpressionError(
+		return compiledQueryFragment{}, compileExpressionError(
 			0, len(compiled.Query.Text), "compiled query exceeds 256 KiB or 4096 arguments",
 		)
 	}
-	return predicate.sql, args, nil
+	predicate.args = args
+	return predicate, nil
 }
 
 func compileResolvedExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
@@ -149,7 +158,7 @@ func compileResolvedExpression(expression *query.ResolvedExpression, field strin
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return compiledQueryFragment{sql: `NOT (` + child.sql + `)`, args: child.args}, nil
+		return compiledQueryFragment{sql: `NOT (` + child.sql + `)`, args: child.args, relations: child.relations}, nil
 	case query.ExpressionNear:
 		return compileNearExpression(expression, field)
 	case query.ExpressionTerm, query.ExpressionPhrase:
@@ -214,13 +223,11 @@ func compileExpressionLeaf(expression *query.ResolvedExpression, field string) (
 			return compiledQueryFragment{}, errors.New("resolved saved operand lacks its query")
 		}
 		return compileSavedPredicate(expression)
-	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max":
+	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
 		return compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
-	case "text_coverage", "has_duplicates":
-		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, field+" fields are not supported by bound queries")
 	default:
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression field")
 	}
@@ -258,7 +265,16 @@ func compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryF
 		}
 		return compiledQueryFragment{}, err
 	}
-	return nested, nil
+	if !expression.Saved.Query.Filters.CollapseDuplicates {
+		return nested, nil
+	}
+	population := selectCompiledPopulation(nested, true)
+	return compiledQueryFragment{
+		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
+			WHERE saved_population.node_id=n.id
+			  AND saved_population.content_version_id=cv.version_id)`,
+		args: population.args, relations: population.relations,
+	}, nil
 }
 
 func compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
@@ -293,6 +309,10 @@ func compileScalarPredicate(field, value string, start, end int) (compiledQueryF
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
 		}
 		return compileSizePredicate(field, bound), nil
+	case "text_coverage":
+		return compileTextCoveragePredicate(value, start, end)
+	case "has_duplicates":
+		return compileHasDuplicatesPredicate(value, start, end)
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "unsupported scalar field")
 	}
@@ -334,6 +354,14 @@ func compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFr
 	if filters.SizeMax != nil {
 		parts = append(parts, compileSizePredicate("size_max", *filters.SizeMax))
 	}
+	parts = append(parts, compileValuePredicates(filters.TextCoverage, func(value string) compiledQueryFragment {
+		predicate, _ := compileTextCoveragePredicate(value, start, end)
+		return predicate
+	}))
+	if filters.HasDuplicates {
+		predicate, _ := compileHasDuplicatesPredicate("true", start, end)
+		parts = append(parts, predicate)
+	}
 	return joinCompiledFragments(parts, ` AND `), nil
 }
 
@@ -343,6 +371,37 @@ func compileSizePredicate(field string, bound int64) compiledQueryFragment {
 		operator = `<=`
 	}
 	return compiledQueryFragment{sql: `cv.size ` + operator + ` ?`, args: []any{bound}}
+}
+
+func compileTextCoveragePredicate(value string, start, end int) (compiledQueryFragment, error) {
+	switch value {
+	case "complete", "partial", "failed", "unprocessed", "none", "unavailable":
+		return compiledQueryFragment{
+			sql: `EXISTS (SELECT 1 FROM processing_coverage pc
+				WHERE pc.node_id=n.id AND pc.version_id=cv.version_id AND pc.state=?)`,
+			args: []any{value}, relations: compiledRelationProcessingCoverage,
+		}, nil
+	default:
+		return compiledQueryFragment{}, compileExpressionError(start, end, "invalid text_coverage operand")
+	}
+}
+
+func compileHasDuplicatesPredicate(value string, start, end int) (compiledQueryFragment, error) {
+	var negate string
+	switch value {
+	case "true":
+	case "false":
+		negate = "NOT "
+	default:
+		return compiledQueryFragment{}, compileExpressionError(start, end, "has_duplicates operand must be true or false")
+	}
+	return compiledQueryFragment{
+		sql: negate + `EXISTS (SELECT 1 FROM current_content_members duplicate_member
+			WHERE duplicate_member.blob_hash=cv.blob_hash
+			  AND duplicate_member.size=cv.size
+			  AND duplicate_member.node_id<>n.id)`,
+		relations: compiledRelationCurrentContent,
+	}, nil
 }
 
 func compileValuePredicates(
@@ -462,7 +521,15 @@ func negateCompiledFragment(fragment compiledQueryFragment) compiledQueryFragmen
 	if fragment.sql == "" {
 		return compiledQueryFragment{}
 	}
-	return compiledQueryFragment{sql: `NOT (` + fragment.sql + `)`, args: fragment.args}
+	return compiledQueryFragment{
+		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations,
+	}
+}
+
+func compiledLiveCurrentPredicate() compiledQueryFragment {
+	return compiledQueryFragment{
+		sql: `n.kind='file' AND n.trashed_at IS NULL AND cv.node_id=n.id AND cv.version_id=n.current_version_id`,
+	}
 }
 
 func trueCompiledFragment() compiledQueryFragment {
@@ -472,14 +539,16 @@ func trueCompiledFragment() compiledQueryFragment {
 func joinCompiledFragments(parts []compiledQueryFragment, operator string) compiledQueryFragment {
 	var sqlParts []string
 	var args []any
+	var relations compiledQueryRelations
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
 		}
 		sqlParts = append(sqlParts, `(`+part.sql+`)`)
 		args = append(args, part.args...)
+		relations |= part.relations
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args}
+	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations}
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {

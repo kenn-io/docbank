@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -77,6 +78,8 @@ type Server struct {
 	auditPreviews *auditPreviewRegistry
 	webSessions   *webSessionRegistry
 	webDownloads  *webDownloadRegistry
+	snapshots     *store.QuerySnapshotService
+	masterOwner   string
 }
 
 // NewServer wires all routes and middleware onto a fresh mux. The handler
@@ -126,10 +129,21 @@ func NewServer(d Deps) *Server {
 	}
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
+	masterOwner := randomSnapshotOwner()
+	var snapshots *store.QuerySnapshotService
+	if d.Store != nil {
+		snapshots = store.NewQuerySnapshotService(d.Store)
+	}
 	s := &Server{
 		deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry(),
-		webSessions: newWebSessionRegistry(), webDownloads: newWebDownloadRegistry(d.VaultRoot),
+		snapshots: snapshots, masterOwner: masterOwner,
+		webDownloads: newWebDownloadRegistry(d.VaultRoot),
 	}
+	s.webSessions = newWebSessionRegistry(func(owner string) {
+		if s.snapshots != nil {
+			s.snapshots.Revoke(owner)
+		}
+	})
 	g := d.Gate
 	if g == nil {
 		g = NewOperationGate()
@@ -155,8 +169,9 @@ func NewServer(d Deps) *Server {
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
-	registerSavedQueryRoutes(humaAPI, d, g)
+	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
+	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerProcessingRoutes(humaAPI, d)
 	registerEmailRoutes(mux, humaAPI, d, g)
@@ -174,7 +189,7 @@ func NewServer(d Deps) *Server {
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads)
 
 	h := http.Handler(mux)
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions)
+	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
@@ -182,6 +197,14 @@ func NewServer(d Deps) *Server {
 	h = trackMiddleware(h, d.Tracker)
 	s.handler = h
 	return s
+}
+
+func randomSnapshotOwner() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic("api: cannot generate query snapshot owner: " + err.Error())
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
@@ -210,11 +233,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.deps.Processing != nil {
 		s.deps.Processing.Stop()
 	}
-	err := s.webSessions.closeAll(ctx)
+	snapshotDone := make(chan error, 1)
+	go func() {
+		if s.snapshots == nil {
+			snapshotDone <- nil
+			return
+		}
+		snapshotDone <- s.snapshots.Close()
+	}()
+	sessionErr := s.webSessions.closeAll(ctx)
 	if s.deps.Processing != nil {
-		err = errors.Join(err, s.deps.Processing.Shutdown(ctx))
+		sessionErr = errors.Join(sessionErr, s.deps.Processing.Shutdown(ctx))
 	}
-	return err
+	select {
+	case snapshotErr := <-snapshotDone:
+		return errors.Join(sessionErr, snapshotErr)
+	case <-ctx.Done():
+		return errors.Join(sessionErr, ctx.Err())
+	}
 }
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
@@ -236,6 +272,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/tags/{tag_id}", http.MethodDelete},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodPatch},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodDelete},
+		{"/api/v1/saved-queries/{saved_query_id}/runs", http.MethodPost},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}
