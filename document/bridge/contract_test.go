@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -19,6 +20,53 @@ var openAPIContract []byte
 
 //go:embed source-evidence-v1.schema.json
 var sourceEvidenceSchema []byte
+
+func TestBridgeContractNormativeDocumentsTimedTranscript(t *testing.T) {
+	compiler := jsonschema.NewCompiler()
+	compiler.Draft = jsonschema.Draft2020
+	const location = "https://docbank.dev/schemas/source-evidence-v1.schema.json"
+	require.NoError(t, compiler.AddResource(location, bytes.NewReader(sourceEvidenceSchema)))
+	schema, err := compiler.Compile(location)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name    string
+		speaker string
+		invalid bool
+	}{
+		{name: "without speaker"},
+		{name: "with speaker", speaker: "Speaker 1"},
+		{name: "speaker at limit", speaker: strings.Repeat("s", 128)},
+		{name: "speaker over limit", speaker: strings.Repeat("s", 129), invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := document.SourceEvidenceV1{
+				ContractVersion: document.SourceEvidenceContractV1,
+				Completeness:    document.EvidenceComplete,
+				Family:          "audio",
+				UnitKind:        document.EvidenceUnitSegment,
+				Units: []document.SourceEvidenceUnitV1{{
+					Order: 0, Text: "synthetic transcript", Speaker: test.speaker,
+					Locator: document.SourceEvidenceLocatorV1{
+						Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero,
+						Start: 1000, End: 2000,
+					},
+				}},
+			}
+			encoded, err := json.Marshal(source)
+			require.NoError(t, err)
+			var payload any
+			require.NoError(t, json.Unmarshal(encoded, &payload))
+			if test.invalid {
+				require.Error(t, document.ValidateSourceEvidenceV1(source))
+				require.Error(t, schema.Validate(payload))
+			} else {
+				require.NoError(t, document.ValidateSourceEvidenceV1(source))
+				require.NoError(t, schema.Validate(payload))
+			}
+		})
+	}
+}
 
 func TestBridgeContractNormativeDocumentsAreStrictAndVersioned(t *testing.T) {
 	var openAPI map[string]any

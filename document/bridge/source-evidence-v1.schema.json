@@ -10,7 +10,7 @@
     "contract_version": {"const": "source-evidence/v1"},
     "completeness": {"enum": ["complete", "partial", "degraded_provenance"]},
     "family": {"type": "string", "minLength": 1, "maxLength": 1024},
-    "unit_kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
+    "unit_kind": {"enum": ["generic", "line", "message", "page", "record", "section", "segment", "sheet", "slide", "spine"]},
     "artifacts": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/artifact"}},
     "omissions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/omission"}},
     "units": {"type": "array", "minItems": 1, "maxItems": 100000, "items": {"$ref": "#/$defs/unit"}}
@@ -91,7 +91,7 @@
       "properties": {
         "end": {"type": "integer", "minimum": 0, "maximum": 1000000000000000},
         "index_origin": {"enum": ["none", "one", "zero"]},
-        "kind": {"enum": ["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"]},
+        "kind": {"enum": ["generic", "line", "message", "page", "record", "section", "segment", "sheet", "slide", "spine"]},
         "name": {"type": "string", "maxLength": 1024},
         "start": {"type": "integer", "minimum": 0, "maximum": 1000000000000000}
       }
@@ -147,6 +147,7 @@
         "order": {"type": "integer", "minimum": 0},
         "provider_id": {"type": "string", "maxLength": 1024},
         "regions": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/region"}},
+        "speaker": {"type": "string", "maxLength": 128},
         "tables": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/table"}},
         "text": {"type": "string", "maxLength": 268435456}
       }

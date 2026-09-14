@@ -347,9 +347,6 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 }
 
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
-	if sequence.seen && sequence.previous.Kind == EvidenceLocatorSegment {
-		return nil
-	}
 	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
 		sequence.previous.Kind == EvidenceLocatorSection) {
 		if len(omitted) > 0 && sequence.unnamed {
@@ -378,6 +375,10 @@ func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceL
 			locator.IndexOrigin != sequence.previous.IndexOrigin {
 			return fmt.Errorf("unit omission %d does not match a locator gap", index)
 		}
+	}
+	if sequence.seen && sequence.previous.Kind == EvidenceLocatorSegment {
+		// Gaps between timed cues do not imply omitted speech.
+		return nil
 	}
 	ordered := slices.Clone(omitted)
 	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
