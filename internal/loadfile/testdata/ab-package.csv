@@ -1,0 +1,4 @@
+BEGBATES,CUSTODIAN,TEXT,UNKNOWN,TEXT
+EXT000001,"Doe, Jane","line one
+line two",00123,alpha
+EXT000003,"Doe, Jane","a ""b""",00007,beta
