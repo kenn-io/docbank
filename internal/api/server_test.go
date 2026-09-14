@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -67,7 +68,7 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	t.Cleanup(func() { _ = blobs.Close() })
 	d := api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(),
-		WebURL: testWebURL,
+		WebURL: testWebURL, EnsureEmail: processing.EnsureEmailTarget,
 	}
 	d.Cfg.Server.APIKey = testAPIKey
 	if mutate != nil {

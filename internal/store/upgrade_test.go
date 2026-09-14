@@ -210,15 +210,15 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsUnreleasedSchemaEightWithoutCutover(t *testing.T) {
+func TestOpenRejectsUnreleasedSchemaNineWithoutCutover(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			s, err := Open(dbPath, test.driver)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE batch_tag_receipts`)
+			_, err = s.db.Exec(`DROP TABLE email_generations`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=8 WHERE singleton=1`)
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=9 WHERE singleton=1`)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
@@ -226,7 +226,7 @@ func TestOpenRejectsUnreleasedSchemaEightWithoutCutover(t *testing.T) {
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
-			require.ErrorContains(t, err, "schema version 8 has no supported JSONL cutover")
+			require.ErrorContains(t, err, "schema version 9 has no supported JSONL cutover")
 		})
 	}
 }
@@ -337,6 +337,7 @@ func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
 	}{
 		{name: "blobs", expected: "has an unexpected layout"},
 		{name: "blob_locations", expected: "has an unexpected blob_locations layout"},
+		{name: "email_generations", expected: "has an unexpected email_generations layout"},
 	} {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {

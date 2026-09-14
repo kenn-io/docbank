@@ -25,6 +25,7 @@ const metadataFormatVersion = 1
 
 const (
 	metadataCreatedAtField        = "created_at"
+	metadataAttachmentIDField     = "attachment_id"
 	metadataGenerationIDField     = "generation_id"
 	metadataContentVersionIDField = "content_version_id"
 )
@@ -450,6 +451,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.schemaVersion >= 7 {
+		if err := exportEmailMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
@@ -982,6 +988,11 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM saved_queries)
 		    + (SELECT COUNT(*) FROM blob_checksums)
+		    + (SELECT COUNT(*) FROM email_generations)
+		    + (SELECT COUNT(*) FROM email_part_artifacts)
+		    + (SELECT COUNT(*) FROM email_attachments)
+		    + (SELECT COUNT(*) FROM email_heads)
+		    + (SELECT COUNT(*) FROM email_body_results)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
@@ -1125,6 +1136,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
+	}
+	if strings.HasPrefix(kind, "email_") {
+		return importEmailMetadataRecord(ctx, tx, kind, raw)
 	}
 	if isProcessingMetadataType(kind) {
 		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
@@ -1419,6 +1433,11 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
+	"email_body_result":                    {"type", "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
+	"email_head":                           {"type", "content_version_id", metadataAttachmentIDField, "published_at"},
+	"email_attachment":                     {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
+	"email_part_artifact":                  {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
+	"email_generation":                     {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
@@ -1466,6 +1485,7 @@ var metadataRequiredFields = map[string][]string{
 }
 
 var metadataNullableFields = map[string]map[string]bool{
+	"email_body_result": {"part_path": true, "rendition_attachment_id": true, "reason": true},
 	"node": {
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
@@ -1849,6 +1869,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
 			return err
+		}
+		if layout.schemaVersion >= 7 {
+			if err := validateEmailMetadataState(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
 			return err

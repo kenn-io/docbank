@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"mime"
-	"mime/multipart"
 	"net/mail"
 	"strconv"
 	"strings"
@@ -23,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	documentmedia "go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -49,18 +48,17 @@ const (
 )
 
 // sourceMetadataExtractorDescriptor names the local parser bundle. Bump the
-// trailing version whenever any parser changes what it extracts: every vault
-// then re-extracts every original, so the bump must be deliberate. A test
-// pins the resulting fingerprint so the bump cannot be forgotten or made by
-// accident.
+// trailing version whenever these parsers change what they extract: every
+// vault then re-extracts every original, so the bump must be deliberate. The
+// shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,rfc5322,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v16"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v17"
 
 var (
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
-	// parser bundle. Any semantic parser change must change the descriptor.
+	// parser bundle, including the shared email decoder recipe and Go version.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
-		sourceMetadataExtractorDescriptor)
+		sourceMetadataExtractorDescriptor, emailmime.Recipe())
 
 	// errSourceMetadataBMFFMalformed marks deterministic box structure defects
 	// in verified bytes, which become durable warnings rather than retryable
@@ -80,8 +78,12 @@ func IsSourceContentUnavailable(err error) bool {
 	return errors.Is(err, errSourceContentUnavailable)
 }
 
-func fingerprintSourceMetadataExtractor(descriptor string) string {
-	digest := sha256.Sum256([]byte(descriptor))
+func fingerprintSourceMetadataExtractor(descriptor string, recipe document.EmailRecipeV1) string {
+	emailFingerprint, err := document.EmailRecipeFingerprint(recipe)
+	if err != nil {
+		panic(fmt.Sprintf("fingerprint built-in email recipe: %v", err))
+	}
+	digest := sha256.Sum256([]byte(descriptor + ":" + emailFingerprint))
 	return hex.EncodeToString(digest[:])
 }
 
@@ -96,14 +98,14 @@ type sourceMetadataBlobReader interface {
 
 // BackfillSourceMetadataTargets processes a selected batch while allowing
 // later originals to progress past a corrupt or temporarily unavailable one.
-func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCatalog, blobs sourceMetadataBlobReader, targets []store.SourceMetadataTarget) (int, error) {
+func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCatalog, blobs sourceMetadataBlobReader, spoolParent string, targets []store.SourceMetadataTarget) (int, error) {
 	completed := 0
 	var targetErrors error
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
 			return completed, errors.Join(targetErrors, err)
 		}
-		metadata, err := sourceMetadataForTarget(ctx, blobs, target)
+		metadata, err := sourceMetadataForTarget(ctx, blobs, spoolParent, target)
 		if err != nil {
 			targetErrors = errors.Join(targetErrors, fmt.Errorf("extracting source metadata target %s: %w", target.SourceSHA256, err))
 			continue
@@ -123,7 +125,7 @@ func BackfillSourceMetadataTargets(ctx context.Context, catalog sourceMetadataCa
 }
 
 func sourceMetadataForTarget(
-	ctx context.Context, blobs sourceMetadataBlobReader, target store.SourceMetadataTarget,
+	ctx context.Context, blobs sourceMetadataBlobReader, spoolParent string, target store.SourceMetadataTarget,
 ) (document.SourceMetadataV1, error) {
 	if target.Size <= maxSourceMetadataOriginalBytes {
 		stream, size, err := blobs.OpenStreamContext(ctx, target.SourceSHA256)
@@ -145,9 +147,9 @@ func sourceMetadataForTarget(
 				"length changed: catalog=%d read=%d", size, len(data)))
 		}
 		if size > maxSourceMetadataWindowBytes && boundedLargeMediaSignature(data) {
-			return extractLargeSourceMetadata(bytes.NewReader(data), size)
+			return extractLargeSourceMetadata(ctx, bytes.NewReader(data), size, spoolParent)
 		}
-		return ExtractSourceMetadata(data), nil
+		return ExtractSourceMetadata(ctx, spoolParent, data)
 	}
 
 	reader, size, err := blobs.OpenSeekableContext(ctx, target.SourceSHA256)
@@ -163,7 +165,7 @@ func sourceMetadataForTarget(
 		return document.SourceMetadataV1{}, sourceContentUnavailable(errors.Join(
 			fmt.Errorf("verifying seekable content: %w", err), reader.Close()))
 	}
-	metadata, extractErr := extractLargeSourceMetadata(&seekReaderAt{seeker: reader}, size)
+	metadata, extractErr := extractLargeSourceMetadata(ctx, &seekReaderAt{seeker: reader}, size, spoolParent)
 	return metadata, errors.Join(extractErr, reader.Close())
 }
 
@@ -222,7 +224,7 @@ func (r *seekReaderAt) ReadAt(target []byte, offset int64) (int, error) {
 	return io.ReadFull(r.seeker, target)
 }
 
-func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.SourceMetadataV1, error) {
+func extractLargeSourceMetadata(ctx context.Context, reader io.ReaderAt, size int64, spoolParent string) (document.SourceMetadataV1, error) {
 	header, err := readSourceMetadataRange(reader, 0, min(size, sourceMetadataRAFHeaderBytes))
 	if err != nil {
 		return document.SourceMetadataV1{}, fmt.Errorf("reading media signature: %w", err)
@@ -237,7 +239,10 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 		if readErr != nil {
 			return document.SourceMetadataV1{}, fmt.Errorf("reading metadata window: %w", readErr)
 		}
-		metadata := ExtractSourceMetadata(window)
+		metadata, err := ExtractSourceMetadata(ctx, spoolParent, window)
+		if err != nil {
+			return document.SourceMetadataV1{}, err
+		}
 		metadata.Warnings = append(metadata.Warnings, sourceWarning(
 			"metadata_window_limited", "container", "bytes",
 			"only the bounded leading metadata window was inspected"))
@@ -252,7 +257,7 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 			metadata.Warnings = append(metadata.Warnings, *warning)
 			return metadata, nil
 		}
-		return ExtractSourceMetadata(compact), nil
+		return ExtractSourceMetadata(ctx, spoolParent, compact)
 	default:
 		metadata := emptySourceMetadata()
 		metadata.Warnings = append(metadata.Warnings, sourceWarning(
@@ -761,7 +766,9 @@ func sourceMetadataMP4StructuralBox(kind string) bool {
 // ExtractSourceMetadata performs bounded, format-signature-based local
 // extraction. It returns warnings for unsupported or malformed input and does
 // not guess from a filename, path, MIME declaration, or caller metadata.
-func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
+// Operational failures return errors so callers can retry without publishing.
+// Email decoding uses the caller's canonical vault spool root for crash recovery.
+func ExtractSourceMetadata(ctx context.Context, spoolParent string, data []byte) (document.SourceMetadataV1, error) {
 	result := emptySourceMetadata()
 	collector := metadataCollector{record: &result, seen: map[string]bool{}}
 	switch {
@@ -778,29 +785,31 @@ func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
 		if err != nil {
 			result.Warnings = append(result.Warnings, sourceWarning(
 				"unparseable_metadata", "media.container", "RAF", "RAF metadata could not be read"))
-			return canonicalSourceMetadataResult(result)
+			break
 		}
-		return metadata
+		return metadata, nil
 	case isSourceMetadataCR3(data):
 		metadata, err := extractCR3SourceMetadata(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			result.Warnings = append(result.Warnings, sourceWarning(
 				"unparseable_metadata", "media.container", "CR3", "CR3 metadata could not be read"))
-			return canonicalSourceMetadataResult(result)
+			break
 		}
-		return metadata
+		return metadata, nil
 	case visualContainerSignature(data):
 		collector.extractVisual(data)
 	case exifTIFFSignature(data):
 		collector.extractTIFFVisual(data)
 	default:
-		if message, err := mail.ReadMessage(bytes.NewReader(data)); err == nil {
-			collector.extractEmail(message)
-		} else {
+		recognized, err := collector.extractEmail(ctx, spoolParent, data)
+		if err != nil {
+			return document.SourceMetadataV1{}, err
+		}
+		if !recognized {
 			result.Warnings = append(result.Warnings, sourceWarning("unsupported_format", "container", "signature", "no supported embedded metadata container was recognized"))
 		}
 	}
-	return canonicalSourceMetadataResult(result)
+	return canonicalSourceMetadataResult(result), nil
 }
 
 func canonicalSourceMetadataResult(metadata document.SourceMetadataV1) document.SourceMetadataV1 {
@@ -983,6 +992,10 @@ func (c *metadataCollector) timestamp(key, namespace, source, raw string) {
 		c.warn("unparseable_timestamp", namespace, source, "embedded timestamp was not coerced")
 		return
 	}
+	c.addTimestamp(key, namespace, source, stamp)
+}
+
+func (c *metadataCollector) addTimestamp(key, namespace, source string, stamp document.SourceMetadataTimestampV1) {
 	if !c.reserveValueBytes(len(stamp.Raw)+len(stamp.Normalized)+len(stamp.Offset), namespace, source) {
 		return
 	}
@@ -1341,92 +1354,142 @@ func (c *metadataCollector) extractOfficeCustom(data []byte) {
 	}
 }
 
-func (c *metadataCollector) extractEmail(message *mail.Message) {
+func (c *metadataCollector) extractEmail(ctx context.Context, spoolParent string, data []byte) (recognized bool, resultErr error) {
+	digest := sha256.Sum256(data)
+	decoded, err := emailmime.Decode(ctx, hex.EncodeToString(digest[:]),
+		int64(len(data)), bytes.NewReader(data), spoolParent)
+	if err != nil {
+		return false, fmt.Errorf("decoding email metadata: %w", err)
+	}
+	defer func() {
+		if err := decoded.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("closing email metadata: %w", err))
+		}
+	}()
+	inventory := decoded.Evidence.Inventory
+	if inventory == nil || len(inventory.Parts) == 0 || len(inventory.Messages) == 0 {
+		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
+		return true, nil
+	}
+	root := inventory.Parts[0]
+	for _, header := range root.Headers {
+		recognized = recognized || header.State == document.EmailHeaderValid
+	}
+	if !recognized {
+		return false, nil
+	}
+	message := inventory.Messages[0]
 	for _, item := range []struct {
 		header, key string
+		fields      []document.EmailDecodedFieldV1
 		sensitive   bool
-	}{{"From", "email.from", false}, {"To", "email.to", false}, {"Cc", "email.cc", false}, {"Bcc", "email.bcc", true}, {"Subject", "email.subject", false}} {
-		if value := message.Header.Get(item.header); value != "" {
-			c.string(item.key, "email", item.header, value, item.sensitive)
+	}{
+		{"From", "email.from", message.Fields.From, false},
+		{"To", "email.to", message.Fields.To, false},
+		{"Cc", "email.cc", message.Fields.Cc, false},
+		{"Bcc", "email.bcc", message.Fields.Bcc, true},
+		{"Subject", "email.subject", message.Fields.Subject, false},
+	} {
+		if len(item.fields) == 0 {
+			continue
+		}
+		field := item.fields[0]
+		if field.State != document.EmailInterpretationDecoded {
+			c.warn("unparseable_metadata", "email", item.header, "email header could not be fully decoded")
+		}
+		if field.Text != nil {
+			c.string(item.key, "email", item.header, *field.Text, item.sensitive)
 		}
 	}
-	if date := message.Header.Get("Date"); date != "" {
-		c.timestamp("email.sent", "email", "Date", date)
+	var count int64
+	verified := inventory.State == document.EmailInventoryComplete
+	for _, part := range inventory.Parts {
+		verified = verified && len(part.Media.Diagnostics) == 0
+		for _, diagnostic := range part.Diagnostics {
+			if diagnostic.Operation == document.EmailOperationHeaders {
+				verified = false
+			}
+		}
+		if part.Disposition != nil && *part.Disposition == "attachment" {
+			count++
+		}
 	}
-	if values := message.Header["Received"]; len(values) > 0 {
-		c.strings("email.received", "email", "Received", values)
-	}
-	parts := 0
-	count, err := countEmailAttachments(message.Header, message.Body, 0, &parts)
-	if err != nil {
+	if !verified {
 		c.warn("unparseable_attachments", "email", "Content-Disposition", "MIME attachment structure could not be verified")
 	} else if count > 0 {
 		c.integer("attachment_count", "email", "Content-Disposition", count)
 	}
-}
-
-type emailMIMEHeader interface {
-	Get(key string) string
-}
-
-func countEmailAttachments(
-	header emailMIMEHeader, body io.Reader, depth int, parts *int,
-) (int64, error) {
-	const (
-		maxMIMEDepth = 8
-		maxMIMEParts = 4096
-	)
-	if depth > maxMIMEDepth {
-		return 0, errors.New("MIME nesting exceeds the supported bound")
-	}
-	contentType := header.Get("Content-Type")
-	mediaType, parameters, err := mime.ParseMediaType(contentType)
+	reader, err := decoded.OpenArtifact(ctx, root.Path, string(document.EmailArtifactRawHeaders))
 	if err != nil {
-		if strings.TrimSpace(contentType) == "" {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("parse MIME content type: %w", err)
+		return false, fmt.Errorf("opening email metadata headers: %w", err)
 	}
-	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
-		return 0, nil
+	raw, readErr := io.ReadAll(io.LimitReader(reader, root.HeaderBlock.Size+1))
+	if err := errors.Join(readErr, reader.Close()); err != nil {
+		return false, fmt.Errorf("reading email metadata headers: %w", err)
 	}
-	boundary := parameters["boundary"]
-	if boundary == "" {
-		return 0, errors.New("multipart MIME content type has no boundary")
+	if int64(len(raw)) != root.HeaderBlock.Size {
+		return false, fmt.Errorf("email metadata headers length changed: expected=%d read=%d", root.HeaderBlock.Size, len(raw))
 	}
-	reader := multipart.NewReader(body, boundary)
-	var count int64
-	for {
-		part, nextErr := reader.NextPart()
-		if errors.Is(nextErr, io.EOF) {
-			return count, nil
+	var received []string
+	for _, header := range root.Headers {
+		if header.Name == nil || (*header.Name != "date" && *header.Name != "received") {
+			continue
 		}
-		if nextErr != nil {
-			return 0, fmt.Errorf("read MIME part: %w", nextErr)
+		value, err := emailmime.HeaderValue(raw, header)
+		if err != nil {
+			c.warn("unparseable_metadata", "email", "headers", "email raw header could not be read")
+			continue
 		}
-		*parts++
-		if *parts > maxMIMEParts {
-			_ = part.Close()
-			return 0, errors.New("MIME part count exceeds the supported bound")
+		if *header.Name == "received" {
+			received = append(received, value)
+		} else if len(message.Date.Fields) == 1 {
+			c.emailTimestamp(message.Date, value)
 		}
-		dispositionValue := part.Header.Get("Content-Disposition")
-		if dispositionValue != "" {
-			disposition, _, dispositionErr := mime.ParseMediaType(dispositionValue)
-			if dispositionErr != nil {
-				_ = part.Close()
-				return 0, fmt.Errorf("parse MIME content disposition: %w", dispositionErr)
-			}
-			if strings.EqualFold(disposition, "attachment") {
-				count++
-			}
-		}
-		nested, nestedErr := countEmailAttachments(part.Header, part, depth+1, parts)
-		closeErr := part.Close()
-		if err := errors.Join(nestedErr, closeErr); err != nil {
-			return 0, err
-		}
-		count += nested
 	}
+	c.strings("email.received", "email", "Received", received)
+	if message.Date.State == document.EmailDateInvalid && len(message.Date.Fields) > 1 {
+		c.warn("unparseable_timestamp", "email", "Date", "multiple Date fields prevented timestamp normalization")
+	}
+	return true, nil
+}
+
+func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string) {
+	if len(raw) > document.MaxSourceMetadataValueBytes {
+		c.warn("value_too_large", "email", "Date", "embedded timestamp was omitted")
+		return
+	}
+	if date.TimezoneState == document.EmailTimezoneUnknownNamed {
+		c.string("email.sent.raw", "email", "Date", raw, false)
+		c.warn("unsupported_timezone", "email", "Date", "email timezone prevented timestamp normalization")
+		return
+	}
+	if date.State != document.EmailDateParsed || date.Civil == nil {
+		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+		return
+	}
+	civil, err := time.Parse("2006-01-02T15:04:05", *date.Civil)
+	if err != nil {
+		c.string("email.sent.raw", "email", "Date", raw, false)
+		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+		return
+	}
+	stamp := document.SourceMetadataTimestampV1{Raw: raw, Normalized: *date.Civil,
+		Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}
+	if date.UTC != nil {
+		instant, err := time.Parse(time.RFC3339, *date.UTC)
+		if err != nil {
+			c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+			return
+		}
+		offset := int(civil.Sub(instant) / time.Second)
+		stamp.Normalized = instant.In(time.FixedZone("", offset)).Format(time.RFC3339)
+		stamp.Timezone = document.SourceMetadataTimezoneUTC
+		if offset != 0 {
+			stamp.Timezone = document.SourceMetadataTimezoneOffset
+			stamp.Offset = stamp.Normalized[len(stamp.Normalized)-6:]
+		}
+	}
+	c.addTimestamp("email.sent", "email", "Date", stamp)
 }
 
 func (c *metadataCollector) extractCalendar(data []byte) {

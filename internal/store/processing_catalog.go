@@ -184,6 +184,14 @@ type RenditionBuildRecord struct {
 	LexicalSegments                   []RenditionLexicalSegmentRecord
 }
 
+// RenditionAttachmentID computes an attachment identity from a stable publication
+// identity and its retained version/profile scope. Queued producers pass their
+// job ID; the local email producer passes its immutable body build ID.
+// It does not validate or authorize a publication.
+func RenditionAttachmentID(publicationID, contentVersionID, profileFingerprint string) string {
+	return renditionScopedID("attachment", publicationID, contentVersionID, profileFingerprint)
+}
+
 // RenditionAttachmentRecord grants one content version authority to reuse a
 // completed vault-local build under one complete processing profile identity.
 type RenditionAttachmentRecord struct {
@@ -224,6 +232,34 @@ func ValidateProcessingProfileRecord(record ProcessingProfileRecord) error {
 func ValidateRenditionBuildRecord(record RenditionBuildRecord) error {
 	_, err := normalizeRenditionBuildRecord(record)
 	return err
+}
+
+// RenditionBuild returns one completed immutable build, including a dormant
+// build that has no attachment or serving head. Reading a build grants no
+// publication authority.
+func (s *Store) RenditionBuild(ctx context.Context, buildID string) (RenditionBuildRecord, error) {
+	if err := validateCatalogSHA256(buildID, "rendition build ID"); err != nil {
+		return RenditionBuildRecord{}, fmt.Errorf("rendition build %q: %w", buildID, ErrNotFound)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return RenditionBuildRecord{}, fmt.Errorf("starting rendition build snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	record, err := loadRenditionBuild(ctx, tx, buildID)
+	if err != nil {
+		return RenditionBuildRecord{}, fmt.Errorf("reading rendition build %s: %w", buildID, err)
+	}
+	if record.VaultID != s.vaultID {
+		return RenditionBuildRecord{}, fmt.Errorf(
+			"rendition build %s belongs to vault %q, not store vault %q",
+			buildID, record.VaultID, s.vaultID,
+		)
+	}
+	if err := tx.Commit(); err != nil {
+		return RenditionBuildRecord{}, fmt.Errorf("closing rendition build snapshot: %w", err)
+	}
+	return record, nil
 }
 
 // StageRenditionBuild inserts or exactly reuses one completed immutable build.

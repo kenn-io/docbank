@@ -309,7 +309,7 @@ func (s *Store) EnqueueRenditionJob(
 		waiterID := renditionScopedID("waiter", jobID, request.ContentVersionID,
 			profile.Fingerprint, authority.principal, authority.scope, authority.disclosure,
 			authority.inputsJSON, authority.retainedJSON)
-		attachmentID := renditionScopedID("attachment", jobID, request.ContentVersionID,
+		attachmentID := RenditionAttachmentID(jobID, request.ContentVersionID,
 			profile.Fingerprint)
 		waiterResult, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_job_waiters(

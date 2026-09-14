@@ -36,7 +36,8 @@ func FuzzExtractSourceMetadata(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
-		record := ExtractSourceMetadata(data)
+		record, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), data)
+		require.NoError(t, err)
 		encoded, checksum, err := document.MarshalSourceMetadataV1(record)
 		require.NoError(t, err, "extracted metadata must satisfy the contract")
 		decoded, decodedChecksum, err := document.DecodeSourceMetadataV1(encoded)

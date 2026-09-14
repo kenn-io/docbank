@@ -99,6 +99,41 @@ func TestAddSingleFile(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAddEMLDeclaresMessageRFC822WithoutChangingSource(t *testing.T) {
+	for _, name := range []string{"message.eml", "message.EML", "message.EmL"} {
+		t.Run(name, func(t *testing.T) {
+			ing := newTestIngester(t)
+			raw := []byte("Subject: Synthetic\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\nlegacy-caf\xe9")
+			root := t.TempDir()
+			path := filepath.Join(root, name)
+			require.NoError(t, os.WriteFile(path, raw, 0o600))
+			report, err := ing.AddPaths(t.Context(), []string{path}, "/inbox")
+			require.NoError(t, err)
+			require.Equal(t, 1, report.Added)
+			node, err := ing.Store.NodeByPath(t.Context(), "/inbox/"+name)
+			require.NoError(t, err)
+			require.Equal(t, "message/rfc822", node.MimeType)
+			sum := sha256.Sum256(raw)
+			require.Equal(t, hex.EncodeToString(sum[:]), node.BlobHash)
+			require.Equal(t, int64(len(raw)), node.Size)
+		})
+	}
+}
+
+func TestDetectMimeDeclaresEMLBeforeHostRegistry(t *testing.T) {
+	for _, name := range []string{"message.eml", "message.EML", "message.EmL"} {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(name, []byte("not sniffable"), func(string) string {
+				called = true
+				return "application/x-host-dependent"
+			})
+			require.Equal(t, "message/rfc822", got)
+			require.False(t, called)
+		})
+	}
+}
+
 func TestAddPathsRejectsNonUTF8ExplicitSourceWithoutPoisoningMetadata(t *testing.T) {
 	ing := newTestIngester(t)
 	invalid := filepath.Join(t.TempDir(), "invalid-"+string([]byte{0xff})+".txt")

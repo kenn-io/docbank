@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1060,13 +1061,13 @@ func TestClientClassifiesExactUploadReadLifecycle(t *testing.T) {
 	tests := []struct {
 		name       string
 		configure  func(*fixture)
-		duringRead func(context.CancelFunc)
+		duringRead func(context.CancelFunc, <-chan struct{})
 		wantCode   document.RenditionErrorCode
 		wantError  error
 	}{
 		{
 			name: "caller cancellation",
-			duringRead: func(cancel context.CancelFunc) {
+			duringRead: func(cancel context.CancelFunc, _ <-chan struct{}) {
 				cancel()
 			},
 			wantError: context.Canceled,
@@ -1076,8 +1077,8 @@ func TestClientClassifiesExactUploadReadLifecycle(t *testing.T) {
 			configure: func(fixture *fixture) {
 				fixture.authorization.ExpiresAt = time.Now().UTC().Add(20 * time.Millisecond).Format(timeForm)
 			},
-			duringRead: func(context.CancelFunc) {
-				time.Sleep(40 * time.Millisecond)
+			duringRead: func(_ context.CancelFunc, closed <-chan struct{}) {
+				<-closed
 			},
 			wantError: document.ErrRenditionAuthorizationExpired,
 		},
@@ -1086,40 +1087,44 @@ func TestClientClassifiesExactUploadReadLifecycle(t *testing.T) {
 			configure: func(fixture *fixture) {
 				fixture.profile.MaxWallTime = 20 * time.Millisecond
 			},
-			duringRead: func(context.CancelFunc) {
-				time.Sleep(40 * time.Millisecond)
+			duringRead: func(_ context.CancelFunc, closed <-chan struct{}) {
+				<-closed
 			},
 			wantCode: document.RenditionErrorCapacity,
 		},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			fixture := newFixture(t, []byte("%PDF-1.7\nslow upload\n%%EOF\n"))
-			if testCase.configure != nil {
-				testCase.configure(fixture)
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			upload := &testUpload{
-				Reader: &callbackReadCloser{
-					reader: bytes.NewReader(fixture.source),
-					before: func() { testCase.duringRead(cancel) },
-				},
-				metadata: fixture.metadata,
-			}
-			client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
-				t.Fatal("expired upload reached egress")
-				return nil, errors.New("unexpected egress")
-			}))
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, []byte("%PDF-1.7\nslow upload\n%%EOF\n"))
+				if testCase.configure != nil {
+					testCase.configure(fixture)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				closed := make(chan struct{})
+				upload := &testUpload{
+					Reader: &callbackReadCloser{
+						reader:     bytes.NewReader(fixture.source),
+						before:     func() { testCase.duringRead(cancel, closed) },
+						afterClose: func() { close(closed) },
+					},
+					metadata: fixture.metadata,
+				}
+				client := fixture.client(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+					t.Fatal("expired upload reached egress")
+					return nil, errors.New("unexpected egress")
+				}))
 
-			_, err := document.RenderRenditionWithResume(ctx, client, upload,
-				fixture.authorization, nil, nil)
+				_, err := document.RenderRenditionWithResume(ctx, client, upload,
+					fixture.authorization, nil, nil)
 
-			if testCase.wantError != nil {
-				assert.ErrorIs(t, err, testCase.wantError)
-			} else {
-				assertCode(t, err, testCase.wantCode)
-			}
+				if testCase.wantError != nil {
+					assert.ErrorIs(t, err, testCase.wantError)
+				} else {
+					assertCode(t, err, testCase.wantCode)
+				}
+			})
 		})
 	}
 }
@@ -1366,7 +1371,12 @@ type testUpload struct {
 }
 
 func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
-func (upload *testUpload) Close() error                                { return nil }
+func (upload *testUpload) Close() error {
+	if reader, ok := upload.Reader.(io.Closer); ok {
+		return reader.Close()
+	}
+	return nil
+}
 
 type testSecrets struct {
 	mu     sync.Mutex
