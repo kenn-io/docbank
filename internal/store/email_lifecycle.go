@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
+	"strings"
 )
 
 var emailInventorySuppressionProfile = func() string {
@@ -32,6 +34,16 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 		for _, id := range versions {
 			if _, ok := selected[id]; !request.All && !ok {
 				continue
+			}
+			retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? ORDER BY operation_id`, id)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(retained) != 0 {
+				if request.All {
+					continue
+				}
+				return nil, nil, emailDocumentRetentionConflict(retained)
 			}
 			v, err := emailVersion(ctx, tx, id)
 			if err != nil {
@@ -108,9 +120,24 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 
 func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions []string) error {
 	for _, id := range versions {
+		retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? UNION SELECT operation_id FROM email_document_relations WHERE child_version_id=? ORDER BY operation_id`, id, id)
+		if err != nil {
+			return err
+		}
+		if len(retained) != 0 {
+			return emailDocumentRetentionConflict(retained)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE content_version_id=?`, id); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func emailDocumentRetentionConflict(operationIDs []string) error {
+	commands := make([]string, len(operationIDs))
+	for i, id := range operationIDs {
+		commands[i] = "docbank email-documents show " + id
+	}
+	return fmt.Errorf("%w: retained by operations %s; inspect with %s; release each receipt with docbank email-documents release <operation-id> --request-digest <request-digest>", ErrEmailDocumentConflict, strings.Join(operationIDs, ", "), strings.Join(commands, "; "))
 }

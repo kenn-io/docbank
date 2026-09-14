@@ -302,10 +302,11 @@ var codeToTypedErr = map[string]error{
 	"maintenance_busy":              ErrMaintenanceBusy,
 	"processing_unavailable":        ErrProcessingUnavailable,
 	"processing_plan_changed":       ErrProcessingPlanChanged,
-	"processing_consent_required":   ErrProcessingConsent,
-	"processing_consent_expired":    ErrProcessingConsent,
-	"processing_consent_revoked":    ErrProcessingConsent,
+	"processing_consent_required":   fmt.Errorf("%w: %w", ErrProcessingConsent, store.ErrProcessingConsentRequired),
+	"processing_consent_expired":    fmt.Errorf("%w: %w", ErrProcessingConsent, store.ErrProcessingConsentExpired),
+	"processing_consent_revoked":    fmt.Errorf("%w: %w", ErrProcessingConsent, store.ErrProcessingConsentRevoked),
 	"derivative_purge_plan_changed": ErrProcessingPlanChanged,
+	"email_document_conflict":       store.ErrEmailDocumentConflict,
 	"email_pending":                 store.ErrEmailPending,
 	"email_not_supported":           store.ErrEmailNotSupported,
 	"email_derivative_suppressed":   store.ErrEmailDerivativeSuppressed,
@@ -358,11 +359,26 @@ func (c *Client) doWithHeaders(
 		}
 		body = bytes.NewReader(b)
 	}
+	return c.doRequest(ctx, method, path, hdr, body, func(reader io.Reader) error {
+		if out == nil {
+			_, _ = io.Copy(io.Discard, reader)
+			return nil
+		}
+		return json.UnmarshalRead(reader, out)
+	})
+}
+
+// doRequest owns transport and successful-response error classification for
+// ordinary JSON and bounded protocol-specific decoders.
+func (c *Client) doRequest(
+	ctx context.Context, method, path string, hdr map[string]string, body io.Reader,
+	decode func(io.Reader) error,
+) (http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("building %s %s: %w", method, path, err)
 	}
-	if in != nil {
+	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.key != "" {
@@ -381,11 +397,7 @@ func (c *Client) doWithHeaders(
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, decodeError(resp)
 	}
-	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return resp.Header.Clone(), nil
-	}
-	if err := json.UnmarshalRead(resp.Body, out); err != nil {
+	if err := decode(resp.Body); err != nil {
 		return nil, &responseDecodeError{err: fmt.Errorf(
 			"decoding %s %s response: %w", method, path, err,
 		)}

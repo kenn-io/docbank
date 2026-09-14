@@ -71,6 +71,29 @@ deletes the selected tree entries. The document bytes are still on disk and may
 still be referenced by another node or version. Only content with no remaining
 reference becomes a GC candidate.
 
+### Release email attachment references
+
+Published email attachments retain their exact source and child versions.
+If a receipt blocks permanent deletion or version pruning, the error names its
+operation ID. Inspect that receipt before releasing its references:
+
+```bash
+docbank email-documents show <operation-id>
+docbank email-documents relations --parent-version <version-id>
+docbank email-documents release <operation-id> --request-digest <request-digest>
+```
+
+`show` and `relations` return JSON. Copy `request_digest` from the inspected
+receipt into the release command. Release removes the receipt and its links,
+keeps ordinary child documents, and relinquishes the original operation's retry
+guarantee. Repeat the deletion command after releasing all blocking receipts.
+Other retention rules still apply.
+
+Use `--child-version` to inspect a child's incoming relationships. See the
+[CLI reference](../cli-reference.md#docbank-email-documents) for page controls
+and the [embedding guide](../embedding.md#publish-email-attachment-documents)
+for publication and retention rules.
+
 ## Stage 3: Garbage collection (`gc`)
 
 GC removes a blob's catalog record only when nothing retains its content. A

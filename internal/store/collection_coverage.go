@@ -73,8 +73,13 @@ coverage_versions AS MATERIALIZED (
  FROM coverage_members m JOIN nodes n ON n.id=m.node_id
  JOIN content_versions v ON v.version_id=n.current_version_id AND v.node_id=n.id
  WHERE n.kind='file' AND n.trashed_at IS NULL
-),
-coverage_attempts AS (
+), ` + processingVersionCoverageCTE()
+}
+
+// processingVersionCoverageCTE classifies exact versions supplied by the caller
+// in coverage_versions, under the profile/generation in coverage_selection.
+func processingVersionCoverageCTE() string {
+	return `coverage_attempts AS (
  SELECT w.content_version_id, w.waiter_id, w.job_id, w.state waiter_state,
   j.state job_state, w.updated_at waiter_updated_at, j.updated_at job_updated_at,
   ROW_NUMBER() OVER (PARTITION BY w.content_version_id ORDER BY

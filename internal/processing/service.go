@@ -877,35 +877,9 @@ type renditionRun struct{ jobID, waiterID, attachmentID string }
 func (service *Service) runRendition(ctx context.Context, node store.Node, version store.ContentVersion,
 	profile configuredProfile, principal, scope string, onEnqueued func(renditionRun),
 ) (renditionRun, error) {
-	prepared, err := service.prepareRendition(ctx, node, version, profile, false)
+	prepared, err := service.prepareExecutableRendition(ctx, node, version, profile)
 	if err != nil {
 		return renditionRun{}, err
-	}
-	preflightWork := store.RenditionJobWork{VaultID: service.catalog.VaultID(),
-		Job:     store.RenditionJob{SourceSHA256: version.BlobHash},
-		Waiter:  store.RenditionJobWaiter{ContentVersionID: version.ID},
-		Profile: profile.record, ExecutionIdentity: prepared.identity}
-	preflightExecution, err := service.renditions.Prepare(ctx, preflightWork, service.clock())
-	if err != nil {
-		return renditionRun{}, fmt.Errorf("preparing rendition execution: %w", err)
-	}
-	if preflightExecution.Upload == nil {
-		return renditionRun{}, errors.New("rendition preflight did not provide an upload")
-	}
-	defer func() { _ = preflightExecution.Upload.Close() }()
-	if err := validateRenditionExecution(preflightWork, preflightExecution); err != nil {
-		return renditionRun{}, fmt.Errorf("validating rendition execution: %w", err)
-	}
-	preflightIdentity, err := document.NewRenditionExecutionIdentityV1(
-		preflightExecution.Upload.Metadata(), preflightExecution.Authorization,
-		preflightExecution.EvidencePolicy, preflightExecution.RenditionPolicy)
-	if err != nil {
-		return renditionRun{}, err
-	}
-	wantIdentity, _, _ := document.CanonicalRenditionExecutionIdentityV1(prepared.identity)
-	gotIdentity, _, _ := document.CanonicalRenditionExecutionIdentityV1(preflightIdentity)
-	if !bytes.Equal(wantIdentity, gotIdentity) {
-		return renditionRun{}, errors.New("planned rendition execution differs from executable runtime")
 	}
 	retained := retainedRenditionClasses(profile.portable)
 	var job store.RenditionJob
@@ -929,9 +903,13 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		onEnqueued(renditionRun{jobID: job.ID, waiterID: waiter.ID, attachmentID: waiter.AttachmentID})
 		ctx = service.lifecycle
 	}
-	if current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID); statusErr == nil &&
+	return service.runRenditionJob(ctx, job.ID, waiter.ID)
+}
+
+func (service *Service) runRenditionJob(ctx context.Context, jobID, waiterID string) (renditionRun, error) {
+	if current, statusErr := service.catalog.RenditionJobByID(ctx, jobID); statusErr == nil &&
 		current.State == store.RenditionJobCompleted {
-		return service.renditionResult(ctx, waiter.ID)
+		return service.renditionResult(ctx, waiterID)
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
 		Runtime: service.renditions, Gate: service.gate, Owner: "embedded-rendition-worker",
@@ -940,15 +918,15 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 		return renditionRun{}, err
 	}
 	for {
-		_, err := worker.RunJob(ctx, job.ID)
-		current, statusErr := service.catalog.RenditionJobByID(ctx, job.ID)
+		_, err := worker.RunJob(ctx, jobID)
+		current, statusErr := service.catalog.RenditionJobByID(ctx, jobID)
 		if statusErr != nil {
 			return renditionRun{}, errors.Join(err, statusErr)
 		}
 		switch current.State {
 		case store.RenditionJobQueued, store.RenditionJobRunning, store.RenditionJobRetryWait:
 		case store.RenditionJobCompleted:
-			return service.renditionResult(ctx, waiter.ID)
+			return service.renditionResult(ctx, waiterID)
 		case store.RenditionJobFailed:
 			if current.FailureCode == store.RenditionFailureConsent {
 				return renditionRun{}, ErrConsentRequired
@@ -1617,6 +1595,42 @@ func (service *Service) resolve(ctx context.Context, selector Selector) (store.N
 type preparedRendition struct {
 	identity       document.RenditionExecutionIdentityV1
 	capturedPolicy jsontext.Value
+}
+
+func (service *Service) prepareExecutableRendition(ctx context.Context, node store.Node, version store.ContentVersion,
+	profile configuredProfile,
+) (preparedRendition, error) {
+	prepared, err := service.prepareRendition(ctx, node, version, profile, false)
+	if err != nil {
+		return preparedRendition{}, err
+	}
+	preflightWork := store.RenditionJobWork{VaultID: service.catalog.VaultID(),
+		Job:     store.RenditionJob{SourceSHA256: version.BlobHash},
+		Waiter:  store.RenditionJobWaiter{ContentVersionID: version.ID},
+		Profile: profile.record, ExecutionIdentity: prepared.identity}
+	preflightExecution, err := service.renditions.Prepare(ctx, preflightWork, service.clock())
+	if err != nil {
+		return preparedRendition{}, fmt.Errorf("preparing rendition execution: %w", err)
+	}
+	if preflightExecution.Upload == nil {
+		return preparedRendition{}, errors.New("rendition preflight did not provide an upload")
+	}
+	defer func() { _ = preflightExecution.Upload.Close() }()
+	if err := validateRenditionExecution(preflightWork, preflightExecution); err != nil {
+		return preparedRendition{}, fmt.Errorf("validating rendition execution: %w", err)
+	}
+	preflightIdentity, err := document.NewRenditionExecutionIdentityV1(
+		preflightExecution.Upload.Metadata(), preflightExecution.Authorization,
+		preflightExecution.EvidencePolicy, preflightExecution.RenditionPolicy)
+	if err != nil {
+		return preparedRendition{}, err
+	}
+	wantIdentity, _, _ := document.CanonicalRenditionExecutionIdentityV1(prepared.identity)
+	gotIdentity, _, _ := document.CanonicalRenditionExecutionIdentityV1(preflightIdentity)
+	if !bytes.Equal(wantIdentity, gotIdentity) {
+		return preparedRendition{}, errors.New("planned rendition execution differs from executable runtime")
+	}
+	return prepared, nil
 }
 
 func (service *Service) prepareRendition(ctx context.Context, node store.Node, version store.ContentVersion,

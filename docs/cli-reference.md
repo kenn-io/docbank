@@ -460,6 +460,27 @@ Physical byte totals cover every affected authorized location.
 Deleted version IDs stop resolving. Later backups preserve the pruned state;
 earlier snapshots still contain their original history.
 
+## docbank email-documents
+
+```text
+docbank email-documents show <operation-id>
+docbank email-documents relations --parent-version <version-id> [--limit <n>]
+docbank email-documents relations --child-version <version-id> [--limit <n>]
+docbank email-documents release <operation-id> --request-digest <digest>
+```
+
+Inspect or release email attachment receipts through the authenticated daemon.
+`show` returns the receipt as JSON. `relations` returns one JSON page for exactly
+one parent or child version; the default limit is 100 and the maximum is 250.
+Continue with `--after-operation <next_operation_id> --after-order <next_order>`
+from the previous page.
+
+`release` requires the exact `request_digest` from the inspected receipt. It
+removes the receipt and its relationships, keeps child documents, and gives up
+the original operation's retry guarantee. See
+[release email attachment references](usage/trash-and-gc.md#release-email-attachment-references)
+when a receipt blocks trash empty or version pruning.
+
 ## docbank refs
 
 ```text
