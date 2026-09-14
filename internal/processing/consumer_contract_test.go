@@ -100,6 +100,8 @@ type consumerSource struct {
 	stages            []string
 }
 
+var _ retrieval.SemanticBackend = (*consumerSource)(nil)
+
 type consumerCorpusDocument struct {
 	document      retrieval.DocumentIdentity
 	name, inputID string
@@ -182,7 +184,7 @@ func (source *consumerSource) AcquireSemanticSearchAuthority(_ context.Context, 
 
 func (source *consumerSource) ResolveSemanticCandidates(_ context.Context, _, _ string,
 	_ document.EmbeddingInputKind, _ string, sourceManifest string, neighbors []vectorindex.Neighbor, _ int,
-	scope store.SearchOptions,
+	scope store.SearchOptions, _ map[int64]struct{},
 ) (store.SemanticSearchResolution, error) {
 	source.stages = append(source.stages, "vector_candidates")
 	for _, neighbor := range neighbors {
