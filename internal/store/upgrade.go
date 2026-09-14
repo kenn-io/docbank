@@ -72,6 +72,7 @@ var (
 )
 
 var currentSchemaTables = [...]string{
+	"email_document_publications", "email_document_relations",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts",
@@ -239,6 +240,7 @@ func validateCurrentSchemaColumns(
 		)
 	}
 	for _, table := range []string{
+		"email_document_publications", "email_document_relations",
 		"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 		"blob_stores", "blob_locations", "blob_pack_entries",
 		"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts",

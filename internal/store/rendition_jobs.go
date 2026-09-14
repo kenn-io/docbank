@@ -55,6 +55,7 @@ const (
 )
 
 var (
+	ErrInvalidRenditionJobRequest   = errors.New("invalid rendition job request")
 	ErrRenditionJobLeaseHeld        = errors.New("rendition job lease is held")
 	ErrRenditionJobFenced           = errors.New("rendition job claim is fenced")
 	ErrRenditionJobOperatorRequired = errors.New("rendition job requires operator resolution")
@@ -141,53 +142,53 @@ func (s *Store) EnqueueRenditionJob(
 ) (RenditionJob, RenditionJobWaiter, error) {
 	profile, err := normalizeProcessingProfileRecord(request.Profile)
 	if err != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("enqueueing rendition job: %w", err)
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("%w: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	policy, err := normalizeCapturedArtifactPolicyV1(request.CapturedArtifactPolicy)
 	if err != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("enqueueing rendition job: %w", err)
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("%w: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	executionJSON, executionFingerprint, err := document.CanonicalRenditionExecutionIdentityV1(
 		request.ExecutionIdentity)
 	if err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
-			"enqueueing rendition job: execution identity: %w", err)
+			"%w: execution identity: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	var executableProfile document.ProcessingProfileV1
 	if err := json.Unmarshal(
 		profile.CanonicalProfile, &executableProfile, json.RejectUnknownMembers(true)); err != nil ||
 		executableProfile.Rendition == nil {
-		return RenditionJob{}, RenditionJobWaiter{}, errors.New(
-			"enqueueing rendition job: profile has no executable rendition binding")
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
+			"%w: profile has no executable rendition binding", ErrInvalidRenditionJobRequest)
 	}
 	if err := document.ValidateRenditionExecutionProfileV1(
 		request.ExecutionIdentity, executableProfile); err != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, errors.New(
-			"enqueueing rendition job: execution identity does not match immutable profile")
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
+			"%w: execution identity does not match immutable profile", ErrInvalidRenditionJobRequest)
 	}
 	if err := validateCapturedArtifactPolicyForProfile(policy, executableProfile); err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
-			"enqueueing rendition job: captured artifact policy: %w", err)
+			"%w: captured artifact policy: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	authority, err := normalizeConsentAuthority(request.Authorization)
 	if err != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("enqueueing rendition job: %w", err)
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("%w: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	if authority.profile != profile.Fingerprint ||
 		authority.disclosure != profile.RenditionDisclosureFingerprint {
-		return RenditionJob{}, RenditionJobWaiter{}, errors.New(
-			"enqueueing rendition job: authorization does not match the exact profile disclosure")
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
+			"%w: authorization does not match the exact profile disclosure", ErrInvalidRenditionJobRequest)
 	}
 	if err := validateRenditionWaiterInputClasses(authority.inputs); err != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("enqueueing rendition job: %w", err)
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("%w: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	if !slices.Equal(authority.retained, policy.retainedRoles()) {
-		return RenditionJob{}, RenditionJobWaiter{}, errors.New(
-			"enqueueing rendition job: authorization retained artifact classes do not match captured policy")
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
+			"%w: authorization retained artifact classes do not match captured policy", ErrInvalidRenditionJobRequest)
 	}
 	if request.Authorization.PriorAuthorization != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, errors.New(
-			"enqueueing rendition job: prior provider authorization is not a waiter identity")
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
+			"%w: prior provider authorization is not a waiter identity", ErrInvalidRenditionJobRequest)
 	}
 	if err := validateUUIDv4(request.ContentVersionID); err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
@@ -220,7 +221,7 @@ func (s *Store) EnqueueRenditionJob(
 			policyFingerprint, executionFingerprint)
 		if request.ExecutionIdentity.Upload.SHA256 != sourceSHA256 ||
 			request.ExecutionIdentity.Authorization.SourceSHA256 != sourceSHA256 {
-			return errors.New("rendition execution identity does not match exact source authority")
+			return fmt.Errorf("%w: rendition execution identity does not match exact source authority", ErrRenditionJobStaleAuthority)
 		}
 		buildSuppressed, err := derivativeBuildSuppressedTx(ctx, tx, sourceSHA256, jobID)
 		if err != nil {

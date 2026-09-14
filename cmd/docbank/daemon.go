@@ -377,6 +377,7 @@ func runServe(ctx context.Context) (retErr error) {
 		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
+		PublishEmailDocuments: processing.PublishEmailDocuments,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {

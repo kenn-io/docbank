@@ -414,50 +414,63 @@ func (s *Store) CreateFileWithReceipt(
 	}
 	var receipt ContentWriteReceipt
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !active {
-			receipt.Node, receipt.Version, err = s.createFileTx(
-				ctx, tx, parentID, name, blobHash, size, mimeType, physical...,
-			)
-			if err != nil {
-				return err
-			}
-			receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
-			return err
-		}
+		receipt, err = s.createFileWithReceiptTx(ctx, tx, parentID, name, blobHash, size, mimeType, physical...)
+		return err
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	return receipt, nil
+}
+
+// createFileWithReceiptTx preserves ordinary audited creation when a domain
+// operation publishes several files in one transaction.
+func (s *Store) createFileWithReceiptTx(
+	ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash string,
+	size int64, mimeType string, physical ...BlobPhysical,
+) (ContentWriteReceipt, error) {
+	var receipt ContentWriteReceipt
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	if !active {
+		receipt.Node, receipt.Version, err = s.createFileTx(
+			ctx, tx, parentID, name, blobHash, size, mimeType, physical...,
+		)
+	} else {
 		priorParent, err := liveDirTx(tx, parentID)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, err
 		}
 		authority, scopes, _, err := loadAuditedNodeAuthority(ctx, tx, parentID)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, err
 		}
 		operation, err := newContentVersionOperation()
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, err
 		}
 		receipt.Node, receipt.Version, err = s.createFileWithOperationTx(
 			ctx, tx, parentID, name, blobHash, size, mimeType, operation, physical...,
 		)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, err
 		}
 		resultingParent, err := nodeByIDTx(tx, parentID)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, err
 		}
 		if err := persistAuditedNodeCreation(ctx, tx, s.vaultID, authority, scopes,
 			priorParent, resultingParent, receipt.Node, receipt.Version, operation.operationID,
 			operation.recordedAt, nil); err != nil {
-			return err
+			return ContentWriteReceipt{}, err
 		}
-		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
-		return err
-	})
+	}
+	if err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 	if err != nil {
 		return ContentWriteReceipt{}, err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/document"
 )
 
 type metadataEmailGeneration struct {
@@ -158,6 +159,15 @@ func exportEmailBodyResult(ctx context.Context, q metadataQuerier, write metadat
 }
 func importEmailMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
 	switch kind {
+	case "email_document_publication":
+		var v metadataEmailDocumentPublication
+		if err := document.UnmarshalEmailDocumentJSON(raw, &v); err != nil {
+			return err
+		}
+		if err := document.ValidateEmailDocumentReceipt(v.Receipt); err != nil {
+			return err
+		}
+		return insertEmailDocumentPublication(ctx, tx, v.Request, v.Receipt)
 	case "email_generation":
 		var v metadataEmailGeneration
 		if err := decodeMetadataRecord(raw, &v); err != nil {

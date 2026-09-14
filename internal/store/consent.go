@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	ErrProcessingConsentRequired = errors.New("processing consent is required")
-	ErrProcessingConsentExpired  = errors.New("processing consent has expired")
-	ErrProcessingConsentRevoked  = errors.New("processing consent has been revoked")
+	ErrInvalidProcessingConsentRequest = errors.New("invalid processing consent request")
+	ErrProcessingConsentRequired       = errors.New("processing consent is required")
+	ErrProcessingConsentExpired        = errors.New("processing consent has expired")
+	ErrProcessingConsentRevoked        = errors.New("processing consent has been revoked")
 )
 
 // ProcessingIncarnation is the local authority boundary for provider access.
@@ -154,7 +155,7 @@ func (s *Store) GrantConsent(
 		RetainedArtifactClasses: request.RetainedArtifactClasses,
 	})
 	if err != nil {
-		return ProcessingConsentGrant{}, err
+		return ProcessingConsentGrant{}, fmt.Errorf("%w: %w", ErrInvalidProcessingConsentRequest, err)
 	}
 	id, err := newUUIDv4()
 	if err != nil {
@@ -211,11 +212,11 @@ func (s *Store) RevokeConsent(
 
 	principal, err := normalizeConsentLabel("principal", request.Principal)
 	if err != nil {
-		return ProcessingConsentRevocation{}, err
+		return ProcessingConsentRevocation{}, fmt.Errorf("%w: %w", ErrInvalidProcessingConsentRequest, err)
 	}
 	scope, err := normalizeConsentLabel("scope", request.Scope)
 	if err != nil {
-		return ProcessingConsentRevocation{}, err
+		return ProcessingConsentRevocation{}, fmt.Errorf("%w: %w", ErrInvalidProcessingConsentRequest, err)
 	}
 	id, err := newUUIDv4()
 	if err != nil {
