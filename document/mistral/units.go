@@ -28,6 +28,7 @@ const (
 	pptxRelationshipNamespace   = "http://schemas.openxmlformats.org/package/2006/relationships"
 	pptxRelationshipIDNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 	pptxContentTypesNamespace   = "http://schemas.openxmlformats.org/package/2006/content-types"
+	pptxMarkupCompatibilityNS   = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 	pptxRelationshipType        = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 	pptxSlideContentType        = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
 )
@@ -120,7 +121,7 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 			return 0, fmt.Errorf("PPTX slide target %q is missing", target)
 		}
 		declaredType, declared := contentDeclarations.forPart(target)
-		if !declared || declaredType != pptxSlideContentType {
+		if !declared || !strings.EqualFold(declaredType, pptxSlideContentType) {
 			return 0, fmt.Errorf("PPTX slide target %q has the wrong content type", target)
 		}
 	}
@@ -345,6 +346,9 @@ func pptxAttribute(attributes []xml.Attr, space, local string) (string, bool, er
 }
 
 func parsePPTXSlideIDs(data []byte) ([]string, error) {
+	if err := rejectPPTXAlternateContent(data); err != nil {
+		return nil, err
+	}
 	var document pptxPresentation
 	if err := decodePPTXXML(data, &document); err != nil {
 		return nil, err
@@ -376,6 +380,23 @@ func parsePPTXSlideIDs(data []byte) ([]string, error) {
 		relationshipIDs = append(relationshipIDs, slide.RelationshipID)
 	}
 	return relationshipIDs, nil
+}
+
+func rejectPPTXAlternateContent(data []byte) error {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read PPTX presentation markup: %w", err)
+		}
+		start, ok := token.(xml.StartElement)
+		if ok && start.Name.Space == pptxMarkupCompatibilityNS && start.Name.Local == "AlternateContent" {
+			return errors.New("PPTX presentation uses unsupported alternate slide-list content")
+		}
+	}
 }
 
 func parsePPTXRelationships(data []byte) (map[string]pptxRelationship, error) {

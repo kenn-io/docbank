@@ -100,9 +100,14 @@ func TestCountPPTXSlides(t *testing.T) {
 			name: "case-insensitive part names",
 			archive: pptxArchiveWithEntries(t, []pptxTestSlide{{
 				id: "256", relationshipID: "rId1", target: "slides/SLIDE1.XML",
-				entryName: "ppt/slides/slide1.xml", contentTypeName: "/ppt/slides/slide1.xml",
+				entryName: "ppt/slides/slide1.xml", contentTypeName: "/ppt/slides/slide1.xml", contentType: strings.ToUpper(pptxSlideContentType),
 			}}, nil),
 			wantUnits: 1,
+		},
+		{
+			name:      "alternate slide-list content",
+			archive:   pptxArchiveWithSlideXML(t, `<p:presentation xmlns:p="`+pptxPresentationNamespace+`" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mc="`+pptxMarkupCompatibilityNS+`"><p:sldIdLst><p:sldId id="256" r:id="rId1"/><mc:AlternateContent><mc:Choice Requires="p"><p:sldId id="257" r:id="rId2"/></mc:Choice><mc:Fallback><p:sldId id="258" r:id="rId3"/></mc:Fallback></mc:AlternateContent></p:sldIdLst></p:presentation>`, validPPTXRelationships(), validPPTXContentTypes()),
+			wantError: true,
 		},
 		{
 			name:      "empty slide list",
@@ -247,7 +252,7 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 	}
 
 	defaultContentTypes := "<Types xmlns=\"" + pptxContentTypesNamespace + "\">" +
-		"<Default Extension=\"xml\" ContentType=\"" + pptxSlideContentType + "\"/>" +
+		"<Default Extension=\"xml\" ContentType=\"" + strings.ToUpper(pptxSlideContentType) + "\"/>" +
 		"<Override PartName=\"/ppt/presentation.xml\" " +
 		"ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/>" +
 		"</Types>"
