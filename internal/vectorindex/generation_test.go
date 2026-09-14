@@ -45,6 +45,32 @@ func TestBuildGenerationIsDeterministicAndSearchesExactCosine(t *testing.T) {
 	assert.Zero(t, neighbors[2].Score)
 }
 
+// This test fails if a caller can supply a row fence yet the ANN scan still
+// scores or returns a row outside that fence.
+func TestSearchRowsScoresOnlySelectedRows(t *testing.T) {
+	set := testVectorSet(document.VectorMetricCosine, document.VectorNormalizationUnitLength,
+		[]string{"revoked", "allowed"}, [][]float32{{0, 1}, {1, 0}})
+	generation, err := BuildGeneration(testManifest(t, []document.VectorSetV1{set}),
+		[]document.VectorSetV1{set}, Options{})
+	require.NoError(t, err)
+	all, err := generation.Search([]float32{1, 0}, 2)
+	require.NoError(t, err)
+
+	neighbors, err := generation.SearchRows([]float32{1, 0}, []RowIdentity{all[0].RowIdentity})
+	require.NoError(t, err)
+	require.Len(t, neighbors, 1)
+	assert.Equal(t, "allowed", neighbors[0].InputKey)
+	assert.InDelta(t, 1, neighbors[0].Score, 1e-12)
+
+	neighbors, err = generation.SearchRows([]float32{1, 0}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, neighbors)
+	_, err = generation.SearchRows([]float32{1, 0}, []RowIdentity{all[0].RowIdentity, all[0].RowIdentity})
+	require.ErrorContains(t, err, "duplicate identity")
+	_, err = generation.SearchRows([]float32{1, 0}, []RowIdentity{all[0].RowIdentity, {InputKey: "absent"}})
+	require.ErrorContains(t, err, "absent from generation")
+}
+
 // This test fails if a codec change alters any architecture-independent v1
 // header, offset, identity, row-major float, or whole-generation checksum byte.
 func TestGenerationEncodesGoldenBinary(t *testing.T) {
