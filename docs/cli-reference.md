@@ -1030,6 +1030,43 @@ authority has already committed, so do not restore the old mapping or assume
 the rewrite rolled back. Release the external file lock and run `docbank
 storage pack`; its reconciliation pass removes the orphaned source pack.
 
+## docbank transfer
+
+### docbank transfer verify
+
+```text
+docbank transfer verify <package> [--archive-id <archive-id>] [--json]
+```
+
+Verifies a transfer package from a local directory, ZIP file, or legacy
+Msgvault JSONL file without opening a vault or starting the daemon. The command
+reads only the named path. See [Verify Transfer Packages](usage/transfers.md)
+for the integrity checks and legacy compatibility limits.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--archive-id <archive-id>` | none | Bind a legacy `msgvault-message-export/1` JSONL file to the registered archive ID that will own it. The flag is required for legacy JSONL and ignored for directory and ZIP packages. Verification checks the ID's syntax but cannot confirm vault registration. |
+| `--json` | `false` | Write the complete machine-readable verification report to stdout. |
+
+Human output is one `valid <format> package <package-id> for archive
+<archive-id> (<package-authority> authority)` line for a valid package. An
+invalid package starts with `invalid <format> package: <n> finding(s)`, followed
+by each retained finding as `<path>: <detail> (<code>)`.
+
+The JSON report contains `format`, `package_id`, `archive_id`, `next_cursor`,
+`valid`, `partial`, `findings_truncated`, `findings`, `findings_total`, `counts`,
+`bounds`, `integrity_authority`, and `package_authority`. A legacy report also
+contains `legacy_evidence`, with `format`, `sha256`, and `bytes`, plus
+`format_limitations`. Each format limitation has `capability`, `state`, and
+`reason`.
+
+Exit `0` means validation succeeded and the reader closed successfully. A bad
+invocation, including a missing `--archive-id` for legacy JSONL, exits `2`.
+After writing its report, any validator error or invalid report exits `6`,
+including validation cancellation and validator-spool cleanup failures. Input-
+opening or legacy-normalization errors, report-output errors, and reader-close
+errors after otherwise valid validation exit `1`.
+
 ## docbank verify
 
 ```

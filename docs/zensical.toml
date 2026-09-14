@@ -34,6 +34,7 @@ nav = [
     {"Trash, GC, Repack & Verify" = "usage/trash-and-gc.md"},
     {"Multi-store Storage" = "usage/storage.md"},
     {"Backup & Restore" = "usage/backup.md"},
+    {"Verify Transfer Packages" = "usage/transfers.md"},
     {"Troubleshooting" = "troubleshooting.md"},
   ]},
   {"Automate & Integrate" = [
