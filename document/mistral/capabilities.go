@@ -259,6 +259,10 @@ func probeRequestOptions(candidate CandidateFormat, maxUnits int, extractHeader,
 	if candidate.Family == formatIDPDF {
 		options.Pages = fmt.Sprintf("0-%d", maxUnits-1)
 	}
+	if candidate.ID == "pptx" {
+		imageLimit := 0
+		options.ImageLimit = &imageLimit
+	}
 	return options
 }
 

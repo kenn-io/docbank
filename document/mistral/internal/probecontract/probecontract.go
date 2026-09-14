@@ -27,6 +27,7 @@ type RequestOptions struct {
 	Pages         string `json:"pages"`
 	ExtractHeader bool   `json:"extract_header"`
 	ExtractFooter bool   `json:"extract_footer"`
+	ImageLimit    *int   `json:"image_limit,omitzero"`
 }
 
 type fingerprintPayload struct {

@@ -42,14 +42,13 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 	}
 	for _, candidate := range candidateFormats {
 		digest := sha256.Sum256([]byte(candidate.ID))
+		options := probeRequestOptions(candidate, manifest.MaxUnits, policy.values.ExtractHeader, policy.values.ExtractFooter)
 		result := CapabilityResult{
 			FormatID: candidate.ID, Family: candidate.Family, MediaType: candidate.MediaType,
 			UnitKind: candidate.UnitKind, Status: ProbeStatusPassed,
-			FixtureDigest: hex.EncodeToString(digest[:])[:16],
-			RequestFingerprint: requestFingerprint(candidate, probeRequestOptions(
-				candidate, manifest.MaxUnits, policy.values.ExtractHeader, policy.values.ExtractFooter,
-			)),
-			ReturnedModel: defaultModel, UnitCount: 1, UnitsProcessed: 1,
+			FixtureDigest:      hex.EncodeToString(digest[:])[:16],
+			RequestFingerprint: requestFingerprint(candidate, options),
+			ReturnedModel:      defaultModel, UnitCount: 1, UnitsProcessed: 1,
 			UnitBoundMethod: UnitBoundNone,
 		}
 		switch candidate.ID {

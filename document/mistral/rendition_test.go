@@ -228,8 +228,11 @@ func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
 			Document struct {
 				URL string `json:"document_url"`
 			} `json:"document"`
+			ImageLimit *int `json:"image_limit"`
 		}
 		require.NoError(t, json.Unmarshal(body, &wire))
+		require.NotNil(t, wire.ImageLimit)
+		assert.Equal(t, 0, *wire.ImageLimit)
 		encoded := strings.TrimPrefix(wire.Document.URL,
 			"data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,")
 		require.NotEqual(t, wire.Document.URL, encoded)

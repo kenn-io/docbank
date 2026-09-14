@@ -694,10 +694,12 @@ func requestEnvelope(
 		ExtractHeader      bool   `json:"extract_header"`
 		ExtractFooter      bool   `json:"extract_footer"`
 		Pages              string `json:"pages,omitzero"`
+		ImageLimit         *int   `json:"image_limit,omitzero"`
 	}{
 		ExtractHeader: options.ExtractHeader,
 		ExtractFooter: options.ExtractFooter,
 		Pages:         options.Pages,
+		ImageLimit:    options.ImageLimit,
 	}
 	tailJSON, err := json.Marshal(tail)
 	if err != nil {
