@@ -29,6 +29,26 @@ func TestPolicyAuthorizesOnlyProbeTestedBounds(t *testing.T) {
 	require.ErrorContains(t, err, "no enforceable unit bound")
 }
 
+func TestLegacyManifestRetainsPDFAuthority(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 500)
+	legacy := syntheticManifest(t, policy, true)
+	for index := range legacy.Results {
+		if legacy.Results[index].FormatID == "pptx" {
+			legacy.Results[index].ReasonCode = ""
+		}
+	}
+	require.NoError(t, legacy.ValidateComplete())
+
+	pdfAuthorization, err := policy.Authorize(legacy, "pdf")
+	require.NoError(t, err)
+	currentFingerprint, err := policy.Fingerprint(syntheticManifest(t, policy, true))
+	require.NoError(t, err)
+	assert.Equal(t, currentFingerprint, pdfAuthorization.PolicyFingerprint())
+
+	_, err = policy.Authorize(legacy, "pptx")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+}
+
 func TestPolicyFingerprintExcludesObservationDate(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 500)
 	first := syntheticManifest(t, policy, true)

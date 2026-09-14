@@ -41,11 +41,18 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	assert.Equal(t, ProbeStatusPassed, docx.Status)
 	assert.Equal(t, UnitBoundNone, docx.UnitBoundMethod)
 	assert.Empty(t, docx.ReasonCode)
+	pptx := findManifestResult(t, manifest, "pptx")
+	assert.Equal(t, ProbeStatusPassed, pptx.Status)
+	assert.Equal(t, UnitBoundLocalExact, pptx.UnitBoundMethod)
+	assert.Equal(t, 1, pptx.LocalUnits)
+	t.Logf("pptx status=%q unit_bound_method=%q local_units=%d", pptx.Status, pptx.UnitBoundMethod, pptx.LocalUnits)
 
 	authorization, err := policy.Authorize(manifest, "pdf")
 	require.NoError(t, err)
 	assert.Equal(t, "pdf", authorization.Format().ID)
 	assert.NotEmpty(t, authorization.PolicyFingerprint())
+	_, err = policy.Authorize(manifest, "pptx")
+	require.NoError(t, err)
 	_, err = policy.Authorize(manifest, "docx")
 	require.ErrorContains(t, err, "run the authenticated capability probe and supply its manifest")
 

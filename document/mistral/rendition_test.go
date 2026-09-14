@@ -190,7 +190,96 @@ func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
 	)
 	_, err = client.Render(t.Context(), &renditionUpload{Reader: bytes.NewReader(source), metadata: metadata}, authorization)
 	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
-	assert.ErrorIs(t, err, ErrCapabilityContract)
+	require.ErrorIs(t, err, ErrCapabilityContract)
+}
+
+func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 3)
+	manifest := syntheticManifest(t, policy, true)
+	for index := range manifest.Results {
+		if manifest.Results[index].FormatID == "pptx" {
+			manifest.Results[index].ReasonCode = ""
+			manifest.Results[index].UnitBoundMethod = UnitBoundLocalExact
+			manifest.Results[index].UnitCount = 3
+			manifest.Results[index].UnitsProcessed = 3
+			manifest.Results[index].LocalUnits = 3
+		}
+	}
+	require.NoError(t, manifest.ValidateComplete())
+	descriptor := renditionDescriptor(t, policy, manifest, "pptx")
+	source := pptxArchive(t, []pptxTestSlide{
+		{id: "256", relationshipID: "rId1", target: "slides/slide1.xml"},
+		{id: "257", relationshipID: "rId2", target: "slides/final.xml"},
+		{id: "258", relationshipID: "rId3", target: "/ppt/slides/slide3.xml"},
+	})
+	fixture := pptxRenditionFixture(t, descriptor, source)
+	var uploaded []byte
+	var requests atomic.Int64
+	providerMismatch := false
+	client, err := NewRenditionProvider(Profile{
+		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
+		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
+		MaxRetryDelay: time.Millisecond,
+	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		body, err := io.ReadAll(request.Body)
+		require.NoError(t, err)
+		var wire struct {
+			Document struct {
+				URL string `json:"document_url"`
+			} `json:"document"`
+		}
+		require.NoError(t, json.Unmarshal(body, &wire))
+		encoded := strings.TrimPrefix(wire.Document.URL,
+			"data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,")
+		require.NotEqual(t, wire.Document.URL, encoded)
+		uploaded, err = base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		processed := 3
+		if providerMismatch {
+			processed = 2
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(pptxRenditionResponse(len(source), processed))), Request: request,
+		}, nil
+	})})
+	require.NoError(t, err)
+
+	result, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, source, uploaded)
+	assert.Equal(t, int64(1), requests.Load())
+	assert.Equal(t, document.EvidenceUnitSlide, result.Evidence.UnitKind)
+	assert.Len(t, result.Evidence.Units, 3)
+	assert.Equal(t, int64(3), result.Receipt.Usage.Units)
+	t.Logf("at_limit local_units=%d provider_units=%d requests=%d uploaded_bytes=%d", len(result.Evidence.Units), result.Receipt.Usage.Units, requests.Load(), len(uploaded))
+
+	overLimitSource := pptxArchive(t, []pptxTestSlide{
+		{id: "256", relationshipID: "rId1", target: "slides/slide1.xml"},
+		{id: "257", relationshipID: "rId2", target: "slides/slide2.xml"},
+		{id: "258", relationshipID: "rId3", target: "slides/slide3.xml"},
+		{id: "259", relationshipID: "rId4", target: "slides/slide4.xml"},
+	})
+	overLimit := pptxRenditionFixture(t, descriptor, overLimitSource)
+	_, err = client.Render(t.Context(), overLimit.upload(), overLimit.authorization)
+	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
+	require.ErrorContains(t, errors.Unwrap(err), "unit limit")
+	assert.Equal(t, int64(1), requests.Load())
+	t.Logf("over_limit max_units=%d requests=%d error=%v", policy.values.MaxUnits, requests.Load(), err)
+
+	identity := pptxRenditionFixture(t, descriptor, testPDF("pptx-identity"))
+	_, err = client.Render(t.Context(), identity.upload(), identity.authorization)
+	assertRenditionCode(t, err, document.RenditionErrorUnsupportedInput)
+	assert.Equal(t, int64(1), requests.Load())
+	t.Logf("identity_mismatch requests=%d error=%v", requests.Load(), err)
+
+	providerMismatch = true
+	_, err = client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
+	require.ErrorIs(t, err, ErrCapabilityContract)
+	assert.Equal(t, int64(2), requests.Load())
+	t.Logf("provider_mismatch local_units=3 provider_units=2 requests=%d error=%v", requests.Load(), err)
 }
 
 func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {
@@ -684,6 +773,39 @@ func renditionFixture(
 		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
 		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
 	}}
+}
+
+func pptxRenditionFixture(
+	t *testing.T, descriptor document.RenditionDescriptor, source []byte,
+) renditionTestFixture {
+	t.Helper()
+	digest := sha256.Sum256(source)
+	metadata := document.AuthorizedUploadMetadata{
+		Filename: "document.pptx", MediaFamily: "presentation",
+		MediaType:  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
+		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64),
+		InputKind: document.RenditionInputOriginalFile,
+	}
+	started := time.Now().UTC().Add(-time.Minute)
+	return renditionTestFixture{metadata: metadata, source: source, authorization: document.RenditionAuthorization{
+		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
+		PolicyFingerprint:           descriptor.PolicyFingerprint,
+		RenditionRequestFingerprint: strings.Repeat("4", 64), SourceSHA256: metadata.SHA256,
+		SourceBytes: metadata.ByteLength, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
+		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: metadata.MediaFamily,
+		MediaType: metadata.MediaType, InputKind: metadata.InputKind,
+		MaxProviderMarkdownBytes: 4096, MaxTotalResultBytes: 32768,
+		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
+		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
+	}}
+}
+
+func pptxRenditionResponse(sourceBytes, processed int) string {
+	return fmt.Sprintf(
+		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"},{"index":2,"markdown":"third"}],"usage_info":{"pages_processed":%d,"doc_size_bytes":%d}}`,
+		processed, sourceBytes,
+	)
 }
 
 func (fixture renditionTestFixture) upload() document.AuthorizedUpload {

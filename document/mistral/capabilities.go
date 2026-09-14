@@ -62,6 +62,7 @@ var failureReasonCodes = []string{
 
 var expectedUnitBounds = map[string]UnitBoundMethod{
 	formatIDPDF: UnitBoundProviderRequest,
+	"pptx":      UnitBoundLocalExact,
 }
 
 func expectedUnitBound(formatID string) UnitBoundMethod {
@@ -188,6 +189,9 @@ func validateCapabilityResult(manifest CapabilityManifest, candidate CandidateFo
 		}
 		if expectedMethod == UnitBoundNone && result.ReasonCode != "" {
 			return fmt.Errorf("mistral capability manifest result %q has an unexpected reason", candidate.ID)
+		}
+		if expectedMethod == UnitBoundLocalExact && result.ReasonCode == "" {
+			return nil
 		}
 		if expectedMethod != UnitBoundNone && !slices.Contains(boundUnverifiedReasonCodes, result.ReasonCode) {
 			return fmt.Errorf("mistral capability manifest result %q does not explain its unverified bound", candidate.ID)

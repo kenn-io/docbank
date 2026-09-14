@@ -1,6 +1,7 @@
 package mistral
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -86,6 +87,12 @@ func TestWriteProbeFixturesPublishesCompleteDeterministicMatrix(t *testing.T) {
 	pdf, err := os.ReadFile(filepath.Join(first, "pdf"))
 	require.NoError(t, err)
 	assert.Contains(t, string(pdf), "/Kids [3 0 R 4 0 R] /Count 2")
+	pptx, err := os.ReadFile(filepath.Join(first, "pptx"))
+	require.NoError(t, err)
+	pptxUnits, err := countPPTXSlides(bytes.NewReader(pptx), int64(len(pptx)))
+	require.NoError(t, err)
+	assert.Equal(t, 1, pptxUnits)
+	t.Logf("pptx digest=%s local_units=%d", fileDigest(filepath.Join(first, "pptx")), pptxUnits)
 }
 
 func TestWriteProbeFixturesMissingOrInvalidSeedsLeavesNoDestination(t *testing.T) {

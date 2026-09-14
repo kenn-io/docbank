@@ -52,7 +52,8 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 			ReturnedModel: defaultModel, UnitCount: 1, UnitsProcessed: 1,
 			UnitBoundMethod: UnitBoundNone,
 		}
-		if candidate.ID == "pdf" {
+		switch candidate.ID {
+		case "pdf":
 			result.UnitCount = 2
 			result.UnitsProcessed = 2
 			if pdfBound {
@@ -63,6 +64,8 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 			} else {
 				result.ReasonCode = reasonBoundUnitsMismatch
 			}
+		case "pptx":
+			result.ReasonCode = reasonBoundUnitsMismatch
 		}
 		manifest.Results = append(manifest.Results, result)
 	}
