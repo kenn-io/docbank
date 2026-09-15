@@ -51,6 +51,45 @@ func TestDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t *testing.T)
 	require.Equal(t, 1, identities)
 }
 
+func TestDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t *testing.T) {
+	s := newTestStore(t)
+	version := seedDocumentPeopleEvent(t, s, "audited.txt", "d7", nil)
+	audited, err := s.Mkdir(t.Context(), s.RootID(), "Audited")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, audited.ID)
+
+	input, err := s.DocumentPeopleResolverInputs(t.Context(), version.ID)
+	require.NoError(t, err)
+	require.Len(t, input.Actors, 1)
+	require.Empty(t, input.Bindings["email:ada@example.test"])
+
+	raw, err := canonical.Marshal(input)
+	require.NoError(t, err)
+	publication := DocumentPeoplePublication{
+		People: document.DocumentPeopleV1{
+			ContractVersion:   document.PersonContractV1,
+			ContentVersionID:  version.ID,
+			EventGenerationID: input.EventGenerationID,
+			Edges:             []document.DocumentPersonEdgeV1{},
+		},
+		Resolution:   DocumentPeopleResolution{UnresolvedActors: 1},
+		InputsSHA256: fakeSHA256(raw), ResolverFingerprint: document.PersonResolverFingerprint(),
+		NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, DirtyRevision: input.DirtyRevision,
+	}
+	head, err := s.PublishDocumentPeople(t.Context(), publication)
+	require.NoError(t, err)
+	require.Equal(t, documentPeopleStatePublished, head.State)
+	require.Zero(t, head.EdgeCount)
+
+	var people, identities, candidates int
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM persons`).Scan(&people))
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM person_identities`).Scan(&identities))
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM person_match_candidates`).Scan(&candidates))
+	require.Zero(t, people)
+	require.Zero(t, identities)
+	require.Zero(t, candidates)
+}
+
 func TestDocumentPeopleResolverInputsOpensNameOnlyCandidate(t *testing.T) {
 	s := newTestStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:ada lovelace", Claim: `"Ada Lovelace"`,

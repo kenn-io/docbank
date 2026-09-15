@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
@@ -214,4 +215,26 @@ func NewDocumentPeopleBackfill(
 		return targets, err
 	}
 	return backfill
+}
+
+// RebuildDocumentPeople synchronously invalidates and drains every retained
+// version. Restore callers only succeed after the durable receipt completes.
+func RebuildDocumentPeople(ctx context.Context, catalog *store.Store) error {
+	build, err := catalog.RebuildDocumentPeople(ctx, uuid.NewString())
+	if err != nil {
+		return err
+	}
+	backfill := NewDocumentPeopleBackfill(catalog, nil, nil)
+	backfill.DrainOnce = true
+	if err := backfill.Run(ctx); err != nil {
+		return err
+	}
+	build, err = catalog.DocumentPeopleBuild(ctx, build.OperationID)
+	if err != nil {
+		return err
+	}
+	if build.State != "completed" {
+		return errors.New("document people rebuild is incomplete")
+	}
+	return nil
 }

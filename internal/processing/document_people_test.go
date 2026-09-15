@@ -45,6 +45,18 @@ func TestDocumentPeopleResolution(t *testing.T) {
 	require.Empty(t, output.Edges)
 }
 
+func TestRebuildDocumentPeoplePublishesEveryRetainedVersion(t *testing.T) {
+	catalog := openDocumentEventTestStore(t)
+	_, err := catalog.CreateFile(t.Context(), catalog.RootID(), "people.txt", testDigest("people-restore"), 8, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, RebuildDocumentEvents(t.Context(), catalog))
+	require.NoError(t, RebuildDocumentPeople(t.Context(), catalog))
+	coverage, err := catalog.DocumentPeopleCoverage(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), coverage.Published)
+	require.Zero(t, coverage.Pending)
+}
+
 type documentPeopleCatalogStub struct {
 	inputs      map[string]store.DocumentPeopleInputs
 	loadErrs    map[string]error

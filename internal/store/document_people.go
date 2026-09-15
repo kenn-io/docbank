@@ -90,7 +90,11 @@ func (s *Store) DocumentPeopleResolverInputs(ctx context.Context, versionID stri
 	if validateUUIDv4(versionID) != nil {
 		return input, ErrInvalidPerson
 	}
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		audited, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, `SELECT cv.node_id,h.generation_id FROM content_versions cv
 			JOIN document_event_heads h ON h.content_version_id=cv.version_id WHERE cv.version_id=?`, versionID).
 			Scan(&input.NodeID, &input.EventGenerationID); errors.Is(err, sql.ErrNoRows) {
@@ -122,19 +126,25 @@ func (s *Store) DocumentPeopleResolverInputs(ctx context.Context, versionID stri
 			if err != nil {
 				return err
 			}
-			if len(matches) == 0 && actorKeyAutoProvisionEligible(claim.ActorKey) {
-				person, err := provisionActorPersonTx(ctx, tx, claim)
-				if err != nil {
-					return err
-				}
-				matches, changed = []Person{person}, true
-			} else if len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:") {
-				retained, err := s.openActorCandidatesTx(ctx, tx, versionID, claims, matches)
-				if err != nil {
-					return err
-				}
-				if !retained {
-					input.CandidateOverflow++
+			// Automatic people and candidate creation changes retained authority.
+			// An audited vault can still rebuild its derived index from retained
+			// bindings, but unresolved actors remain unresolved until an audited
+			// authority mutation is implemented.
+			if !audited {
+				if len(matches) == 0 && actorKeyAutoProvisionEligible(claim.ActorKey) {
+					person, err := provisionActorPersonTx(ctx, tx, claim)
+					if err != nil {
+						return err
+					}
+					matches, changed = []Person{person}, true
+				} else if len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:") {
+					retained, err := s.openActorCandidatesTx(ctx, tx, versionID, claims, matches)
+					if err != nil {
+						return err
+					}
+					if !retained {
+						input.CandidateOverflow++
+					}
 				}
 			}
 			input.Bindings[actorKey] = matches
@@ -473,7 +483,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 		state = documentPeopleStateUnavailable
 	}
 	var head DocumentPeopleHead
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := checkPeoplePublicationFence(ctx, tx, p); err != nil {
 			return err
 		}
@@ -604,7 +614,7 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 	if reason != "derivation_failed" && reason != "input_over_limit" {
 		return errors.New("invalid document people failure reason")
 	}
-	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		p := DocumentPeoplePublication{People: document.DocumentPeopleV1{ContentVersionID: input.ContentVersionID, EventGenerationID: input.EventGenerationID}, NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, DirtyRevision: input.DirtyRevision}
 		if err := checkPeoplePublicationFence(ctx, tx, p); err != nil {
 			return err

@@ -2,10 +2,12 @@ package backupapp
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,6 +58,8 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	databasePath := filepath.Join(target, "docbank.db")
 	metadata, err := store.Open(databasePath)
 	require.NoError(t, err)
+	_, err = metadata.CreateFile(t.Context(), metadata.RootID(), "people.txt", strings.Repeat("a", 64), 1, "text/plain")
+	require.NoError(t, err)
 	next := store.NewPackCatalog(metadata).PrimaryOwnership()
 	require.NoError(t, metadata.Close())
 
@@ -68,11 +72,42 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	require.NoError(t, verifyRestoredRenditionHeads(
 		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
 	))
+	metadata, err = store.Open(databasePath)
+	require.NoError(t, err)
+	coverage, err := metadata.DocumentPeopleCoverage(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), coverage.Published)
+	require.NoError(t, metadata.Close())
 
 	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(target, "blobs"))
 	require.NoError(t, err)
 	require.True(t, pending, "verification must leave crash recovery authority intact")
 	require.NoError(t, handoff.Rollback(t.Context()))
+}
+
+func TestRestoredRenditionVerificationReturnsPeopleRebuildFailure(t *testing.T) {
+	target := t.TempDir()
+	databasePath := filepath.Join(target, "docbank.db")
+	metadata, err := store.Open(databasePath)
+	require.NoError(t, err)
+	next := store.NewPackCatalog(metadata).PrimaryOwnership()
+	require.NoError(t, metadata.Close())
+
+	priorDatabaseDigest := ""
+	handoff, err := blob.NewPrimaryRestoreHandoff(
+		filepath.Join(target, "blobs"), next, &priorDatabaseDigest,
+	)
+	require.NoError(t, err)
+	require.NoError(t, handoff.Prepare(t.Context()))
+	t.Cleanup(func() { _ = handoff.Rollback(t.Context()) })
+
+	forced := errors.New("forced people rebuild failure")
+	err = verifyRestoredRenditionHeadsWithPeopleRebuild(
+		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
+		func(context.Context, *store.Store) error { return forced },
+	)
+	require.ErrorIs(t, err, forced)
+	require.ErrorContains(t, err, "rebuilding restored person index")
 }
 
 func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing.T) {

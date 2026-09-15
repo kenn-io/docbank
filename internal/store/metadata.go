@@ -28,6 +28,7 @@ const (
 	metadataAttachmentIDField     = "attachment_id"
 	metadataGenerationIDField     = "generation_id"
 	metadataContentVersionIDField = "content_version_id"
+	metadataIngestIDField         = "ingest_id"
 )
 
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
@@ -401,6 +402,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasPersons() {
+		if err := exportPersonMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if layout.hasPostV3Metadata() {
 		if err := exportVisualPreviews(ctx, tx, write); err != nil {
@@ -1185,6 +1191,9 @@ func (s *Store) importMetadataRecord(
 	if isEmbeddingMetadataType(kind) {
 		return importEmbeddingMetadataRecord(ctx, tx, kind, raw)
 	}
+	if isPersonMetadataType(kind) {
+		return importPersonMetadataRecord(ctx, tx, kind, raw)
+	}
 	switch kind {
 	case "blob":
 		var v metadataBlob
@@ -1486,23 +1495,33 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"email_body_result":                    {"type", "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
-	"email_head":                           {"type", "content_version_id", metadataAttachmentIDField, "published_at"},
-	"email_attachment":                     {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
-	"email_part_artifact":                  {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
-	"email_generation":                     {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
-	"email_document_publication":           {"type", "request", "receipt"},
+	"email_body_result":                    {metadataTypeField, "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
+	"email_head":                           {metadataTypeField, metadataContentVersionIDField, metadataAttachmentIDField, "published_at"},
+	"email_attachment":                     {metadataTypeField, metadataAttachmentIDField, metadataContentVersionIDField, "generation_id", "attached_at"},
+	"email_part_artifact":                  {metadataTypeField, "generation_id", "part_path", "role", "blob_hash", "size"},
+	"email_generation":                     {metadataTypeField, "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
+	"email_document_publication":           {metadataTypeField, "request", "receipt"},
 	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
 	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
 	metadataSourceMetadataHeadType:         {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
 	metadataVisualPreviewGenerationType:    {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:          {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
+	metadataPersonType:                     personMetadataRequiredFields[metadataPersonType],
+	metadataPersonIdentityType:             personMetadataRequiredFields[metadataPersonIdentityType],
+	metadataPersonExternalType:             personMetadataRequiredFields[metadataPersonExternalType],
+	metadataPersonExternalAliasType:        personMetadataRequiredFields[metadataPersonExternalAliasType],
+	metadataPersonAliasType:                personMetadataRequiredFields[metadataPersonAliasType],
+	metadataPersonMergeType:                personMetadataRequiredFields[metadataPersonMergeType],
+	metadataPersonSplitType:                personMetadataRequiredFields[metadataPersonSplitType],
+	metadataCustodianAssignmentType:        personMetadataRequiredFields[metadataCustodianAssignmentType],
+	metadataPersonAssertionType:            personMetadataRequiredFields[metadataPersonAssertionType],
+	metadataPersonCandidateType:            personMetadataRequiredFields[metadataPersonCandidateType],
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
-	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
-	metadataCollectionLabelType:            {metadataTypeField, "ingest_id", "label", "revision", "updated_at"},
-	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	metadataIngestType:                     {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
+	metadataCollectionLabelType:            {metadataTypeField, metadataIngestIDField, "label", "revision", "updated_at"},
+	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
 	metadataProvenanceVersionBindingType:   {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
@@ -1557,6 +1576,10 @@ var metadataNullableFields = map[string]map[string]bool{
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
 	metadataProcessingConsentGrantType: {"expires_at": true},
+	metadataPersonExternalType:         personMetadataNullableFields[metadataPersonExternalType],
+	metadataPersonAliasType:            personMetadataNullableFields[metadataPersonAliasType],
+	metadataCustodianAssignmentType:    personMetadataNullableFields[metadataCustodianAssignmentType],
+	metadataPersonCandidateType:        personMetadataNullableFields[metadataPersonCandidateType],
 	metadataRenditionJobType: {
 		"execution_snapshot": true, "claim_owner": true, "lease_expires_at": true,
 		"provider_resume_handle": true, "selected_waiter_id": true,
@@ -1939,6 +1962,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
 			return err
+		}
+		if layout.hasPersons() {
+			if err := validatePersonMetadataState(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if layout.schemaVersion >= 13 {
 			if err := exportEmailDocumentMetadata(ctx, tx, func(any) error { return nil }); err != nil {
