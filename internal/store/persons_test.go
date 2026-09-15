@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,7 +30,7 @@ func TestPersonIdentityAuthorityAndSharedContactPoints(t *testing.T) {
 		EvidenceKind: "operator_assertion", EvidenceID: "claim-1", Confidence: "operator_asserted"}
 	added, err := s.AddPersonIdentity(ctx, ada.PersonID, ada.Revision, identity)
 	require.NoError(t, err)
-	require.Equal(t, "Ada@example.test", added.ValueNormalized)
+	require.Equal(t, "ada@example.test", added.ValueNormalized)
 	ada, _, err = s.PersonByID(ctx, ada.PersonID)
 	require.NoError(t, err)
 	_, err = s.AddPersonIdentity(ctx, ada.PersonID, ada.Revision, identity)
@@ -52,23 +51,18 @@ func TestPersonIdentityAuthorityAndSharedContactPoints(t *testing.T) {
 	require.Empty(t, identities)
 }
 
-func TestPersonMutationsAdvanceEpochAndDirtyExistingPopulation(t *testing.T) {
+func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	nodeID, versionID := seedPeopleVersion(t, s)
-	_, err = s.db.Exec(`INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,sensitive) VALUES(?,?,?,'generation','author','email:Ada@example.test','source_metadata','claim','exact_identifier','identifier_match','Ada',1,0)`, versionID, nodeID, person.PersonID)
 	require.NoError(t, err)
 	var before int64
 	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
 	person, err = s.UpdatePerson(ctx, person.PersonID, person.Revision, "Ada L.")
 	require.NoError(t, err)
-	var after, dirty int64
+	var after int64
 	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
 	require.Equal(t, before+1, after)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM document_people_dirty WHERE content_version_id=?`, versionID).Scan(&dirty))
-	require.EqualValues(t, 1, dirty)
 	retired, err := s.RetirePerson(ctx, person.PersonID, person.Revision)
 	require.NoError(t, err)
 	require.Equal(t, "retired", retired.State)
@@ -91,7 +85,7 @@ func TestPersonAuthorityRejectsInvalidInputs(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPerson)
 }
 
-func TestRetirePersonTombstonesResolutionAndSupersedesCandidates(t *testing.T) {
+func TestRetirePersonTombstonesResolution(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Retiring person", "transfer")
@@ -101,11 +95,6 @@ func TestRetirePersonTombstonesResolutionAndSupersedesCandidates(t *testing.T) {
 	require.NoError(t, err)
 	person, _, err = s.PersonByID(ctx, person.PersonID)
 	require.NoError(t, err)
-	candidateID, err := newUUIDv4()
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,state,created_at) VALUES(?,?,?,?,'identifier_conflict','{}',?,1,'open',?)`,
-		candidateID, "email:retiring@example.test", "Retiring person", person.PersonID, strings.Repeat("a", 64), nowRFC3339())
-	require.NoError(t, err)
 
 	retired, err := s.RetirePerson(ctx, person.PersonID, person.Revision)
 	require.NoError(t, err)
@@ -114,14 +103,12 @@ func TestRetirePersonTombstonesResolutionAndSupersedesCandidates(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.ResolveExternalPersonUID(ctx, "msgvault", "synthetic", "retiring")
 	require.ErrorIs(t, err, ErrNotFound)
-	var survivor, reason, candidateState string
+	var survivor, reason string
 	var survivorValid bool
 	require.NoError(t, s.db.QueryRow(`SELECT COALESCE(surviving_person_id,''),surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, person.PersonID).Scan(&survivor, &survivorValid, &reason))
 	require.Empty(t, survivor)
 	require.False(t, survivorValid)
 	require.Equal(t, "deleted", reason)
-	require.NoError(t, s.db.QueryRow(`SELECT state FROM person_match_candidates WHERE candidate_id=?`, candidateID).Scan(&candidateState))
-	require.Equal(t, "superseded", candidateState)
 }
 
 func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {

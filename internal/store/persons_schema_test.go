@@ -14,9 +14,8 @@ func TestPersonsSchema(t *testing.T) {
 	for _, table := range []string{
 		"persons", "person_identities", "person_external_identities",
 		"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits",
-		"custodian_assignments", "person_document_assertions", "person_match_candidates",
-		"document_people_state", "document_people_dirty", "document_people_heads", "document_people",
-		"document_people_generations", "document_people_builds", "person_rollups",
+		"custodian_assignments",
+		"document_people_state", "document_people_dirty",
 	} {
 		var count int
 		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&count))
@@ -35,17 +34,16 @@ func TestDocumentPeopleStateSurvivesReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(path)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE document_people_state SET binding_epoch=7, publication_epoch=9 WHERE singleton=1`)
+	_, err = s.db.Exec(`UPDATE document_people_state SET binding_epoch=7 WHERE singleton=1`)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
 	reopened, err := Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
-	var binding, publication int64
-	require.NoError(t, reopened.db.QueryRow(`SELECT binding_epoch,publication_epoch FROM document_people_state WHERE singleton=1`).Scan(&binding, &publication))
+	var binding int64
+	require.NoError(t, reopened.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&binding))
 	require.EqualValues(t, 7, binding)
-	require.EqualValues(t, 9, publication)
 }
 
 func TestPristineMetadataTargetRequiresUntouchedPeopleState(t *testing.T) {

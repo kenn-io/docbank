@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/docbank/document"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -180,9 +179,8 @@ func (s *Store) bootstrapTx() error {
 
 func initializeDocumentPeopleState(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO document_people_state
-		(singleton,contract_version,resolver_fingerprint,binding_epoch,publication_epoch,updated_at)
-		VALUES(1,?,?,1,1,?) ON CONFLICT(singleton) DO NOTHING`,
-		document.PersonContractV1, document.PersonResolverFingerprint(), nowRFC3339())
+		(singleton,binding_epoch,updated_at)
+		VALUES(1,1,?) ON CONFLICT(singleton) DO NOTHING`, nowRFC3339())
 	return err
 }
 

@@ -136,25 +136,6 @@ func TestMergePersonsAcceptsResolvedCurrentExternalUIDs(t *testing.T) {
 	require.Equal(t, "retired", states["retired"])
 }
 
-func TestMergePersonsRejectsConflictingAssertions(t *testing.T) {
-	s := newTestStore(t)
-	left, err := s.CreatePerson(t.Context(), "Left", "operator")
-	require.NoError(t, err)
-	right, err := s.CreatePerson(t.Context(), "Right", "operator")
-	require.NoError(t, err)
-	_, versionID := seedPeopleVersion(t, s)
-	for person, action := range map[Person]string{left: "assert", right: "suppress"} {
-		assertionID, err := newUUIDv4()
-		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) VALUES(?,?,?,'author',?,'','2026-09-12T00:00:00Z')`, assertionID, versionID, person.PersonID, action)
-		require.NoError(t, err)
-	}
-	operationID, err := newUUIDv4()
-	require.NoError(t, err)
-	_, err = s.MergePersons(t.Context(), left.PersonID, right.PersonID, operationID, left.Revision, right.Revision)
-	require.ErrorIs(t, err, ErrPersonMergeConflict)
-}
-
 func TestMergePersonsRewritesAliasChainsToOneHop(t *testing.T) {
 	s := newTestStore(t)
 	first, err := s.CreatePerson(t.Context(), "First", "operator")
@@ -184,7 +165,7 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 	source, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	source, first := addTestPersonIdentity(t, s, source, "email", "Ada@example.test", "first")
-	source, second := addTestPersonIdentity(t, s, source, "email", "ada@example.test", "second")
+	source, second := addTestPersonIdentity(t, s, source, "email", "other@example.test", "second")
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
 	request := PersonSplitRequest{PersonID: source.PersonID, OperationID: operationID, DisplayName: "Ada Two",
@@ -202,4 +183,47 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 	replayed, err := s.SplitPerson(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, receipt, replayed)
+}
+
+func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	source, err := s.CreatePerson(ctx, "Source", "operator")
+	require.NoError(t, err)
+	external, err := s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: source.PersonID,
+		System: "msgvault", ArchiveID: "example-archive", UID: "split-uid", UIDKind: "vcard_uid", UIDState: "current"}, source.Revision)
+	require.NoError(t, err)
+	nodeID, versionID := seedPeopleVersion(t, s)
+	assignment, err := s.SetCustodian(ctx, CustodianRequest{
+		Scope:    CustodianScope{Kind: "document", NodeID: nodeID, ContentVersionID: versionID},
+		PersonID: source.PersonID, RawLabel: "Source", Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	source, _, err = s.PersonByID(ctx, source.PersonID)
+	require.NoError(t, err)
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	request := PersonSplitRequest{PersonID: source.PersonID, OperationID: operationID, DisplayName: "Split",
+		Revision: source.Revision, IdentityIDs: []string{}, AssignmentIDs: []string{assignment.AssignmentID}, External: []PersonExternalIdentity{external}}
+	receipt, err := s.SplitPerson(ctx, request)
+	require.NoError(t, err)
+	resolved, err := s.ResolveExternalPersonUID(ctx, external.System, external.ArchiveID, external.UID)
+	require.NoError(t, err)
+	require.Equal(t, receipt.NewPersonID, resolved.PersonID)
+	assignments, err := s.CustodiansForVersion(ctx, versionID)
+	require.NoError(t, err)
+	require.Len(t, assignments, 1)
+	require.Equal(t, receipt.NewPersonID, *assignments[0].PersonID)
+	replayed, err := s.SplitPerson(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, receipt, replayed)
+	require.ErrorIs(t, s.RetireCustodian(ctx, assignment.AssignmentID, assignment.Revision), ErrStaleRevision)
+	// Merging the split person back must fence the assignment a second time.
+	source, _, err = s.PersonByID(ctx, source.PersonID)
+	require.NoError(t, err)
+	operationID, err = newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, source.PersonID, receipt.NewPersonID, operationID, source.Revision, 1)
+	require.NoError(t, err)
+	require.ErrorIs(t, s.RetireCustodian(ctx, assignment.AssignmentID, assignments[0].Revision), ErrStaleRevision)
 }

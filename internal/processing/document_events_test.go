@@ -127,7 +127,7 @@ func TestAdaptersRecoverRawEmailMinutePrecisionAndUnknownZone(t *testing.T) {
 	require.Equal(t, document.EventRole("blind_copy"), sent.Actors[0].Role)
 	require.True(t, sent.Actors[0].Sensitive)
 	require.Equal(t, document.EventRole("sender"), sent.Actors[1].Role)
-	require.Equal(t, "email:ADA@example.test", sent.Actors[1].ActorKey)
+	require.Equal(t, "email:ada@example.test", sent.Actors[1].ActorKey)
 	require.Equal(t, sent.EventID, requirePrimary(t, record.Primaries, "full").EventID)
 	require.Equal(t, requireEventKind(t, record.Events, "vault_recorded").EventID,
 		requirePrimary(t, record.Primaries, "safe").EventID)

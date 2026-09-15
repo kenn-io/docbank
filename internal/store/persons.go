@@ -52,7 +52,7 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
 			return err
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, id, "person_created")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return Person{}, err
@@ -80,7 +80,7 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 		if count != 1 {
 			return ErrStaleRevision
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, id, "person_updated")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return Person{}, err
@@ -113,7 +113,7 @@ func (s *Store) RetirePerson(ctx context.Context, id string, revision int64) (Pe
 		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,NULL,'deleted',?)`, id, now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded' WHERE suggested_person_id=? AND state='open'`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=NULL,revision=revision+1 WHERE person_id=? AND retired_at IS NULL`, id); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
@@ -121,7 +121,7 @@ func (s *Store) RetirePerson(ctx context.Context, id string, revision int64) (Pe
 			&retired.Revision, &retired.CreatedAt, &retired.UpdatedAt); err != nil {
 			return err
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, id, "person_retired")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return Person{}, err
@@ -151,23 +151,22 @@ func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, erro
 }
 
 func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, error) {
-	resolved, reachedThrough := id, ""
-	var survivor sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?`, id).Scan(&survivor)
-	if err == nil {
-		if !survivor.Valid || survivor.String == "" {
-			return Person{}, "", ErrNotFound
-		}
-		resolved, reachedThrough = survivor.String, id
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return Person{}, "", err
-	}
 	var person Person
-	err = s.db.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, resolved).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin, &person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
+		FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)
+		AND state<>'retired'`, id, id).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
+		&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Person{}, "", ErrNotFound
 	}
-	return person, reachedThrough, err
+	if err != nil {
+		return Person{}, "", err
+	}
+	reachedThrough := ""
+	if person.PersonID != id {
+		reachedThrough = id
+	}
+	return person, reachedThrough, nil
 }
 
 func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision int64, identity PersonIdentity) (PersonIdentity, error) {
@@ -213,7 +212,7 @@ func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, nowRFC3339(), personID); err != nil {
 			return err
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, personID, "identity_added")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return PersonIdentity{}, err
@@ -240,7 +239,7 @@ func (s *Store) RemovePersonIdentity(ctx context.Context, personID, identityID s
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, nowRFC3339(), personID); err != nil {
 			return err
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, personID, "identity_removed")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 }
 
@@ -284,16 +283,8 @@ func fencePersonTx(ctx context.Context, tx *sql.Tx, personID string, revision in
 	return nil
 }
 
-func markDocumentPeopleDirtyForPerson(ctx context.Context, tx *sql.Tx, personID, reason string) error {
-	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT DISTINCT content_version_id FROM document_people WHERE person_id=? LIMIT ?)`, personID, document.MaxPersonDirtyVersionsPerScan+1).Scan(&count); err != nil {
-		return err
-	}
-	if count <= document.MaxPersonDirtyVersionsPerScan {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO document_people_dirty(content_version_id,reason,marked_at) SELECT content_version_id,?,? FROM document_people WHERE person_id=? GROUP BY content_version_id ON CONFLICT(content_version_id) DO UPDATE SET revision=revision+1,reason=excluded.reason,marked_at=excluded.marked_at`, reason, nowRFC3339(), personID); err != nil {
-			return err
-		}
-	}
+// advancePersonBindingEpochTx invalidates person bindings after an authority change.
+func advancePersonBindingEpochTx(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
 	return err
 }

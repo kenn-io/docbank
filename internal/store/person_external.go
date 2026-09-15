@@ -2,33 +2,19 @@ package store
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
 )
 
-var personExternalSystems = map[string]struct{}{"msgvault": {}}
-
 const (
 	defaultPersonActorKeyLimit = 100
 	maxPersonActorKeyLimit     = 250
 )
-
-func PersonExternalSystems() []string {
-	systems := make([]string, 0, len(personExternalSystems))
-	for system := range personExternalSystems {
-		systems = append(systems, system)
-	}
-	slices.Sort(systems)
-	return systems
-}
 
 type PersonExternalIdentity struct {
 	PersonID, System, ArchiveID, UID, UIDKind, UIDState string
@@ -54,8 +40,7 @@ type PersonActorKeyPage struct {
 }
 
 func validExternalTuple(system, archiveID, uid string) bool {
-	_, err := document.ExternalPersonActorKey(system, archiveID, uid)
-	return err == nil
+	return document.ValidateExternalPersonTuple(system, archiveID, uid) == nil
 }
 
 func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExternalIdentity, revision int64) (PersonExternalIdentity, error) {
@@ -107,7 +92,7 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, identity.PersonID); err != nil {
 			return err
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, identity.PersonID, "external_identity_linked")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return PersonExternalIdentity{}, err
@@ -145,7 +130,7 @@ func (s *Store) UnlinkExternalIdentity(ctx context.Context, system, archiveID, u
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, personID); err != nil {
 			return err
 		}
-		return markDocumentPeopleDirtyForPerson(ctx, tx, personID, "external_identity_unlinked")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 }
 
@@ -158,15 +143,7 @@ func (s *Store) RecordExternalUIDAliases(ctx context.Context, system, archiveID,
 			if !validExternalTuple(system, archiveID, retired) || retired == survivingUID {
 				return ErrInvalidPerson
 			}
-			var existing string
-			err := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, system, archiveID, retired).Scan(&existing)
-			if err == nil && existing != survivingUID {
-				return ErrPersonIdentityConflict
-			}
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES(?,?,?,?,?)`, system, archiveID, retired, survivingUID, nowRFC3339()); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES(?,?,?,?,?) ON CONFLICT(system,archive_id,retired_uid) DO UPDATE SET surviving_uid=excluded.surviving_uid,observed_at=excluded.observed_at`, system, archiveID, retired, survivingUID, nowRFC3339()); err != nil {
 				return err
 			}
 		}
@@ -175,14 +152,14 @@ func (s *Store) RecordExternalUIDAliases(ctx context.Context, system, archiveID,
 				return err
 			}
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
-		return err
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 }
 
 func validateExternalAliasChainTx(ctx context.Context, tx *sql.Tx, system, archiveID, uid string) error {
+	start := uid
 	seen := map[string]bool{}
-	for range 33 {
+	for hops := range 33 {
 		if seen[uid] {
 			return errors.New("external UID alias cycle")
 		}
@@ -190,6 +167,19 @@ func validateExternalAliasChainTx(ctx context.Context, tx *sql.Tx, system, archi
 		var next string
 		err := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, system, archiveID, uid).Scan(&next)
 		if errors.Is(err, sql.ErrNoRows) {
+			// A new target must also stay reachable from every existing inbound alias.
+			var tooLong bool
+			if err := tx.QueryRowContext(ctx, `WITH RECURSIVE ancestors(uid,depth) AS (
+				SELECT ?,? UNION ALL
+				SELECT a.retired_uid,ancestors.depth+1 FROM person_external_uid_aliases a
+				JOIN ancestors ON a.surviving_uid=ancestors.uid
+				WHERE a.system=? AND a.archive_id=? AND ancestors.depth<33
+			) SELECT EXISTS(SELECT 1 FROM ancestors WHERE depth>32)`, start, hops, system, archiveID).Scan(&tooLong); err != nil {
+				return err
+			}
+			if tooLong {
+				return errors.New("external UID alias hop limit")
+			}
 			return nil
 		}
 		if err != nil {
@@ -285,7 +275,7 @@ func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysR
 	if request.Limit < 1 || request.Limit > maxPersonActorKeyLimit {
 		return PersonActorKeyPage{}, ErrInvalidPerson
 	}
-	last, err := s.decodePersonActorCursor(request.PersonID, request.Cursor)
+	last, err := decodePersonActorCursor(request.PersonID, request.Cursor)
 	if err != nil {
 		return PersonActorKeyPage{}, err
 	}
@@ -352,7 +342,7 @@ func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysR
 	page := PersonActorKeyPage{Items: ordered, Total: total}
 	if len(page.Items) > request.Limit {
 		page.Items = page.Items[:request.Limit]
-		page.NextCursor = s.encodePersonActorCursor(request.PersonID, page.Items[len(page.Items)-1])
+		page.NextCursor = encodePersonActorCursor(request.PersonID, page.Items[len(page.Items)-1])
 	}
 	if err := tx.Commit(); err != nil {
 		return PersonActorKeyPage{}, err
@@ -360,33 +350,24 @@ func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysR
 	return page, nil
 }
 
-func (s *Store) encodePersonActorCursor(personID, last string) string {
-	payload := base64.RawURLEncoding.EncodeToString([]byte(last))
-	mac := hmac.New(sha256.New, []byte(s.vaultID))
-	_, _ = fmt.Fprintf(mac, "%s\x00%s", personID, payload)
-	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+func encodePersonActorCursor(personID, last string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(personID + "\x00" + last))
 }
 
-func (s *Store) decodePersonActorCursor(personID, cursor string) (string, error) {
+func decodePersonActorCursor(personID, cursor string) (string, error) {
 	if cursor == "" {
 		return "", nil
 	}
-	payload, signature, ok := strings.Cut(cursor, ".")
-	if !ok || payload == "" || signature == "" || strings.Contains(signature, ".") {
+	if len(cursor) > base64.RawURLEncoding.EncodedLen(len(personID)+1+document.MaxActorKeyBytes) {
 		return "", ErrInvalidPerson
 	}
-	decodedSignature, err := base64.RawURLEncoding.Strict().DecodeString(signature)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(cursor)
 	if err != nil {
 		return "", ErrInvalidPerson
 	}
-	mac := hmac.New(sha256.New, []byte(s.vaultID))
-	_, _ = fmt.Fprintf(mac, "%s\x00%s", personID, payload)
-	if !hmac.Equal(decodedSignature, mac.Sum(nil)) {
+	owner, last, ok := strings.Cut(string(raw), "\x00")
+	if !ok || owner != personID || last == "" || len(last) > document.MaxActorKeyBytes {
 		return "", ErrInvalidPerson
 	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(payload)
-	if err != nil || len(raw) > document.MaxActorKeyBytes {
-		return "", ErrInvalidPerson
-	}
-	return string(raw), nil
+	return last, nil
 }

@@ -358,6 +358,19 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
+	// ponytail: refuse partial backups until person authority has JSONL records.
+	if layout.hasPersons() {
+		for _, table := range []string{"persons", "person_identities", "person_external_identities",
+			"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits", "custodian_assignments"} {
+			var populated bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+")").Scan(&populated); err != nil {
+				return fmt.Errorf("checking person authority for export: %w", err)
+			}
+			if populated {
+				return errors.New("metadata export and backup do not yet support person authority")
+			}
+		}
+	}
 	vaultID, err := readVaultIdentity(ctx, tx, layout.legacyV090())
 	if err != nil {
 		return fmt.Errorf("reading vault identity: %w", err)
@@ -1064,18 +1077,10 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM person_merges)
 		    + (SELECT COUNT(*) FROM person_splits)
 		    + (SELECT COUNT(*) FROM custodian_assignments)
-		    + (SELECT COUNT(*) FROM person_document_assertions)
-		    + (SELECT COUNT(*) FROM person_match_candidates)
 		    + (SELECT COUNT(*) FROM document_people_dirty)
-		    + (SELECT COUNT(*) FROM document_people_heads)
-		    + (SELECT COUNT(*) FROM document_people)
-		    + (SELECT COUNT(*) FROM document_people_generations)
-		    + (SELECT COUNT(*) FROM document_people_builds)
-		    + (SELECT COUNT(*) FROM person_rollups)
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state
-		       WHERE singleton != 1 OR contract_version != ? OR resolver_fingerprint != ?
-		          OR binding_epoch != 1 OR publication_epoch != 1)
+		       WHERE singleton != 1 OR binding_epoch != 1)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
 		         FROM current_processing_incarnation WHERE singleton=1)),
@@ -1083,7 +1088,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM blob_packs)
 		    + (SELECT COUNT(*) FROM blob_pack_entries)
 		    + (SELECT COUNT(*) FROM gc_loose_retirements)
-	`, document.PersonContractV1, document.PersonResolverFingerprint()).Scan(&nodes, &other, &packs); err != nil {
+	`).Scan(&nodes, &other, &packs); err != nil {
 		return fmt.Errorf("checking metadata import target: %w", err)
 	}
 	if nodes != 1 || other != 0 || packs != 0 {

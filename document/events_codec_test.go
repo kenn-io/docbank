@@ -64,6 +64,18 @@ func TestDocumentEventsCodecRejectsNonCanonicalBytes(t *testing.T) {
 	require.ErrorContains(t, err, "decoding document events")
 }
 
+func TestDocumentEventsKeepsUnscopedHandleKeys(t *testing.T) {
+	key, err := ActorKeyV1("handle", "Chat/u-0F31")
+	require.NoError(t, err)
+	require.Equal(t, "handle:chat/u-0F31", key)
+	value := validDocumentEvents()
+	value.Events[0].Actors[0].ActorKey = key
+	raw, _, err := MarshalDocumentEventsV1(value)
+	require.NoError(t, err)
+	_, _, err = DecodeDocumentEventsV1(raw)
+	require.NoError(t, err)
+}
+
 func TestDocumentEventsCodecCanonicalEmptyRecord(t *testing.T) {
 	value := DocumentEventsV1{VaultUID: "vault-uid-1", ContentVersionID: "cv-1", ContractVersion: DocumentEventsContractV1,
 		DocumentKind: "other", Diagnostics: []DocumentEventDiagnosticV1{}, Events: []DocumentEventV1{},

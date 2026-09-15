@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,10 +10,9 @@ import (
 
 func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
 	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a"}))
-	require.Error(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a", PackageID: "package-a"}))
+	require.Error(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a", ContentVersionID: "version-a"}))
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a"}))
 	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a", NodeID: 2}))
-	require.Error(t, validateCustodianScope(CustodianScope{Kind: "package", PackageRecordID: "record-a"}))
 }
 
 func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
@@ -27,6 +27,87 @@ func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "Records Team", rows[0].RawLabel)
 	require.Nil(t, rows[0].PersonID)
+}
+
+func TestCustodianAdditionalRejectsDuplicateClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, version := seedPeopleVersion(t, s)
+	request := CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: node, ContentVersionID: version},
+		RawLabel: "Records Team", Rank: "additional", Basis: "transfer_record", SourceRef: "receipt-a", IfMatchRevision: 1}
+	_, err := s.SetCustodian(ctx, request)
+	require.NoError(t, err)
+	request.RawLabel = "RECORDS TEAM"
+	_, err = s.SetCustodian(ctx, request)
+	require.ErrorIs(t, err, ErrCustodianConflict)
+	rows, err := s.CustodiansForVersion(ctx, version)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	request.SourceRef = "receipt-b"
+	_, err = s.SetCustodian(ctx, request)
+	require.NoError(t, err)
+	rows, err = s.CustodiansForVersion(ctx, version)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+}
+
+func TestCustodianCollectionMarksOnlyMembersDirty(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	seedPeopleVersion(t, s)
+	run, err := s.BeginIngest(ctx, "cli", "Synthetic custodian collection")
+	require.NoError(t, err)
+	for i := range 2 {
+		name := fmt.Sprintf("record-%d.txt", i)
+		_, _, err := s.IngestFile(ctx, run, s.RootID(), name, fakeHash(fmt.Sprintf("c%d", i)),
+			4, "text/plain", "/synthetic/"+name, "")
+		require.NoError(t, err)
+	}
+	request := CustodianRequest{Scope: CustodianScope{Kind: "collection", IngestID: run.ID()},
+		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1}
+	_, err = s.SetCustodian(ctx, request)
+	require.NoError(t, err)
+	_, err = s.SetCustodian(ctx, request)
+	require.NoError(t, err)
+	var count, revision int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*),MIN(revision) FROM document_people_dirty`).Scan(&count, &revision))
+	require.Equal(t, 2, count)
+	require.Equal(t, 2, revision)
+}
+
+func TestCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginCallerSuppliedIngest(ctx, "cli", "Synthetic source assertion")
+	require.NoError(t, err)
+	_, _, err = s.IngestFile(ctx, run, s.RootID(), "record.txt", fakeHash("c1"),
+		4, "text/plain", "/synthetic/record.txt", "")
+	require.NoError(t, err)
+	_, err = s.SetCustodian(ctx, CustodianRequest{Scope: CustodianScope{Kind: "collection", IngestID: run.ID()},
+		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestCustodiansIncludesRetiredPersonAsUnresolved(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, version := seedPeopleVersion(t, s)
+	person, err := s.CreatePerson(ctx, "Records owner", "operator")
+	require.NoError(t, err)
+	assignment, err := s.SetCustodian(ctx, CustodianRequest{
+		Scope: CustodianScope{Kind: "document", NodeID: node, ContentVersionID: version}, PersonID: person.PersonID,
+		RawLabel: "Records owner", Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1})
+	require.NoError(t, err)
+	_, err = s.RetirePerson(ctx, person.PersonID, person.Revision)
+	require.NoError(t, err)
+	unresolved, total, err := s.Custodians(ctx, CustodianScope{}, true, 100, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, unresolved, 1)
+	require.Equal(t, assignment.AssignmentID, unresolved[0].AssignmentID)
+	require.Equal(t, assignment.RawLabel, unresolved[0].RawLabel)
+	require.Nil(t, unresolved[0].PersonID)
 }
 
 func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) {
@@ -46,8 +127,6 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	require.NoError(t, err)
 	require.EqualValues(t, 1, assignment.Revision)
 	require.Nil(t, assignment.IngestID)
-	require.Nil(t, assignment.PackageID)
-	require.Nil(t, assignment.PackageRecordID)
 	require.NotNil(t, assignment.NodeID)
 	require.Equal(t, node, *assignment.NodeID)
 	require.NotNil(t, assignment.ContentVersionID)
@@ -103,46 +182,6 @@ func TestCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t *testing.T) 
 	require.Equal(t, []string{operator.AssignmentID, transfer.AssignmentID, collection.AssignmentID}, []string{
 		rows[0].AssignmentID, rows[1].AssignmentID, rows[2].AssignmentID,
 	})
-	require.Equal(t, []int{0, 1, 4}, []int{custodianPrecedence(rows[0]), custodianPrecedence(rows[1]), custodianPrecedence(rows[2])})
-}
-
-func TestCustodiansDistinguishesPackageDefaultFromAllRecords(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	_, err := s.SetCustodian(ctx, CustodianRequest{Scope: CustodianScope{Kind: "package", PackageID: "package-a"},
-		RawLabel: "Default owner", Rank: "additional", Basis: "package_column", IfMatchRevision: 1})
-	require.NoError(t, err)
-	_, err = s.SetCustodian(ctx, CustodianRequest{Scope: CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-1"},
-		RawLabel: "Record owner", Rank: "additional", Basis: "package_column", IfMatchRevision: 1})
-	require.NoError(t, err)
-	_, err = s.SetCustodian(ctx, CustodianRequest{Scope: CustodianScope{Kind: "package", PackageID: "package-b"},
-		PersonID: mustCreateCustodianPerson(t, s, "Resolved owner"), RawLabel: "Resolved owner", Rank: "additional", Basis: "operator_assigned", IfMatchRevision: 1})
-	require.NoError(t, err)
-
-	allPackageRows, total, err := s.Custodians(ctx, CustodianScope{Kind: "package", PackageID: "package-a"}, false, 100, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, total)
-	require.Len(t, allPackageRows, 2)
-	defaultRows, total, err := s.Custodians(ctx, CustodianScope{Kind: "package", PackageID: "package-a", HasPackageRecordID: true}, false, 100, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, total)
-	require.Len(t, defaultRows, 1)
-	require.Nil(t, defaultRows[0].IngestID)
-	require.Nil(t, defaultRows[0].NodeID)
-	require.Nil(t, defaultRows[0].ContentVersionID)
-	require.NotNil(t, defaultRows[0].PackageID)
-	require.NotNil(t, defaultRows[0].PackageRecordID)
-	require.Empty(t, *defaultRows[0].PackageRecordID)
-	recordRows, total, err := s.Custodians(ctx, CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-1", HasPackageRecordID: true}, false, 100, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, total)
-	require.Equal(t, "Record owner", recordRows[0].RawLabel)
-	_, _, err = s.Custodians(ctx, CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-1"}, false, 100, 0)
-	require.ErrorIs(t, err, ErrInvalidPerson)
-	unresolved, total, err := s.Custodians(ctx, CustodianScope{}, true, 100, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, total)
-	require.Len(t, unresolved, 2)
 }
 
 func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
@@ -186,11 +225,4 @@ func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonRetired)
 	_, _, err = s.Custodians(ctx, CustodianScope{}, false, 251, 0)
 	require.ErrorIs(t, err, ErrInvalidPerson)
-}
-
-func mustCreateCustodianPerson(t *testing.T, s *Store, name string) string {
-	t.Helper()
-	person, err := s.CreatePerson(t.Context(), name, "operator")
-	require.NoError(t, err)
-	return person.PersonID
 }

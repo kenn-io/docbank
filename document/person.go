@@ -16,10 +16,7 @@ import (
 )
 
 type PersonIdentityKind string
-type PersonRole string
 type PersonEvidenceKind string
-type PersonBasis string
-type PersonConfidence string
 
 type NormalizedIdentity struct {
 	Kind             PersonIdentityKind
@@ -32,19 +29,11 @@ type NormalizedIdentity struct {
 }
 
 const (
-	PersonContractV1                  = "document-people/v1"
-	PersonNormalizationV1             = "person-identity-normalization/v1"
-	PersonResolverDescriptor          = "document-people-resolver/v1;normalization=v1;evidence-pair;scoped-identities;consent-before-binding"
 	MaxPersonDisplayNameBytes         = 200
 	MaxPersonIdentityValueBytes       = 320
 	MaxPersonIdentitiesPerPerson      = 200
 	MaxPersonExternalIdentities       = 64
-	MaxPersonEdgesPerVersion          = 4096
-	MaxPersonAssertionNoteBytes       = 1000
 	MaxCustodianSourceRefBytes        = 512
-	MaxPersonRoleCountsBytes          = 4096
-	MaxOpenPersonCandidates           = 10000
-	MaxPersonCandidateEvidence        = 16384
 	MaxPersonMergeMovedBytes          = 262144
 	MaxPersonDirtyVersionsPerScan     = 10000
 	MaxPersonArchiveIDBytes           = 128
@@ -53,11 +42,6 @@ const (
 	MaxPersonEvidenceKindBytes        = 64
 	MaxPersonEvidenceIDBytes          = 256
 )
-
-func PersonResolverFingerprint() string {
-	sum := sha256.Sum256([]byte(PersonResolverDescriptor))
-	return hex.EncodeToString(sum[:])
-}
 
 func FoldPersonName(value string) string {
 	return strings.Join(strings.Fields(cases.Fold().String(norm.NFKC.String(value))), " ")
@@ -97,7 +81,7 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 		if err != nil || ascii == "" {
 			return bad()
 		}
-		out.ValueNormalized = local + "@" + strings.ToLower(ascii)
+		out.ValueNormalized = strings.ToLower(local + "@" + ascii)
 		out.Normalization = "email_v1"
 		out.AutoLinkEligible = true
 	case "phone":
@@ -130,11 +114,14 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 		if !found || service == "" || handle == "" {
 			return bad()
 		}
-		key, err := personTupleDigest([]string{strings.ToLower(service), scopeKind, scopeValue, handle})
-		if err != nil {
-			return NormalizedIdentity{}, err
+		out.ValueNormalized = strings.ToLower(service) + "/" + handle
+		if scopeKind != "" {
+			key, err := personTupleDigest([]string{strings.ToLower(service), scopeKind, scopeValue, handle})
+			if err != nil {
+				return NormalizedIdentity{}, err
+			}
+			out.ValueNormalized = key
 		}
-		out.ValueNormalized = key
 		out.Normalization = "none"
 		out.AutoLinkEligible = scopeKind != "" && scopeValue != ""
 	case "name_alias":
@@ -175,34 +162,22 @@ func ActorKey(identity NormalizedIdentity) (string, error) {
 	}
 }
 
-func ExternalPersonActorKey(system, archiveID, uid string) (string, error) {
+func ValidateExternalPersonTuple(system, archiveID, uid string) error {
 	if system != "msgvault" || archiveID == "" || uid == "" || len(archiveID) > MaxPersonArchiveIDBytes || len(uid) > MaxPersonExternalUIDBytes ||
 		!validPersonIdentityText(archiveID) || !validPersonIdentityText(uid) {
-		return "", errors.New("invalid external person tuple")
+		return errors.New("invalid external person tuple")
+	}
+	return nil
+}
+
+func ExternalPersonActorKey(system, archiveID, uid string) (string, error) {
+	if err := ValidateExternalPersonTuple(system, archiveID, uid); err != nil {
+		return "", err
 	}
 	key, err := personTupleDigest([]string{system, archiveID, uid})
 	return "external_uid:" + key, err
 }
 
-func PersonRoles() []PersonRole {
-	return []PersonRole{"author", "last_saved_by", "custodian", "sender", "recipient", "copied", "blind_copy", "organizer", "attendee", "participant", "speaker"}
-}
-
 func PersonEvidenceKinds() []PersonEvidenceKind {
 	return []PersonEvidenceKind{"source_metadata", "email_generation", "provenance_binding", "content_version", "package_row", "output_receipt", "transfer_record", "custodian_assignment", "operator_assertion"}
-}
-
-func PersonRoleGroup(role PersonRole) string {
-	switch role {
-	case "sender":
-		return "sent"
-	case "recipient", "copied", "blind_copy":
-		return "received"
-	case "author", "last_saved_by":
-		return "authored"
-	case "custodian":
-		return "custodian_of"
-	default:
-		return "other"
-	}
 }
