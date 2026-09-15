@@ -51,7 +51,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
-| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF and conditional PPTX OCR, including the rendition-provider adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF plus conditional PPTX and XLSX OCR, including the rendition-provider adapter |
 | [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
@@ -192,8 +192,13 @@ require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`, `numbers`,
 and `msg`. Fixture and staging directories must be private. The initial
 capability contract authorizes PDF through a provider-request bound. PPTX is
 eligible only when the authenticated probe records a local slide count and the
-provider reports the same number of processed units. Other formats may extract
-during a probe but remain unauthorized for production uploads.
+provider reports the same number of processed units. XLSX follows the same rule
+with the count of worksheets listed by `xl/workbook.xml`. The counter includes
+hidden, veryHidden, and empty worksheets. It rejects chartsheets, dialog sheets,
+macro sheets, and malformed metadata. It ignores worksheet parts the workbook
+does not list. Strict XLSX packages are rejected locally until provider support
+is proven. Other formats may extract during a probe but remain unauthorized for
+production uploads.
 
 If manifest validation reports that PPTX "does not explain its unverified
 bound", rerun the authenticated capability probe to replace the manifest.
@@ -216,15 +221,20 @@ every success or failure path.
 
 The rendition adapter counts source units locally before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
-the listed PresentationML slides, rejects invalid slide references or over-limit decks before
-upload, and compares the provider's processed count with that local count. See
+the listed PresentationML slides. For XLSX it counts the worksheets listed by
+the workbook relationships. Both formats reject invalid references or
+over-limit documents before upload, then compare the provider's processed count
+with the local count. A disagreement rejects the result before the adapter
+publishes source evidence. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 
-The PPTX count includes hidden slides. This assumes Mistral processes every
-listed slide; the probe fixture contains one visible slide and does not verify
-hidden-slide behavior. If Mistral skips hidden slides, the count comparison
-fails after upload and may incur provider charges.
+The PPTX count includes hidden slides. The XLSX count includes hidden,
+veryHidden, and empty worksheets. The probe fixture contains one visible unit
+for each format, so it does not prove how Mistral handles the other states. If
+the provider skips one, the count comparison fails after upload and may incur
+provider charges. Every production manifest must come from a fresh authenticated
+probe for its endpoint, model, and policy.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,

@@ -31,6 +31,8 @@ func TestSyntheticManifestAuthorizesPDF(t *testing.T) {
 	assert.Equal(t, "pdf", authorization.Format().ID)
 	_, err = policy.Authorize(manifest, "pptx")
 	require.ErrorContains(t, err, "run the authenticated capability probe")
+	_, err = policy.Authorize(manifest, "xlsx")
+	require.ErrorContains(t, err, "run the authenticated capability probe")
 
 	pdf := mistraltest.MinimalPDF("synthetic")
 	format, err := mistral.DetectFormat(bytes.NewReader(pdf), int64(len(pdf)), "application/pdf")

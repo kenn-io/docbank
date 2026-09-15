@@ -63,7 +63,7 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 			} else {
 				result.ReasonCode = reasonBoundUnitsMismatch
 			}
-		case "pptx":
+		case "pptx", "xlsx":
 			result.ReasonCode = reasonBoundUnitsMismatch
 		}
 		manifest.Results = append(manifest.Results, result)

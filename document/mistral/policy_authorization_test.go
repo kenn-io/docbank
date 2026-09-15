@@ -14,7 +14,7 @@ func TestPolicyDoesNotAuthorizeUnprovedNonPDFFormats(t *testing.T) {
 			}
 		})
 	}
-	for _, formatID := range []string{"docx", "xlsx", "odt", "epub", "txt"} {
+	for _, formatID := range []string{"docx", "odt", "epub", "txt"} {
 		if expectedUnitBound(formatID) == UnitBoundLocalExact || localUnitCounters[formatID] != nil {
 			t.Fatalf("unmeasured format %q is registered for local authority", formatID)
 		}

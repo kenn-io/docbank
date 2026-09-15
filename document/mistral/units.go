@@ -19,6 +19,7 @@ type localUnitCounter func(io.ReaderAt, int64) (int, error)
 // with provider-authentic unit evidence may be added here.
 var localUnitCounters = map[string]localUnitCounter{
 	"pptx": countPPTXSlides,
+	"xlsx": countXLSXSheets,
 }
 
 type pptxNamespaceFamily uint8

@@ -4,6 +4,7 @@
 // Uploads fail closed unless an operator has run the authenticated capability
 // probe and supplied its validated manifest. PDF uses a provider-request bound;
 // PPTX also needs a local slide count that matches the provider's processed
-// units. Other formats remain unavailable until they have a probe-tested unit
-// bound.
+// units. XLSX also needs a local count of every listed worksheet, matched
+// against the provider's processed units. Other formats remain unavailable
+// until they have a probe-tested unit bound.
 package mistral

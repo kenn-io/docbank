@@ -63,7 +63,7 @@ func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.Capability
 			} else {
 				result.ReasonCode = probecontract.ReasonBoundUnitsMismatch
 			}
-		case "pptx":
+		case "pptx", "xlsx":
 			result.ReasonCode = probecontract.ReasonBoundUnitsMismatch
 		}
 		manifest.Results = append(manifest.Results, result)

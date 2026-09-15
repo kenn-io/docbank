@@ -176,6 +176,13 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 				}
 			}
 		}, want: "does not explain its unverified bound"},
+		{name: "unexplained XLSX bound", mutate: func(manifest *CapabilityManifest) {
+			for index := range manifest.Results {
+				if manifest.Results[index].FormatID == "xlsx" {
+					manifest.Results[index].ReasonCode = ""
+				}
+			}
+		}, want: "does not explain its unverified bound"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
