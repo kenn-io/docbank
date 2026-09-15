@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
-	jsonv2 "encoding/json/v2"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -880,7 +880,7 @@ func validateEmbeddingGenerationEvidence(record EmbeddingInputGenerationRecord, 
 		return errors.New("embedding generation canonical evidence hash mismatch")
 	}
 	var evidence document.NormalizedEvidenceV1
-	if err := jsonv2.Unmarshal(evidenceJSON, &evidence, jsonv2.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(evidenceJSON, &evidence, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("decoding embedding generation evidence: %w", err)
 	}
 	var generation document.EmbeddingInputGeneration
@@ -1211,7 +1211,7 @@ func encodeCanonicalEmbeddingDescriptor(descriptor document.EmbeddingDescriptor)
 	if !reflect.DeepEqual(canonical, descriptor) {
 		return nil, errors.New("E1 descriptor is not canonical")
 	}
-	encoded, err := json.Marshal(canonical)
+	encoded, err := json.Marshal(canonical, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return nil, err
 	}
@@ -1226,7 +1226,7 @@ func decodeCanonicalEmbeddingDescriptor(data []byte) (document.EmbeddingDescript
 		return document.EmbeddingDescriptor{}, errors.New("E1 descriptor JSON exceeds bounds")
 	}
 	var descriptor document.EmbeddingDescriptor
-	if err := jsonv2.Unmarshal(data, &descriptor, jsonv2.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(data, &descriptor, json.RejectUnknownMembers(true)); err != nil {
 		return document.EmbeddingDescriptor{}, fmt.Errorf("decoding strict E1 descriptor JSON: %w", err)
 	}
 	encoded, err := encodeCanonicalEmbeddingDescriptor(descriptor)

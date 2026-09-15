@@ -4,7 +4,8 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -874,7 +875,7 @@ func normalizeArtifacts(
 		normalized := EvidenceArtifactV1{
 			Pointer: artifact.Pointer, Role: artifact.Role, SHA256: artifact.SHA256,
 		}
-		local, err := json.Marshal(normalized)
+		local, err := json.Marshal(normalized, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal evidence artifact identity: %w", err)
 		}
@@ -938,7 +939,7 @@ func normalizeEvidenceUnit(
 		Tables:    tables,
 		Text:      text,
 	}
-	local, err := json.Marshal(unit)
+	local, err := json.Marshal(unit, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return NormalizedEvidenceUnitV1{}, fmt.Errorf("marshal evidence unit identity: %w", err)
 	}
@@ -967,7 +968,7 @@ func normalizeRegions(
 			ParentID:   providerToID[region.ParentProviderID],
 			TextRange:  textRange,
 		}
-		local, err := json.Marshal(normalized)
+		local, err := json.Marshal(normalized, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal evidence region identity: %w", err)
 		}
@@ -1002,7 +1003,7 @@ func normalizeTables(
 			Cells: cells, Columns: table.Columns, Order: table.Order,
 			RegionID: regionIDs[table.RegionProviderID], Rows: table.Rows,
 		}
-		local, err := json.Marshal(normalized)
+		local, err := json.Marshal(normalized, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return nil, fmt.Errorf("marshal evidence table identity: %w", err)
 		}
@@ -1117,7 +1118,7 @@ func marshalNormalizedEvidenceV1(evidence NormalizedEvidenceV1, checkExisting bo
 	}
 	existing := evidence.Checksum
 	evidence.Checksum = ""
-	encoded, err := json.Marshal(evidence)
+	encoded, err := json.Marshal(evidence, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal normalized evidence v1: %w", err)
 	}
@@ -1215,7 +1216,7 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		}
 		withoutID := unit
 		withoutID.ID = ""
-		local, err := json.Marshal(withoutID)
+		local, err := json.Marshal(withoutID, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return fmt.Errorf("marshal normalized evidence unit %d identity: %w", index, err)
 		}
@@ -1259,7 +1260,7 @@ func validateNormalizedArtifacts(artifacts []EvidenceArtifactV1) (map[string]str
 		pointerChecksums[artifact.Pointer] = artifact.SHA256
 		withoutID := artifact
 		withoutID.ID = ""
-		local, err := json.Marshal(withoutID)
+		local, err := json.Marshal(withoutID, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return nil, fmt.Errorf("marshal normalized evidence artifact %d identity: %w", index, err)
 		}
@@ -1314,7 +1315,7 @@ func validateNormalizedRegions(
 		}
 		withoutID := region
 		withoutID.ID = ""
-		local, err := json.Marshal(withoutID)
+		local, err := json.Marshal(withoutID, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return nil, fmt.Errorf("marshal normalized evidence region %d identity: %w", index, err)
 		}
@@ -1400,7 +1401,7 @@ func validateNormalizedTables(
 		}
 		withoutID := table
 		withoutID.ID = ""
-		local, err := json.Marshal(withoutID)
+		local, err := json.Marshal(withoutID, json.Deterministic(true), json.FormatNilSliceAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if err != nil {
 			return fmt.Errorf("marshal normalized evidence table %d identity: %w", index, err)
 		}

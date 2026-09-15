@@ -2,7 +2,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"slices"
@@ -115,7 +116,7 @@ func validateToolInputs(tools []*sdkmcp.Tool) func(sdkmcp.MethodHandler) sdkmcp.
 	}
 }
 
-func decodeToolArguments(raw json.RawMessage) (map[string]any, error) {
+func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 	arguments := map[string]any{}
 	if len(raw) == 0 {
 		return arguments, nil
