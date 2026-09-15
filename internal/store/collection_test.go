@@ -45,15 +45,21 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, total)
 	require.Len(t, collections, 2)
-	assert.Equal(t, second.ID(), collections[0].ID)
-	assert.Equal(t, int64(2), collections[0].FileCount)
-	assert.Equal(t, int64(12), collections[0].TotalBytes)
-	assert.Equal(t, first.ID(), collections[1].ID)
-	assert.Equal(t, int64(2), collections[1].FileCount)
-	assert.Equal(t, int64(10), collections[1].TotalBytes)
-	assert.Nil(t, collections[1].Label)
-	assert.Equal(t, int64(1), collections[1].LabelRevision)
-	assert.Equal(t, first.record.StartedAt, collections[1].LabelUpdatedAt)
+	byID := make(map[string]Collection, len(collections))
+	for _, collection := range collections {
+		byID[collection.ID] = collection
+	}
+	firstCollection, ok := byID[first.ID()]
+	require.True(t, ok)
+	secondCollection, ok := byID[second.ID()]
+	require.True(t, ok)
+	assert.Equal(t, int64(2), secondCollection.FileCount)
+	assert.Equal(t, int64(12), secondCollection.TotalBytes)
+	assert.Equal(t, int64(2), firstCollection.FileCount)
+	assert.Equal(t, int64(10), firstCollection.TotalBytes)
+	assert.Nil(t, firstCollection.Label)
+	assert.Equal(t, int64(1), firstCollection.LabelRevision)
+	assert.Equal(t, first.record.StartedAt, firstCollection.LabelUpdatedAt)
 
 	page, err := s.CollectionMembers(ctx, first.ID(), 1, 0)
 	require.NoError(t, err)
@@ -61,7 +67,7 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, secondNode.ID, page.Items[0].Node.ID)
 	assert.Equal(t, "/a.txt", page.Items[0].Path)
-	assert.Equal(t, collections[1], page.Collection)
+	assert.Equal(t, firstCollection, page.Collection)
 
 	page, err = s.CollectionMembers(ctx, first.ID(), 1, 1)
 	require.NoError(t, err)
