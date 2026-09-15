@@ -195,8 +195,10 @@ eligible only when the authenticated probe records a local slide count and the
 provider reports the same number of processed units. XLSX follows the same rule
 with the count of worksheets listed by `xl/workbook.xml`. The counter includes
 hidden, veryHidden, and empty worksheets. It rejects chartsheets, dialog sheets,
-macro sheets, malformed metadata, and unlisted worksheet parts. Other formats
-may extract during a probe but remain unauthorized for production uploads.
+macro sheets, and malformed metadata. It ignores worksheet parts the workbook
+does not list. Strict XLSX packages are rejected locally until provider support
+is proven. Other formats may extract during a probe but remain unauthorized for
+production uploads.
 
 If manifest validation reports that PPTX "does not explain its unverified
 bound", rerun the authenticated capability probe to replace the manifest.

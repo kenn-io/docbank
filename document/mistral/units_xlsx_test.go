@@ -29,6 +29,7 @@ func TestCountXLSXSheets(t *testing.T) {
 		archive   []byte
 		wantUnits int
 		wantError bool
+		errorText string
 	}{
 		{
 			name: "one worksheet",
@@ -86,29 +87,30 @@ func TestCountXLSXSheets(t *testing.T) {
 		},
 		{
 			name: "mixed namespace families",
-			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, nil,
+			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{sheetID: "1", relationshipID: "rId1", target: "worksheets/sheet1.xml"}},
 				`<workbook xmlns="`+xlsxStrictWorkbookNamespace+`" xmlns:r="`+pptxStrictRelationshipIDNS+`"><sheets><sheet sheetId="1" r:id="rId1"/></sheets></workbook>`,
-				validPPTXRootRelationships(), "", "", nil),
+				`<Relationships xmlns="`+pptxRelationshipNamespace+`"><Relationship Id="rIdRoot" Type="`+pptxOfficeDocumentRelType+`" Target="xl/workbook.xml"/></Relationships>`, "", "", nil),
 			wantError: true,
+			errorText: "unsupported or mixed namespace family",
 		},
 		{
 			name: "chartsheet relationship",
 			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{
-				sheetID: "1", relationshipID: "rId1", target: "chartsheets/chart1.xml", relationshipType: pptxRelationshipTypeForTest("chartsheet"), contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml",
+				sheetID: "1", relationshipID: "rId1", target: "chartsheets/chart1.xml", relationshipType: xlsxRelationshipTypeForTest("chartsheet"), contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml",
 			}}, "", "", "", "", nil),
 			wantError: true,
 		},
 		{
 			name: "dialog sheet relationship",
 			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{
-				sheetID: "1", relationshipID: "rId1", target: "dialogs/dialog1.xml", relationshipType: pptxRelationshipTypeForTest("dialogsheet"), contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml",
+				sheetID: "1", relationshipID: "rId1", target: "dialogs/dialog1.xml", relationshipType: xlsxRelationshipTypeForTest("dialogsheet"), contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml",
 			}}, "", "", "", "", nil),
 			wantError: true,
 		},
 		{
 			name: "macro sheet relationship",
 			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{
-				sheetID: "1", relationshipID: "rId1", target: "macrosheets/macro1.xml", relationshipType: pptxRelationshipTypeForTest("macrosheet"), contentType: "application/vnd.ms-excel.macrosheet+xml",
+				sheetID: "1", relationshipID: "rId1", target: "macrosheets/macro1.xml", relationshipType: xlsxRelationshipTypeForTest("macrosheet"), contentType: "application/vnd.ms-excel.macrosheet+xml",
 			}}, "", "", "", "", nil),
 			wantError: true,
 		},
@@ -152,9 +154,19 @@ func TestCountXLSXSheets(t *testing.T) {
 		{
 			name: "external relationship target",
 			archive: xlsxArchive(t, []xlsxTestSheet{{
-				sheetID: "1", relationshipID: "rId1", target: "https://example.invalid/sheet.xml",
+				sheetID: "1", relationshipID: "rId1", target: "worksheets/sheet1.xml", targetMode: "External",
 			}}),
 			wantError: true,
+			errorText: "has an external target",
+		},
+		{
+			name: "external root relationship mode",
+			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{
+				sheetID: "1", relationshipID: "rId1", target: "worksheets/sheet1.xml",
+			}}, `<workbook xmlns="`+xlsxWorkbookNamespace+`" xmlns:r="`+pptxRelationshipIDNamespace+`"><sheets><sheet sheetId="1" r:id="rId1"/></sheets></workbook>`,
+				`<Relationships xmlns="`+pptxRelationshipNamespace+`"><Relationship Id="rIdRoot" Type="`+pptxOfficeDocumentRelType+`" TargetMode="External" Target="xl/workbook.xml"/></Relationships>`, "", "", nil),
+			wantError: true,
+			errorText: "office document relationship has an external target",
 		},
 		{
 			name: "escaping relationship target",
@@ -176,6 +188,15 @@ func TestCountXLSXSheets(t *testing.T) {
 				sheetID: "1", relationshipID: "rId1", target: "worksheets/sheet1.xml",
 			}}, "", "", "", `<Types xmlns="`+pptxContentTypesNamespace+`"><Override PartName="/xl/workbook.xml" ContentType="application/xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="`+xlsxWorksheetContentType+`"/></Types>`, nil),
 			wantError: true,
+		},
+		{
+			name: "duplicate worksheet target",
+			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{
+				{sheetID: "1", relationshipID: "rId1", target: "worksheets/shared.xml"},
+				{sheetID: "2", relationshipID: "rId2", target: "worksheets/shared.xml"},
+			}, "", "", `<Relationships xmlns="`+pptxRelationshipNamespace+`"><Relationship Id="rId1" Type="`+xlsxWorksheetRelationshipType+`" Target="worksheets/shared.xml"/><Relationship Id="rId2" Type="`+xlsxWorksheetRelationshipType+`" Target="worksheets/shared.xml"/></Relationships>`, `<Types xmlns="`+pptxContentTypesNamespace+`"><Override PartName="/xl/workbook.xml" ContentType="`+xlsxWorkbookContentType+`"/><Override PartName="/xl/worksheets/shared.xml" ContentType="`+xlsxWorksheetContentType+`"/></Types>`, nil),
+			wantError: true,
+			errorText: "worksheet relationship target \"xl/worksheets/shared.xml\" is duplicated",
 		},
 		{
 			name: "foreign count-bearing element",
@@ -207,6 +228,10 @@ func TestCountXLSXSheets(t *testing.T) {
 			units, err := countXLSXSheets(bytes.NewReader(test.archive), int64(len(test.archive)))
 			if test.wantError {
 				require.Error(t, err)
+				if test.errorText != "" {
+					assert.Contains(t, err.Error(), test.errorText)
+					t.Logf("guard_error=%v", err)
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -427,8 +452,6 @@ type xlsxTestSheet struct {
 	sheetID          string
 	relationshipID   string
 	target           string
-	entryName        string
-	contentTypeName  string
 	contentType      string
 	relationshipType string
 	targetMode       string
@@ -495,9 +518,6 @@ func xlsxArchiveWithParts(
 			}
 			targetName := xlsxArchiveTargetName(sheet.target)
 			contentTypeName := "/" + targetName
-			if sheet.contentTypeName != "" {
-				contentTypeName = sheet.contentTypeName
-			}
 			contentType := sheet.contentType
 			if contentType == "" {
 				contentType = xlsxWorksheetContentType
@@ -517,11 +537,7 @@ func xlsxArchiveWithParts(
 		if sheet.target == "" {
 			continue
 		}
-		entryName := xlsxArchiveTargetName(sheet.target)
-		if sheet.entryName != "" {
-			entryName = sheet.entryName
-		}
-		entries[entryName] = `<worksheet xmlns="` + workbookNamespace + `"/>`
+		entries[xlsxArchiveTargetName(sheet.target)] = `<worksheet xmlns="` + workbookNamespace + `"/>`
 	}
 	maps.Copy(entries, extra)
 	return documentZIP(t, entries)
@@ -534,7 +550,7 @@ func xlsxArchiveTargetName(target string) string {
 	return path.Clean(path.Join("xl", target))
 }
 
-func pptxRelationshipTypeForTest(kind string) string {
+func xlsxRelationshipTypeForTest(kind string) string {
 	return "http://schemas.openxmlformats.org/officeDocument/2006/relationships/" + kind
 }
 
