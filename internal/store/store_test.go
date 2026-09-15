@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -17,6 +19,30 @@ func newTestStore(t *testing.T) *Store {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
+}
+
+func TestStorageTransactionPreservesCancellationAfterAutomaticRollback(t *testing.T) {
+	for _, phase := range []string{"callback", "commit"} {
+		t.Run(phase, func(t *testing.T) {
+			s := newTestStore(t)
+			s.db.SetMaxOpenConns(1)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				cancel()
+				// The only connection becomes available after automatic rollback.
+				require.NoError(t, s.db.PingContext(t.Context()))
+				var value int
+				readErr := tx.QueryRow("SELECT 1").Scan(&value)
+				if phase == "callback" {
+					return readErr
+				}
+				return nil
+			})
+			require.ErrorIs(t, err, context.Canceled)
+			require.ErrorIs(t, err, sql.ErrTxDone)
+		})
+	}
 }
 
 func TestOpenRejectsObsoletePreReleaseSchema(t *testing.T) {

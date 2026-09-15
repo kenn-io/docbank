@@ -226,11 +226,24 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+	suppliedName, suppliedProfile, err := processing.NewSuppliedMediaProfile(s, blobs, "daemon:operator")
+	if err != nil {
+		return fmt.Errorf("configuring supplied media profile: %w", err)
+	}
+	if _, exists := processingProfiles[suppliedName]; exists {
+		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
+	}
+	processingProfiles[suppliedName] = suppliedProfile
+	var mediaTokenKey [32]byte
+	if _, err := rand.Read(mediaTokenKey[:]); err != nil {
+		return fmt.Errorf("generating daemon media token key: %w", err)
+	}
 	processingService, err := processing.NewService(processing.ServiceConfig{
 		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
 		RenditionRuntimes: runtimeRegistry,
 		Principal:         "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
-		Lifecycle: sigCtx,
+		Lifecycle:     sigCtx,
+		MediaTokenKey: mediaTokenKey,
 	})
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
@@ -239,6 +252,11 @@ func runServe(ctx context.Context) (retErr error) {
 		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
 	); err != nil {
 		return err
+	}
+	if err := jobSupervisor.Start("process:media-continuations", (&processing.MediaContinuationWorker{
+		Service: processingService, IdleDelay: time.Second,
+	}).Run); err != nil {
+		return fmt.Errorf("starting media processing continuations: %w", err)
 	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {

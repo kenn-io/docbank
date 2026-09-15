@@ -58,6 +58,13 @@ func timeoutExemptRequest(r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return false
 	}
+	if r.URL.Path == "/api/v1/media/sources" {
+		return true
+	}
+	if rest, found := strings.CutPrefix(r.URL.Path, "/api/v1/media/sources/"); found {
+		sourceID, action, _ := strings.Cut(rest, "/")
+		return sourceID != "" && (action == "artifacts" || action == "retry")
+	}
 	rest, found := strings.CutPrefix(r.URL.Path, "/api/v1/versions/")
 	if !found {
 		return false

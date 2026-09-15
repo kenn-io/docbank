@@ -42,6 +42,7 @@ type ProcessingConsentGrantRequest struct {
 // ProcessingConsentGrant is immutable authority within one vault incarnation.
 type ProcessingConsentGrant struct {
 	ID                      string
+	ConsentSetID            string
 	VaultID                 string
 	ProcessingIncarnationID string
 	Principal               string
@@ -147,61 +148,105 @@ func (s *Store) CurrentProcessingIncarnation(ctx context.Context) (ProcessingInc
 func (s *Store) GrantConsent(
 	ctx context.Context, request ProcessingConsentGrantRequest,
 ) (ProcessingConsentGrant, error) {
-	authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
-		Principal: request.Principal, Scope: request.Scope,
-		ProfileFingerprint:      request.ProfileFingerprint,
-		DisclosureFingerprint:   request.DisclosureFingerprint,
-		InputClasses:            request.InputClasses,
-		RetainedArtifactClasses: request.RetainedArtifactClasses,
-	})
+	grants, err := s.GrantConsentSet(ctx, []ProcessingConsentGrantRequest{request})
 	if err != nil {
 		return ProcessingConsentGrant{}, fmt.Errorf("%w: %w", ErrInvalidProcessingConsentRequest, err)
 	}
-	id, err := newUUIDv4()
+	return grants[0], nil
+}
+
+// GrantConsentSet atomically records the independently scoped grants produced
+// by one reviewed processing plan and gives them one status association.
+func (s *Store) GrantConsentSet(ctx context.Context,
+	requests []ProcessingConsentGrantRequest,
+) ([]ProcessingConsentGrant, error) {
+	if len(requests) == 0 || len(requests) > 100 {
+		return nil, errors.New("processing consent set must contain between 1 and 100 grants")
+	}
+	setID, err := newUUIDv4()
 	if err != nil {
-		return ProcessingConsentGrant{}, fmt.Errorf("granting processing consent: %w", err)
+		return nil, fmt.Errorf("granting processing consent set: %w", err)
+	}
+	type preparedGrant struct {
+		authority  normalizedConsentAuthority
+		expiresRaw any
+		grant      ProcessingConsentGrant
 	}
 	issuedAt := time.Now().UTC()
 	issuedRaw := issuedAt.Format(timestampLayout)
-	var expiresRaw any
-	var expiresAt *time.Time
-	if request.ExpiresAt != nil {
-		value := request.ExpiresAt.UTC()
-		expiresRaw = value.Format(timestampLayout)
-		expiresAt = &value
-	}
-	grant := ProcessingConsentGrant{
-		ID: id, VaultID: s.vaultID, Principal: authority.principal, Scope: authority.scope,
-		ProfileFingerprint: authority.profile, DisclosureFingerprint: authority.disclosure,
-		InputClasses: authority.inputs, RetainedArtifactClasses: authority.retained,
-		IssuedAt: issuedAt, ExpiresAt: expiresAt,
+	prepared := make([]preparedGrant, len(requests))
+	for index, request := range requests {
+		authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
+			Principal: request.Principal, Scope: request.Scope,
+			ProfileFingerprint:      request.ProfileFingerprint,
+			DisclosureFingerprint:   request.DisclosureFingerprint,
+			InputClasses:            request.InputClasses,
+			RetainedArtifactClasses: request.RetainedArtifactClasses,
+		})
+		if err != nil {
+			return nil, err
+		}
+		id, err := newUUIDv4()
+		if err != nil {
+			return nil, fmt.Errorf("granting processing consent set: %w", err)
+		}
+		var expiresRaw any
+		var expiresAt *time.Time
+		if request.ExpiresAt != nil {
+			value := request.ExpiresAt.UTC()
+			expiresRaw, expiresAt = value.Format(timestampLayout), &value
+		}
+		prepared[index] = preparedGrant{authority: authority, expiresRaw: expiresRaw,
+			grant: ProcessingConsentGrant{ID: id, ConsentSetID: setID, VaultID: s.vaultID,
+				Principal: authority.principal, Scope: authority.scope,
+				ProfileFingerprint: authority.profile, DisclosureFingerprint: authority.disclosure,
+				InputClasses: authority.inputs, RetainedArtifactClasses: authority.retained,
+				IssuedAt: issuedAt, ExpiresAt: expiresAt}}
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		incarnationID, err := currentProcessingIncarnationIDTx(ctx, tx)
-		if err != nil {
-			return err
+		for index := range prepared {
+			item := &prepared[index]
+			if err := s.grantConsentTx(ctx, tx, item.authority, issuedRaw,
+				item.expiresRaw, &item.grant); err != nil {
+				return err
+			}
 		}
-		grant.ProcessingIncarnationID = incarnationID
-		grant.RevocationFence, err = consentRevocationFenceTx(ctx, tx, s.vaultID,
-			incarnationID, authority.principal, authority.scope)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO processing_consent_grants(
-				grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
-				disclosure_fingerprint,input_classes_json,retained_classes_json,
-				revocation_fence,issued_at,expires_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, grant.ID, grant.VaultID,
-			grant.ProcessingIncarnationID, grant.Principal, grant.Scope,
-			grant.ProfileFingerprint, grant.DisclosureFingerprint, authority.inputsJSON,
-			authority.retainedJSON, grant.RevocationFence, issuedRaw, expiresRaw)
-		return err
+		return nil
 	})
 	if err != nil {
-		return ProcessingConsentGrant{}, fmt.Errorf("granting processing consent: %w", err)
+		return nil, fmt.Errorf("granting processing consent set: %w", err)
 	}
-	return grant, nil
+	grants := make([]ProcessingConsentGrant, len(prepared))
+	for index := range prepared {
+		grants[index] = prepared[index].grant
+	}
+	return grants, nil
+}
+
+func (s *Store) grantConsentTx(
+	ctx context.Context, tx *sql.Tx, authority normalizedConsentAuthority,
+	issuedRaw string, expiresRaw any, grant *ProcessingConsentGrant,
+) error {
+	incarnationID, err := currentProcessingIncarnationIDTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	grant.ProcessingIncarnationID = incarnationID
+	grant.RevocationFence, err = consentRevocationFenceTx(ctx, tx, s.vaultID,
+		incarnationID, authority.principal, authority.scope)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO processing_consent_grants(
+			grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,
+			revocation_fence,issued_at,expires_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, grant.ID, grant.ConsentSetID, grant.VaultID,
+		grant.ProcessingIncarnationID, grant.Principal, grant.Scope,
+		grant.ProfileFingerprint, grant.DisclosureFingerprint, authority.inputsJSON,
+		authority.retainedJSON, grant.RevocationFence, issuedRaw, expiresRaw)
+	return err
 }
 
 func (s *Store) RevokeConsent(
@@ -227,28 +272,36 @@ func (s *Store) RevokeConsent(
 		ID: id, VaultID: s.vaultID, Principal: principal, Scope: scope, RevokedAt: revokedAt,
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		result.ProcessingIncarnationID, err = currentProcessingIncarnationIDTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		prior, err := consentRevocationFenceTx(ctx, tx, s.vaultID,
-			result.ProcessingIncarnationID, principal, scope)
-		if err != nil {
-			return err
-		}
-		result.Fence = prior + 1
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO processing_consent_revocations(
-				revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
-			) VALUES(?,?,?,?,?,?,?)`, result.ID, result.VaultID,
-			result.ProcessingIncarnationID, principal, scope, result.Fence,
-			revokedAt.Format(timestampLayout))
-		return err
+		return s.revokeConsentTx(ctx, tx, principal, scope, &result)
 	})
 	if err != nil {
 		return ProcessingConsentRevocation{}, fmt.Errorf("revoking processing consent: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Store) revokeConsentTx(
+	ctx context.Context, tx *sql.Tx, principal, scope string,
+	result *ProcessingConsentRevocation,
+) error {
+	var err error
+	result.ProcessingIncarnationID, err = currentProcessingIncarnationIDTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	prior, err := consentRevocationFenceTx(ctx, tx, s.vaultID,
+		result.ProcessingIncarnationID, principal, scope)
+	if err != nil {
+		return err
+	}
+	result.Fence = prior + 1
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO processing_consent_revocations(
+			revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
+		) VALUES(?,?,?,?,?,?,?)`, result.ID, result.VaultID,
+		result.ProcessingIncarnationID, principal, scope, result.Fence,
+		result.RevokedAt.Format(timestampLayout))
+	return err
 }
 
 // BeginProviderEgress checks durable consent while holding the shared revocation
@@ -287,6 +340,36 @@ func (s *Store) AuthorizeProviderOperation(
 	return authorization, nil
 }
 
+// AuthorizeProviderOperationFromConsentSet selects the independently scoped
+// grant recorded with one already admitted stage. Later grant renewals cannot
+// move a processing request to another reviewed consent set.
+func (s *Store) AuthorizeProviderOperationFromConsentSet(ctx context.Context,
+	admittedGrantID string, request ProviderOperationAuthorizationRequest,
+) (ProviderOperationAuthorization, error) {
+	if request.PriorAuthorization != nil {
+		return ProviderOperationAuthorization{}, errors.New(
+			"prior processing authorization cannot select a consent set",
+		)
+	}
+	if err := validateUUIDv4(admittedGrantID); err != nil {
+		return ProviderOperationAuthorization{}, ErrProcessingConsentRequired
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	authorization, err := authorizeProviderOperationInConsentSetTx(
+		ctx, tx, s.vaultID, request, time.Now().UTC(), admittedGrantID)
+	if err != nil {
+		return ProviderOperationAuthorization{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
+	}
+	return authorization, nil
+}
+
 func (s *Store) authorizeProviderOperationTx(
 	ctx context.Context, tx *sql.Tx, request ProviderOperationAuthorizationRequest, now time.Time,
 ) (ProviderOperationAuthorization, error) {
@@ -296,6 +379,13 @@ func (s *Store) authorizeProviderOperationTx(
 func authorizeProviderOperationTx(
 	ctx context.Context, querier metadataQuerier, vaultID string,
 	request ProviderOperationAuthorizationRequest, now time.Time,
+) (_ ProviderOperationAuthorization, retErr error) {
+	return authorizeProviderOperationInConsentSetTx(ctx, querier, vaultID, request, now, "")
+}
+
+func authorizeProviderOperationInConsentSetTx(
+	ctx context.Context, querier metadataQuerier, vaultID string,
+	request ProviderOperationAuthorizationRequest, now time.Time, admittedGrantID string,
 ) (_ ProviderOperationAuthorization, retErr error) {
 	authority, err := normalizeConsentAuthority(request)
 	if err != nil {
@@ -327,6 +417,13 @@ func authorizeProviderOperationTx(
 	if request.PriorAuthorization != nil {
 		statement += ` AND grant_id=?`
 		args = append(args, request.PriorAuthorization.GrantID)
+	}
+	if admittedGrantID != "" {
+		statement += ` AND consent_set_id=(
+			SELECT consent_set_id FROM processing_consent_grants
+			WHERE grant_id=? AND vault_uid=? AND incarnation_id=?
+		)`
+		args = append(args, admittedGrantID, vaultID, incarnationID)
 	}
 	statement += ` ORDER BY issued_at DESC,grant_id DESC`
 	rows, err := querier.QueryContext(ctx, statement, args...)

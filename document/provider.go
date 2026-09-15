@@ -193,6 +193,9 @@ type AuthorizedUploadMetadata struct {
 	CapabilityRecordChecksum string             `json:"capability_record_checksum"`
 	ProviderMetadataChecksum string             `json:"provider_metadata_checksum"`
 	InputKind                RenditionInputKind `json:"input_kind"`
+	// InputBinding identifies an exact retained auxiliary input selected before
+	// admission. It is empty for providers that consume only the original.
+	InputBinding string `json:"input_binding,omitempty"`
 }
 
 // RenditionAuthorization binds one provider invocation to exact input and output limits.

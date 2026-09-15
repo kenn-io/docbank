@@ -402,6 +402,11 @@ func validateRenditionExecutionIdentity(identity RenditionExecutionIdentityV1) e
 	if err := validateAuthorizedUploadMetadata(identity.Upload); err != nil {
 		return err
 	}
+	if identity.Upload.InputBinding != "" {
+		if err := validateFingerprint(identity.Upload.InputBinding, "upload input binding"); err != nil {
+			return err
+		}
+	}
 	authorization := identity.Authorization
 	if err := validateStableToken(authorization.ProviderID, "authorization provider ID", 128); err != nil {
 		return err

@@ -233,6 +233,55 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
+func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
+	for _, authority := range []string{"source version", "input artifact"} {
+		t.Run(authority, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			protected, err := s.CreateFile(
+				ctx, s.RootID(), "protected.bin", fakeHash("a1"), 10, "application/octet-stream")
+			require.NoError(t, err)
+			unrelated, err := s.CreateFile(
+				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
+			require.NoError(t, err)
+			stamp := nowRFC3339()
+			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+				fakeHash("a1"), stamp)
+			require.NoError(t, err)
+			switch authority {
+			case "source version":
+				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
+					'source-version','source',1,?,?,?,?,?,?)`, protected.CurrentVersionID,
+					protected.BlobHash, protected.Size, `{}`, digestCatalogJSON([]byte(`{}`)), stamp)
+			case "input artifact":
+				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+					'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
+					protected.CurrentVersionID, protected.BlobHash, stamp)
+			}
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, protected.ID, protected.Revision)
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
+			require.NoError(t, err)
+
+			preview, err := s.TrashEmpty(ctx, 0, false)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), preview.Candidates)
+			run, err := s.TrashEmpty(ctx, 0, true)
+			require.NoError(t, err)
+			require.Equal(t, preview.Candidates, run.Candidates)
+			require.Equal(t, int64(1), run.Deleted)
+			_, err = s.NodeByID(ctx, protected.ID)
+			require.NoError(t, err)
+			_, err = s.NodeByID(ctx, unrelated.ID)
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
+}
+
 func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()

@@ -382,6 +382,26 @@ func (s *Store) ingestFile(
 	size int64, mimeType, originalPath, originalMtime string, options ingestFileOptions,
 	physical ...BlobPhysical,
 ) (ContentWriteReceipt, bool, IngestDirectoryResolution, error) {
+	var receipt ContentWriteReceipt
+	var added bool
+	var resolution IngestDirectoryResolution
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		receipt, added, resolution, err = s.ingestFileTx(ctx, tx, run, parentID,
+			name, blobHash, size, mimeType, originalPath, originalMtime, options, physical...)
+		return err
+	})
+	if err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+	}
+	return receipt, added, resolution, nil
+}
+
+func (s *Store) ingestFileTx(
+	ctx context.Context, tx *sql.Tx, run IngestRun, parentID int64, name, blobHash string,
+	size int64, mimeType, originalPath, originalMtime string, options ingestFileOptions,
+	physical ...BlobPhysical,
+) (ContentWriteReceipt, bool, IngestDirectoryResolution, error) {
 	name, err := NormalizeName(name)
 	if err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -410,184 +430,178 @@ func (s *Store) ingestFile(
 		added      bool
 		resolution IngestDirectoryResolution
 	)
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		ingestAdded := false
-		if options.directoryPlan != nil || options.observeMembership {
-			ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
-			if err != nil {
-				return err
-			}
-		}
-		if options.directoryPlan != nil {
-			leaf, resolved, err := s.ensureIngestDirectoryTx(ctx, tx, *options.directoryPlan)
-			if err != nil {
-				return err
-			}
-			parentID = leaf.ID
-			resolution = resolved
-		}
-		finalName := name
-		if options.exact {
-			var existingID int64
-			err := tx.QueryRow(
-				`SELECT id FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
-				parentID, name).Scan(&existingID)
-			switch {
-			case err == nil:
-				return fmt.Errorf("creating exact ingest %q under node %d: %w",
-					name, parentID, ErrExists)
-			case errors.Is(err, sql.ErrNoRows):
-			case err != nil:
-				return fmt.Errorf("checking exact ingest name %q: %w", name, err)
-			}
-		} else {
-			var existingID int64
-			var skip bool
-			finalName, existingID, skip, err = resolveIngestNameTx(
-				tx, parentID, name, blobHash, run.record.SourceKind,
-			)
-			if err != nil {
-				return err
-			}
-			if skip {
-				if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
-					return fmt.Errorf("reconciling idempotent ingest content: %w", err)
-				}
-				receipt.Node, err = scanNode(tx.QueryRow(
-					`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
-				if err != nil {
-					return fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
-				}
-				if options.observeMembership {
-					provenance.NodeID = receipt.Node.ID
-					provenance.Identity, err = provenanceIdentity(provenance)
-					if err != nil {
-						return fmt.Errorf("identifying ingest observation for %q: %w", name, err)
-					}
-					receipt.Node, err = s.observeOperationalIngestTx(
-						ctx, tx, run, receipt.Node, provenance, ingestAdded,
-					)
-					if err != nil {
-						return err
-					}
-				}
-				if !options.completeReceipt {
-					return nil
-				}
-				receipt.Version, err = scanContentVersion(tx.QueryRow(
-					`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
-					receipt.Node.CurrentVersionID,
-				))
-				if err != nil {
-					return fmt.Errorf("reading idempotent ingest version of node %d: %w", existingID, err)
-				}
-				receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
-				if err != nil {
-					return err
-				}
-				return nil
-			}
-		}
-		active, err := auditAuthorityActiveTx(ctx, tx)
+	ingestAdded := false
+	if options.directoryPlan != nil || options.observeMembership {
+		ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
-		var (
-			authority auditAuthorityState
-			scopes    []auditScopeState
-			prior     Node
-		)
-		if active {
-			prior, err = liveDirTx(tx, parentID)
-			if err != nil {
-				return err
-			}
-			authority, scopes, _, err = loadAuditedNodeAuthority(ctx, tx, parentID)
-			if err != nil {
-				return err
-			}
-		}
-		if options.directoryPlan == nil && !options.observeMembership {
-			ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
-			if err != nil {
-				return err
-			}
-		}
-		operation, err := newContentVersionOperation()
+	}
+	if options.directoryPlan != nil {
+		leaf, resolved, err := s.ensureIngestDirectoryTx(ctx, tx, *options.directoryPlan)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
-		var version ContentVersion
-		receipt.Node, version, err = s.createFileWithOperationTx(
-			ctx, tx, parentID, finalName, blobHash, size, mimeType, operation, physical...,
+		parentID = leaf.ID
+		resolution = resolved
+	}
+	finalName := name
+	if options.exact {
+		var existingID int64
+		err := tx.QueryRow(
+			`SELECT id FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
+			parentID, name).Scan(&existingID)
+		switch {
+		case err == nil:
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("creating exact ingest %q under node %d: %w",
+				name, parentID, ErrExists)
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("checking exact ingest name %q: %w", name, err)
+		}
+	} else {
+		var existingID int64
+		var skip bool
+		finalName, existingID, skip, err = resolveIngestNameTx(
+			tx, parentID, name, blobHash, run.record.SourceKind,
 		)
 		if err != nil {
-			return err
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
-		receipt.Version = version
-		provenance.NodeID = receipt.Node.ID
-		provenance.Identity, err = provenanceIdentity(provenance)
-		if err != nil {
-			return fmt.Errorf("identifying provenance for %q: %w", finalName, err)
-		}
-		if err := validateProvenanceRecord(provenance); err != nil {
-			return fmt.Errorf("validating provenance for %q: %w", finalName, err)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO provenance (
-				identity, node_id, ingest_id, original_path, original_mtime, supersedes
-			 ) VALUES (?, ?, ?, ?, ?, ?)`,
-			provenance.Identity, provenance.NodeID, provenance.IngestID,
-			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
-			return fmt.Errorf("recording provenance for %q: %w", finalName, err)
-		}
-		binding := ProvenanceVersionBinding{
-			ProvenanceIdentity: provenance.Identity,
-			ContentVersionID:   version.ID,
-			ObservedAt:         run.record.StartedAt,
-			BasisRef:           provenanceVersionBindingBasis,
-		}
-		if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
-			return fmt.Errorf("binding provenance for %q: %w", finalName, err)
-		}
-		if run.operationalWatch {
-			if err := insertWatchSourceTx(
-				tx, run.record.SourceDesc, provenance.OriginalPath,
-				receipt.Node.ID, blobHash, size,
-			); err != nil {
-				return err
+		if skip {
+			if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
+				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reconciling idempotent ingest content: %w", err)
 			}
-		}
-		if active {
-			resultingParent, err := nodeByIDTx(tx, parentID)
+			receipt.Node, err = scanNode(tx.QueryRow(
+				`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, existingID))
 			if err != nil {
-				return err
+				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reading idempotent ingest node %d: %w", existingID, err)
 			}
-			metadata, err := makeAuditedIngestCreationMetadata(
-				run.record, provenance, ingestAdded, binding, operation.operationID,
-			)
+			if options.observeMembership {
+				provenance.NodeID = receipt.Node.ID
+				provenance.Identity, err = provenanceIdentity(provenance)
+				if err != nil {
+					return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("identifying ingest observation for %q: %w", name, err)
+				}
+				receipt.Node, err = s.observeOperationalIngestTx(
+					ctx, tx, run, receipt.Node, provenance, ingestAdded,
+				)
+				if err != nil {
+					return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+				}
+			}
+			if !options.completeReceipt {
+				return receipt, added, resolution, nil
+			}
+			receipt.Version, err = scanContentVersion(tx.QueryRow(
+				`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`,
+				receipt.Node.CurrentVersionID,
+			))
 			if err != nil {
-				return err
+				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("reading idempotent ingest version of node %d: %w", existingID, err)
 			}
-			if err := persistAuditedNodeCreation(
-				ctx, tx, s.vaultID, authority, scopes, prior, resultingParent,
-				receipt.Node, version, operation.operationID, operation.recordedAt, &metadata,
-			); err != nil {
-				return err
-			}
-		}
-		if options.completeReceipt {
 			receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 			if err != nil {
-				return err
+				return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 			}
+			return receipt, added, resolution, nil
 		}
-		added = true
-		return nil
-	})
+	}
+	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 	}
+	var (
+		authority auditAuthorityState
+		scopes    []auditScopeState
+		prior     Node
+	)
+	if active {
+		prior, err = liveDirTx(tx, parentID)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		authority, scopes, _, err = loadAuditedNodeAuthority(ctx, tx, parentID)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+	}
+	if options.directoryPlan == nil && !options.observeMembership {
+		ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+	}
+	operation, err := newContentVersionOperation()
+	if err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+	}
+	var version ContentVersion
+	receipt.Node, version, err = s.createFileWithOperationTx(
+		ctx, tx, parentID, finalName, blobHash, size, mimeType, operation, physical...,
+	)
+	if err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+	}
+	receipt.Version = version
+	provenance.NodeID = receipt.Node.ID
+	provenance.Identity, err = provenanceIdentity(provenance)
+	if err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("identifying provenance for %q: %w", finalName, err)
+	}
+	if err := validateProvenanceRecord(provenance); err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("validating provenance for %q: %w", finalName, err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO provenance (
+			identity, node_id, ingest_id, original_path, original_mtime, supersedes
+		 ) VALUES (?, ?, ?, ?, ?, ?)`,
+		provenance.Identity, provenance.NodeID, provenance.IngestID,
+		provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("recording provenance for %q: %w", finalName, err)
+	}
+	binding := ProvenanceVersionBinding{
+		ProvenanceIdentity: provenance.Identity,
+		ContentVersionID:   version.ID,
+		ObservedAt:         run.record.StartedAt,
+		BasisRef:           provenanceVersionBindingBasis,
+	}
+	if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("binding provenance for %q: %w", finalName, err)
+	}
+	if run.operationalWatch {
+		if err := insertWatchSourceTx(
+			tx, run.record.SourceDesc, provenance.OriginalPath,
+			receipt.Node.ID, blobHash, size,
+		); err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+	}
+	if active {
+		resultingParent, err := nodeByIDTx(tx, parentID)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		metadata, err := makeAuditedIngestCreationMetadata(
+			run.record, provenance, ingestAdded, binding, operation.operationID,
+		)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		if err := persistAuditedNodeCreation(
+			ctx, tx, s.vaultID, authority, scopes, prior, resultingParent,
+			receipt.Node, version, operation.operationID, operation.recordedAt, &metadata,
+		); err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+	}
+	if options.completeReceipt {
+		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+	}
+	added = true
 	return receipt, added, resolution, nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -102,13 +103,16 @@ type RenditionJob struct {
 // RenditionJobWaiter is one version/profile authority waiting to attach the
 // shared build. Its ID is not part of build identity or artifact bytes.
 type RenditionJobWaiter struct {
-	ID                 string
-	JobID              string
-	ContentVersionID   string
-	ProfileFingerprint string
-	AttachmentID       string
-	State              string
-	FailureCode        RenditionFailureCode
+	ID                           string
+	JobID                        string
+	ContentVersionID             string
+	ProfileFingerprint           string
+	AttachmentID                 string
+	State                        string
+	FailureCode                  RenditionFailureCode
+	AuthorizationGrantID         string
+	AuthorizationIncarnationID   string
+	AuthorizationRevocationFence int64
 }
 
 // RenditionJobClaim is the worker-only fenced lease. ResumeHandle is opaque
@@ -186,10 +190,6 @@ func (s *Store) EnqueueRenditionJob(
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
 			"%w: authorization retained artifact classes do not match captured policy", ErrInvalidRenditionJobRequest)
 	}
-	if request.Authorization.PriorAuthorization != nil {
-		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
-			"%w: prior provider authorization is not a waiter identity", ErrInvalidRenditionJobRequest)
-	}
 	if err := validateUUIDv4(request.ContentVersionID); err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
 			"enqueueing rendition job: content version: %w", ErrNotFound)
@@ -211,6 +211,16 @@ func (s *Store) EnqueueRenditionJob(
 		if !currentSource || request.ExecutionIdentity.Authorization.DiscloseFilename &&
 			request.ExecutionIdentity.Upload.Filename != filename {
 			return ErrRenditionJobStaleAuthority
+		}
+		if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" {
+			visible, err := mediaInputBindingVisibleForSourceTx(
+				ctx, tx, request.Authorization.Principal, binding, sourceSHA256)
+			if err != nil {
+				return err
+			}
+			if !visible {
+				return ErrRenditionJobStaleAuthority
+			}
 		}
 		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
 			return err
@@ -238,8 +248,9 @@ func (s *Store) EnqueueRenditionJob(
 		}
 		nowTime := time.Now().UTC()
 		now := nowTime.Format(timestampLayout)
-		if _, err := authorizeProviderOperationTx(
-			ctx, tx, s.vaultID, request.Authorization, nowTime); err != nil {
+		admissionAuthorization, err := authorizeProviderOperationTx(
+			ctx, tx, s.vaultID, request.Authorization, nowTime)
+		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -309,20 +320,26 @@ func (s *Store) EnqueueRenditionJob(
 		}
 		waiterID := renditionScopedID("waiter", jobID, request.ContentVersionID,
 			profile.Fingerprint, authority.principal, authority.scope, authority.disclosure,
-			authority.inputsJSON, authority.retainedJSON)
+			authority.inputsJSON, authority.retainedJSON, admissionAuthorization.GrantID,
+			admissionAuthorization.ProcessingIncarnationID,
+			strconv.FormatInt(admissionAuthorization.RevocationFence, 10))
 		attachmentID := RenditionAttachmentID(jobID, request.ContentVersionID,
 			profile.Fingerprint)
 		waiterResult, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_job_waiters(
 				waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-				disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
+				disclosure_fingerprint,input_classes_json,retained_classes_json,
+				authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+				state,failure_code,
 				attachment_id,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,'waiting',NULL,?,?,?)
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'waiting',NULL,?,?,?)
 			ON CONFLICT(waiter_id) DO UPDATE SET
 				state='waiting',failure_code=NULL,updated_at=excluded.updated_at`,
 			waiterID, jobID, request.ContentVersionID, profile.Fingerprint,
 			authority.principal, authority.scope, authority.disclosure,
-			authority.inputsJSON, authority.retainedJSON, attachmentID, now, now)
+			authority.inputsJSON, authority.retainedJSON, admissionAuthorization.GrantID,
+			admissionAuthorization.ProcessingIncarnationID,
+			admissionAuthorization.RevocationFence, attachmentID, now, now)
 		if err != nil {
 			return fmt.Errorf("joining rendition job: %w", err)
 		}
@@ -424,6 +441,25 @@ func (s *Store) RenditionJobByID(ctx context.Context, id string) (RenditionJob, 
 		return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, err)
 	}
 	return job, nil
+}
+
+// RenditionInputBinding returns the exact auxiliary input frozen into one
+// rendition build's executable identity.
+func (s *Store) RenditionInputBinding(ctx context.Context, buildID string) (string, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT execution_identity_json FROM rendition_jobs WHERE job_id=?`,
+		buildID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var identity document.RenditionExecutionIdentityV1
+	if err := json.Unmarshal([]byte(raw), &identity, json.RejectUnknownMembers(true)); err != nil {
+		return "", fmt.Errorf("decoding rendition input binding: %w", err)
+	}
+	return identity.Upload.InputBinding, nil
 }
 
 func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (RenditionJobWaiter, error) {
@@ -1285,13 +1321,19 @@ func (s *Store) PublishRenditionJob(
 		var providerStarted bool
 		var selectedWaiter, grantID, incarnationID sql.NullString
 		var revocationFence sql.NullInt64
+		var executionIdentityJSON string
 		if err := tx.QueryRowContext(ctx, `
 			SELECT lexical_generation_id,provider_started,selected_waiter_id,authorization_grant_id,
-			       authorization_incarnation_id,authorization_revocation_fence
+			       authorization_incarnation_id,authorization_revocation_fence,execution_identity_json
 			FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(
 			&generationID, &providerStarted, &selectedWaiter, &grantID, &incarnationID,
-			&revocationFence); err != nil {
+			&revocationFence, &executionIdentityJSON); err != nil {
 			return fmt.Errorf("reading rendition publication authority: %w", err)
+		}
+		var executionIdentity document.RenditionExecutionIdentityV1
+		if err := json.Unmarshal([]byte(executionIdentityJSON), &executionIdentity,
+			json.RejectUnknownMembers(true)); err != nil {
+			return fmt.Errorf("decoding rendition publication identity: %w", err)
 		}
 		if providerStarted {
 			if !selectedWaiter.Valid || !grantID.Valid || !incarnationID.Valid ||
@@ -1328,6 +1370,14 @@ func (s *Store) PublishRenditionJob(
 		rejected := make([]rejectedWaiter, 0)
 		for _, waiterID := range waiterIDs {
 			request, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
+			if err == nil && executionIdentity.Upload.InputBinding != "" {
+				var visible bool
+				visible, err = mediaInputBindingVisibleForSourceTx(ctx, tx, request.Principal,
+					executionIdentity.Upload.InputBinding, job.SourceSHA256)
+				if err == nil && !visible {
+					err = ErrRenditionJobStaleAuthority
+				}
+			}
 			if err == nil {
 				if waiterID == selectedWaiter.String && publicationErr != nil {
 					// A fresh grant cannot replace the authority used for provider egress.
@@ -1427,6 +1477,22 @@ func (s *Store) PublishRenditionJob(
 		return RenditionJobPublication{}, publicationErr
 	}
 	return publication, nil
+}
+
+func mediaInputBindingVisibleForSourceTx(
+	ctx context.Context, tx *sql.Tx, principal, inputID, sourceSHA256 string,
+) (bool, error) {
+	var found int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM media_input_artifacts i
+		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
+		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
+		WHERE i.input_id=? AND o.caller_principal=? AND o.visible=1
+			AND v.source_sha256=? AND o.source_version_id=i.source_version_id`,
+		inputID, principal, sourceSHA256).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return found == 1, err
 }
 
 func renditionWaitingIDsTx(ctx context.Context, tx *sql.Tx, jobID string) (_ []string, retErr error) {
@@ -1545,10 +1611,13 @@ func loadRenditionJobWaiterTx(
 	var waiter RenditionJobWaiter
 	var failure sql.NullString
 	err := query.QueryRowContext(ctx, `
-		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,attachment_id,state,failure_code
+		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,attachment_id,state,failure_code,
+		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence
 		FROM rendition_job_waiters WHERE waiter_id=?`, id).Scan(
 		&waiter.ID, &waiter.JobID, &waiter.ContentVersionID,
-		&waiter.ProfileFingerprint, &waiter.AttachmentID, &waiter.State, &failure)
+		&waiter.ProfileFingerprint, &waiter.AttachmentID, &waiter.State, &failure,
+		&waiter.AuthorizationGrantID,
+		&waiter.AuthorizationIncarnationID, &waiter.AuthorizationRevocationFence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionJobWaiter{}, ErrNotFound
 	}
@@ -1602,11 +1671,14 @@ func renditionWaiterAuthorizationTx(
 ) (ProviderOperationAuthorizationRequest, error) {
 	var request ProviderOperationAuthorizationRequest
 	var inputJSON, retainedJSON, sourceSHA256, renditionFingerprint, evidenceFingerprint string
-	var policyJSON, executionJSON, filename string
+	var policyJSON, executionJSON, filename, grantID, incarnationID string
+	var revocationFence int64
 	var currentSource bool
 	err := tx.QueryRowContext(ctx, `
 		SELECT w.principal,w.scope,w.profile_fingerprint,w.disclosure_fingerprint,
-		       w.input_classes_json,w.retained_classes_json,v.blob_hash,
+		       w.input_classes_json,w.retained_classes_json,
+		       w.authorization_grant_id,w.authorization_incarnation_id,
+		       w.authorization_revocation_fence,v.blob_hash,
 		       p.rendition_request_fingerprint,p.evidence_lexical_fingerprint,
 		       j.captured_artifact_policy_json,j.execution_identity_json,n.name,
 		       n.current_version_id=v.version_id AND n.trashed_at IS NULL
@@ -1618,7 +1690,8 @@ func renditionWaiterAuthorizationTx(
 		WHERE w.waiter_id=? AND w.job_id=? AND w.state='waiting'`,
 		waiterID, job.ID).Scan(&request.Principal, &request.Scope,
 		&request.ProfileFingerprint, &request.DisclosureFingerprint,
-		&inputJSON, &retainedJSON, &sourceSHA256, &renditionFingerprint, &evidenceFingerprint,
+		&inputJSON, &retainedJSON, &grantID, &incarnationID, &revocationFence,
+		&sourceSHA256, &renditionFingerprint, &evidenceFingerprint,
 		&policyJSON, &executionJSON, &filename, &currentSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProviderOperationAuthorizationRequest{}, ErrNotFound
@@ -1645,6 +1718,10 @@ func renditionWaiterAuthorizationTx(
 	}
 	if err := json.Unmarshal([]byte(retainedJSON), &request.RetainedArtifactClasses); err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition waiter retained classes: %w", err)
+	}
+	request.PriorAuthorization = &ProviderOperationAuthorization{
+		GrantID: grantID, ProcessingIncarnationID: incarnationID,
+		RevocationFence: revocationFence,
 	}
 	policy, err := normalizeCapturedArtifactPolicyV1(jsontext.Value(policyJSON))
 	if err != nil {

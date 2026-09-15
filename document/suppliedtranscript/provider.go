@@ -30,6 +30,12 @@ type Source interface {
 	Transcript(ctx context.Context, sealedAudioSHA256 string) (document.SuppliedTranscript, error)
 }
 
+// BoundSource resolves a transcript selected before provider admission. The
+// binding is part of the immutable rendition execution identity.
+type BoundSource interface {
+	TranscriptForBinding(ctx context.Context, sealedAudioSHA256, binding string) (document.SuppliedTranscript, error)
+}
+
 // Profile fixes the source identity and evidence policy for one
 // provider instance.
 type Profile struct {
@@ -119,7 +125,18 @@ func (p *Provider) Render(
 		return document.RenditionResult{}, provider.Canceled(err)
 	}
 	startedAt := time.Now().UTC()
-	transcript, err := p.source.Transcript(ctx, metadata.SHA256)
+	var transcript document.SuppliedTranscript
+	var err error
+	if metadata.InputBinding != "" {
+		bound, ok := p.source.(BoundSource)
+		if !ok {
+			return document.RenditionResult{}, provider.Classified(
+				document.RenditionErrorPolicyRejected, "selected transcript binding is unsupported", nil)
+		}
+		transcript, err = bound.TranscriptForBinding(ctx, metadata.SHA256, metadata.InputBinding)
+	} else {
+		transcript, err = p.source.Transcript(ctx, metadata.SHA256)
+	}
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return document.RenditionResult{}, provider.Canceled(contextErr)

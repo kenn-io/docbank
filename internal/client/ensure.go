@@ -13,8 +13,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -331,7 +333,7 @@ func StartAnyVersion(ctx context.Context, root string) (kitdaemon.RuntimeRecord,
 	return start(ctx, root, false)
 }
 
-func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.RuntimeRecord, error) {
+func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.RuntimeRecord, retErr error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, err
@@ -344,23 +346,48 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, err
 	}
-	defer func() { _ = logFile.Close() }()
-	defer func() { _ = os.Remove(logPath) }()
+	defer func() {
+		_ = logFile.Close()
+		_ = os.Remove(logPath)
+	}()
 	// DOCBANK_HOME is forced to root so a caller-supplied root (update's
 	// restart path, tests) can never spawn a daemon on a different vault
 	// than the one being discovered.
-	childPID := 0
+	var child *os.Process
 	err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
 		Executable: exe,
 		Args:       []string{"daemon", "run"},
 		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", "DOCBANK_HOME="+root),
 		Stdout:     logFile,
 		Stderr:     logFile,
-		AfterStart: func(cmd *exec.Cmd) { childPID = cmd.Process.Pid },
+		AfterStart: func(cmd *exec.Cmd) { child = cmd.Process },
 	})
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, fmt.Errorf("spawning daemon: %w", err)
 	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		// A child that never published a runtime record cannot be found by Stop.
+		// Retain its process handle until readiness succeeds or cleanup finishes.
+		if runtime.GOOS != "windows" {
+			if err := child.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				retErr = errors.Join(retErr, fmt.Errorf("stopping unready daemon: %w", err))
+			}
+		}
+		rec := kitdaemon.RuntimeRecord{PID: child.Pid}
+		if dead, _ := waitDead(context.Background(), rec, daemon.GracefulExitTimeout); dead {
+			return
+		}
+		if err := child.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			retErr = errors.Join(retErr, fmt.Errorf("terminating unready daemon: %w", err))
+			return
+		}
+		if dead, _ := waitDead(context.Background(), rec, daemon.ForcedExitTimeout); !dead {
+			retErr = errors.Join(retErr, fmt.Errorf("daemon pid %d did not exit after failed startup", child.Pid))
+		}
+	}()
 
 	deadline := time.Now().Add(ensureTimeout)
 	opts := discoverOptions(requireVersion)
@@ -369,7 +396,7 @@ func start(ctx context.Context, root string, requireVersion bool) (kitdaemon.Run
 		if err == nil && ok {
 			return rec, nil
 		}
-		if childPID > 0 && !kitdaemon.ProcessAlive(childPID) {
+		if !kitdaemon.ProcessAlive(child.Pid) {
 			return kitdaemon.RuntimeRecord{}, daemonStartFailure(
 				logFile, "daemon exited before becoming ready")
 		}

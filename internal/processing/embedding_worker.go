@@ -45,6 +45,7 @@ type embeddingWorkerCatalog interface {
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
+	ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time) error
 	ValidateEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, at time.Time) error
 	BeginEmbeddingProviderEgress(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, prior *store.ProviderOperationAuthorization, at time.Time) (store.ProviderOperationAuthorization, *store.ProviderEgressFence, error)
 	AbandonEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time) error
@@ -91,10 +92,16 @@ type EmbeddingRuntime interface {
 	Classify(err error) (EmbeddingProviderFailure, time.Duration)
 }
 
-// EmbeddingRuntimeRegistry resolves exact immutable descriptor fingerprints.
+// EmbeddingRuntimeRegistry resolves provider clients by immutable descriptor
+// and execution policy by the admitted profile and binding.
 type EmbeddingRuntimeRegistry struct {
 	mu       sync.RWMutex
 	runtimes map[string]EmbeddingRuntime
+	bindings map[embeddingRuntimeBinding]EmbeddingRuntime
+}
+
+type embeddingRuntimeBinding struct {
+	profileFingerprint, bindingID, descriptorFingerprint string
 }
 
 func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
@@ -112,7 +119,9 @@ func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
 }
 
 func NewEmbeddingRuntimeRegistry() *EmbeddingRuntimeRegistry {
-	return &EmbeddingRuntimeRegistry{runtimes: make(map[string]EmbeddingRuntime)}
+	return &EmbeddingRuntimeRegistry{
+		runtimes: make(map[string]EmbeddingRuntime), bindings: make(map[embeddingRuntimeBinding]EmbeddingRuntime),
+	}
 }
 
 func (registry *EmbeddingRuntimeRegistry) Ready() bool {
@@ -125,11 +134,8 @@ func (registry *EmbeddingRuntimeRegistry) Ready() bool {
 }
 
 func (registry *EmbeddingRuntimeRegistry) Register(fingerprint string, runtime EmbeddingRuntime) error {
-	if registry == nil || len(fingerprint) != sha256.Size*2 || embeddingInterfaceNil(runtime) || !runtime.Ready() {
+	if registry == nil || !validEmbeddingRuntimeFingerprint(fingerprint) || embeddingInterfaceNil(runtime) || !runtime.Ready() {
 		return errors.New("embedding runtime registration is invalid")
-	}
-	if _, err := hex.DecodeString(fingerprint); err != nil {
-		return errors.New("embedding runtime descriptor fingerprint is invalid")
 	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
@@ -140,12 +146,47 @@ func (registry *EmbeddingRuntimeRegistry) Register(fingerprint string, runtime E
 	return nil
 }
 
+// RegisterBinding pins profile-local execution policy, including error
+// classification, without duplicating the provider descriptor registration.
+func (registry *EmbeddingRuntimeRegistry) RegisterBinding(profileFingerprint, bindingID,
+	descriptorFingerprint string, runtime EmbeddingRuntime,
+) error {
+	if registry == nil || !validEmbeddingRuntimeFingerprint(profileFingerprint) || bindingID == "" ||
+		!validEmbeddingRuntimeFingerprint(descriptorFingerprint) || embeddingInterfaceNil(runtime) || !runtime.Ready() {
+		return errors.New("embedding binding runtime registration is invalid")
+	}
+	key := embeddingRuntimeBinding{profileFingerprint, bindingID, descriptorFingerprint}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if _, exists := registry.runtimes[descriptorFingerprint]; !exists {
+		return errors.New("embedding binding runtime descriptor is not registered")
+	}
+	if _, exists := registry.bindings[key]; exists {
+		return errors.New("embedding binding runtime is already registered")
+	}
+	registry.bindings[key] = runtime
+	return nil
+}
+
+func validEmbeddingRuntimeFingerprint(fingerprint string) bool {
+	if len(fingerprint) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(fingerprint)
+	return err == nil
+}
+
 func (registry *EmbeddingRuntimeRegistry) Prepare(ctx context.Context, work EmbeddingWork) (EmbeddingExecution, error) {
 	if registry == nil {
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
 	}
 	registry.mu.RLock()
-	runtime := registry.runtimes[work.Descriptor.Fingerprint]
+	runtime := registry.bindings[embeddingRuntimeBinding{
+		work.ProcessingProfile.Fingerprint, work.Binding.Name, work.Descriptor.Fingerprint,
+	}]
+	if embeddingInterfaceNil(runtime) {
+		runtime = registry.runtimes[work.Descriptor.Fingerprint]
+	}
 	registry.mu.RUnlock()
 	if embeddingInterfaceNil(runtime) {
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
@@ -280,7 +321,7 @@ func (worker *EmbeddingWorker) Run(ctx context.Context) error {
 		processed, err := worker.ScanOnce(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return err
 			}
 			storageFailures++
 			if !errors.Is(err, ErrEmbeddingPersistence) || storageFailures >= worker.retryLimit {
@@ -358,7 +399,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		processed++
 		if err := worker.processClaim(ctx, claim, work); err != nil {
 			if ctx.Err() != nil {
-				return processed, ctx.Err()
+				return processed, err
 			}
 			if errors.Is(err, ErrEmbeddingPersistence) || !isEmbeddingWorkFence(err) {
 				return processed, err
@@ -395,12 +436,15 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 		}
 		return nil
 	})
+	if err != nil && ctx.Err() != nil {
+		return processed, ctx.Err()
+	}
 	if err == nil && processed {
 		err = worker.processClaim(ctx, claim, work)
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return processed, ctx.Err()
+			return processed, err
 		}
 		if isEmbeddingWorkFence(err) {
 			err = worker.gate.MutateContext(ctx, func() error {
@@ -431,6 +475,19 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 		}
 		cancelAttempt()
 		retErr = errors.Join(retErr, stopLease())
+		if ctx.Err() != nil {
+			retErr = ctx.Err()
+			// Work and lease renewal have stopped. Release this claim before
+			// shutdown closes storage, so a restart need not await lease expiry.
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := worker.gate.MutateContext(releaseCtx, func() error {
+				return worker.catalog.ReleaseEmbeddingWork(releaseCtx, claim, worker.clock().UTC())
+			}); err != nil {
+				// Keep cleanup failure distinct from normal worker cancellation.
+				retErr = ErrEmbeddingPersistence
+			}
+		}
 	}()
 	if err := validateEmbeddingWork(work, worker.maxRows, worker.maxDimensions); err != nil || int64(len(work.InputGeneration.Inputs))*int64(work.Descriptor.Dimension)*4 > worker.maxVectorBlobBytes {
 		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)

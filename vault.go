@@ -132,6 +132,10 @@ type Vault struct {
 	metadata         *store.Store
 	blobs            *blob.Store
 	processing       *internalprocessing.Service
+	processingCancel context.CancelFunc
+	processingWG     sync.WaitGroup
+	processingErrMu  sync.Mutex
+	processingErr    error
 	emailSpoolParent string
 
 	lifecycle    sync.RWMutex
@@ -330,6 +334,15 @@ func openVaultWithRootOpener(
 			EmbeddingClassifiers: classifiers,
 			Tokenizers:           profile.Tokenizers}
 	}
+	suppliedName, suppliedProfile, err := internalprocessing.NewSuppliedMediaProfile(
+		metadata, blobs, "embedded:operator")
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := profiles[suppliedName]; exists {
+		return nil, fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
+	}
+	profiles[suppliedName] = suppliedProfile
 	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
 		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
 		Profiles: profiles, SpoolDirectory: spoolDirectory,
@@ -338,7 +351,50 @@ func openVaultWithRootOpener(
 		return nil, err
 	}
 	vault.processing = processingService
+	worker, err := internalprocessing.NewRenditionWorker(internalprocessing.RenditionWorkerConfig{
+		Catalog: metadata, Blobs: blobs, Runtime: processingService.RenditionRuntimes(),
+		Gate: embeddedMutationGate{vault: vault}, Owner: "embedded-rendition-" + metadata.VaultID(),
+		LeaseDuration: 5 * time.Minute, IdleDelay: 25 * time.Millisecond,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var embeddingWorker *internalprocessing.EmbeddingWorker
+	embeddingRuntimes := processingService.EmbeddingRuntimes()
+	if embeddingRuntimes.Ready() {
+		embeddingWorker, err = internalprocessing.NewEmbeddingWorker(
+			internalprocessing.EmbeddingWorkerConfig{
+				Catalog: metadata, Authority: metadata, Blobs: blobs, GenerationBlobs: blobs,
+				Runtime: embeddingRuntimes, Gate: embeddedMutationGate{vault: vault},
+				Owner: "embedded-embedding-" + metadata.VaultID(), LeaseDuration: 5 * time.Minute,
+				IdleDelay: 25 * time.Millisecond, RetryLimit: 3, RetryBaseDelay: time.Second,
+				MaxRetryDelay: 30 * time.Second, AttemptLifetime: 30 * time.Minute,
+				MaxRows: 100_000, MaxDimensions: 1_048_576, MaxVectorBlobBytes: 64 << 20,
+				DescriptorFingerprints: embeddingRuntimes.Fingerprints(),
+			})
+		if err != nil {
+			return nil, err
+		}
+	}
+	workerContext, cancelWorkers := context.WithCancel(context.Background())
+	vault.processingCancel = cancelWorkers
+	continuation := &internalprocessing.MediaContinuationWorker{Service: processingService, IdleDelay: 25 * time.Millisecond}
+	vault.startProcessingWorker(workerContext, worker.Run)
+	vault.startProcessingWorker(workerContext, continuation.Run)
+	if embeddingWorker != nil {
+		vault.startProcessingWorker(workerContext, embeddingWorker.Run)
+	}
 	return vault, nil
+}
+
+func (v *Vault) startProcessingWorker(ctx context.Context, run func(context.Context) error) {
+	v.processingWG.Go(func() {
+		if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			v.processingErrMu.Lock()
+			v.processingErr = errors.Join(v.processingErr, err)
+			v.processingErrMu.Unlock()
+		}
+	})
 }
 
 type embeddedMutationGate struct{ vault *Vault }
@@ -371,7 +427,14 @@ func (v *Vault) Close() error {
 		return nil
 	}
 	v.closed = true
-	return errors.Join(v.blobs.Close(), v.metadata.Close(), v.spoolLock.Release(), v.lock.Release(), v.root.Close())
+	if v.processingCancel != nil {
+		v.processingCancel()
+	}
+	v.processingWG.Wait()
+	v.processingErrMu.Lock()
+	workerErr := v.processingErr
+	v.processingErrMu.Unlock()
+	return errors.Join(workerErr, v.blobs.Close(), v.metadata.Close(), v.spoolLock.Release(), v.lock.Release(), v.root.Close())
 }
 
 // SQLiteDriver reports the adapter selected for this vault.
@@ -1071,6 +1134,16 @@ func (v *Vault) write(
 		return PutReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	return v.writeHeld(ctx, virtualPath, content, opts, immutable, provenance)
+}
+
+// writeHeld performs a content write while its caller owns the vault lifecycle
+// read lease. Internal composite operations use it to avoid reacquiring that
+// lease while a pending close holds the writer queue.
+func (v *Vault) writeHeld(
+	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions, immutable bool,
+	provenance *ProvenanceSource,
+) (PutReceipt, error) {
 	if content == nil {
 		return PutReceipt{}, errors.New("docbank content reader is required")
 	}

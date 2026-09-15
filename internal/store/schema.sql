@@ -440,6 +440,141 @@ CREATE INDEX IF NOT EXISTS content_versions_node
     ON content_versions(node_id, node_revision DESC);
 CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
 
+-- Media source authority separates an immutable recording identity and its
+-- exact revisions from each caller's independently revocable occurrence.
+-- Private acquisition references remain runtime-only and are never exported.
+CREATE TABLE IF NOT EXISTS media_sources (
+    source_id       TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL,
+    provider        TEXT NOT NULL,
+    origin_scope    TEXT NOT NULL,
+    identity_sha256 TEXT NOT NULL UNIQUE,
+    created_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_source_versions (
+    source_version_id  TEXT PRIMARY KEY,
+    source_id          TEXT NOT NULL REFERENCES media_sources(source_id),
+    revision           INTEGER NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    source_sha256      TEXT NOT NULL,
+    source_bytes       INTEGER NOT NULL,
+    capture_json       TEXT NOT NULL,
+    claim_sha256       TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    UNIQUE (source_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS media_source_heads (
+    source_id         TEXT PRIMARY KEY REFERENCES media_sources(source_id),
+    source_version_id TEXT REFERENCES media_source_versions(source_version_id),
+    revision          INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_occurrences (
+    occurrence_id         TEXT PRIMARY KEY,
+    source_id             TEXT NOT NULL REFERENCES media_sources(source_id),
+    source_version_id     TEXT REFERENCES media_source_versions(source_version_id),
+    caller_principal      TEXT NOT NULL,
+    caller_occurrence_ref TEXT NOT NULL,
+    caller_revision       TEXT NOT NULL,
+    caller_filename       TEXT NOT NULL,
+    caller_person_ref     TEXT NOT NULL,
+    speaker_label         TEXT NOT NULL,
+    message_json          TEXT NOT NULL,
+    visible               INTEGER NOT NULL,
+    first_seen_at         TEXT NOT NULL,
+    revoked_at            TEXT,
+    UNIQUE (caller_principal, caller_occurrence_ref, caller_revision)
+);
+
+CREATE TABLE IF NOT EXISTS media_visibility_fences (
+    caller_principal TEXT PRIMARY KEY,
+    fence            INTEGER NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_input_artifacts (
+    input_id           TEXT PRIMARY KEY,
+    occurrence_id      TEXT NOT NULL REFERENCES media_occurrences(occurrence_id),
+    source_id          TEXT NOT NULL REFERENCES media_sources(source_id),
+    source_version_id  TEXT REFERENCES media_source_versions(source_version_id),
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    kind               TEXT NOT NULL,
+    origin             TEXT NOT NULL,
+    provider           TEXT NOT NULL,
+    language           TEXT NOT NULL,
+    input_sha256       TEXT NOT NULL,
+    created_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_operations (
+    operation_id  TEXT PRIMARY KEY,
+    principal     TEXT NOT NULL,
+    verb          TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    state         TEXT NOT NULL,
+    source_id     TEXT REFERENCES media_sources(source_id),
+    receipt_json  TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_acquisitions (
+    acquisition_id      TEXT PRIMARY KEY,
+    operation_id        TEXT NOT NULL REFERENCES media_operations(operation_id),
+    occurrence_id       TEXT NOT NULL REFERENCES media_occurrences(occurrence_id),
+    source_id           TEXT NOT NULL REFERENCES media_sources(source_id),
+    origin_id           TEXT NOT NULL,
+    resolver_fingerprint TEXT NOT NULL,
+    request_sha256      TEXT NOT NULL,
+    authorization_json  TEXT NOT NULL,
+    state               TEXT NOT NULL,
+    stage               TEXT NOT NULL,
+    outcome             TEXT NOT NULL,
+    failure_code        TEXT NOT NULL,
+    attempt             INTEGER NOT NULL,
+    claim_owner         TEXT,
+    claim_epoch         INTEGER NOT NULL,
+    lease_expires_at    TEXT,
+    available_at        TEXT NOT NULL,
+    received_bytes      INTEGER NOT NULL,
+    started_at          TEXT,
+    finished_at         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS media_protected_refs (
+    acquisition_id    TEXT PRIMARY KEY REFERENCES media_acquisitions(acquisition_id),
+    occurrence_id     TEXT NOT NULL REFERENCES media_occurrences(occurrence_id),
+    request_url       TEXT NOT NULL,
+    credential_binding TEXT NOT NULL,
+    expires_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS media_versions_content
+    ON media_source_versions(content_version_id, source_id);
+CREATE INDEX IF NOT EXISTS media_occurrences_principal
+    ON media_occurrences(caller_principal, visible, source_id, occurrence_id);
+CREATE INDEX IF NOT EXISTS media_occurrences_source
+    ON media_occurrences(source_id, visible, caller_principal, occurrence_id);
+CREATE INDEX IF NOT EXISTS media_acquisitions_claimable
+    ON media_acquisitions(state, available_at, lease_expires_at, acquisition_id);
+
+CREATE TRIGGER IF NOT EXISTS media_sources_immutable_update
+BEFORE UPDATE ON media_sources BEGIN
+    SELECT RAISE(ABORT, 'media source records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS media_source_versions_immutable_update
+BEFORE UPDATE ON media_source_versions BEGIN
+    SELECT RAISE(ABORT, 'media source version records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS media_input_artifacts_immutable_update
+BEFORE UPDATE ON media_input_artifacts BEGIN
+    SELECT RAISE(ABORT, 'media input artifact records are immutable');
+END;
+
 -- Visual previews are immutable exact-version derivatives selected by a small
 -- mutable head. The content version owns their lifecycle; deleting the version
 -- removes its preview catalog, after which ordinary blob GC may reclaim bytes
@@ -574,6 +709,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS processing_consent_grants (
     grant_id                  TEXT PRIMARY KEY,
+    consent_set_id            TEXT NOT NULL,
     vault_uid                 TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
     incarnation_id            TEXT NOT NULL REFERENCES processing_incarnations(incarnation_id),
     principal                 TEXT NOT NULL,
@@ -593,6 +729,9 @@ CREATE INDEX IF NOT EXISTS processing_consent_grants_authority
         disclosure_fingerprint, input_classes_json, retained_classes_json,
         issued_at, grant_id
     );
+
+CREATE INDEX IF NOT EXISTS processing_consent_grants_set
+    ON processing_consent_grants(consent_set_id, grant_id);
 
 CREATE TABLE IF NOT EXISTS processing_consent_revocations (
     revocation_id  TEXT PRIMARY KEY,
@@ -818,6 +957,9 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
     vector_space_id     TEXT NOT NULL REFERENCES embedding_vector_spaces(vector_space_id) ON DELETE CASCADE,
     principal           TEXT NOT NULL,
     scope               TEXT NOT NULL,
+    authorization_grant_id TEXT NOT NULL,
+    authorization_incarnation_id TEXT NOT NULL,
+    authorization_revocation_fence INTEGER NOT NULL,
     state               TEXT NOT NULL,
     claim_owner         TEXT,
     claim_epoch         INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
@@ -828,7 +970,8 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
     receipt_json        TEXT,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
-    UNIQUE (content_version_id,profile_fingerprint,binding_id,input_kind,generation_id)
+    UNIQUE (content_version_id,profile_fingerprint,binding_id,input_kind,generation_id,
+            authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence)
 );
 
 CREATE INDEX IF NOT EXISTS embedding_jobs_ready
@@ -1125,6 +1268,9 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
     disclosure_fingerprint   TEXT NOT NULL,
     input_classes_json       TEXT NOT NULL,
     retained_classes_json    TEXT NOT NULL,
+    authorization_grant_id   TEXT NOT NULL,
+    authorization_incarnation_id TEXT NOT NULL,
+    authorization_revocation_fence INTEGER NOT NULL,
     state                    TEXT NOT NULL,
     failure_code             TEXT,
     attachment_id            TEXT NOT NULL,

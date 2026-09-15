@@ -1203,6 +1203,59 @@ Every daemon registers `extract:plain-text`, `extract:source-metadata`, and
 rendition provider is bound, and configured watched inboxes add `watch:<name>`
 tasks. See [Daemon](architecture/daemon.md) for what each job does.
 
+## docbank media
+
+```
+docbank media submit --file CALL.wav --operation-id UUID --occurrence-ref REF --revision REV
+docbank media list
+docbank media status SOURCE_ID
+docbank media import-artifact SOURCE_ID --kind transcript --file TRANSCRIPT.txt \
+  --occurrence-id OCCURRENCE_ID --operation-id UUID
+docbank media retry SOURCE_ID --processing-profile supplied-transcript \
+  --operation-id UUID
+docbank media occurrences list [--source-id SOURCE_ID]
+docbank media occurrences declare SOURCE_ID --operation-id UUID \
+  --occurrence-ref REF --revision REV
+docbank media occurrences revoke OCCURRENCE_ID --operation-id UUID --revision REV
+docbank media origins
+```
+
+`media submit` accepts bounded WAV and MP3 files. It verifies the declared
+size and SHA-256 computed by the CLI, retains the original bytes, and records
+the caller occurrence separately. Repeating the same bytes reuses one source
+version while a different occurrence remains independently revocable. An
+empty processing profile means retention only.
+
+Use `media import-artifact` to bind supplied transcript text to the exact
+visible occurrence and recording version. Its receipt returns the input ID.
+Pass that value with `media retry --supplied-input-id INPUT_ID` when more than one
+transcript exists for the recording. The selected input remains fixed for the
+job; importing another transcript does not change work already queued.
+Artifact imports retain inputs only. Use
+`media retry` to request processing after the import.
+
+Processing is explicit. The built-in `supplied-transcript` profile turns the
+selected retained input into the ordinary sanitized Markdown rendition used by
+search and export. `media retry` queues that work only when the exact processing
+consent is still valid, then returns without waiting for the provider. The
+daemon resumes queued work after restart. In `media status`, `operation_id`,
+`operation_state`, `job_id`, and `supplied_input_id` describe the newest processing
+attempt. To wait for a retry, match its operation ID and wait for its operation
+state to become `succeeded` or `failed`. The separate `coverage_state` preserves
+the last successful transcript's coverage while a retry is pending or fails;
+revoking that transcript's occurrence makes its coverage `stale`. Before any
+successful processing, coverage describes the current attempt.
+Media processing requires a profile with a rendition provider. Profiles that
+only produce embeddings are rejected.
+
+Remote references are read from `--reference-file PATH`, or from stdin with
+`--reference-file -`. They are never accepted as a command-line URL. Reference
+submission performs no network access by itself and rejects processing requests.
+Acquisition planning, grant,
+and revoke commands are available under `media acquisition-plan` and
+`media consent`; a daemon without a registered acquisition policy reports the
+capability as unavailable.
+
 ## docbank watch
 
 ```

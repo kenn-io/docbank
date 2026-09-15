@@ -79,6 +79,9 @@ type ServiceConfig struct {
 	SpoolDirectory    string
 	Clock             func() time.Time
 	Lifecycle         context.Context
+	MediaMaxBytes     int64
+	MediaOrigins      map[string]MediaOriginPolicy
+	MediaTokenKey     [32]byte
 }
 
 type configuredProfile struct {
@@ -93,24 +96,36 @@ type configuredProfile struct {
 }
 
 type Service struct {
-	catalog        *store.Store
-	blobs          *blob.Store
-	gate           processingOperationGate
-	profiles       map[string]configuredProfile
-	principal      string
-	scope          string
-	spoolDirectory string
-	clock          func() time.Time
-	lifecycle      context.Context
-	renditions     *RenditionRuntimeRegistry
-	embeddings     *EmbeddingRuntimeRegistry
-	mediaEvidence  *retrieval.MediaEvidenceResolver
-	runsMu         sync.Mutex
-	runs           int
-	stopping       bool
-	stop           context.CancelFunc
-	drained        chan struct{}
-	formatCoverage document.FormatCoverageV1
+	catalog          *store.Store
+	blobs            *blob.Store
+	gate             processingOperationGate
+	profiles         map[string]configuredProfile
+	principal        string
+	scope            string
+	spoolDirectory   string
+	clock            func() time.Time
+	lifecycle        context.Context
+	renditions       *RenditionRuntimeRegistry
+	embeddings       *EmbeddingRuntimeRegistry
+	mediaEvidence    *retrieval.MediaEvidenceResolver
+	runsMu           sync.Mutex
+	runs             int
+	stopping         bool
+	stop             context.CancelFunc
+	drained          chan struct{}
+	formatCoverage   document.FormatCoverageV1
+	mediaMaxBytes    int64
+	mediaMu          sync.Mutex
+	mediaStagedBytes int64
+	mediaOrigins     map[string]MediaOriginPolicy
+	mediaTokenKey    [32]byte
+}
+
+func (service *Service) mediaMutation(ctx context.Context, fn func() error) error {
+	if service == nil || service.gate == nil {
+		return ErrMediaCapabilityUnavailable
+	}
+	return service.gate.MutateContext(ctx, fn)
 }
 
 type processingOperationGate interface {
@@ -337,9 +352,21 @@ func NewService(config ServiceConfig) (*Service, error) {
 		scope:          config.Scope,
 		spoolDirectory: config.SpoolDirectory, clock: config.Clock, lifecycle: config.Lifecycle,
 		renditions: renditionRuntimes, embeddings: NewEmbeddingRuntimeRegistry(),
-		mediaEvidence: retrieval.NewMediaEvidenceResolver(config.Blobs)}
+		mediaEvidence: retrieval.NewMediaEvidenceResolver(config.Blobs),
+		mediaMaxBytes: config.MediaMaxBytes,
+		mediaOrigins:  config.MediaOrigins, mediaTokenKey: config.MediaTokenKey}
+	if len(service.mediaOrigins) > 0 && service.mediaTokenKey == ([32]byte{}) {
+		return nil, errors.New("processing service media token key is required when origins are configured")
+	}
+	if service.mediaMaxBytes == 0 {
+		service.mediaMaxBytes = 512 << 20
+	}
+	if service.mediaMaxBytes < 1 || service.mediaMaxBytes > media.MaxInspectionSourceBytes {
+		return nil, fmt.Errorf("processing service media byte limit must be between 1 and %d", media.MaxInspectionSourceBytes)
+	}
 	registeredRenditions := make(map[string]document.RenditionProvider)
 	registeredEmbeddings := make(map[string]document.EmbeddingProvider)
+	registeredEmbeddingBindings := make(map[embeddingRuntimeBinding]bool)
 	for name, supplied := range config.Profiles {
 		if err := validateProfileName(name); err != nil {
 			return nil, err
@@ -420,9 +447,10 @@ func NewService(config ServiceConfig) (*Service, error) {
 					name, binding.Name, disclosureErr)
 			}
 			configured.embedDisclosures[binding.Name] = disclosure
-			classifier := supplied.EmbeddingClassifiers[binding.Name]
-			if classifier == nil {
+			classifier, customClassifier := supplied.EmbeddingClassifiers[binding.Name]
+			if !customClassifier || classifier == nil {
 				classifier = classifyEmbeddingProviderError
+				customClassifier = false
 			}
 			runtime, err := NewProviderEmbeddingRuntime(provider, config.Blobs,
 				config.SpoolDirectory, classifier)
@@ -437,6 +465,19 @@ func NewService(config ServiceConfig) (*Service, error) {
 			} else if !sameProvider(existing, provider) {
 				return nil, fmt.Errorf("processing profile %q embedding %q conflicts with "+
 					"another profile's provider for the same descriptor", name, binding.Name)
+			}
+			bindingKey := embeddingRuntimeBinding{configured.record.Fingerprint, binding.Name, descriptor.Fingerprint}
+			if existingCustom, exists := registeredEmbeddingBindings[bindingKey]; exists {
+				if existingCustom || customClassifier {
+					return nil, fmt.Errorf("processing profile %q embedding %q conflicts with "+
+						"another profile's classifier for the same canonical binding", name, binding.Name)
+				}
+			} else {
+				if err := service.embeddings.RegisterBinding(configured.record.Fingerprint, binding.Name,
+					descriptor.Fingerprint, runtime); err != nil {
+					return nil, fmt.Errorf("processing profile %q embedding %q: %w", name, binding.Name, err)
+				}
+				registeredEmbeddingBindings[bindingKey] = customClassifier
 			}
 			configured.embedders[binding.Name] = provider
 			configured.embeddingRuntimes[binding.Name] = runtime
@@ -656,7 +697,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		}
 	}
 	principal, scope := service.principal, service.scope
-	processingJobID, renditionJobID, attachmentID := "", "", ""
+	processingJobID, renditionJobID, attachmentID, consentSetGrantID := "", "", "", ""
 	announced := Job{}
 	notify := func(job Job) {
 		if announced.ID != "" {
@@ -677,7 +718,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	}
 	if profile.portable.Rendition != nil {
 		var renditionRun renditionRun
-		renditionRun, err = service.runRendition(ctx, node, version, profile, principal, scope, renditionProgress)
+		renditionRun, err = service.runRendition(ctx, node, version, request.Selector.Profile, profile, principal, scope, renditionProgress)
 		if announced.ID != "" {
 			ctx = service.lifecycle
 		}
@@ -694,6 +735,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 			return announced, processingConsentBoundaryError(err)
 		}
 		processingJobID, renditionJobID, attachmentID = renditionRun.waiterID, renditionRun.jobID, renditionRun.attachmentID
+		consentSetGrantID = renditionRun.authorizationGrantID
 	}
 	var embeddingProgress func([]string)
 	if onEnqueued != nil {
@@ -705,7 +747,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 				ProfileFingerprint: profile.record.Fingerprint, ContentVersionID: version.ID})
 		}
 	}
-	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, embeddingProgress)
+	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID, embeddingProgress)
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
 	}
@@ -915,43 +957,35 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 
 func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
 	return service.gate.MutateContext(ctx, func() error {
-		for _, request := range service.profileConsentRequests(profile) {
-			_, err := service.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
+		requests := service.profileConsentRequests(profile)
+		grants := make([]store.ProcessingConsentGrantRequest, len(requests))
+		for index, request := range requests {
+			grants[index] = store.ProcessingConsentGrantRequest{
 				Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
 				DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
-				RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt})
-			if err != nil {
-				return err
-			}
+				RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt}
 		}
-		return nil
+		_, err := service.catalog.GrantConsentSet(ctx, grants)
+		return err
 	})
 }
 
-type renditionRun struct{ jobID, waiterID, attachmentID string }
+type renditionRun struct{ jobID, waiterID, attachmentID, authorizationGrantID string }
 
 func (service *Service) runRendition(ctx context.Context, node store.Node, version store.ContentVersion,
-	profile configuredProfile, principal, scope string, onEnqueued func(renditionRun),
+	profileName string, profile configuredProfile, principal, scope string, onEnqueued func(renditionRun),
 ) (renditionRun, error) {
-	prepared, err := service.prepareExecutableRendition(ctx, node, version, profile)
+	inputBinding, err := service.resolveMediaInputBinding(
+		ctx, profileName, version.BlobHash, nil)
 	if err != nil {
 		return renditionRun{}, err
 	}
-	retained := retainedRenditionClasses(profile.portable)
-	var job store.RenditionJob
-	var waiter store.RenditionJobWaiter
-	err = service.gate.MutateContext(ctx, func() error {
-		var enqueueErr error
-		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
-			ContentVersionID: version.ID, Profile: profile.record,
-			CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity,
-			Authorization: store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
-				ProfileFingerprint:    profile.record.Fingerprint,
-				DisclosureFingerprint: profile.record.RenditionDisclosureFingerprint,
-				InputClasses:          []string{string(document.RenditionInputOriginalFile)}, RetainedArtifactClasses: retained},
-		})
-		return enqueueErr
-	})
+	job, waiter, err := service.enqueueRendition(ctx, node, version, profile,
+		store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
+			ProfileFingerprint:      profile.record.Fingerprint,
+			DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
+			InputClasses:            []string{string(document.RenditionInputOriginalFile)},
+			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding)
 	if err != nil {
 		return renditionRun{}, err
 	}
@@ -1008,7 +1042,8 @@ func (service *Service) renditionResult(ctx context.Context, waiterID string) (r
 	}
 	// Shared work can finish while rejecting this request's publication authority.
 	if waiter.State == "published" {
-		return renditionRun{jobID: waiter.JobID, waiterID: waiter.ID, attachmentID: waiter.AttachmentID}, nil
+		return renditionRun{jobID: waiter.JobID, waiterID: waiter.ID,
+			attachmentID: waiter.AttachmentID, authorizationGrantID: waiter.AuthorizationGrantID}, nil
 	}
 	if waiter.FailureCode == store.RenditionFailureConsent {
 		return renditionRun{}, ErrConsentRequired
@@ -1041,8 +1076,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 				return Status{}, err
 			}
 		}
-		embeddings, err := service.catalog.EmbeddingJobsForVersionProfile(ctx,
-			waiter.ContentVersionID, waiter.ProfileFingerprint)
+		embeddings, err := service.catalog.EmbeddingJobsForVersionProfileConsentSet(ctx,
+			waiter.ContentVersionID, waiter.ProfileFingerprint,
+			waiter.AuthorizationGrantID)
 		if err != nil {
 			return Status{}, err
 		}
@@ -1053,8 +1089,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 	}
 	embedding, embeddingErr := service.catalog.EmbeddingJobByID(ctx, jobID)
 	if embeddingErr == nil {
-		embeddings, err := service.catalog.EmbeddingJobsForVersionProfile(ctx,
-			embedding.ContentVersionID, embedding.ProfileFingerprint)
+		embeddings, err := service.catalog.EmbeddingJobsForVersionProfileConsentSet(ctx,
+			embedding.ContentVersionID, embedding.ProfileFingerprint,
+			embedding.AuthorizationGrantID)
 		if err != nil {
 			return Status{}, err
 		}
@@ -1147,6 +1184,16 @@ func (service *Service) RenditionByAttachment(ctx context.Context, attachmentID 
 func (service *Service) renditionFromView(ctx context.Context, node store.Node, contentVersionID string,
 	view store.RenditionView, limit int64,
 ) (Rendition, error) {
+	inputBinding, err := service.catalog.RenditionInputBinding(ctx, view.Build.ID)
+	if err != nil {
+		return Rendition{}, err
+	}
+	if inputBinding != "" {
+		if _, err := service.catalog.SuppliedTranscriptBindingForSource(
+			ctx, service.principal, view.Build.SourceSHA256, inputBinding); err != nil {
+			return Rendition{}, store.ErrNotFound
+		}
+	}
 	if limit == 0 {
 		limit = MaxRenditionBytes
 	}
@@ -1352,7 +1399,7 @@ func (service *Service) prepareSearch(
 }
 
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
-	profile configuredProfile, principal, scope string, onEnqueued func([]string),
+	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string),
 ) ([]string, error) {
 	if len(profile.portable.Embeddings) == 0 {
 		return []string{}, nil
@@ -1380,6 +1427,20 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		authorization := store.ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+		var admitted store.ProviderOperationAuthorization
+		if consentSetGrantID == "" {
+			admitted, err = service.catalog.AuthorizeProviderOperation(ctx, authorization)
+			if err == nil {
+				consentSetGrantID = admitted.GrantID
+			}
+		} else {
+			admitted, err = service.catalog.AuthorizeProviderOperationFromConsentSet(
+				ctx, consentSetGrantID, authorization)
+		}
+		if err != nil {
+			return jobIDs, err
+		}
+		authorization.PriorAuthorization = &admitted
 		var job store.EmbeddingJob
 		enqueueErr := service.gate.MutateContext(ctx, func() error {
 			var err error
@@ -1417,7 +1478,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			return jobIDs, err
 		}
 		for {
-			processed, runErr := worker.RunJob(ctx, jobID)
+			_, runErr := worker.RunJob(ctx, jobID)
 			if runErr != nil {
 				if isEmbeddingWorkFence(runErr) {
 					return jobIDs, ErrPlanChanged
@@ -1442,13 +1503,13 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 					return jobIDs, consentErr
 				}
 			}
-			if processed || status.State == "completed" || status.State == "failed" {
+			if status.State == "completed" || status.State == "failed" {
 				if status.State == "completed" {
 					vectorSpaces = append(vectorSpaces, fingerprints.VectorSpace[binding.Name])
 				}
 				break
 			}
-			if status.State != "running" && status.State != "retry_wait" {
+			if status.State != "queued" && status.State != "running" && status.State != "retry_wait" {
 				return jobIDs, errors.New("embedding job was not claimable")
 			}
 			if err := worker.wait(ctx, 100*time.Millisecond); err != nil {
@@ -1666,10 +1727,14 @@ type preparedRendition struct {
 }
 
 func (service *Service) prepareExecutableRendition(ctx context.Context, node store.Node, version store.ContentVersion,
-	profile configuredProfile,
+	profile configuredProfile, inputBinding string,
 ) (preparedRendition, error) {
 	prepared, err := service.prepareRendition(ctx, node, version, profile, false)
 	if err != nil {
+		return preparedRendition{}, err
+	}
+	prepared.identity.Upload.InputBinding = inputBinding
+	if _, _, err := document.CanonicalRenditionExecutionIdentityV1(prepared.identity); err != nil {
 		return preparedRendition{}, err
 	}
 	preflightWork := store.RenditionJobWork{VaultID: service.catalog.VaultID(),
@@ -1728,6 +1793,16 @@ type providerRenditionRuntime struct {
 	clock          func() time.Time
 }
 
+type boundAuthorizedUpload struct {
+	document.AuthorizedUpload
+
+	metadata document.AuthorizedUploadMetadata
+}
+
+func (upload *boundAuthorizedUpload) Metadata() document.AuthorizedUploadMetadata {
+	return upload.metadata
+}
+
 func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store.RenditionJobWork,
 	now time.Time,
 ) (RenditionExecution, error) {
@@ -1743,6 +1818,11 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 		profile, now, true)
 	if err != nil {
 		return RenditionExecution{}, err
+	}
+	if work.ExecutionIdentity.Upload.InputBinding != "" {
+		metadata := prepared.Upload.Metadata()
+		metadata.InputBinding = work.ExecutionIdentity.Upload.InputBinding
+		prepared.Upload = &boundAuthorizedUpload{AuthorizedUpload: prepared.Upload, metadata: metadata}
 	}
 	return RenditionExecution{Provider: runtime.provider, Upload: prepared.Upload,
 		Authorization: prepared.Authorization, EvidencePolicy: prepared.EvidencePolicy,

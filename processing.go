@@ -49,6 +49,33 @@ func (v *Vault) StartProcessing(ctx context.Context, request StartProcessingRequ
 		ContentVersionID: job.ContentVersionID}, nil
 }
 
+// GrantProcessingPlanConsent records explicit authority for one exact reviewed
+// embedded processing plan without starting provider work.
+func (v *Vault) GrantProcessingPlanConsent(
+	ctx context.Context, request ProcessingConsentGrantRequest,
+) (ProcessingConsentGrant, error) {
+	if err := v.begin(); err != nil {
+		return ProcessingConsentGrant{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	grant, err := v.processing.GrantConsent(ctx, internalprocessing.ConsentGrantRequest{
+		Selector:        toProcessingSelector(request.PlanRequest.Selector),
+		PlanFingerprint: request.PlanFingerprint, ExpiresAt: request.ExpiresAt,
+	})
+	return ProcessingConsentGrant{PlanFingerprint: grant.PlanFingerprint,
+		ProfileFingerprint: grant.ProfileFingerprint, ExpiresAt: grant.ExpiresAt}, err
+}
+
+// RevokeProcessingPlanConsent advances the embedded operator's processing fence.
+func (v *Vault) RevokeProcessingPlanConsent(ctx context.Context) (ProcessingConsentRevocation, error) {
+	if err := v.begin(); err != nil {
+		return ProcessingConsentRevocation{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	revocation, err := v.processing.RevokeConsent(ctx)
+	return ProcessingConsentRevocation{RevokedAt: revocation.RevokedAt}, err
+}
+
 func (v *Vault) ProcessingStatus(ctx context.Context, request ProcessingStatusRequest) (ProcessingStatus, error) {
 	if err := v.begin(); err != nil {
 		return ProcessingStatus{}, err

@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -175,6 +176,7 @@ type metadataProcessingIncarnation struct {
 type metadataProcessingConsentGrant struct {
 	Type                    string   `json:"type"`
 	ID                      string   `json:"grant_id"`
+	ConsentSetID            string   `json:"consent_set_id"`
 	VaultID                 string   `json:"vault_id"`
 	ProcessingIncarnationID string   `json:"incarnation_id"`
 	Principal               string   `json:"principal"`
@@ -231,21 +233,24 @@ type metadataRenditionJob struct {
 }
 
 type metadataRenditionJobWaiter struct {
-	Type                  string                `json:"type"`
-	ID                    string                `json:"waiter_id"`
-	JobID                 string                `json:"job_id"`
-	ContentVersionID      string                `json:"content_version_id"`
-	ProfileFingerprint    string                `json:"profile_fingerprint"`
-	Principal             string                `json:"principal"`
-	Scope                 string                `json:"scope"`
-	DisclosureFingerprint string                `json:"disclosure_fingerprint"`
-	InputClasses          []string              `json:"input_classes"`
-	RetainedClasses       []string              `json:"retained_classes"`
-	State                 string                `json:"state"`
-	FailureCode           *RenditionFailureCode `json:"failure_code,omitempty"`
-	AttachmentID          string                `json:"attachment_id"`
-	CreatedAt             string                `json:"created_at"`
-	UpdatedAt             string                `json:"updated_at"`
+	Type                         string                `json:"type"`
+	ID                           string                `json:"waiter_id"`
+	JobID                        string                `json:"job_id"`
+	ContentVersionID             string                `json:"content_version_id"`
+	ProfileFingerprint           string                `json:"profile_fingerprint"`
+	Principal                    string                `json:"principal"`
+	Scope                        string                `json:"scope"`
+	DisclosureFingerprint        string                `json:"disclosure_fingerprint"`
+	InputClasses                 []string              `json:"input_classes"`
+	RetainedClasses              []string              `json:"retained_classes"`
+	AuthorizationGrantID         string                `json:"authorization_grant_id"`
+	AuthorizationIncarnationID   string                `json:"authorization_incarnation_id"`
+	AuthorizationRevocationFence int64                 `json:"authorization_revocation_fence"`
+	State                        string                `json:"state"`
+	FailureCode                  *RenditionFailureCode `json:"failure_code,omitempty"`
+	AttachmentID                 string                `json:"attachment_id"`
+	CreatedAt                    string                `json:"created_at"`
+	UpdatedAt                    string                `json:"updated_at"`
 }
 
 var processingMetadataRequiredFields = map[string][]string{
@@ -253,7 +258,7 @@ var processingMetadataRequiredFields = map[string][]string{
 		metadataTypeField, "incarnation_id", metadataCreatedAtField,
 	},
 	metadataProcessingConsentGrantType: {
-		metadataTypeField, "grant_id", auditVaultIDField, "incarnation_id",
+		metadataTypeField, "grant_id", "consent_set_id", auditVaultIDField, "incarnation_id",
 		"principal", "scope", "profile_fingerprint", "disclosure_fingerprint",
 		"input_classes", "retained_artifact_classes", "revocation_fence",
 		"issued_at", "expires_at",
@@ -326,7 +331,9 @@ var processingMetadataRequiredFields = map[string][]string{
 	metadataRenditionJobWaiterType: {
 		metadataTypeField, "waiter_id", "job_id", "content_version_id",
 		"profile_fingerprint", "principal", "scope", "disclosure_fingerprint",
-		"input_classes", "retained_classes", "state", "attachment_id",
+		"input_classes", "retained_classes", "authorization_grant_id",
+		"authorization_incarnation_id", "authorization_revocation_fence",
+		"state", "attachment_id",
 		metadataCreatedAtField, "updated_at",
 	},
 }
@@ -432,7 +439,9 @@ func exportRenditionJobWaiters(
 ) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-		       disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
+		       disclosure_fingerprint,input_classes_json,retained_classes_json,
+		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+		       state,failure_code,
 		       attachment_id,created_at,updated_at
 		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
 	if err != nil {
@@ -445,7 +454,9 @@ func exportRenditionJobWaiters(
 		var failure sql.NullString
 		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
 			&record.ProfileFingerprint, &record.Principal, &record.Scope,
-			&record.DisclosureFingerprint, &inputs, &retained, &record.State, &failure,
+			&record.DisclosureFingerprint, &inputs, &retained, &record.AuthorizationGrantID,
+			&record.AuthorizationIncarnationID, &record.AuthorizationRevocationFence,
+			&record.State, &failure,
 			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
 		}
@@ -531,7 +542,7 @@ func exportProcessingConsentGrants(
 	ctx context.Context, tx metadataQuerier, write metadataWrite,
 ) error {
 	grants, err := tx.QueryContext(ctx, `
-		SELECT grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+		SELECT grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
 		       disclosure_fingerprint,input_classes_json,retained_classes_json,
 		       revocation_fence,issued_at,expires_at
 		FROM processing_consent_grants ORDER BY incarnation_id,issued_at,grant_id`)
@@ -543,7 +554,7 @@ func exportProcessingConsentGrants(
 		value := metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType}
 		var inputs, retained string
 		var expires sql.NullString
-		if err := grants.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
+		if err := grants.Scan(&value.ID, &value.ConsentSetID, &value.VaultID, &value.ProcessingIncarnationID,
 			&value.Principal, &value.Scope, &value.ProfileFingerprint,
 			&value.DisclosureFingerprint, &inputs, &retained, &value.RevocationFence,
 			&value.IssuedAt, &expires); err != nil {
@@ -936,10 +947,10 @@ func (s *Store) importProcessingMetadataRecord(
 			expires = *value.ExpiresAt
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO processing_consent_grants(
-			grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+			grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
 			disclosure_fingerprint,input_classes_json,retained_classes_json,
 			revocation_fence,issued_at,expires_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.VaultID,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.ConsentSetID, value.VaultID,
 			value.ProcessingIncarnationID, authority.principal, authority.scope,
 			authority.profile, authority.disclosure, authority.inputsJSON,
 			authority.retainedJSON, value.RevocationFence, value.IssuedAt, expires)
@@ -1164,11 +1175,15 @@ func (s *Store) importProcessingMetadataRecord(
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
 			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-			disclosure_fingerprint,input_classes_json,retained_classes_json,state,failure_code,
+			disclosure_fingerprint,input_classes_json,retained_classes_json,
+			authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+			state,failure_code,
 			attachment_id,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
 			value.ProfileFingerprint, authority.principal, authority.scope,
-			authority.disclosure, authority.inputsJSON, authority.retainedJSON, value.State,
+			authority.disclosure, authority.inputsJSON, authority.retainedJSON,
+			value.AuthorizationGrantID, value.AuthorizationIncarnationID,
+			value.AuthorizationRevocationFence, value.State,
 			value.FailureCode, value.AttachmentID, value.CreatedAt, value.UpdatedAt)
 		return err
 	case metadataCurrentRenditionRootType:
@@ -1481,10 +1496,18 @@ func validateMetadataRenditionJobWaiter(
 	}
 	if renditionScopedID("waiter", value.JobID, value.ContentVersionID,
 		value.ProfileFingerprint, authority.principal, authority.scope, authority.disclosure,
-		authority.inputsJSON, authority.retainedJSON) != value.ID ||
+		authority.inputsJSON, authority.retainedJSON, value.AuthorizationGrantID,
+		value.AuthorizationIncarnationID, strconv.FormatInt(value.AuthorizationRevocationFence, 10)) != value.ID ||
 		renditionScopedID("attachment", value.JobID, value.ContentVersionID,
 			value.ProfileFingerprint) != value.AttachmentID {
 		return normalizedConsentAuthority{}, errors.New("rendition waiter identity is invalid")
+	}
+	if err := validateUUIDv4(value.AuthorizationGrantID); err != nil {
+		return normalizedConsentAuthority{}, errors.New("rendition waiter authorization grant is invalid")
+	}
+	if err := validateUUIDv4(value.AuthorizationIncarnationID); err != nil ||
+		value.AuthorizationRevocationFence < 0 {
+		return normalizedConsentAuthority{}, errors.New("rendition waiter authorization incarnation is invalid")
 	}
 	if err := validateMetadataTime("rendition waiter created_at", value.CreatedAt); err != nil {
 		return normalizedConsentAuthority{}, err
@@ -1564,8 +1587,9 @@ func validateMetadataProcessingConsentGrant(
 		return normalizedConsentAuthority{}, errors.New("invalid processing consent grant record")
 	}
 	for subject, id := range map[string]string{
-		"grant ID": value.ID, "processing incarnation ID": value.ProcessingIncarnationID,
-		"vault ID": value.VaultID,
+		"grant ID": value.ID, "consent set ID": value.ConsentSetID,
+		"processing incarnation ID": value.ProcessingIncarnationID,
+		"vault ID":                  value.VaultID,
 	} {
 		if err := validateUUIDv4(id); err != nil {
 			return normalizedConsentAuthority{}, fmt.Errorf("invalid processing consent %s: %w", subject, err)
@@ -2582,7 +2606,7 @@ func validateProcessingConsentRevocations(ctx context.Context, tx metadataQuerie
 
 func validateProcessingConsentGrants(ctx context.Context, tx metadataQuerier) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT grant_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+		SELECT grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
 		       disclosure_fingerprint,input_classes_json,retained_classes_json,
 		       revocation_fence,issued_at,expires_at
 		FROM processing_consent_grants ORDER BY incarnation_id,issued_at,grant_id`)
@@ -2594,7 +2618,7 @@ func validateProcessingConsentGrants(ctx context.Context, tx metadataQuerier) er
 		value := metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType}
 		var inputs, retained string
 		var expires sql.NullString
-		if err := rows.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
+		if err := rows.Scan(&value.ID, &value.ConsentSetID, &value.VaultID, &value.ProcessingIncarnationID,
 			&value.Principal, &value.Scope, &value.ProfileFingerprint,
 			&value.DisclosureFingerprint, &inputs, &retained, &value.RevocationFence,
 			&value.IssuedAt, &expires); err != nil {

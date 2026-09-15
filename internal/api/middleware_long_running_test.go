@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -136,4 +137,42 @@ func TestEmailPartStreamAndEnsureHaveNoRequestDeadline(t *testing.T) {
 		"/api/v1/versions/11111111-1111-4111-8111-111111111111/email", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	assert.True(t, <-deadline)
+}
+
+func TestMediaRetryOutlivesRequestTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const route = "/api/v1/media/sources/{source_id}/retry"
+		operation := NewOfflineServer().API().OpenAPI().Paths[route].Post
+		mux := http.NewServeMux()
+		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
+		huma.Register(humaAPI, huma.Operation{
+			OperationID: "testMediaRetry", Method: http.MethodPost, Path: route,
+			BodyReadTimeout: operation.BodyReadTimeout,
+		}, func(ctx context.Context, _ *struct{ Body struct{} }) (*struct{ Body string }, error) {
+			// Source inspection can outlast the ordinary request deadline.
+			time.Sleep(61 * time.Second)
+			return &struct{ Body string }{Body: "queued"}, ctx.Err()
+		})
+		server := httptest.NewTestServer(t, timeoutMiddleware(mux))
+		reader, writer := io.Pipe()
+		written := make(chan struct{})
+		defer func() {
+			_ = reader.Close()
+			<-written
+		}()
+		go func() {
+			defer close(written)
+			time.Sleep(6 * time.Second)
+			_, err := writer.Write([]byte(`{}`))
+			_ = writer.CloseWithError(err)
+		}()
+		response, err := server.Client().Post(server.URL+"/api/v1/media/sources/source-1/retry",
+			"application/json", reader)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, response.Body.Close()) }()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+		require.JSONEq(t, `"queued"`, string(body))
+	})
 }

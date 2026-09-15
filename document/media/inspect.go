@@ -2,6 +2,7 @@ package media
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
@@ -31,8 +32,9 @@ import (
 )
 
 const (
-	capabilityRecordVersion  = 1
-	maxInspectionSourceBytes = int64(1 << 30)
+	capabilityRecordVersion = 1
+	// MaxInspectionSourceBytes is the largest source byte limit accepted by InspectCapability.
+	MaxInspectionSourceBytes = int64(1 << 30)
 
 	ooxmlWorksheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
 	ooxmlSlideType     = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
@@ -148,17 +150,23 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	if err := validateInspectionPolicy(policy); err != nil {
 		return CapabilityRecord{}, err
 	}
+	baseType, _, _ := mime.ParseMediaType(policy.DeclaredMediaType)
+	ext := strings.ToLower(filepath.Ext(policy.Filename))
+	if baseType == "audio/wav" || baseType == "audio/x-wav" || baseType == "audio/mpeg" ||
+		ext == ".wav" || ext == ".mp3" {
+		return inspectAudio(reader, policy, baseType, ext)
+	}
 	data, err := io.ReadAll(io.LimitReader(reader, policy.MaxSourceBytes+1))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: read inspection source: %w", err)
 	}
+	digest := sha256.Sum256(data)
+	digestHex := hex.EncodeToString(digest[:])
 	if int64(len(data)) > policy.MaxSourceBytes {
-		return sealCapabilityRecord(policy, data, CapabilityRecord{
+		return sealCapabilityRecord(policy, int64(len(data)), digestHex, CapabilityRecord{
 			Eligible: false, Reason: CapabilityReasonSourceBytes,
 		})
 	}
-	digest := sha256.Sum256(data)
-	digestHex := hex.EncodeToString(digest[:])
 	if int64(len(data)) != policy.ExpectedBytes {
 		return CapabilityRecord{}, fmt.Errorf("media: source byte length %d does not match declared %d",
 			len(data), policy.ExpectedBytes)
@@ -168,8 +176,6 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	}
 
 	record := CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnsupported}
-	baseType, _, _ := mime.ParseMediaType(policy.DeclaredMediaType)
-	ext := strings.ToLower(filepath.Ext(policy.Filename))
 	switch {
 	case isTextFamily(ext, baseType):
 		record = inspectText(data, ext, baseType, policy)
@@ -179,10 +185,6 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 		record = inspectVisualCapability(data, baseType, policy)
 	case baseType == "application/pdf" || ext == ".pdf":
 		record = inspectPDF(data, policy)
-	case baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav":
-		record = inspectWAV(data, policy)
-	case baseType == "audio/mpeg" || ext == ".mp3":
-		record = inspectMP3(data, policy)
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -212,16 +214,7 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 			record.Reason = CapabilityReasonMalformed
 		}
 	}
-	if record.Eligible && record.MediaFamily == "audio" {
-		validIdentity := record.Format == "wav" && ext == ".wav" &&
-			(baseType == "audio/wav" || baseType == "audio/x-wav") ||
-			record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg"
-		if !validIdentity {
-			record.Eligible = false
-			record.Reason = CapabilityReasonMalformed
-		}
-	}
-	return sealCapabilityRecord(policy, data, record)
+	return sealCapabilityRecord(policy, int64(len(data)), digestHex, record)
 }
 
 // ValidateCapabilityRecord verifies canonical authority fields and checksum.
@@ -300,16 +293,15 @@ func (record *CapabilityRecord) UnmarshalJSON(data []byte) error {
 }
 
 func sealCapabilityRecord(
-	policy InspectionPolicy, data []byte, record CapabilityRecord,
+	policy InspectionPolicy, sourceBytes int64, sourceSHA256 string, record CapabilityRecord,
 ) (CapabilityRecord, error) {
-	digest := sha256.Sum256(data)
 	policyEncoded, err := json.Marshal(policy, json.Deterministic(true))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: encode inspection policy: %w", err)
 	}
 	record.Version = capabilityRecordVersion
-	record.SourceBytes = int64(len(data))
-	record.SourceSHA256 = hex.EncodeToString(digest[:])
+	record.SourceBytes = sourceBytes
+	record.SourceSHA256 = sourceSHA256
 	record.PolicyFingerprint = sha256Hex(policyEncoded)
 	record.DescriptorFingerprint = policy.DescriptorFingerprint
 	record.ProfileFingerprint = policy.ProfileFingerprint
@@ -337,8 +329,8 @@ func validateInspectionPolicy(policy InspectionPolicy) error {
 	if err != nil || baseType == "" {
 		return errors.New("media: declared media type is invalid")
 	}
-	if policy.ExpectedBytes <= 0 || policy.ExpectedBytes > maxInspectionSourceBytes ||
-		policy.MaxSourceBytes <= 0 || policy.MaxSourceBytes > maxInspectionSourceBytes ||
+	if policy.ExpectedBytes <= 0 || policy.ExpectedBytes > MaxInspectionSourceBytes ||
+		policy.MaxSourceBytes <= 0 || policy.MaxSourceBytes > MaxInspectionSourceBytes ||
 		policy.ExpectedBytes > policy.MaxSourceBytes {
 		return errors.New("media: source byte bounds are invalid")
 	}
@@ -1444,72 +1436,119 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	}, nil
 }
 
-func inspectWAV(data []byte, policy InspectionPolicy) CapabilityRecord {
-	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/wav", Format: "wav"}
-	if len(data) < 44 || !bytes.Equal(data[:4], []byte("RIFF")) ||
-		!bytes.Equal(data[8:12], []byte("WAVE")) ||
-		uint64(binary.LittleEndian.Uint32(data[4:8]))+8 != uint64(len(data)) {
-		record.Reason = CapabilityReasonMalformed
-		return record
+// inspectAudio hashes the whole bounded source while retaining only parser
+// headers. Skipped audio and metadata bytes still contribute to source identity.
+func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext string) (CapabilityRecord, error) {
+	limited := &io.LimitedReader{R: reader, N: policy.MaxSourceBytes + 1}
+	hash := sha256.New()
+	buffered := bufio.NewReader(io.TeeReader(limited, hash))
+	var record CapabilityRecord
+	var err error
+	if baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav" {
+		record, err = inspectWAV(buffered, policy)
+	} else {
+		record, err = inspectMP3(buffered, policy)
+	}
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return CapabilityRecord{}, fmt.Errorf("media: read inspection source: %w", err)
+	}
+	// Read through the buffer so WriteTo cannot bypass a pending source error.
+	if _, err := io.Copy(io.Discard, struct{ io.Reader }{buffered}); err != nil {
+		return CapabilityRecord{}, fmt.Errorf("media: read inspection source: %w", err)
+	}
+	size := policy.MaxSourceBytes + 1 - limited.N
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if size > policy.MaxSourceBytes {
+		return sealCapabilityRecord(policy, size, digest, CapabilityRecord{Reason: CapabilityReasonSourceBytes})
+	}
+	if size != policy.ExpectedBytes {
+		return CapabilityRecord{}, fmt.Errorf("media: source byte length %d does not match declared %d", size, policy.ExpectedBytes)
+	}
+	if digest != policy.ExpectedSHA256 {
+		return CapabilityRecord{}, errors.New("media: source SHA-256 does not match declaration")
+	}
+	validIdentity := record.Format == "wav" && ext == ".wav" &&
+		(baseType == "audio/wav" || baseType == "audio/x-wav") ||
+		record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg"
+	if record.Eligible && !validIdentity {
+		record.Eligible, record.Reason = false, CapabilityReasonMalformed
+	}
+	return sealCapabilityRecord(policy, size, digest, record)
+}
+
+func inspectWAV(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/wav", Format: "wav", Reason: CapabilityReasonMalformed}
+	var header [12]byte
+	if _, err := io.ReadFull(reader, header[:]); err != nil {
+		return record, err
+	}
+	if policy.ExpectedBytes < 44 || string(header[:4]) != "RIFF" || string(header[8:]) != "WAVE" ||
+		int64(binary.LittleEndian.Uint32(header[4:8]))+8 != policy.ExpectedBytes {
+		return record, nil
 	}
 	var byteRate, sampleRate, audioBytes uint32
 	var audioFormat, channels, blockAlign, bitsPerSample uint16
 	var seenFormat, seenAudio bool
-	offset := 12
-	for offset+8 <= len(data) {
-		chunkSize := binary.LittleEndian.Uint32(data[offset+4 : offset+8])
-		if uint64(chunkSize) > uint64(len(data)) {
-			record.Reason = CapabilityReasonMalformed
-			return record
+	offset := int64(12)
+	var chunk [8]byte
+	var format [16]byte
+	for offset+8 <= policy.ExpectedBytes {
+		if _, err := io.ReadFull(reader, chunk[:]); err != nil {
+			return record, err
 		}
-		size := int(chunkSize) // #nosec G115 -- bounded by len(data), which is an int
+		chunkSize := binary.LittleEndian.Uint32(chunk[4:])
+		size := int64(chunkSize)
 		body := offset + 8
-		if size < 0 || body+size > len(data) {
-			record.Reason = CapabilityReasonMalformed
-			return record
+		if body+size+size%2 > policy.ExpectedBytes {
+			return record, nil
 		}
-		switch string(data[offset : offset+4]) {
+		skip := size + size%2
+		switch string(chunk[:4]) {
 		case "fmt ":
 			if seenFormat || size < 16 {
-				record.Reason = CapabilityReasonMalformed
-				return record
+				return record, nil
 			}
+			if _, err := io.ReadFull(reader, format[:]); err != nil {
+				return record, err
+			}
+			skip -= 16
 			seenFormat = true
-			audioFormat = binary.LittleEndian.Uint16(data[body : body+2])
-			channels = binary.LittleEndian.Uint16(data[body+2 : body+4])
-			sampleRate = binary.LittleEndian.Uint32(data[body+4 : body+8])
-			byteRate = binary.LittleEndian.Uint32(data[body+8 : body+12])
-			blockAlign = binary.LittleEndian.Uint16(data[body+12 : body+14])
-			bitsPerSample = binary.LittleEndian.Uint16(data[body+14 : body+16])
+			audioFormat = binary.LittleEndian.Uint16(format[:2])
+			channels = binary.LittleEndian.Uint16(format[2:4])
+			sampleRate = binary.LittleEndian.Uint32(format[4:8])
+			byteRate = binary.LittleEndian.Uint32(format[8:12])
+			blockAlign = binary.LittleEndian.Uint16(format[12:14])
+			bitsPerSample = binary.LittleEndian.Uint16(format[14:])
 		case "data":
 			if seenAudio {
-				record.Reason = CapabilityReasonMalformed
-				return record
+				return record, nil
 			}
 			seenAudio = true
 			audioBytes = chunkSize
+		}
+		if _, err := reader.Discard(int(skip)); err != nil { // #nosec G115 -- skip is bounded by the source limit.
+			return record, fmt.Errorf("reading WAV chunk: %w", err)
 		}
 		offset = body + size + size%2
 	}
 	bytesPerSample := uint64(bitsPerSample) / 8
 	wantBlockAlign := uint64(channels) * bytesPerSample
 	wantByteRate := uint64(sampleRate) * wantBlockAlign
-	if offset != len(data) || !seenFormat || !seenAudio ||
+	if offset != policy.ExpectedBytes || !seenFormat || !seenAudio ||
 		(audioFormat != 1 && audioFormat != 3) || channels == 0 || sampleRate == 0 ||
 		bitsPerSample == 0 || bitsPerSample%8 != 0 || wantBlockAlign == 0 ||
 		wantBlockAlign > math.MaxUint16 || uint64(blockAlign) != wantBlockAlign ||
 		wantByteRate > math.MaxUint32 || uint64(byteRate) != wantByteRate ||
 		audioBytes == 0 || uint64(audioBytes)%wantBlockAlign != 0 || policy.MaxDurationMS <= 0 {
-		record.Reason = CapabilityReasonMalformed
-		return record
+		return record, nil
 	}
 	record.Measurements.DurationMS = (int64(audioBytes)*1000 + int64(byteRate) - 1) / int64(byteRate)
 	if record.Measurements.DurationMS > policy.MaxDurationMS {
 		record.Reason = CapabilityReasonVisualBounds
-		return record
+		return record, nil
 	}
 	record.Eligible, record.Reason = true, CapabilityReasonEligible
-	return record
+	return record, nil
 }
 
 type mp3FrameHeader struct {
@@ -1518,61 +1557,71 @@ type mp3FrameHeader struct {
 	samples, length uint64
 }
 
-func inspectMP3(data []byte, policy InspectionPolicy) CapabilityRecord {
-	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/mpeg", Format: "mp3"}
+func inspectMP3(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/mpeg", Format: "mp3", Reason: CapabilityReasonMalformed}
 	if policy.MaxDurationMS <= 0 {
-		record.Reason = CapabilityReasonMalformed
-		return record
+		return record, nil
 	}
-	audioStart, audioEnd, ok := mp3AudioBounds(data)
-	if !ok {
-		record.Reason = CapabilityReasonMalformed
-		return record
+	tagBytes, ok, err := readMP3LeadingTag(reader, policy.ExpectedBytes)
+	if err != nil || !ok {
+		return record, err
 	}
 	var reference mp3FrameHeader
 	var seenFrame bool
 	var totalSamples uint64
-	for offset := audioStart; offset < audioEnd; {
-		frame, ok := parseMP3FrameHeader(data[offset:audioEnd])
+	for remaining := policy.ExpectedBytes - tagBytes; remaining > 0; {
+		header, err := reader.Peek(4)
+		if err != nil {
+			return record, fmt.Errorf("reading MP3 frame header: %w", err)
+		}
+		if remaining == 128 && string(header[:3]) == "TAG" {
+			if _, err := reader.Discard(128); err != nil {
+				return record, fmt.Errorf("reading ID3v1 tag: %w", err)
+			}
+			break
+		}
+		frame, ok := parseMP3FrameHeader(header)
 		if !ok || seenFrame && (frame.version != reference.version || frame.sampleRate != reference.sampleRate) {
-			record.Reason = CapabilityReasonMalformed
-			return record
+			return record, nil
 		}
 		if !seenFrame {
 			reference = frame
 			seenFrame = true
 		}
-		remaining := uint64(audioEnd - offset) //nolint:gosec // offset is below audioEnd by the loop condition
-		if frame.length > remaining || math.MaxUint64-totalSamples < frame.samples {
-			record.Reason = CapabilityReasonMalformed
-			return record
+		if frame.length > uint64(remaining) || math.MaxUint64-totalSamples < frame.samples { // #nosec G115 -- remaining is positive.
+			return record, nil
+		}
+		if _, err := reader.Discard(int(frame.length)); err != nil { // #nosec G115 -- frame.length is bounded by remaining source bytes.
+			return record, fmt.Errorf("reading MP3 frame: %w", err)
 		}
 		totalSamples += frame.samples
-		offset += int(frame.length) // #nosec G115 -- bounded by the remaining input bytes above.
+		remaining -= int64(frame.length) // #nosec G115 -- frame.length is bounded by remaining source bytes.
 	}
 	if totalSamples == 0 {
-		record.Reason = CapabilityReasonMalformed
-		return record
+		return record, nil
 	}
 	durationMS, ok := mp3DurationMilliseconds(totalSamples, reference.sampleRate)
 	if !ok {
-		record.Reason = CapabilityReasonMalformed
-		return record
+		return record, nil
 	}
 	record.Measurements.DurationMS = durationMS
 	if durationMS > policy.MaxDurationMS {
 		record.Reason = CapabilityReasonVisualBounds
-		return record
+		return record, nil
 	}
 	record.Eligible, record.Reason = true, CapabilityReasonEligible
-	return record
+	return record, nil
 }
 
-func mp3AudioBounds(data []byte) (int, int, bool) {
-	start, end := 0, len(data)
-	if bytes.HasPrefix(data, []byte("ID3")) {
-		if len(data) < 10 {
-			return 0, 0, false
+func readMP3LeadingTag(reader *bufio.Reader, sourceBytes int64) (int64, bool, error) {
+	header, err := reader.Peek(3)
+	if err != nil {
+		return 0, false, fmt.Errorf("reading MP3 tag header: %w", err)
+	}
+	if string(header) == "ID3" {
+		var data [10]byte
+		if _, err := io.ReadFull(reader, data[:]); err != nil {
+			return 0, false, err
 		}
 		version, revision, flags := data[3], data[4], data[5]
 		var allowedFlags byte
@@ -1584,41 +1633,45 @@ func mp3AudioBounds(data []byte) (int, int, bool) {
 		case 4:
 			allowedFlags = 0xf0
 		default:
-			return 0, 0, false
+			return 0, false, nil
 		}
 		if revision == 0xff || flags & ^allowedFlags != 0 {
-			return 0, 0, false
+			return 0, false, nil
 		}
 		tagSize := 0
 		for _, value := range data[6:10] {
 			if value&0x80 != 0 {
-				return 0, 0, false
+				return 0, false, nil
 			}
 			tagSize = tagSize<<7 | int(value)
 		}
 		if tagSize > maxID3v2TagBytes {
-			return 0, 0, false
+			return 0, false, nil
 		}
 		footerBytes := 0
 		if version == 4 && flags&0x10 != 0 {
 			footerBytes = 10
 		}
-		start = 10 + tagSize + footerBytes
-		if start > end {
-			return 0, 0, false
+		total := int64(10 + tagSize + footerBytes)
+		if total >= sourceBytes {
+			return 0, false, nil
+		}
+		if _, err := reader.Discard(tagSize); err != nil {
+			return 0, false, fmt.Errorf("reading ID3v2 tag body: %w", err)
 		}
 		if footerBytes != 0 {
-			footer := data[start-footerBytes : start]
+			var footer [10]byte
+			if _, err := io.ReadFull(reader, footer[:]); err != nil {
+				return 0, false, err
+			}
 			if !bytes.Equal(footer[:3], []byte("3DI")) || footer[3] != version || footer[4] != revision ||
 				footer[5] != flags || !bytes.Equal(footer[6:10], data[6:10]) {
-				return 0, 0, false
+				return 0, false, nil
 			}
 		}
+		return total, true, nil
 	}
-	if end-start >= 128 && bytes.Equal(data[end-128:end-125], []byte("TAG")) {
-		end -= 128
-	}
-	return start, end, start < end
+	return 0, true, nil
 }
 
 func parseMP3FrameHeader(data []byte) (mp3FrameHeader, bool) {

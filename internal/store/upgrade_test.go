@@ -414,6 +414,36 @@ func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) {
+	for _, table := range []struct {
+		name, column string
+	}{
+		{name: "processing_consent_grants", column: "expires_at"},
+		{name: "rendition_job_waiters", column: "failure_code"},
+		{name: "embedding_jobs", column: "receipt_json"},
+	} {
+		for _, test := range v090UpgradeDrivers() {
+			t.Run(table.name+"/"+test.name, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+
+				db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				})
+				require.NoError(t, err)
+				_, err = db.Exec(`ALTER TABLE ` + table.name + ` DROP COLUMN ` + table.column)
+				require.NoError(t, err)
+				require.NoError(t, db.Close())
+
+				_, err = Open(dbPath, test.driver)
+				require.ErrorContains(t, err, "has an unexpected "+table.name+" layout")
+			})
+		}
+	}
+}
+
 func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 	layouts := []struct {
 		name     string

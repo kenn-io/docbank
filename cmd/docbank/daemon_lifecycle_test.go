@@ -134,6 +134,20 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	oldBin := buildDocbank(t) // reports version "dev"
 	newBin := buildDocbankVersion(t, "v9.9.9-test")
 	dir := t.TempDir()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		logs, err := filepath.Glob(filepath.Join(dir, "logs", "*.log"))
+		if err != nil {
+			t.Logf("listing daemon logs: %v", err)
+			return
+		}
+		for _, path := range logs {
+			data, err := os.ReadFile(path)
+			t.Logf("daemon log %s (read error: %v):\n%s", filepath.Base(path), err, data)
+		}
+	})
 	env := append(os.Environ(), "DOCBANK_HOME="+dir)
 
 	run := func(bin string, args ...string) (string, error) {

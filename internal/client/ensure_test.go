@@ -25,6 +25,55 @@ import (
 	"go.kenn.io/docbank/internal/version"
 )
 
+func TestMain(m *testing.M) {
+	if ready := os.Getenv("DOCBANK_START_TEST_CHILD"); ready != "" && os.Getenv(EnvBackgroundDaemon) == "1" {
+		if err := os.WriteFile(ready, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			os.Exit(2)
+		}
+		// Stand in for a child that has not published its runtime record yet.
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func TestStartCancellationStopsUnreadyChild(t *testing.T) {
+	root := t.TempDir()
+	ready := filepath.Join(t.TempDir(), "child-pid")
+	t.Setenv("DOCBANK_START_TEST_CHILD", ready)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Start(ctx, root)
+		done <- err
+	}()
+	var pid int
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(ready)
+		if err != nil {
+			return false
+		}
+		pid, err = strconv.Atoi(string(data))
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+	child, err := os.FindProcess(pid)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = child.Kill()
+		_ = child.Release()
+		_, _ = waitDead(context.Background(), kitdaemon.RuntimeRecord{PID: pid}, daemon.ForcedExitTimeout)
+	})
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(daemon.GracefulExitTimeout + daemon.ForcedExitTimeout + 5*time.Second):
+		t.Fatal("launcher did not return after cancellation")
+	}
+	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
+}
+
 func TestCreateTimeMatches(t *testing.T) {
 	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
 	require.Equal(t, os.Getpid(), rec.PID)

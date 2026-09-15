@@ -28,6 +28,7 @@ func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, validateUUIDv4(grant.ID))
+	require.NoError(t, validateUUIDv4(grant.ConsentSetID))
 	require.NoError(t, validateUUIDv4(grant.ProcessingIncarnationID))
 	assert.Equal(t, s.VaultID(), grant.VaultID)
 	assert.Equal(t, int64(0), grant.RevocationFence)
@@ -37,6 +38,32 @@ func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
 	assert.Equal(t, grant.ID, authorization.GrantID)
 	assert.Equal(t, grant.ProcessingIncarnationID, authorization.ProcessingIncarnationID)
 	assert.Equal(t, grant.RevocationFence, authorization.RevocationFence)
+}
+
+func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
+	s := newTestStore(t)
+	rendition := testProviderAuthorizationRequest()
+	embedding := rendition
+	embedding.DisclosureFingerprint = testConsentFingerprint("embedding-disclosure")
+	embedding.InputClasses = []string{"rendition_chunk"}
+	embedding.RetainedArtifactClasses = []string{"embedding_vector_set"}
+	set, err := s.GrantConsentSet(t.Context(), []ProcessingConsentGrantRequest{
+		grantRequestForAuthorization(rendition, nil),
+		grantRequestForAuthorization(embedding, nil),
+	})
+	require.NoError(t, err)
+	require.Len(t, set, 2)
+	renewed, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(embedding, nil))
+	require.NoError(t, err)
+
+	authorization, err := s.AuthorizeProviderOperationFromConsentSet(
+		t.Context(), set[0].ID, embedding)
+	require.NoError(t, err)
+	require.Equal(t, set[1].ID, authorization.GrantID)
+	require.NotEqual(t, renewed.ID, authorization.GrantID)
+
+	_, err = s.AuthorizeProviderOperationFromConsentSet(t.Context(), renewed.ID, rendition)
+	require.ErrorIs(t, err, ErrProcessingConsentRequired)
 }
 
 func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
@@ -323,6 +350,7 @@ func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testin
 	var snapshot bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &snapshot))
 	assert.Contains(t, snapshot.String(), grant.ID)
+	assert.Contains(t, snapshot.String(), grant.ConsentSetID)
 
 	target, err := Open(filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
@@ -345,6 +373,11 @@ func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testin
 		`SELECT COUNT(*) FROM processing_consent_grants WHERE grant_id=?`, grant.ID,
 	).Scan(&historical))
 	assert.Equal(t, 1, historical)
+	var restoredConsentSetID string
+	require.NoError(t, target.db.QueryRow(
+		`SELECT consent_set_id FROM processing_consent_grants WHERE grant_id=?`, grant.ID,
+	).Scan(&restoredConsentSetID))
+	assert.Equal(t, grant.ConsentSetID, restoredConsentSetID)
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(t.Context(), &restored))
 	assert.Equal(t, snapshot.String(), restored.String(),
