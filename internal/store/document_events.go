@@ -102,6 +102,9 @@ func (s *Store) PublishDocumentEvents(
 func invalidateDocumentEventsForVersionsTx(
 	ctx context.Context, tx *sql.Tx, versionIDs []string,
 ) (int64, error) {
+	if err := invalidateDocumentPeopleForVersionsTx(ctx, tx, versionIDs); err != nil {
+		return 0, fmt.Errorf("invalidating document people: %w", err)
+	}
 	seen := make(map[string]struct{}, len(versionIDs))
 	var invalidated int64
 	for _, versionID := range versionIDs {
@@ -180,7 +183,7 @@ func (s *Store) publishDocumentEventsTx(
 		if err != nil {
 			return DocumentEventGeneration{}, err
 		}
-	} else if err := insertDocumentEventGeneration(ctx, tx, generation); err != nil {
+	} else if err := insertDocumentEventGeneration(ctx, tx, generation, record); err != nil {
 		return DocumentEventGeneration{}, err
 	}
 	if err := checkDocumentEventGeneration(s.VaultID(), generation, record); err != nil {
@@ -255,6 +258,7 @@ func insertDocumentEventGeneration(
 	ctx context.Context,
 	tx *sql.Tx,
 	generation DocumentEventGeneration,
+	record document.DocumentEventsV1,
 ) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_generations(
 		generation_id,content_version_id,contract_version,deriver_fingerprint,inputs_sha256,
@@ -265,7 +269,62 @@ func insertDocumentEventGeneration(
 		generation.Checksum, generation.EventCount, generation.CreatedAt); err != nil {
 		return fmt.Errorf("recording document event generation: %w", err)
 	}
+	for _, event := range record.Events {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO document_events(
+			generation_id,event_id,source_key,date_kind,source_kind_raw,date_value,raw_value,
+			precision,fraction_digits,timezone_kind,zone_text,offset_seconds,axis_key,utc_key,
+			claim_basis,parse_confidence,evidence_kind,evidence_id,evidence_sha256,
+			evidence_locator,sensitive
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, generation.GenerationID,
+			event.EventID, event.SourceKey, event.DateKind, event.SourceKindRaw, event.DateValue,
+			event.RawValue, event.Precision, event.FractionDigits, event.TimezoneKind, event.ZoneText,
+			nullableDocumentEventOffset(event.OffsetSeconds), event.AxisKey,
+			nullableDocumentEventText(event.UTCKey), event.ClaimBasis, event.ParseConfidence,
+			event.EvidenceKind, event.EvidenceID, event.EvidenceSHA256, []byte(event.EvidenceLocator),
+			documentEventBool(event.Sensitive)); err != nil {
+			return fmt.Errorf("recording document event %s: %w", event.EventID, err)
+		}
+		for _, actor := range event.Actors {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_actors(
+				generation_id,event_id,role,ordinal,actor_key,display_name,address,claim_json,
+				evidence_kind,evidence_id,sensitive
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, generation.GenerationID, event.EventID, actor.Role,
+				actor.Ordinal, actor.ActorKey, actor.DisplayName, actor.Address, []byte(actor.Claim),
+				actor.EvidenceKind, actor.EvidenceID, documentEventBool(actor.Sensitive)); err != nil {
+				return fmt.Errorf("recording document event %s actor: %w", event.EventID, err)
+			}
+		}
+	}
+	for _, primary := range record.Primaries {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_primaries(
+			generation_id,scope_class,disclosure,event_id,rule_id,reason
+		) VALUES(?,?,?,?,?,?)`, generation.GenerationID, primary.ScopeClass,
+			primary.Disclosure, primary.EventID, primary.RuleID, primary.Reason); err != nil {
+			return fmt.Errorf("recording document event primary: %w", err)
+		}
+	}
 	return nil
+}
+
+func nullableDocumentEventOffset(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableDocumentEventText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func documentEventBool(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func documentEventHeadChanged(

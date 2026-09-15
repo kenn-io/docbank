@@ -17,6 +17,10 @@ type metadataActorClaim struct {
 func metadataActorsForField(field document.SourceMetadataFieldV1) ([]metadataActorClaim, error) {
 	actors := make([]metadataActorClaim, 0)
 	if field.Key == "creators" && field.Value.Kind == document.SourceMetadataStringList {
+		role := personRoleForSourceField(field)
+		if role == "" {
+			return actors, nil
+		}
 		for index, value := range field.Value.Strings {
 			if len(value) > document.MaxDocumentEventActorClaimBytes {
 				return nil, fmt.Errorf("metadata actor claim exceeds %d bytes: %w",
@@ -28,7 +32,7 @@ func metadataActorsForField(field document.SourceMetadataFieldV1) ([]metadataAct
 			}
 			actors = append(actors, metadataActorClaim{fieldKey: field.Key, actor: document.DocumentEventActorV1{
 				ActorKey: key, Claim: value, DisplayName: value, Ordinal: index,
-				Role: "author", Sensitive: field.Sensitive,
+				Role: role, Sensitive: field.Sensitive,
 			}})
 		}
 		return actors, nil
@@ -58,6 +62,23 @@ func metadataActorsForField(field document.SourceMetadataFieldV1) ([]metadataAct
 	return actors, nil
 }
 
+func personRoleForSourceField(field document.SourceMetadataFieldV1) document.EventRole {
+	if field.Key != "creators" {
+		return ""
+	}
+	if field.Namespace == "calendar" {
+		switch strings.ToUpper(field.SourceField) {
+		case "ORGANIZER":
+			return "organizer"
+		case "ATTENDEE":
+			return "attendee"
+		default:
+			return ""
+		}
+	}
+	return "author"
+}
+
 func metadataEmailActorRole(key string) (document.EventRole, bool) {
 	switch key {
 	case "email.from":
@@ -78,14 +99,14 @@ func attachMetadataActors(events []document.DocumentEventV1, actors []metadataAc
 		target := 0
 		if strings.HasPrefix(claim.fieldKey, "email.") {
 			for index := range events {
-				if events[index].DateKind == "sent" && events[index].EvidenceKind == "source_metadata" {
+				if events[index].DateKind == "sent" && actorEvidenceMatchesEvent(claim.actor, events[index]) {
 					target = index
 					break
 				}
 			}
 		} else {
 			for index := range events {
-				if events[index].EvidenceKind == "source_metadata" {
+				if actorEvidenceMatchesEvent(claim.actor, events[index]) {
 					target = index
 					break
 				}
@@ -93,4 +114,8 @@ func attachMetadataActors(events []document.DocumentEventV1, actors []metadataAc
 		}
 		events[target].Actors = append(events[target].Actors, claim.actor)
 	}
+}
+
+func actorEvidenceMatchesEvent(actor document.DocumentEventActorV1, event document.DocumentEventV1) bool {
+	return actor.EvidenceKind == event.EvidenceKind && actor.EvidenceID == event.EvidenceID
 }

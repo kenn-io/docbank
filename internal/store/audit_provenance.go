@@ -411,7 +411,7 @@ func (replay *auditedHistoryReplay) validateProvenanceAppendDelta(
 	if err != nil {
 		return replayedProvenanceMutation{}, err
 	}
-	ingestID, err := auditUUIDField(ingestPost, "ingest_id")
+	ingestID, err := auditUUIDField(ingestPost, metadataIngestIDField)
 	if err != nil {
 		return replayedProvenanceMutation{}, err
 	}
@@ -483,7 +483,7 @@ func validateReplayedProvenance(record audit.Record, newIngest string) error {
 	if err != nil {
 		return err
 	}
-	ingestID, err := auditUUIDField(record, "ingest_id")
+	ingestID, err := auditUUIDField(record, metadataIngestIDField)
 	if err != nil {
 		return err
 	}
@@ -512,7 +512,7 @@ func validateReplayedProvenance(record audit.Record, newIngest string) error {
 	}
 	identityRecord := audit.Record{Kind: "provenance_identity", Fields: []audit.Field{
 		{Name: "node_id", Value: audit.Unsigned(nodeID)},
-		{Name: "ingest_id", Value: ingestValue},
+		{Name: metadataIngestIDField, Value: ingestValue},
 		{Name: "original_path", Value: audit.Bytes(path)},
 		{Name: "original_mtime", Value: audit.Absent()},
 		{Name: "supersedes", Value: audit.Absent()},
@@ -553,12 +553,12 @@ func (replay *auditedHistoryReplay) requireSupersedableProvenance(nodeID uint64,
 	if err != nil {
 		return err
 	}
-	ingestID, err := auditField(predecessor, "ingest_id")
+	ingestID, err := auditField(predecessor, metadataIngestIDField)
 	if err != nil {
 		return err
 	}
 	key, err := attachedAuditKey(audit.Record{Kind: metadataIngestType, Fields: []audit.Field{
-		{Name: "ingest_id", Value: ingestID},
+		{Name: metadataIngestIDField, Value: ingestID},
 	}})
 	if err != nil {
 		return err
@@ -753,7 +753,7 @@ func validateReplayedIngest(record audit.Record) error {
 	if record.Kind != metadataIngestType {
 		return errors.New("provenance mutation ingest has the wrong record kind")
 	}
-	if _, err := auditUUIDField(record, "ingest_id"); err != nil {
+	if _, err := auditUUIDField(record, metadataIngestIDField); err != nil {
 		return err
 	}
 	if _, err := auditTimestampField(record, "started_at"); err != nil {

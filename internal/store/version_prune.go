@@ -144,6 +144,10 @@ func (s *Store) PruneContentVersions(
 		for index, version := range result.Candidates {
 			versionIDs[index] = version.ID
 		}
+		affectedPeople, err := peoplePersonsForVersions(ctx, tx, versionIDs)
+		if err != nil {
+			return err
+		}
 		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 			return err
 		}
@@ -151,6 +155,9 @@ func (s *Store) PruneContentVersions(
 			if _, err := tx.Exec(`DELETE FROM content_versions WHERE version_id = ?`, version.ID); err != nil {
 				return fmt.Errorf("pruning content version %s: %w", version.ID, err)
 			}
+		}
+		if err := refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople); err != nil {
+			return err
 		}
 		result.DeletedVersions = len(result.Candidates)
 		result.Changed = true

@@ -218,6 +218,35 @@ func TestEmbeddedBackupRoundTrip(t *testing.T) {
 	require.Equal(t, content, got)
 }
 
+func TestEmbeddedBackupRestoresDocumentPeople(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	createRangeFixture(t, vault, "/archive/people.txt", []byte("synthetic people restore\n"))
+	_, err = vault.RebuildDocumentEvents(t.Context(), "70000000-0000-4000-8000-000000000011")
+	require.NoError(t, err)
+	_, err = vault.RebuildDocumentPeople(t.Context(), "70000000-0000-4000-8000-000000000012")
+	require.NoError(t, err)
+	before, err := vault.DocumentPeopleCoverage(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), before.Published)
+
+	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+	require.NoError(t, err)
+	snapshot, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{})
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{SnapshotID: snapshot.ID, Target: target})
+	require.NoError(t, err)
+	restored, err := docbank.New(t.Context(), docbank.Config{Root: target})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	coverage, err := restored.DocumentPeopleCoverage(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), coverage.Published)
+	require.Zero(t, coverage.Pending)
+}
+
 func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 	require.NoError(t, err)

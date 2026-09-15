@@ -23,12 +23,13 @@ func emailInventorySuppressed(ctx context.Context, q metadataQuerier, v ContentV
 // purgeEmailCatalogTx shares the existing derivative purge transaction. Only
 // All/version selectors address email inventories; rendition IDs keep their
 // original selector meaning.
-func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, asOf string, report *PurgeReport) ([]derivativePurgeSuppression, []string, error) {
+func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, asOf string, report *PurgeReport) ([]derivativePurgeSuppression, []string, []string, error) {
 	var suppressions []derivativePurgeSuppression
+	var affectedVersions []string
 	if request.All || len(request.ContentVersionIDs) > 0 {
 		versions, err := loadProcessingMetadataIDs(ctx, tx, "email purge version", `SELECT version_id FROM content_versions ORDER BY version_id`)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		selected := stringSet(request.ContentVersionIDs)
 		for _, id := range versions {
@@ -37,21 +38,21 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			}
 			retained, err := stringColumnTx(ctx, tx, "retaining email publications", `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? ORDER BY operation_id`, id)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if len(retained) != 0 {
 				if request.All {
 					continue
 				}
-				return nil, nil, emailDocumentRetentionConflict(retained)
+				return nil, nil, nil, emailDocumentRetentionConflict(retained)
 			}
 			v, err := emailVersion(ctx, tx, id)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			generationIDs, err := stringColumnTx(ctx, tx, "email generation", `SELECT generation_id FROM email_attachments WHERE content_version_id=? ORDER BY generation_id`, id)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if len(generationIDs) == 0 && !emailMIME(v.MimeType) {
 				continue
@@ -59,7 +60,7 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			if len(generationIDs) == 0 {
 				suppressed, err := emailInventorySuppressed(ctx, tx, v)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				if suppressed {
 					continue
@@ -67,6 +68,7 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 				sum := sha256.Sum256([]byte("docbank-email-pending-generation/v1\x00" + v.BlobHash + "\x00" + v.ID))
 				generationIDs = append(generationIDs, hex.EncodeToString(sum[:]))
 			}
+			affectedVersions = append(affectedVersions, id)
 			for _, generationID := range generationIDs {
 				suppressions = append(suppressions, derivativePurgeSuppression{sourceSHA256: v.BlobHash, profileFingerprint: derivativeAttachmentSuppressionScope(v.ID, emailInventorySuppressionProfile), buildID: generationID, purgedAt: asOf, active: true})
 			}
@@ -79,11 +81,11 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 			} {
 				result, err := tx.ExecContext(ctx, entry.query, id)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				count, err := rowsAffectedInt(result)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				*entry.count += count
 			}
@@ -92,30 +94,30 @@ func purgeEmailCatalogTx(ctx context.Context, tx *sql.Tx, request PurgeRequest, 
 	// Generations have no independent source-blob root: an orphan is collectible.
 	ids, err := stringColumnTx(ctx, tx, "orphan email generation", `SELECT generation_id FROM email_generations g WHERE NOT EXISTS(SELECT 1 FROM email_attachments a WHERE a.generation_id=g.generation_id) ORDER BY generation_id`)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var blobs []string
 	for _, id := range ids {
 		hashes, err := stringColumnTx(ctx, tx, "email artifact", `SELECT blob_hash FROM email_part_artifacts WHERE generation_id=? ORDER BY blob_hash`, id)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		blobs = append(blobs, hashes...)
 		result, err := tx.ExecContext(ctx, `DELETE FROM email_part_artifacts WHERE generation_id=?`, id)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		count, err := rowsAffectedInt(result)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		report.RemovedEmailPartArtifacts += count
 		if _, err := tx.ExecContext(ctx, `DELETE FROM email_generations WHERE generation_id=?`, id); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		report.RemovedEmailGenerations++
 	}
-	return suppressions, blobs, nil
+	return suppressions, blobs, affectedVersions, nil
 }
 
 func deleteEmailAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versions []string) error {
