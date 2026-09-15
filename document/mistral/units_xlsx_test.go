@@ -23,6 +23,11 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+var xlsxWorksheetRelationshipTypes = pptxNamespacePair{
+	transitional: xlsxWorksheetRelationshipType,
+	strict:       "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet",
+}
+
 func TestCountXLSXSheets(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -78,6 +83,13 @@ func TestCountXLSXSheets(t *testing.T) {
 			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{
 				sheetID: "1", relationshipID: "rId1", target: "worksheets/sheet1.xml",
 			}}, string([]byte{0xef, 0xbb, 0xbf})+`<workbook xmlns="`+xlsxWorkbookNamespace+`" xmlns:r="`+pptxRelationshipIDNamespace+`"><sheets><sheet sheetId="1" r:id="rId1"/></sheets></workbook>`, "", "", "", nil),
+			wantUnits: 1,
+		},
+		{
+			name: "opaque extension metadata does not affect membership",
+			archive: xlsxArchiveWithParts(t, pptxNamespaceFamilyTransitional, []xlsxTestSheet{{
+				sheetID: "1", relationshipID: "rId1", target: "worksheets/sheet1.xml",
+			}}, `<workbook xmlns="`+xlsxWorkbookNamespace+`" xmlns:r="`+pptxRelationshipIDNamespace+`" xmlns:m="urn:metadata"><extLst><ext uri="urn:metadata"><m:sheets><m:sheet/></m:sheets></ext></extLst><sheets><sheet sheetId="1" r:id="rId1" m:name="opaque" m:state="opaque"/></sheets></workbook>`, "", "", "", nil),
 			wantUnits: 1,
 		},
 		{

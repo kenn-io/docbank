@@ -26,11 +26,6 @@ var xlsxWorkbookNamespaces = pptxNamespacePair{
 	strict:       xlsxStrictWorkbookNamespace,
 }
 
-var xlsxWorksheetRelationshipTypes = pptxNamespacePair{
-	transitional: xlsxWorksheetRelationshipType,
-	strict:       "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet",
-}
-
 type xlsxSheet struct {
 	ID             string
 	RelationshipID string
@@ -211,7 +206,7 @@ func parseXLSXSheetIDs(data []byte) ([]string, pptxNamespaceFamily, error) {
 				}
 			}
 			if token.Name.Space != workbookNamespace {
-				if err := skipXLSXElement(decoder, workbookNamespace); err != nil {
+				if err := decoder.Skip(); err != nil {
 					return nil, family, fmt.Errorf("skip XLSX workbook element: %w", err)
 				}
 				continue
@@ -220,7 +215,7 @@ func parseXLSXSheetIDs(data []byte) ([]string, pptxNamespaceFamily, error) {
 				if token.Name.Local == "sheet" {
 					return nil, family, errors.New("XLSX sheet is outside the sheets list")
 				}
-				if err := skipXLSXElement(decoder, workbookNamespace); err != nil {
+				if err := decoder.Skip(); err != nil {
 					return nil, family, fmt.Errorf("skip XLSX workbook element: %w", err)
 				}
 				continue
@@ -277,26 +272,6 @@ func xlsxRelationshipIDs(sheets []xlsxSheet, family pptxNamespaceFamily) ([]stri
 	return relationshipIDs, family, nil
 }
 
-func skipXLSXElement(decoder *xml.Decoder, workbookNamespace string) error {
-	depth := 1
-	for depth > 0 {
-		token, err := decoder.Token()
-		if err != nil {
-			return fmt.Errorf("read XLSX skipped element: %w", err)
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			if (token.Name.Local == "sheet" || token.Name.Local == "sheets") && token.Name.Space != workbookNamespace {
-				return errors.New("XLSX workbook has a foreign sheet element")
-			}
-			depth++
-		case xml.EndElement:
-			depth--
-		}
-	}
-	return nil
-}
-
 func parseXLSXSheetList(decoder *xml.Decoder, start xml.StartElement) ([]xlsxSheet, error) {
 	family, ok := xlsxWorkbookNamespaces.family(start.Name.Space)
 	if !ok || start.Name.Local != "sheets" {
@@ -318,7 +293,7 @@ func parseXLSXSheetList(decoder *xml.Decoder, start xml.StartElement) ([]xlsxShe
 			if err != nil {
 				return nil, fmt.Errorf("decode XLSX sheet: %w", err)
 			}
-			if err := skipXLSXElement(decoder, workbookNamespace); err != nil {
+			if err := decoder.Skip(); err != nil {
 				return nil, fmt.Errorf("skip XLSX sheet: %w", err)
 			}
 			sheets = append(sheets, sheet)
@@ -349,7 +324,7 @@ func parseXLSXSheet(start xml.StartElement) (xlsxSheet, error) {
 			continue
 		}
 		switch attribute.Name.Local {
-		case "sheetId", "name", "state":
+		case "sheetId":
 			if attribute.Name.Space != "" {
 				return xlsxSheet{}, errors.New("XLSX sheet has an unexpected attribute namespace")
 			}
