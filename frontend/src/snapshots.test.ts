@@ -5,7 +5,6 @@ import {
   captureSnapshotTargets,
   createSnapshot,
   readSnapshotPage,
-  runSavedSnapshot,
   snapshotMemberHash,
   type SnapshotPage,
   type SnapshotRow,
@@ -13,11 +12,10 @@ import {
 
 const version2 = "22222222-2222-4222-8222-222222222222";
 const version10 = "10101010-1010-4010-8010-101010101010";
-const savedID = "33333333-3333-4333-8333-333333333333";
-const runID = "44444444-4444-4444-8444-444444444444";
 const snapshotID = "0123456789abcdef0123456789abcdef";
 const blob2 = "2".repeat(64);
 const blob10 = "a".repeat(64);
+const tagID = "11111111-1111-4111-8111-111111111111";
 const query = parseQuery("{}");
 
 async function sha256OfUTF8(text: string): Promise<string> {
@@ -38,9 +36,9 @@ function row(nodeID: number, version: string, blob: string, size: number): Snaps
     media_family: "text",
     modified_at: "2026-09-11T00:00:00Z",
     sort_key: `synthetic-${nodeID}.txt`,
-    tags: [{ id: savedID, name: "Synthetic", revision: 2 }],
-    collection_ids: [savedID],
-    display_collection_id: savedID,
+    tags: [{ id: tagID, name: "Synthetic", revision: 2 }],
+    collection_ids: [tagID],
+    display_collection_id: tagID,
     display_collection_label: null,
     coverage_state: "complete",
     coverage_build_id: "build-synthetic",
@@ -54,7 +52,7 @@ async function page(overrides: Record<string, unknown> = {}): Promise<Record<str
   return {
     $schema: "http://localhost/schemas/WorkspaceQueryResponse.json",
     query,
-    dependencies: [{ kind: "tag", id: savedID, revision: 2 }],
+    dependencies: [{ kind: "tag", id: tagID, revision: 2 }],
     query_fingerprint: await queryFingerprint(query),
     member_hash: await sha256OfUTF8("2:" + version2 + "\n"),
     snapshot_fingerprint: `sha256:${"f".repeat(64)}`,
@@ -67,7 +65,7 @@ async function page(overrides: Record<string, unknown> = {}): Promise<Record<str
     rows,
     facets: [{
       dimension: "tags", available: true, values: [
-        { key: savedID, label: "Synthetic", count: 1, selected: false },
+        { key: tagID, label: "Synthetic", count: 1, selected: false },
       ], total: 1, missing: 0, other: 0,
     }],
     snapshot: true,
@@ -197,55 +195,6 @@ describe("snapshot transport and receipt validation", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("validates saved-run identity and preserves a meaningful previous zero", async () => {
-    const snapshot = await page();
-    delete snapshot.$schema;
-    const receipt = {
-      run: {
-        run_id: runID, saved_query_id: savedID, saved_query_revision: 7,
-        query_fingerprint: snapshot.query_fingerprint, snapshot_id: snapshot.snapshot_id,
-        member_hash: snapshot.member_hash, total: snapshot.total, total_bytes: snapshot.total_bytes,
-        ran_at: "2026-09-11T00:00:00Z", expires_at: "2026-09-11T00:15:00Z",
-        previous_run_id: "55555555-5555-4555-8555-555555555555",
-        previous_member_hash: "0".repeat(64), previous_total: 0,
-        previous_query_fingerprint: `sha256:${"0".repeat(64)}`,
-        comparison: { hash_changed: true, total_delta: 1, definition_changed: true },
-      },
-      snapshot,
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
-
-    await expect(runSavedSnapshot(
-      "session", savedID, 7, query, { page_size: 50, facets: ["tags"] }, new AbortController().signal,
-    )).resolves.toEqual(receipt);
-    const [, init] = fetchMock.mock.calls[0] ?? [];
-    expect(new Headers(init?.headers).get("If-Match")).toBe("7");
-    expect(JSON.parse(String(init?.body))).toEqual({ page_size: 50, facets: ["tags"] });
-  });
-
-  it.each([
-    ["saved ID", { saved_query_id: "66666666-6666-4666-8666-666666666666" }],
-    ["saved revision", { saved_query_revision: 8 }],
-    ["snapshot link", { snapshot_id: "fedcba9876543210fedcba9876543210" }],
-    ["member link", { member_hash: "0".repeat(64) }],
-    ["total link", { total: 2 }],
-  ])("rejects a saved-run receipt with substituted %s", async (_name, runOverride) => {
-    const snapshot = await page();
-    delete snapshot.$schema;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      run: {
-        run_id: runID, saved_query_id: savedID, saved_query_revision: 7,
-        query_fingerprint: snapshot.query_fingerprint, snapshot_id: snapshot.snapshot_id,
-        member_hash: snapshot.member_hash, total: snapshot.total, total_bytes: snapshot.total_bytes,
-        ran_at: "2026-09-11T00:00:00Z", expires_at: "2026-09-11T00:15:00Z",
-        comparison: { hash_changed: false, total_delta: 0, definition_changed: false },
-        ...runOverride,
-      }, snapshot,
-    }));
-    await expect(runSavedSnapshot(
-      "session", savedID, 7, query, { page_size: 50, facets: ["tags"] }, new AbortController().signal,
-    )).rejects.toThrow(/saved query run receipt/i);
-  });
 });
 
 describe("exact snapshot target capture", () => {

@@ -3,7 +3,6 @@ import { canonicalQuery, parseQuery, type Query } from "./query.js";
 import {
   createSnapshot,
   readSnapshotPage,
-  runSavedSnapshot,
   type SnapshotOptions,
   type SnapshotPage,
 } from "./snapshots.js";
@@ -62,27 +61,6 @@ export class SnapshotSession {
       this.emit({
         status: "ready", firstPage, page: firstPage, query: started.query,
         options: started.options, offset: 0,
-      });
-    } catch (error) {
-      this.fail(started.epoch, error, this.accepted ?? {
-        status: "error", query: started.query, options: started.options, offset: 0,
-      });
-    }
-  }
-
-  async runSaved(
-    id: string, revision: number, query: Query, options: SnapshotOptions,
-  ): Promise<void> {
-    const started = this.begin(query, options);
-    if (started === undefined) return;
-    try {
-      const result = await runSavedSnapshot(
-        this.session, id, revision, started.query, started.options, started.signal,
-      );
-      if (!this.current(started.epoch)) return;
-      this.emit({
-        status: "ready", firstPage: result.snapshot, page: result.snapshot,
-        query: started.query, options: started.options, offset: 0,
       });
     } catch (error) {
       this.fail(started.epoch, error, this.accepted ?? {

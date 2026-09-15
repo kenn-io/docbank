@@ -13,6 +13,7 @@
   import { untrack } from "svelte";
   import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError, type Tag } from "./api.js";
+  import { encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
 
   interface Props {
@@ -68,7 +69,6 @@
   async function saveCheckpoint(): Promise<void> {
     failure = "";
     try {
-      const { encodeRecovery } = await import("./actionRecovery.js");
       const bytes = await encodeRecovery(action);
       const blob = new Blob([Uint8Array.from(bytes)], { type: "application/json" });
       const url = URL.createObjectURL(blob);

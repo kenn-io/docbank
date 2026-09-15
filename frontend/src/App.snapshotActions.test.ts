@@ -1,7 +1,8 @@
 import { createHash, webcrypto } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import type { PreparedAction, PersistedAction } from "./actionJournal.js";
+import type { PreparedAction } from "./actionRecovery.js";
+import type { PersistedAction } from "./actionJournal.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import { canonicalQuery, type Query } from "./query.js";
 import { snapshotMemberHash, type SnapshotPage, type SnapshotRow } from "./snapshots.js";
@@ -23,6 +24,11 @@ const journal = vi.hoisted(() => ({
     };
   },
   async load() { return journalState.action; },
+  async loadBatch(index: number) {
+    const action = journalState.action!;
+    return { action_id: action.action_id, state: action.state,
+      checkpoint_verified: action.checkpoint_verified, batch: action.batches[index] };
+  },
   async verifyCheckpoint() {},
   async confirmResume() {},
   consumeResumeConfirmation() { return false; },

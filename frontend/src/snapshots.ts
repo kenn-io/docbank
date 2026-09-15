@@ -1,5 +1,5 @@
 import { requestResponse } from "./api.js";
-import { canonicalQuery, parseQuery, type Query } from "./query.js";
+import { canonicalQuery, parseQuery, queryFingerprint as fingerprintQuery, type Query } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
@@ -70,27 +70,6 @@ export type SnapshotMember = Pick<SnapshotRow,
   "node_id" | "content_version_id" | "blob_hash" | "size" | "revision">;
 export type VerifiedSnapshotTargets = { snapshot: SnapshotPage; members: SnapshotMember[] };
 
-export interface SavedQueryRunResult {
-  run: {
-    run_id: string;
-    saved_query_id: string;
-    saved_query_revision: number;
-    query_fingerprint: string;
-    snapshot_id: string;
-    member_hash: string;
-    total: number;
-    total_bytes: number;
-    ran_at: string;
-    expires_at: string;
-    previous_run_id?: string;
-    previous_member_hash?: string;
-    previous_total?: number | null;
-    previous_query_fingerprint?: string;
-    comparison: { hash_changed: boolean; total_delta: number; definition_changed: boolean };
-  };
-  snapshot: SnapshotPage;
-}
-
 const maxResponseBytes = 32 * 1024 * 1024;
 const maxSnapshotMembers = 250_000;
 const maxRowBytes = 64 * 1024;
@@ -116,10 +95,6 @@ const encoder = new TextEncoder();
 
 function malformed(reason: string): never {
   throw new Error(`Malformed snapshot receipt: ${reason}.`);
-}
-
-function savedMalformed(reason: string): never {
-  throw new Error(`Malformed saved query run receipt: ${reason}.`);
 }
 
 function record(value: unknown, field: string): Record<string, unknown> {
@@ -309,11 +284,6 @@ function parseFacet(value: unknown, index: number): WorkspaceQueryResponse["face
   };
 }
 
-async function queryDigest(value: Query): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(canonicalQuery(value)));
-  return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
 async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
   const raw = record(value, "receipt");
   keys(raw, [
@@ -333,7 +303,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     malformed("query does not match the request");
   }
   const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
-  if (!prefixedSHA256.test(queryFingerprint) || queryFingerprint !== await queryDigest(decodedQuery)) {
+  if (!prefixedSHA256.test(queryFingerprint) || queryFingerprint !== await fingerprintQuery(decodedQuery)) {
     malformed("query fingerprint is inconsistent");
   }
   if (!Array.isArray(raw.dependencies) || raw.dependencies.length > 256) malformed("dependencies exceeds its bound");
@@ -539,94 +509,6 @@ export async function readSnapshotPage(
     malformed("page cursor direction is inconsistent");
   }
   return result;
-}
-
-function mapRun(value: unknown): SavedQueryRunResult["run"] {
-  const raw = record(value, "run");
-  keys(raw, [
-    "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash",
-    "total", "total_bytes", "ran_at", "expires_at", "comparison",
-  ], ["previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"], "run");
-  const comparisonRaw = record(raw.comparison, "run.comparison");
-  keys(comparisonRaw, ["hash_changed", "total_delta", "definition_changed"], [], "run.comparison");
-  if (typeof comparisonRaw.hash_changed !== "boolean" || typeof comparisonRaw.definition_changed !== "boolean") {
-    savedMalformed("comparison flags are invalid");
-  }
-  const runID = string(raw.run_id, "run.run_id");
-  const savedQueryID = string(raw.saved_query_id, "run.saved_query_id");
-  const queryFingerprint = string(raw.query_fingerprint, "run.query_fingerprint");
-  const snapshotID = string(raw.snapshot_id, "run.snapshot_id");
-  const memberHash = string(raw.member_hash, "run.member_hash");
-  const previousRunID = optionalString(raw.previous_run_id, "run.previous_run_id");
-  const previousMemberHash = optionalString(raw.previous_member_hash, "run.previous_member_hash");
-  const previousQueryFingerprint = optionalString(raw.previous_query_fingerprint, "run.previous_query_fingerprint");
-  const previousTotal = raw.previous_total === undefined || raw.previous_total === null
-    ? raw.previous_total as null | undefined : integer(raw.previous_total, "run.previous_total");
-  if (!uuidV4.test(runID) || !uuidV4.test(savedQueryID) || !prefixedSHA256.test(queryFingerprint) ||
-      !snapshotIdentity.test(snapshotID) || !sha256.test(memberHash)) savedMalformed("run identity is invalid");
-  const hasPrevious = previousRunID !== undefined;
-  if (hasPrevious !== (previousMemberHash !== undefined) || hasPrevious !== (previousQueryFingerprint !== undefined) ||
-      hasPrevious !== (previousTotal !== undefined && previousTotal !== null)) savedMalformed("previous run fields are inconsistent");
-  if (hasPrevious && (!uuidV4.test(previousRunID!) || previousRunID === runID || !sha256.test(previousMemberHash!) ||
-      !prefixedSHA256.test(previousQueryFingerprint!))) savedMalformed("previous run identity is invalid");
-  const total = integer(raw.total, "run.total");
-  const totalDelta = integer(raw.comparison && comparisonRaw.total_delta, "run.comparison.total_delta", Number.MIN_SAFE_INTEGER);
-  if (hasPrevious && (totalDelta !== total - previousTotal! || comparisonRaw.hash_changed !== (memberHash !== previousMemberHash) ||
-      comparisonRaw.definition_changed !== (queryFingerprint !== previousQueryFingerprint))) {
-    savedMalformed("comparison is inconsistent");
-  }
-  if (!hasPrevious && (totalDelta !== 0 || comparisonRaw.hash_changed || comparisonRaw.definition_changed)) {
-    savedMalformed("comparison invents a previous run");
-  }
-  return {
-    run_id: runID,
-    saved_query_id: savedQueryID,
-    saved_query_revision: integer(raw.saved_query_revision, "run.saved_query_revision", 1),
-    query_fingerprint: queryFingerprint,
-    snapshot_id: snapshotID,
-    member_hash: memberHash,
-    total,
-    total_bytes: integer(raw.total_bytes, "run.total_bytes"),
-    ran_at: dateTime(raw.ran_at, "run.ran_at"),
-    expires_at: dateTime(raw.expires_at, "run.expires_at"),
-    ...(previousRunID === undefined ? {} : { previous_run_id: previousRunID }),
-    ...(previousMemberHash === undefined ? {} : { previous_member_hash: previousMemberHash }),
-    ...(previousTotal === undefined ? {} : { previous_total: previousTotal }),
-    ...(previousQueryFingerprint === undefined ? {} : { previous_query_fingerprint: previousQueryFingerprint }),
-    comparison: {
-      hash_changed: comparisonRaw.hash_changed,
-      total_delta: totalDelta,
-      definition_changed: comparisonRaw.definition_changed,
-    },
-  };
-}
-
-export async function runSavedSnapshot(
-  session: string, id: string, revision: number, query: Query, options: SnapshotOptions, signal: AbortSignal,
-): Promise<SavedQueryRunResult> {
-  if (!uuidV4.test(id) || !Number.isSafeInteger(revision) || revision < 1) throw new Error("Saved query identity or revision is invalid.");
-  const normalized = normalizedOptions(options);
-  const response = await requestResponse(`/api/v1/saved-queries/${encodeURIComponent(id)}/runs`, session, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "If-Match": String(revision) },
-    body: JSON.stringify(normalized),
-    signal,
-  });
-  const raw = record(await boundedJSON(response), "saved query run receipt");
-  keys(raw, ["run", "snapshot"], ["$schema"], "saved query run receipt");
-  if (raw.$schema !== undefined && string(raw.$schema, "saved query run receipt.$schema").length === 0) {
-    savedMalformed("$schema is invalid");
-  }
-  const run = mapRun(raw.run);
-  const snapshot = await parseSnapshot(raw.snapshot, query);
-  validateFirstPage(snapshot, normalized);
-  if (run.saved_query_id !== id || run.saved_query_revision !== revision ||
-      run.query_fingerprint !== snapshot.query_fingerprint || run.snapshot_id !== snapshot.snapshot_id ||
-      run.member_hash !== snapshot.member_hash || run.total !== snapshot.total || run.total_bytes !== snapshot.total_bytes ||
-      run.ran_at !== snapshot.created_at || run.expires_at !== snapshot.expires_at) {
-    savedMalformed("run and snapshot authority are inconsistent");
-  }
-  return { run, snapshot };
 }
 
 export async function snapshotMemberHash(
