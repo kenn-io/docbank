@@ -170,7 +170,7 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	require.Equal(transport.t, "Bearer synthetic-key", request.Header.Get("Authorization"), "call %d", call)
 	body, err := io.ReadAll(request.Body)
 	require.NoError(transport.t, err)
-	assert.NotContains(transport.t, string(body), strings.Join([]string{"image", "limit"}, "_"))
+	assert.NotContains(transport.t, string(body), "image_limit")
 	var input struct {
 		Pages         string `json:"pages"`
 		ExtractHeader bool   `json:"extract_header"`

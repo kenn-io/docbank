@@ -45,7 +45,6 @@ const (
 	pptxRelationshipIDNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 	pptxStrictRelationshipIDNS  = "http://purl.oclc.org/ooxml/officeDocument/relationships"
 	pptxContentTypesNamespace   = "http://schemas.openxmlformats.org/package/2006/content-types"
-	pptxMarkupCompatibilityNS   = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 	pptxOfficeDocumentRelType   = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
 	pptxStrictOfficeDocumentRel = "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument"
 	pptxRelationshipType        = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
@@ -102,10 +101,10 @@ func pptxRelationshipTypeFamily(typeName string) (pptxNamespaceFamily, bool) {
 }
 
 type pptxRelationship struct {
-	ID         string  `xml:"Id,attr"`
-	Type       string  `xml:"Type,attr"`
-	Target     string  `xml:"Target,attr"`
-	TargetMode *string `xml:"TargetMode,attr"`
+	ID         string
+	Type       string
+	Target     string
+	TargetMode *string
 	family     pptxNamespaceFamily
 }
 
@@ -138,40 +137,20 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	relationshipFamily, err := validatePPTXRelationshipParts(archive.File)
-	if err != nil {
-		return 0, err
-	}
 
-	presentation, err := pptxEntry(entries, pptxPresentationPath)
+	presentationXML, err := readPPTXPart(entries, pptxPresentationPath)
 	if err != nil {
 		return 0, err
 	}
-	presentationRels, err := pptxEntry(entries, pptxPresentationRelsPath)
+	relationshipsXML, err := readPPTXPart(entries, pptxPresentationRelsPath)
 	if err != nil {
 		return 0, err
 	}
-	contentTypes, err := pptxEntry(entries, ooxmlContentTypesName)
+	contentTypesXML, err := readPPTXPart(entries, ooxmlContentTypesName)
 	if err != nil {
 		return 0, err
 	}
-	rootRelationships, err := pptxEntry(entries, pptxRootRelationshipsPath)
-	if err != nil {
-		return 0, err
-	}
-	presentationXML, err := readPPTXXML(presentation)
-	if err != nil {
-		return 0, err
-	}
-	relationshipsXML, err := readPPTXXML(presentationRels)
-	if err != nil {
-		return 0, err
-	}
-	contentTypesXML, err := readPPTXXML(contentTypes)
-	if err != nil {
-		return 0, err
-	}
-	rootRelationshipsXML, err := readPPTXXML(rootRelationships)
+	rootRelationshipsXML, err := readPPTXPart(entries, pptxRootRelationshipsPath)
 	if err != nil {
 		return 0, err
 	}
@@ -184,7 +163,7 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("parse PPTX presentation: %w", err)
 	}
-	if relationshipFamily != presentationFamily || rootFamily != presentationFamily {
+	if rootFamily != presentationFamily {
 		return 0, errors.New("PPTX package mixes namespace families")
 	}
 	relationships, relationshipsFamily, err := parsePPTXRelationships(relationshipsXML)
@@ -207,6 +186,9 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 		}
 		if relationship.Type != pptxSlideRelationshipTypes.value(presentationFamily) {
 			return 0, fmt.Errorf("PPTX relationship %q is not a slide", relationshipID)
+		}
+		if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
+			return 0, fmt.Errorf("PPTX slide relationship %q has an external target", relationshipID)
 		}
 		target, err := resolvePPTXTargetFrom(pptxPresentationPath, relationship.Target)
 		if err != nil {
@@ -234,12 +216,16 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	return len(relationshipIDs), nil
 }
 
-func pptxEntry(entries map[string]*zip.File, name string) (*zip.File, error) {
+func readPPTXPart(entries map[string]*zip.File, name string) ([]byte, error) {
 	aliases, err := canonicalPPTXPath(name)
 	if err != nil {
 		return nil, err
 	}
-	return pptxEntryForKeys(entries, aliases.keys(), name)
+	entry, err := pptxEntryForKeys(entries, aliases.keys(), name)
+	if err != nil {
+		return nil, err
+	}
+	return readPPTXXML(entry)
 }
 
 func pptxEntryForKeys(entries map[string]*zip.File, keys []string, name string) (*zip.File, error) {
@@ -303,84 +289,21 @@ func readPPTXXML(entry *zip.File) ([]byte, error) {
 	return data, nil
 }
 
-func validatePPTXRelationshipParts(files []*zip.File) (pptxNamespaceFamily, error) {
-	var packageFamily pptxNamespaceFamily
-	for _, entry := range files {
-		if entry.FileInfo().IsDir() {
-			continue
-		}
-		sourcePath, relationshipPart, err := pptxRelationshipSourcePath(entry.Name)
-		if err != nil {
-			return pptxNamespaceFamilyUnknown, fmt.Errorf("normalize PPTX relationship part %q: %w", entry.Name, err)
-		}
-		if !relationshipPart {
-			continue
-		}
-		data, err := readPPTXXML(entry)
-		if err != nil {
-			return pptxNamespaceFamilyUnknown, err
-		}
-		relationships, family, err := parsePPTXRelationships(data)
-		if err != nil {
-			return pptxNamespaceFamilyUnknown, fmt.Errorf("parse PPTX relationship part %q: %w", entry.Name, err)
-		}
-		if family != pptxNamespaceFamilyUnknown && packageFamily == pptxNamespaceFamilyUnknown {
-			packageFamily = family
-		} else if family != pptxNamespaceFamilyUnknown && packageFamily != family {
-			return pptxNamespaceFamilyUnknown, fmt.Errorf("PPTX relationship part %q mixes namespace families", entry.Name)
-		}
-		for _, relationship := range relationships {
-			if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
-				return pptxNamespaceFamilyUnknown, fmt.Errorf("PPTX relationship part %q contains an external target", entry.Name)
-			}
-			if _, err := resolvePPTXTargetFrom(sourcePath, relationship.Target); err != nil {
-				return pptxNamespaceFamilyUnknown, fmt.Errorf("resolve PPTX relationship %q in %q: %w", relationship.ID, entry.Name, err)
-			}
-		}
-	}
-	return packageFamily, nil
-}
-
-func pptxRelationshipSourcePath(name string) (string, bool, error) {
-	aliases, err := canonicalPPTXPath(name)
-	if err != nil {
-		return "", false, err
-	}
-	if aliases.raw == pptxRootRelationshipsPath || aliases.decoded == pptxRootRelationshipsPath {
-		return "", true, nil
-	}
-	decodedBase := path.Base(aliases.decoded)
-	decodedDirectory := path.Dir(aliases.decoded)
-	if path.Base(decodedDirectory) != "_rels" || !strings.HasSuffix(decodedBase, ".rels") {
-		return "", false, nil
-	}
-	sourceName := strings.TrimSuffix(decodedBase, ".rels")
-	sourcePath := path.Join(path.Dir(decodedDirectory), sourceName)
-	if sourcePath == "." {
-		sourcePath = ""
-	}
-	return sourcePath, true, nil
-}
-
 type pptxPresentation struct {
-	XMLName   xml.Name
 	SlideList []pptxSlideList
 	family    pptxNamespaceFamily
 }
 
 type pptxSlideList struct {
 	Slides []pptxSlideID
-	family pptxNamespaceFamily
 }
 
 type pptxSlideID struct {
-	ID             string `xml:"id,attr"`
-	RelationshipID string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships id,attr"`
-	family         pptxNamespaceFamily
+	ID             string
+	RelationshipID string
 }
 
 type pptxRelationshipDocument struct {
-	XMLName       xml.Name
 	Relationships []pptxRelationship
 	family        pptxNamespaceFamily
 }
@@ -466,13 +389,13 @@ func cleanPPTXPath(value string) (string, error) {
 }
 
 type pptxDefaultType struct {
-	Extension   string `xml:"Extension,attr"`
-	ContentType string `xml:"ContentType,attr"`
+	Extension   string
+	ContentType string
 }
 
 type pptxContentType struct {
-	PartName    string `xml:"PartName,attr"`
-	ContentType string `xml:"ContentType,attr"`
+	PartName    string
+	ContentType string
 }
 
 func (presentation *pptxPresentation) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement) error {
@@ -480,7 +403,6 @@ func (presentation *pptxPresentation) UnmarshalXML(decoder *xml.Decoder, start x
 	if !ok || start.Name.Local != "presentation" {
 		return errors.New("PPTX presentation has the wrong root element")
 	}
-	presentation.XMLName = start.Name
 	presentation.family = family
 	presentation.SlideList = nil
 	for {
@@ -499,7 +421,7 @@ func (presentation *pptxPresentation) UnmarshalXML(decoder *xml.Decoder, start x
 				}
 				continue
 			}
-			slideList := pptxSlideList{family: family}
+			slideList := pptxSlideList{}
 			if err := decoder.DecodeElement(&slideList, &token); err != nil {
 				return fmt.Errorf("decode PPTX slide list: %w", err)
 			}
@@ -522,10 +444,6 @@ func (slideList *pptxSlideList) UnmarshalXML(decoder *xml.Decoder, start xml.Sta
 	if !ok || start.Name.Local != "sldIdLst" {
 		return errors.New("PPTX slide list has an unexpected element")
 	}
-	if slideList.family != pptxNamespaceFamilyUnknown && slideList.family != family {
-		return errors.New("PPTX slide list mixes namespace families")
-	}
-	slideList.family = family
 	slideList.Slides = nil
 	for {
 		token, err := decoder.Token()
@@ -537,7 +455,7 @@ func (slideList *pptxSlideList) UnmarshalXML(decoder *xml.Decoder, start xml.Sta
 			if token.Name.Space != pptxPresentationNamespaces.value(family) || token.Name.Local != "sldId" {
 				return errors.New("PPTX slide list has an unexpected element")
 			}
-			slide := pptxSlideID{family: family}
+			slide := pptxSlideID{}
 			if err := decoder.DecodeElement(&slide, &token); err != nil {
 				return fmt.Errorf("decode PPTX slide ID: %w", err)
 			}
@@ -559,9 +477,6 @@ func (slide *pptxSlideID) UnmarshalXML(decoder *xml.Decoder, start xml.StartElem
 	family, ok := pptxPresentationNamespaces.family(start.Name.Space)
 	if !ok || start.Name.Local != "sldId" {
 		return errors.New("PPTX slide list has an unexpected element")
-	}
-	if slide.family != pptxNamespaceFamilyUnknown && slide.family != family {
-		return errors.New("PPTX slide ID mixes namespace families")
 	}
 	relationshipIDNamespace := pptxRelationshipIDNamespaces.value(family)
 	for _, attribute := range start.Attr {
@@ -593,7 +508,7 @@ func (slide *pptxSlideID) UnmarshalXML(decoder *xml.Decoder, start xml.StartElem
 	if err := decoder.Skip(); err != nil {
 		return fmt.Errorf("skip PPTX slide: %w", err)
 	}
-	slide.ID, slide.RelationshipID, slide.family = id, relationshipID, family
+	slide.ID, slide.RelationshipID = id, relationshipID
 	return nil
 }
 
@@ -652,7 +567,6 @@ func (document *pptxRelationshipDocument) UnmarshalXML(decoder *xml.Decoder, sta
 	if start.Name.Space != pptxRelationshipNamespace || start.Name.Local != "Relationships" {
 		return errors.New("PPTX relationships have the wrong root element")
 	}
-	document.XMLName = start.Name
 	document.family = pptxNamespaceFamilyUnknown
 	document.Relationships = nil
 	for {
@@ -755,15 +669,9 @@ func pptxAttribute(attributes []xml.Attr, space, local string) (string, bool, er
 }
 
 func parsePPTXSlideIDs(data []byte) ([]string, pptxNamespaceFamily, error) {
-	if err := rejectPPTXAlternateContent(data); err != nil {
-		return nil, pptxNamespaceFamilyUnknown, err
-	}
 	var document pptxPresentation
 	if err := decodePPTXXML(data, &document); err != nil {
 		return nil, pptxNamespaceFamilyUnknown, err
-	}
-	if document.family == pptxNamespaceFamilyUnknown || document.XMLName.Local != "presentation" {
-		return nil, pptxNamespaceFamilyUnknown, errors.New("PPTX presentation has the wrong root element")
 	}
 	if len(document.SlideList) != 1 || len(document.SlideList[0].Slides) == 0 {
 		return nil, document.family, errors.New("PPTX presentation has no slides")
@@ -791,30 +699,10 @@ func parsePPTXSlideIDs(data []byte) ([]string, pptxNamespaceFamily, error) {
 	return relationshipIDs, document.family, nil
 }
 
-func rejectPPTXAlternateContent(data []byte) error {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read PPTX presentation markup: %w", err)
-		}
-		start, ok := token.(xml.StartElement)
-		if ok && start.Name.Space == pptxMarkupCompatibilityNS && start.Name.Local == "AlternateContent" {
-			return errors.New("PPTX presentation uses unsupported alternate slide-list content")
-		}
-	}
-}
-
 func parsePPTXRelationships(data []byte) (map[string]pptxRelationship, pptxNamespaceFamily, error) {
 	var document pptxRelationshipDocument
 	if err := decodePPTXXML(data, &document); err != nil {
 		return nil, pptxNamespaceFamilyUnknown, err
-	}
-	if document.XMLName.Local != "Relationships" {
-		return nil, pptxNamespaceFamilyUnknown, errors.New("PPTX relationships have the wrong root element")
 	}
 	relationships := make(map[string]pptxRelationship, len(document.Relationships))
 	for _, relationship := range document.Relationships {
@@ -844,6 +732,9 @@ func validatePPTXRootPresentation(data []byte) (pptxNamespaceFamily, error) {
 		}
 		if target != "" {
 			return pptxNamespaceFamilyUnknown, errors.New("PPTX root has duplicate office document relationships")
+		}
+		if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
+			return pptxNamespaceFamilyUnknown, errors.New("PPTX office document relationship has an external target")
 		}
 		target = relationship.Target
 	}

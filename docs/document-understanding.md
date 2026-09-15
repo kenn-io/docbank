@@ -195,6 +195,9 @@ eligible only when the authenticated probe records a local slide count and the
 provider reports the same number of processed units. Other formats may extract
 during a probe but remain unauthorized for production uploads.
 
+If manifest validation reports that PPTX "does not explain its unverified
+bound", rerun the authenticated capability probe to replace the manifest.
+
 For each production document:
 
 1. Call `Policy.Authorize(validated manifest, declared format)`.
@@ -213,10 +216,15 @@ every success or failure path.
 
 The rendition adapter counts source units locally before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
-the listed PresentationML slides, rejects malformed or over-limit decks before
+the listed PresentationML slides, rejects invalid slide references or over-limit decks before
 upload, and compares the provider's processed count with that local count. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
+
+The PPTX count includes hidden slides. This assumes Mistral processes every
+listed slide; the probe fixture contains one visible slide and does not verify
+hidden-slide behavior. If Mistral skips hidden slides, the count comparison
+fails after upload and may incur provider charges.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,

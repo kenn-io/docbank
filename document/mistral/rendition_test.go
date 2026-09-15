@@ -71,7 +71,7 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 		assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
 		body, err := io.ReadAll(request.Body)
 		require.NoError(t, err)
-		assert.NotContains(t, string(body), strings.Join([]string{"image", "limit"}, "_"))
+		assert.NotContains(t, string(body), "image_limit")
 		var wire struct {
 			Document struct {
 				URL string `json:"document_url"`

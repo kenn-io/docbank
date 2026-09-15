@@ -20,6 +20,8 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+const pptxMarkupCompatibilityNS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
 func TestLocalUnitCounterRegistryIsMistralOwnedAndBounded(t *testing.T) {
 	// This guards future registrations and keeps local counters tied to formats.
 	for formatID, counter := range localUnitCounters {
@@ -118,6 +120,13 @@ func TestCountPPTXSlides(t *testing.T) {
 			wantError: true,
 		},
 		{
+			name: "alternate content in extension list",
+			archive: pptxArchiveWithSlideXML(t, strings.Replace(validPPTXPresentation(), `</p:presentation>`,
+				`<p:extLst><p:ext uri="urn:example:extension"><mc:AlternateContent xmlns:mc="`+pptxMarkupCompatibilityNS+`"><mc:Choice Requires="p"/><mc:Fallback/></mc:AlternateContent></p:ext></p:extLst></p:presentation>`, 1),
+				validPPTXRelationships(), validPPTXContentTypes()),
+			wantUnits: 1,
+		},
+		{
 			name:      "empty slide list",
 			archive:   pptxArchiveWithSlideXML(t, `<p:presentation xmlns:p="`+pptxPresentationNamespace+`" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst/></p:presentation>`, validPPTXRelationships(), validPPTXContentTypes()),
 			wantError: true,
@@ -170,6 +179,15 @@ func TestCountPPTXSlides(t *testing.T) {
 			wantError: true,
 		},
 		{
+			name: "external root relationship mode",
+			archive: pptxArchiveWithEntries(t, []pptxTestSlide{{
+				id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
+			}}, map[string]string{
+				pptxRootRelationshipsPath: strings.Replace(validPPTXRootRelationships(), `Target="`, `TargetMode="External" Target="`, 1),
+			}),
+			wantError: true,
+		},
+		{
 			name:      "UTF-8 BOM in presentation and relationships",
 			archive:   pptxArchiveWithSlideXML(t, string([]byte{0xef, 0xbb, 0xbf})+validPPTXPresentation(), string([]byte{0xef, 0xbb, 0xbf})+validPPTXRelationships(), validPPTXContentTypes()),
 			wantUnits: 1,
@@ -182,7 +200,7 @@ func TestCountPPTXSlides(t *testing.T) {
 		{
 			name: "external relationship mode",
 			archive: pptxArchive(t, []pptxTestSlide{{
-				id: "256", relationshipID: "rId1", target: "https://example.invalid/slide.xml", targetMode: "External",
+				id: "256", relationshipID: "rId1", target: "slides/slide1.xml", targetMode: "External",
 			}}),
 			wantError: true,
 		},
@@ -234,7 +252,6 @@ func TestCountPPTXSlides(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			units, err := countPPTXSlides(bytes.NewReader(test.archive), int64(len(test.archive)))
 			if test.wantError {
-				t.Logf("error=%v", err)
 				if err == nil {
 					t.Fatal("countPPTXSlides succeeded for invalid PPTX")
 				}
@@ -246,7 +263,6 @@ func TestCountPPTXSlides(t *testing.T) {
 			if units != test.wantUnits {
 				t.Fatalf("countPPTXSlides() = %d, want %d", units, test.wantUnits)
 			}
-			t.Logf("count=%d", units)
 		})
 	}
 
@@ -259,7 +275,6 @@ func TestCountPPTXSlides(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := countPPTXSlides(input.reader, input.size)
-			t.Logf("error=%v", err)
 			if err == nil {
 				t.Fatal("countPPTXSlides accepted invalid input")
 			}
@@ -384,7 +399,6 @@ func TestCountPPTXSlidesRejectsMixedAndUnknownNamespaceFamilies(t *testing.T) {
 			archive := pptxArchiveWithFamily(t, test.family, slides, test.extra)
 			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 			require.Error(t, err)
-			t.Logf("error=%v", err)
 		})
 	}
 }
@@ -434,7 +448,6 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			assert.Equal(t, 1, units)
-			t.Logf("target=%s entry=%s content_type=%s count=%d", test.target, test.entryName, test.contentTypeName, units)
 		})
 	}
 
@@ -474,7 +487,6 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 			units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 			require.NoError(t, err)
 			assert.Equal(t, 1, units)
-			t.Logf("target=%s entry=%s content_type=%s count=%d", test.target, test.entryName, test.contentTypeName, units)
 		})
 	}
 
@@ -491,7 +503,6 @@ func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert.Equal(t, 1, defaultUnits)
-	t.Logf("default_content_type count=%d", defaultUnits)
 }
 
 func TestCountPPTXSlidesRejectsAmbiguousPackageAliases(t *testing.T) {
@@ -504,7 +515,6 @@ func TestCountPPTXSlidesRejectsAmbiguousPackageAliases(t *testing.T) {
 		})
 		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 		require.ErrorContains(t, err, "ambiguous equivalent entries")
-		t.Logf("error=%v", err)
 	})
 
 	t.Run("content type declarations", func(t *testing.T) {
@@ -517,7 +527,6 @@ func TestCountPPTXSlidesRejectsAmbiguousPackageAliases(t *testing.T) {
 		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 		require.ErrorContains(t, err, "content type")
 		require.ErrorContains(t, err, "duplicated")
-		t.Logf("error=%v", err)
 	})
 
 	t.Run("slide targets resolving to one ZIP entry", func(t *testing.T) {
@@ -533,7 +542,6 @@ func TestCountPPTXSlidesRejectsAmbiguousPackageAliases(t *testing.T) {
 		})
 		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 		require.ErrorContains(t, err, "duplicated")
-		t.Logf("error=%v", err)
 	})
 
 	t.Run("content type aliases with equal values remain ambiguous", func(t *testing.T) {
@@ -547,7 +555,6 @@ func TestCountPPTXSlidesRejectsAmbiguousPackageAliases(t *testing.T) {
 		})
 		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 		require.ErrorContains(t, err, "ambiguous declarations")
-		t.Logf("error=%v", err)
 	})
 }
 
@@ -560,7 +567,6 @@ func TestCountPPTXSlidesRejectsInvalidPackageAliases(t *testing.T) {
 		})
 		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 		require.ErrorContains(t, err, "valid path")
-		t.Logf("error=%v", err)
 	})
 
 	t.Run("package-root ZIP entry escape", func(t *testing.T) {
@@ -571,7 +577,6 @@ func TestCountPPTXSlidesRejectsInvalidPackageAliases(t *testing.T) {
 		})
 		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 		require.ErrorContains(t, err, "escapes the package root")
-		t.Logf("error=%v", err)
 	})
 
 	for _, test := range []struct {
@@ -588,7 +593,6 @@ func TestCountPPTXSlidesRejectsInvalidPackageAliases(t *testing.T) {
 			archive := pptxArchiveWithSlideXML(t, validPPTXPresentation(), validPPTXRelationships(), contentTypes)
 			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 			require.ErrorContains(t, err, test.want)
-			t.Logf("part_name=%s error=%v", test.partName, err)
 		})
 	}
 }
@@ -607,7 +611,6 @@ func TestCountPPTXSlidesRejectsEncodedSeparatorsInRawPartNames(t *testing.T) {
 			}}, map[string]string{partName: relationships})
 			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 			require.ErrorContains(t, err, "encoded path separator")
-			t.Logf("part_name=%s error=%v", partName, err)
 		})
 	}
 }
@@ -627,172 +630,8 @@ func TestCountPPTXSlidesCanonicalizesRootTarget(t *testing.T) {
 			units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 			require.NoError(t, err)
 			assert.Equal(t, 1, units)
-			t.Logf("root_target=%s count=%d", target, units)
 		})
 	}
-}
-
-func TestCountPPTXSlidesScansEveryRelationshipPart(t *testing.T) {
-	tests := []struct {
-		name, relationshipType, target, targetMode string
-	}{
-		{
-			name:             "external image",
-			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-			target:           "https://example.invalid/image.png",
-		},
-		{
-			name:             "whitespace around external URL",
-			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-			target:           " \t https://example.invalid/image.png \t ",
-		},
-		{
-			name:             "encoded whitespace around external URL",
-			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-			target:           "%20https://example.invalid/image.png%09",
-		},
-		{
-			name:             "external video",
-			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video",
-			target:           "https://example.invalid/video.mp4",
-		},
-		{
-			name:             "external OLE",
-			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject",
-			target:           "https://example.invalid/object.bin",
-		},
-		{name: "external target without TargetMode", relationshipType: "http://example.test/image", target: "https://example.invalid/image.png"},
-		{name: "external scheme", relationshipType: "http://example.test/image", target: "custom:resource"},
-		{name: "protocol relative", relationshipType: "http://example.test/image", target: "//example.invalid/image.png"},
-		{name: "query", relationshipType: "http://example.test/image", target: "media/image.png?download=1"},
-		{name: "fragment", relationshipType: "http://example.test/image", target: "media/image.png#fragment"},
-		{name: "host path", relationshipType: "http://example.test/image", target: "C:/image.png"},
-		{name: "malformed escape", relationshipType: "http://example.test/image", target: "media/%ZZ.png"},
-		{name: "package root escape", relationshipType: "http://example.test/image", target: "../../../outside.png"},
-		{name: "source-relative root escape", relationshipType: "http://example.test/image", target: "../../../media/image.png"},
-		{name: "whitespace around package root escape", relationshipType: "http://example.test/image", target: " \t ../../../outside.png \t "},
-		{name: "encoded whitespace around package root escape", relationshipType: "http://example.test/image", target: "%09..%2F..%2F..%2Foutside.png%20"},
-		{name: "external TargetMode", relationshipType: "http://example.test/image", target: "media/image.png", targetMode: "External"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			mode := ""
-			if test.targetMode != "" {
-				mode = ` TargetMode="` + test.targetMode + `"`
-			}
-			relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="` +
-				test.relationshipType + `" Target="` + test.target + `"` + mode + `/></Relationships>`
-			archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-				id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-			}}, map[string]string{
-				"ppt/slides/_rels/slide1.xml.rels": relationships,
-			})
-			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-			require.Error(t, err)
-			t.Logf("target=%s error=%v", test.target, err)
-		})
-	}
-
-	t.Run("encoded relationship-part suffix", func(t *testing.T) {
-		relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="https://example.invalid/image.png"/></Relationships>`
-		archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-			id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-		}}, map[string]string{
-			"ppt/slides/_rels/slide1.xml.r%65ls": relationships,
-		})
-		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-		require.Error(t, err)
-		t.Logf("error=%v", err)
-	})
-
-	t.Run("encoded relationship-part separator", func(t *testing.T) {
-		relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="https://example.invalid/image.png"/></Relationships>`
-		archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-			id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-		}}, map[string]string{
-			"ppt/slides/_rels%2Fslide1.xml.rels": relationships,
-		})
-		_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-		require.Error(t, err)
-		t.Logf("error=%v", err)
-	})
-}
-
-func TestCountPPTXSlidesRejectsMalformedNestedRelationships(t *testing.T) {
-	archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-		id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-	}}, map[string]string{
-		"ppt/slides/_rels/slide1.xml.rels": `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2"`,
-	})
-	_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-	require.ErrorContains(t, err, "relationship part")
-	t.Logf("error=%v", err)
-}
-
-func TestCountPPTXSlidesAcceptsInternalNestedRelationships(t *testing.T) {
-	relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="../media/image1.png"/></Relationships>`
-	archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-		id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-	}}, map[string]string{
-		"ppt/slides/_rels/slide1.xml.rels": relationships,
-		"ppt/media/image1.png":             "synthetic image",
-	})
-	units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-	require.NoError(t, err)
-	assert.Equal(t, 1, units)
-	t.Logf("nested_target=../media/image1.png count=%d", units)
-
-	t.Run("percent-encoded source path", func(t *testing.T) {
-		archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-			id: "256", relationshipID: "rId1", target: "slides/100%25/slide1.xml",
-		}}, map[string]string{
-			"ppt/slides/100%25/_rels/slide1.xml.rels": `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="../media/image1.png"/></Relationships>`,
-			"ppt/slides/media/image1.png":             "synthetic image",
-		})
-		units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-		require.NoError(t, err)
-		assert.Equal(t, 1, units)
-		t.Logf("encoded_source_path count=%d", units)
-	})
-
-	t.Run("encoded source basename", func(t *testing.T) {
-		archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-			id: "256", relationshipID: "rId1", target: "slides/%53lide1.xml",
-		}}, map[string]string{
-			"ppt/slides/_rels/%53lide1.xml.rels": `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="../media/image1.png"/></Relationships>`,
-			"ppt/media/image1.png":               "synthetic image",
-		})
-		units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-		require.NoError(t, err)
-		assert.Equal(t, 1, units)
-		t.Logf("encoded_source_basename count=%d", units)
-	})
-
-	t.Run("encoded dot source directory", func(t *testing.T) {
-		archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-			id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-		}}, map[string]string{
-			"ppt/slides/%2e/_rels/slide1.xml.rels": `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="../media/image1.png"/></Relationships>`,
-			"ppt/media/image1.png":                 "synthetic image",
-		})
-		units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-		require.NoError(t, err)
-		assert.Equal(t, 1, units)
-		t.Logf("encoded_dot_source_directory count=%d", units)
-	})
-
-	t.Run("root-level source part", func(t *testing.T) {
-		archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
-			id: "256", relationshipID: "rId1", target: "../slide1.xml",
-		}}, map[string]string{
-			"_rels/slide1.xml.rels": `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="media/image1.png"/></Relationships>`,
-			"media/image1.png":      "synthetic image",
-		})
-		units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
-		require.NoError(t, err)
-		assert.Equal(t, 1, units)
-		t.Logf("root_level_source_part count=%d", units)
-	})
 }
 
 func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) {
@@ -821,14 +660,14 @@ func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) 
 		name, relationship, entryName string
 	}{
 		{
-			name: "malformed nested relationship",
+			name: "malformed presentation relationship",
 			relationship: `<Relationships xmlns="` + pptxRelationshipNamespace +
 				`"><Relationship Id="rId2"`,
 		},
 		{
-			name: "external nested relationship",
+			name: "external slide relationship",
 			relationship: `<Relationships xmlns="` + pptxRelationshipNamespace +
-				`"><Relationship Id="rId2" Type="http://example.test/image" Target="https://example.invalid/image.png"/></Relationships>`,
+				`"><Relationship Id="rId1" Type="` + pptxRelationshipType + `" Target="slides/slide1.xml" TargetMode="External"/></Relationships>`,
 		},
 		{
 			name: "encoded relationship-part separator",
@@ -841,7 +680,7 @@ func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			entryName := test.entryName
 			if entryName == "" {
-				entryName = "ppt/slides/_rels/slide1.xml.rels"
+				entryName = pptxPresentationRelsPath
 			}
 			archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
 				id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
@@ -852,12 +691,11 @@ func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) 
 			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 			assertRenditionCode(t, err, document.RenditionErrorUnsupportedInput)
 			assert.Zero(t, requests.Load())
-			t.Logf("requests=%d error=%v", requests.Load(), err)
 		})
 	}
 }
 
-func TestRenditionClientAcceptsCompleteStrictPPTXWithOneRequest(t *testing.T) {
+func TestRenditionClientAcceptsStrictPPTXWithHyperlink(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 3)
 	manifest := syntheticManifest(t, policy, true)
 	for index := range manifest.Results {
@@ -873,7 +711,10 @@ func TestRenditionClientAcceptsCompleteStrictPPTXWithOneRequest(t *testing.T) {
 	descriptor := renditionDescriptor(t, policy, manifest, "pptx")
 	source := pptxArchiveWithFamily(t, pptxNamespaceFamilyStrict, []pptxTestSlide{{
 		id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
-	}}, nil)
+	}}, map[string]string{
+		"ppt/slides/_rels/slide1.xml.rels":  `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + pptxStrictRelationshipIDNS + `/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="` + pptxStrictRelationshipIDNS + `/hyperlink" Target="https://example.com/" TargetMode="External"/></Relationships>`,
+		"ppt/slideLayouts/slideLayout1.xml": `<p:sldLayout xmlns:p="` + pptxStrictPresentationNS + `"/>`,
+	})
 	fixture := pptxRenditionFixture(t, descriptor, source)
 	var requests atomic.Int64
 	response := fmt.Sprintf(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"strict"}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(source))
@@ -908,7 +749,6 @@ func TestPrepareAcceptsBOMPPTX(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
 	assert.Equal(t, 1, prepared.localUnits)
-	t.Logf("prepared_bom_pptx local_units=%d", prepared.localUnits)
 }
 
 type pptxTestSlide struct {
@@ -940,11 +780,7 @@ func pptxArchiveWithFamily(t *testing.T, family pptxNamespaceFamily, slides []pp
 	presentation := strings.Builder{}
 	presentation.WriteString(`<p:presentation xmlns:p="` + presentationNamespace + `" xmlns:r="` + relationshipIDNamespace + `"><p:sldIdLst>`)
 	for _, slide := range slides {
-		show := ""
-		if slide.hidden {
-			show = ` show="0"`
-		}
-		fmt.Fprintf(&presentation, `<p:sldId id="%s" r:id="%s"%s/>`, slide.id, slide.relationshipID, show)
+		fmt.Fprintf(&presentation, `<p:sldId id="%s" r:id="%s"/>`, slide.id, slide.relationshipID)
 	}
 	presentation.WriteString(`</p:sldIdLst></p:presentation>`)
 
@@ -983,7 +819,11 @@ func pptxArchiveWithFamily(t *testing.T, family pptxNamespaceFamily, slides []pp
 			if slide.entryName != "" {
 				entryName = slide.entryName
 			}
-			entries[entryName] = `<p:sld xmlns:p="` + presentationNamespace + `"/>`
+			show := ""
+			if slide.hidden {
+				show = ` show="0"`
+			}
+			entries[entryName] = `<p:sld xmlns:p="` + presentationNamespace + `"` + show + `/>`
 		}
 	}
 	contentTypes.WriteString(`</Types>`)
