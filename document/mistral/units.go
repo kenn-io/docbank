@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -42,6 +43,23 @@ type pptxRelationship struct {
 	TargetMode *string `xml:"TargetMode,attr"`
 }
 
+type pptxPathAliases struct {
+	raw     string
+	decoded string
+}
+
+func (aliases pptxPathAliases) keys() []string {
+	if aliases.raw == aliases.decoded {
+		return []string{aliases.raw}
+	}
+	return []string{aliases.raw, aliases.decoded}
+}
+
+type pptxResolvedTarget struct {
+	keys    []string
+	decoded string
+}
+
 func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	if reader == nil || size <= 0 {
 		return 0, errors.New("PPTX source must be non-empty")
@@ -50,13 +68,12 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open PPTX ZIP: %w", err)
 	}
-	entries := make(map[string]*zip.File, len(archive.File))
-	for _, entry := range archive.File {
-		key := pptxPathKey(entry.Name)
-		if _, exists := entries[key]; exists {
-			return 0, fmt.Errorf("PPTX ZIP contains duplicate entry %q", entry.Name)
-		}
-		entries[key] = entry
+	entries, err := indexPPTXEntries(archive.File)
+	if err != nil {
+		return 0, err
+	}
+	if err := validatePPTXRelationshipParts(archive.File); err != nil {
+		return 0, err
 	}
 
 	presentation, err := pptxEntry(entries, pptxPresentationPath)
@@ -108,7 +125,7 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 		return 0, fmt.Errorf("parse PPTX content types: %w", err)
 	}
 
-	seenTargets := make(map[string]struct{}, len(relationshipIDs))
+	seenEntries := make(map[*zip.File]struct{}, len(relationshipIDs))
 	for _, relationshipID := range relationshipIDs {
 		relationship, ok := relationships[relationshipID]
 		if !ok {
@@ -117,36 +134,73 @@ func countPPTXSlides(reader io.ReaderAt, size int64) (int, error) {
 		if relationship.Type != pptxRelationshipType {
 			return 0, fmt.Errorf("PPTX relationship %q is not a slide", relationshipID)
 		}
-		if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
-			return 0, fmt.Errorf("PPTX slide relationship %q is external", relationshipID)
-		}
-		target, err := resolvePPTXTarget(relationship.Target)
+		target, err := resolvePPTXTargetFrom(pptxPresentationPath, relationship.Target)
 		if err != nil {
 			return 0, fmt.Errorf("resolve PPTX slide relationship %q: %w", relationshipID, err)
 		}
-		targetKey := pptxPathKey(target)
-		if _, exists := seenTargets[targetKey]; exists {
-			return 0, fmt.Errorf("PPTX slide relationship target %q is duplicated", target)
+		entry, err := pptxEntryForKeys(entries, target.keys, relationship.Target)
+		if err != nil {
+			return 0, err
 		}
-		seenTargets[targetKey] = struct{}{}
-		entry, ok := entries[targetKey]
-		if !ok || entry.FileInfo().IsDir() {
-			return 0, fmt.Errorf("PPTX slide target %q is missing", target)
+		if entry.FileInfo().IsDir() {
+			return 0, fmt.Errorf("PPTX slide target %q is missing", target.decoded)
 		}
-		declaredType, declared := contentDeclarations.forPart(target)
+		if _, exists := seenEntries[entry]; exists {
+			return 0, fmt.Errorf("PPTX slide relationship target %q is duplicated", target.decoded)
+		}
+		seenEntries[entry] = struct{}{}
+		declaredType, declared, err := contentDeclarations.forPartKeys(target.keys, target.decoded)
+		if err != nil {
+			return 0, err
+		}
 		if !declared || !strings.EqualFold(declaredType, pptxSlideContentType) {
-			return 0, fmt.Errorf("PPTX slide target %q has the wrong content type", target)
+			return 0, fmt.Errorf("PPTX slide target %q has the wrong content type", target.decoded)
 		}
 	}
 	return len(relationshipIDs), nil
 }
 
 func pptxEntry(entries map[string]*zip.File, name string) (*zip.File, error) {
-	entry, ok := entries[pptxPathKey(name)]
-	if !ok {
+	aliases, err := canonicalPPTXPath(name)
+	if err != nil {
+		return nil, err
+	}
+	return pptxEntryForKeys(entries, aliases.keys(), name)
+}
+
+func pptxEntryForKeys(entries map[string]*zip.File, keys []string, name string) (*zip.File, error) {
+	var found *zip.File
+	for _, key := range keys {
+		entry, ok := entries[key]
+		if !ok {
+			continue
+		}
+		if found != nil && found != entry {
+			return nil, fmt.Errorf("PPTX target %q has ambiguous ZIP entries", name)
+		}
+		found = entry
+	}
+	if found == nil {
 		return nil, fmt.Errorf("PPTX ZIP is missing %q", name)
 	}
-	return entry, nil
+	return found, nil
+}
+
+func indexPPTXEntries(files []*zip.File) (map[string]*zip.File, error) {
+	entries := make(map[string]*zip.File, len(files))
+	for _, entry := range files {
+		aliases, err := canonicalPPTXPath(entry.Name)
+		if err != nil {
+			return nil, fmt.Errorf("normalize PPTX ZIP entry %q: %w", entry.Name, err)
+		}
+		for _, key := range aliases.keys() {
+			if existing, exists := entries[key]; exists && existing != entry {
+				return nil, fmt.Errorf("PPTX ZIP contains ambiguous equivalent entries %q and %q", existing.Name, entry.Name)
+			}
+			entries[key] = entry
+		}
+	}
+	return entries, nil
 }
 
 func readPPTXXML(entry *zip.File) ([]byte, error) {
@@ -170,6 +224,59 @@ func readPPTXXML(entry *zip.File) ([]byte, error) {
 	}
 	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
 	return data, nil
+}
+
+func validatePPTXRelationshipParts(files []*zip.File) error {
+	for _, entry := range files {
+		if entry.FileInfo().IsDir() {
+			continue
+		}
+		sourcePath, relationshipPart, err := pptxRelationshipSourcePath(entry.Name)
+		if err != nil {
+			return fmt.Errorf("normalize PPTX relationship part %q: %w", entry.Name, err)
+		}
+		if !relationshipPart {
+			continue
+		}
+		data, err := readPPTXXML(entry)
+		if err != nil {
+			return err
+		}
+		relationships, err := parsePPTXRelationships(data)
+		if err != nil {
+			return fmt.Errorf("parse PPTX relationship part %q: %w", entry.Name, err)
+		}
+		for _, relationship := range relationships {
+			if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
+				return fmt.Errorf("PPTX relationship part %q contains an external target", entry.Name)
+			}
+			if _, err := resolvePPTXTargetFrom(sourcePath, relationship.Target); err != nil {
+				return fmt.Errorf("resolve PPTX relationship %q in %q: %w", relationship.ID, entry.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func pptxRelationshipSourcePath(name string) (string, bool, error) {
+	aliases, err := canonicalPPTXPath(name)
+	if err != nil {
+		return "", false, err
+	}
+	if aliases.raw == pptxRootRelationshipsPath || aliases.decoded == pptxRootRelationshipsPath {
+		return "", true, nil
+	}
+	decodedBase := path.Base(aliases.decoded)
+	decodedDirectory := path.Dir(aliases.decoded)
+	if path.Base(decodedDirectory) != "_rels" || !strings.HasSuffix(decodedBase, ".rels") {
+		return "", false, nil
+	}
+	sourceName := strings.TrimSuffix(decodedBase, ".rels")
+	sourcePath := path.Join(path.Dir(decodedDirectory), sourceName)
+	if sourcePath == "." {
+		sourcePath = ""
+	}
+	return sourcePath, true, nil
 }
 
 type pptxPresentation struct {
@@ -199,16 +306,31 @@ type pptxContentTypesDocument struct {
 
 type pptxContentDeclarations struct {
 	defaults  map[string]string
-	overrides map[string]string
+	overrides map[string]pptxContentDeclaration
 }
 
-func (declarations pptxContentDeclarations) forPart(name string) (string, bool) {
-	key := pptxPathKey(name)
-	if contentType, ok := declarations.overrides[key]; ok {
-		return contentType, true
+func (declarations pptxContentDeclarations) forPartKeys(keys []string, decodedName string) (string, bool, error) {
+	var declaration pptxContentDeclaration
+	for _, key := range keys {
+		value, ok := declarations.overrides[key]
+		if !ok {
+			continue
+		}
+		if declaration.partName != "" && declaration.partName != value.partName {
+			return "", false, fmt.Errorf("PPTX content type for %q has ambiguous declarations", decodedName)
+		}
+		declaration = value
 	}
-	contentType, ok := declarations.defaults[strings.ToLower(path.Ext(name))]
-	return contentType, ok
+	if declaration.partName != "" {
+		return declaration.contentType, true, nil
+	}
+	contentType, ok := declarations.defaults[strings.ToLower(path.Ext(decodedName))]
+	return contentType, ok, nil
+}
+
+type pptxContentDeclaration struct {
+	partName    string
+	contentType string
 }
 
 func pptxPathKey(value string) string {
@@ -218,6 +340,37 @@ func pptxPathKey(value string) string {
 		}
 		return r
 	}, value)
+}
+
+func canonicalPPTXPath(value string) (pptxPathAliases, error) {
+	if value == "" {
+		return pptxPathAliases{}, errors.New("PPTX part name is not an internal path")
+	}
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		return pptxPathAliases{}, errors.New("PPTX part name is not a valid path")
+	}
+	if strings.ContainsAny(value, "\\\x00") || strings.ContainsAny(decoded, "\\\x00") {
+		return pptxPathAliases{}, errors.New("PPTX part name is not an internal path")
+	}
+	raw, err := cleanPPTXPath(value)
+	if err != nil {
+		return pptxPathAliases{}, err
+	}
+	decodedClean, err := cleanPPTXPath(decoded)
+	if err != nil {
+		return pptxPathAliases{}, err
+	}
+	return pptxPathAliases{raw: pptxPathKey(raw), decoded: pptxPathKey(decodedClean)}, nil
+}
+
+func cleanPPTXPath(value string) (string, error) {
+	value = strings.TrimPrefix(value, "/")
+	cleaned := path.Clean(value)
+	if cleaned == "." || path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", errors.New("PPTX part name escapes the package root")
+	}
+	return cleaned, nil
 }
 
 type pptxDefaultType struct {
@@ -447,19 +600,16 @@ func validatePPTXRootPresentation(data []byte) error {
 		if target != "" {
 			return errors.New("PPTX root has duplicate office document relationships")
 		}
-		if relationship.TargetMode != nil && !strings.EqualFold(*relationship.TargetMode, "Internal") {
-			return errors.New("PPTX office document relationship is external")
-		}
 		target = relationship.Target
 	}
 	if target == "" {
 		return errors.New("PPTX root has no office document relationship")
 	}
-	resolved, err := normalizePPTXPartName(target)
+	resolved, err := resolvePPTXTargetFrom("", target)
 	if err != nil {
 		return fmt.Errorf("resolve PPTX office document target: %w", err)
 	}
-	if pptxPathKey(resolved) != pptxPathKey(pptxPresentationPath) {
+	if !slices.Contains(resolved.keys, pptxPathKey(pptxPresentationPath)) {
 		return fmt.Errorf("PPTX office document relationship targets %q", target)
 	}
 	return nil
@@ -484,20 +634,22 @@ func parsePPTXContentTypes(data []byte) (pptxContentDeclarations, error) {
 		}
 		defaults[extension] = contentType.ContentType
 	}
-	overrides := make(map[string]string, len(document.Overrides))
+	overrides := make(map[string]pptxContentDeclaration, len(document.Overrides))
 	for _, contentType := range document.Overrides {
 		if contentType.PartName == "" || contentType.ContentType == "" {
 			return pptxContentDeclarations{}, errors.New("PPTX content type is incomplete")
 		}
-		partName, err := normalizePPTXPartName(contentType.PartName)
+		partName, err := canonicalPPTXPartName(contentType.PartName)
 		if err != nil {
 			return pptxContentDeclarations{}, err
 		}
-		key := pptxPathKey(partName)
-		if _, exists := overrides[key]; exists {
-			return pptxContentDeclarations{}, fmt.Errorf("PPTX content type for %q is duplicated", partName)
+		declaration := pptxContentDeclaration{partName: partName.decoded, contentType: contentType.ContentType}
+		for _, key := range partName.keys() {
+			if _, exists := overrides[key]; exists {
+				return pptxContentDeclarations{}, fmt.Errorf("PPTX content type for %q is duplicated", contentType.PartName)
+			}
+			overrides[key] = declaration
 		}
-		overrides[key] = contentType.ContentType
 	}
 	return pptxContentDeclarations{defaults: defaults, overrides: overrides}, nil
 }
@@ -548,59 +700,103 @@ func validatePPTXXMLStructure(data []byte) error {
 	}
 }
 
-func resolvePPTXTarget(target string) (string, error) {
+func resolvePPTXTargetFrom(sourcePath, target string) (pptxResolvedTarget, error) {
 	if target == "" {
-		return "", errors.New("PPTX relationship target is not an internal path")
-	}
-	parsed, err := url.Parse(target)
-	if err != nil {
-		return "", errors.New("PPTX relationship target is not a valid URI")
-	}
-	if parsed.Scheme != "" || parsed.Host != "" || strings.HasPrefix(target, "//") ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("PPTX relationship target is external")
+		return pptxResolvedTarget{}, errors.New("PPTX relationship target is not an internal path")
 	}
 	decoded, err := url.PathUnescape(target)
 	if err != nil {
-		return "", errors.New("PPTX relationship target is not a valid path")
+		return pptxResolvedTarget{}, errors.New("PPTX relationship target is not a valid URI")
 	}
-	if strings.ContainsAny(decoded, "\\\x00") {
-		return "", errors.New("PPTX relationship target is not an internal path")
+	if err := validatePPTXTargetURI(target, decoded); err != nil {
+		return pptxResolvedTarget{}, err
 	}
-	if strings.HasPrefix(target, "/") {
-		target, _ = strings.CutPrefix(target, "/")
-	} else {
-		target = path.Join(path.Dir(pptxPresentationPath), target)
+	rooted := strings.HasPrefix(target, "/") || strings.HasPrefix(decoded, "/")
+	resolveSpelling := func(spelling string) string {
+		if rooted {
+			spelling = strings.TrimPrefix(spelling, "/")
+			if strings.HasPrefix(strings.ToLower(spelling), "%2f") {
+				spelling = spelling[3:]
+			}
+			return spelling
+		}
+		if sourcePath == "" {
+			return spelling
+		}
+		base := path.Dir(sourcePath)
+		if base == "." {
+			return spelling
+		}
+		base = strings.ReplaceAll(base, "%", "%25")
+		return base + "/" + spelling
 	}
-	return normalizePPTXPartName(target)
+	rawTarget, err := canonicalPPTXPath(resolveSpelling(target))
+	if err != nil {
+		return pptxResolvedTarget{}, fmt.Errorf("normalize PPTX relationship target: %w", err)
+	}
+	return pptxResolvedTarget{keys: rawTarget.keys(), decoded: rawTarget.decoded}, nil
 }
 
-func normalizePPTXPartName(partName string) (string, error) {
+func canonicalPPTXPartName(partName string) (pptxPathAliases, error) {
 	if partName == "" {
-		return "", errors.New("PPTX part name is not an internal path")
+		return pptxPathAliases{}, errors.New("PPTX part name is not an internal path")
 	}
 	parsed, err := url.Parse(partName)
 	if err != nil {
-		return "", errors.New("PPTX part name is not a valid URI")
+		return pptxPathAliases{}, errors.New("PPTX part name is not a valid URI")
 	}
 	if parsed.Scheme != "" || parsed.Host != "" || strings.HasPrefix(partName, "//") ||
 		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("PPTX part name is external")
+		return pptxPathAliases{}, errors.New("PPTX part name is external")
 	}
 	decoded, err := url.PathUnescape(partName)
 	if err != nil {
-		return "", errors.New("PPTX part name is not a valid path")
+		return pptxPathAliases{}, errors.New("PPTX part name is not a valid URI")
 	}
-	if strings.ContainsAny(decoded, "\\\x00") {
-		return "", errors.New("PPTX part name is not an internal path")
+	if hasPPTXURIPathScheme(decoded) || strings.HasPrefix(decoded, "//") {
+		return pptxPathAliases{}, errors.New("PPTX part name is external")
 	}
-	partName = strings.TrimPrefix(partName, "/")
-	cleaned := path.Clean(partName)
-	decodedCleaned := path.Clean(strings.TrimPrefix(decoded, "/"))
-	if cleaned == "." || path.IsAbs(cleaned) || decodedCleaned == ".." || strings.HasPrefix(decodedCleaned, "../") {
-		return "", errors.New("PPTX part name escapes the package root")
+	aliases, err := canonicalPPTXPath(partName)
+	if err != nil {
+		return pptxPathAliases{}, err
 	}
-	return cleaned, nil
+	return aliases, nil
+}
+
+func validatePPTXTargetURI(target, decoded string) error {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return errors.New("PPTX relationship target is not a valid URI")
+	}
+	if parsed.Scheme != "" || parsed.Host != "" || parsed.Opaque != "" ||
+		strings.HasPrefix(target, "//") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("PPTX relationship target is external")
+	}
+	if hasPPTXURIPathScheme(decoded) || strings.HasPrefix(decoded, "//") {
+		return errors.New("PPTX relationship target is external")
+	}
+	return nil
+}
+
+func hasPPTXURIPathScheme(value string) bool {
+	colon := strings.IndexByte(value, ':')
+	if colon <= 0 {
+		return false
+	}
+	prefixEnd := strings.IndexAny(value, "/?#")
+	if prefixEnd >= 0 && prefixEnd < colon {
+		return false
+	}
+	if (value[0] < 'A' || value[0] > 'Z') && (value[0] < 'a' || value[0] > 'z') {
+		return false
+	}
+	for _, character := range value[1:colon] {
+		if (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') && character != '+' && character != '-' && character != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 func countLocalUnits(format CandidateFormat, reader io.ReaderAt, size int64) (int, error) {

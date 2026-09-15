@@ -16,6 +16,7 @@ lists the checks contributors must preserve.
 | `internal/client` | typed HTTP calls and daemon convergence | opening SQLite or blobs |
 | `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
+| `document/mistral` | Mistral OCR integration and the local PPTX counter, including slide-list membership, URI-equivalent package-name resolution, and validation of every OPC relationship part before provider egress | generic format detection or storage authority |
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
