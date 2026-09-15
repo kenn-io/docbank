@@ -8,15 +8,31 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/font"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 const maxStampOutputBytes int64 = 512 << 20
+
+const watermarkArtifact = "/Artifact <</Subtype /Watermark /Type /Pagination >>BDC"
+
+// Keep stamping independent of the host's pdfcpu config and font directory.
+func stampConfiguration() *model.Configuration {
+	return &model.Configuration{
+		Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
+		Eol: types.EolLF, WriteObjectStream: true, WriteXRefStream: true,
+		Optimize: true, OptimizeBeforeWriting: true, OptimizeResourceDicts: true,
+		Cmd: model.ADDWATERMARKS, Limits: model.DefaultResourceLimits(),
+	}
+}
 
 var ErrStampEngineFailure = errors.New("stamp_engine_failure: the PDF engine could not stamp a page")
 
@@ -67,10 +83,11 @@ func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe
 		return zero, stampFailure("validate recipe", err)
 	}
 
-	pageCount, dimensions, err := inspectSource(source, recipe.Restamp)
+	pdfContext, dimensions, err := inspectSource(source, recipe.Restamp)
 	if err != nil {
 		return zero, err
 	}
+	pageCount := pdfContext.PageCount
 	if err := validateLabels(labels, recipe, pageCount, dimensions); err != nil {
 		return zero, err
 	}
@@ -78,19 +95,19 @@ func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe
 	if err != nil {
 		return zero, err
 	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return zero, stampFailure("rewind source", err)
+	if err := applyWatermarks(pdfContext, watermarks); err != nil {
+		return zero, stampFailure("stamp PDF", err)
 	}
 
 	var staged bytes.Buffer
 	bounded := &limitedStampWriter{Writer: &staged, Remaining: maxStampOutputBytes}
-	if err := api.AddWatermarksMap(source, bounded, watermarks, nil); err != nil {
+	if err := api.WriteContext(pdfContext, bounded); err != nil {
 		return zero, stampFailure("stamp PDF", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	verifiedCount, err := api.PageCount(bytes.NewReader(staged.Bytes()), nil)
+	verifiedCount, err := api.PageCount(bytes.NewReader(staged.Bytes()), stampConfiguration())
 	if err != nil {
 		return zero, stampFailure("verify output page count", err)
 	}
@@ -115,8 +132,177 @@ func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe
 	}, nil
 }
 
+// Let pdfcpu lay out the stamp in displayed page coordinates, then transform
+// only that artifact back into source coordinates. pdfcpu's own rotation
+// normalization rewrites source content and mishandles inherited rotation and
+// offset crop boxes. Preserve the original boxes and rotation, including absence
+// of a leaf entry when the value is inherited.
+func applyWatermarks(ctx *model.Context, watermarks map[int]*model.Watermark) (err error) {
+	defer fault.Catch(&err)
+	originals := make([]types.Dict, ctx.PageCount)
+	matrices := make([][6]float64, ctx.PageCount)
+	for i := range ctx.PageCount {
+		page, _, attrs, err := ctx.PageDict(i+1, false)
+		if err != nil {
+			return fmt.Errorf("prepare page %d: %w", i+1, err)
+		}
+		box := attrs.CropBox
+		if box == nil {
+			box = attrs.MediaBox
+		}
+		rotation := (attrs.Rotate%360 + 360) % 360
+		w, h := box.Width(), box.Height()
+		matrix := [6]float64{1, 0, 0, 1, box.LL.X, box.LL.Y}
+		switch rotation {
+		case 90:
+			w, h = h, w
+			matrix = [6]float64{0, 1, -1, 0, box.UR.X, box.LL.Y}
+		case 180:
+			matrix = [6]float64{-1, 0, 0, -1, box.UR.X, box.UR.Y}
+		case 270:
+			w, h = h, w
+			matrix = [6]float64{0, -1, 1, 0, box.LL.X, box.UR.Y}
+		case 0:
+		default:
+			return fmt.Errorf("page %d rotation is not a multiple of 90", i+1)
+		}
+		matrices[i] = matrix
+		originals[i] = types.Dict{"MediaBox": page["MediaBox"], "CropBox": page["CropBox"], "Rotate": page["Rotate"]}
+		page.Update("MediaBox", types.NewNumberArray(0, 0, w, h))
+		page.Update("CropBox", types.NewNumberArray(0, 0, w, h))
+		page.Update("Rotate", types.Integer(0))
+		// pdfcpu edits content streams in place. Give every page its own
+		// stream, including blank pages, so shared source streams stay intact.
+		content, err := sourcePageContent(ctx, page, i+1)
+		if err != nil {
+			return err
+		}
+		if err := setPageContent(ctx, page, content); err != nil {
+			return err
+		}
+		resources := maps.Clone(attrs.Resources)
+		if resources == nil {
+			resources = types.NewDict()
+		}
+		// Restamping removes and replaces entries in these dictionaries.
+		// Resolve indirect dictionaries so pages cannot change each other's stamps.
+		for _, key := range []string{"XObject", "ExtGState"} {
+			if object, exists := resources[key]; exists {
+				dict, err := ctx.DereferenceDict(object)
+				if err != nil {
+					return fmt.Errorf("read page %d %s: %w", i+1, key, err)
+				}
+				resources[key] = dict.Clone()
+			}
+		}
+		page.Update("Resources", resources)
+	}
+	if err := pdfcpu.AddWatermarksMap(ctx, watermarks); err != nil {
+		return fmt.Errorf("add watermarks: %w", err)
+	}
+	for i, original := range originals {
+		page, _, _, err := ctx.PageDict(i+1, false)
+		if err != nil {
+			return fmt.Errorf("restore page %d: %w", i+1, err)
+		}
+		for key, value := range original {
+			if value == nil {
+				page.Delete(key)
+			} else {
+				page.Update(key, value)
+			}
+		}
+		content, start, form, err := stampedForm(ctx, i+1)
+		if err != nil {
+			return err
+		}
+		// A Bates label must remain visible even if the source's first layer
+		// defaults OFF. Flatten only the new form, preserving source layers.
+		form.Delete("OC")
+		m := matrices[i]
+		prefix := fmt.Sprintf("%s q %f %f %f %f %f %f cm ", watermarkArtifact, m[0], m[1], m[2], m[3], m[4], m[5])
+		content = append(append(bytes.Clone(content[:start]), prefix...), content[start+len(watermarkArtifact)+3:]...)
+		if err := setPageContent(ctx, page, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setPageContent(ctx *model.Context, page types.Dict, content []byte) error {
+	stream, err := ctx.NewStreamDictForBuf(content)
+	if err != nil {
+		return fmt.Errorf("create page content: %w", err)
+	}
+	if err := stream.Encode(); err != nil {
+		return fmt.Errorf("encode page content: %w", err)
+	}
+	ref, err := ctx.IndRefForNewObject(*stream)
+	if err != nil {
+		return fmt.Errorf("store page content: %w", err)
+	}
+	page.Update("Contents", *ref)
+	return nil
+}
+
+func sourcePageContent(ctx *model.Context, page types.Dict, pageNumber int) ([]byte, error) {
+	object, err := ctx.Dereference(page["Contents"])
+	if err != nil {
+		return nil, fmt.Errorf("read page %d streams: %w", pageNumber, err)
+	}
+	streams, ok := object.(types.Array)
+	if !ok {
+		streams = types.Array{object}
+	}
+	var content bytes.Buffer
+	for _, stream := range streams {
+		decoded, err := ctx.PageContent(types.Dict{"Contents": stream}, pageNumber)
+		if err != nil && !errors.Is(err, model.ErrNoContent) {
+			return nil, fmt.Errorf("decode page %d stream: %w", pageNumber, err)
+		}
+		content.Write(decoded)
+		// Preserve lexical boundaries and terminate trailing PDF comments.
+		content.WriteByte('\n')
+	}
+	return content.Bytes(), nil
+}
+
+// Read the form drawn by pdfcpu's final artifact. Source XObjects can be large
+// images or contain identical text; neither says anything about the new stamp.
+func stampedForm(ctx *model.Context, pageNumber int) ([]byte, int, *types.StreamDict, error) {
+	page, _, attrs, err := ctx.PageDict(pageNumber, false)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("read page: %w", err)
+	}
+	content, err := ctx.PageContent(page, pageNumber)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("read page content: %w", err)
+	}
+	start := bytes.LastIndex(content, []byte(watermarkArtifact))
+	if start < 0 {
+		return nil, 0, nil, errors.New("missing final watermark artifact")
+	}
+	fields := strings.Fields(string(content[start+len(watermarkArtifact):]))
+	n := len(fields)
+	if n < 5 || fields[0] != "q" || fields[n-3] != "Do" || fields[n-2] != "Q" || fields[n-1] != "EMC" || !strings.HasPrefix(fields[n-4], "/Fm") {
+		return nil, 0, nil, errors.New("unexpected final watermark artifact")
+	}
+	xObjects, err := ctx.DereferenceDict(attrs.Resources["XObject"])
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("read page XObjects: %w", err)
+	}
+	form, _, err := ctx.DereferenceStreamDict(xObjects[strings.TrimPrefix(fields[n-4], "/")])
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("read stamp form: %w", err)
+	}
+	if form == nil || form.Subtype() == nil || *form.Subtype() != "Form" {
+		return nil, 0, nil, errors.New("watermark does not draw a form")
+	}
+	return content, start, form, nil
+}
+
 func verifyStampedLabels(pdf []byte, labels []PageLabel) error {
-	pdfContext, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	pdfContext, err := api.ReadContext(bytes.NewReader(pdf), stampConfiguration())
 	if err != nil {
 		return stampFailure("verify output labels", err)
 	}
@@ -127,45 +313,22 @@ func verifyStampedLabels(pdf []byte, labels []PageLabel) error {
 		return stampFailure("verify output labels", errors.New("page and label counts differ"))
 	}
 	for _, label := range labels {
-		pageDict, _, attributes, err := pdfContext.PageDict(label.SourcePage, false)
+		_, _, form, err := stampedForm(pdfContext, label.SourcePage)
 		if err != nil {
-			return stampFailure("verify output labels", fmt.Errorf("read page %d: %w", label.SourcePage, err))
+			return stampFailure("verify output labels", fmt.Errorf("page %d: %w", label.SourcePage, err))
 		}
-		pageContent, err := pdfContext.PageContent(pageDict, label.SourcePage)
-		if err != nil {
-			return stampFailure("verify output labels", fmt.Errorf("read page %d content: %w", label.SourcePage, err))
+		if _, optional := form.Find("OC"); optional {
+			return stampFailure("verify output labels", fmt.Errorf("page %d stamp depends on optional content", label.SourcePage))
 		}
-		if !bytes.Contains(pageContent, []byte("/Artifact <</Subtype /Watermark /Type /Pagination >>BDC")) {
-			return stampFailure("verify output labels", fmt.Errorf("page %d has no watermark artifact", label.SourcePage))
-		}
-		xObjects, err := pdfContext.DereferenceDict(attributes.Resources["XObject"])
-		if err != nil {
-			return stampFailure("verify output labels", fmt.Errorf("read page %d XObjects: %w", label.SourcePage, err))
+		if err := form.DecodeWithLimit(4 << 20); err != nil {
+			return stampFailure("verify output labels", fmt.Errorf("decode page %d stamp: %w", label.SourcePage, err))
 		}
 		escaped, err := types.Escape(label.Label)
 		if err != nil {
 			return stampFailure("verify output labels", fmt.Errorf("encode page %d label: %w", label.SourcePage, err))
 		}
 		labelToken := []byte("(" + *escaped + ") Tj")
-		matches := 0
-		for name, object := range xObjects {
-			if !bytes.Contains(pageContent, []byte("/"+name+" Do")) {
-				continue
-			}
-			stream, _, err := pdfContext.DereferenceStreamDict(object)
-			if err != nil {
-				return stampFailure("verify output labels", fmt.Errorf("read page %d XObject %s: %w", label.SourcePage, name, err))
-			}
-			if stream == nil {
-				continue
-			}
-			if err := stream.DecodeWithLimit(4 << 20); err != nil {
-				return stampFailure("verify output labels", fmt.Errorf("decode page %d XObject %s: %w", label.SourcePage, name, err))
-			}
-			if bytes.Contains(stream.Content, labelToken) {
-				matches++
-			}
-		}
+		matches := bytes.Count(form.Content, labelToken)
 		if matches != 1 {
 			return stampFailure("verify output labels", fmt.Errorf("page %d contains %d copies of its declared label", label.SourcePage, matches))
 		}
@@ -173,33 +336,30 @@ func verifyStampedLabels(pdf []byte, labels []PageLabel) error {
 	return nil
 }
 
-func inspectSource(source io.ReadSeeker, allowRestamp bool) (int, []types.Dim, error) {
+func inspectSource(source io.ReadSeeker, allowRestamp bool) (*model.Context, []types.Dim, error) {
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return 0, nil, stampFailure("rewind source", err)
+		return nil, nil, stampFailure("rewind source", err)
 	}
-	pdfContext, err := api.ReadContext(source, model.NewDefaultConfiguration())
+	pdfContext, err := api.ReadValidateAndOptimize(source, stampConfiguration())
 	if err != nil {
-		return 0, nil, stampFailure("read source PDF", err)
-	}
-	if err := api.ValidateContext(pdfContext); err != nil {
-		return 0, nil, stampFailure("validate source PDF", err)
+		return nil, nil, stampFailure("read source PDF", err)
 	}
 	count := pdfContext.PageCount
 	if count < 1 {
-		return 0, nil, stampFailure("read source page count", errors.New("PDF has no pages"))
+		return nil, nil, stampFailure("read source page count", errors.New("PDF has no pages"))
 	}
 	boundaries, err := pdfContext.PageBoundaries(nil)
 	if err != nil {
-		return 0, nil, stampFailure("read source page boundaries", err)
+		return nil, nil, stampFailure("read source page boundaries", err)
 	}
 	if len(boundaries) != count {
-		return 0, nil, stampFailure("read source page boundaries", errors.New("page boundary count mismatch"))
+		return nil, nil, stampFailure("read source page boundaries", errors.New("page boundary count mismatch"))
 	}
 	dimensions := make([]types.Dim, count)
 	for index, boundary := range boundaries {
 		cropBox := boundary.CropBox()
 		if cropBox == nil {
-			return 0, nil, stampFailure("read source page boundaries", fmt.Errorf("page %d has no effective CropBox", index+1))
+			return nil, nil, stampFailure("read source page boundaries", fmt.Errorf("page %d has no effective CropBox", index+1))
 		}
 		dimensions[index] = cropBox.Dimensions()
 		if boundary.Rot%180 != 0 {
@@ -207,18 +367,16 @@ func inspectSource(source io.ReadSeeker, allowRestamp bool) (int, []types.Dim, e
 		}
 	}
 	if !allowRestamp {
-		if _, err := source.Seek(0, io.SeekStart); err != nil {
-			return 0, nil, stampFailure("rewind source", err)
+		// pdfcpu recognizes its own artifacts, not arbitrary Bates text from
+		// Acrobat or other tools. Such marks remain part of the source content.
+		if err := pdfcpu.DetectPageTreeWatermarks(pdfContext); err != nil {
+			return nil, nil, stampFailure("inspect source watermarks", err)
 		}
-		hasWatermarks, err := api.HasWatermarks(source, nil)
-		if err != nil {
-			return 0, nil, stampFailure("inspect source watermarks", err)
-		}
-		if hasWatermarks {
-			return 0, nil, stampFailure("inspect source watermarks", errors.New("source already contains a watermark"))
+		if pdfContext.Watermarked {
+			return nil, nil, stampFailure("inspect source watermarks", errors.New("source already contains a pdfcpu watermark"))
 		}
 	}
-	return count, dimensions, nil
+	return pdfContext, dimensions, nil
 }
 
 func validateLabels(labels []PageLabel, recipe Recipe, pageCount int, dimensions []types.Dim) error {
@@ -264,7 +422,7 @@ func buildWatermarks(labels []PageLabel, recipe Recipe) (map[int]*model.Watermar
 	)
 	watermarks := make(map[int]*model.Watermark, len(labels))
 	for _, label := range labels {
-		watermark, err := api.TextWatermark(label.Label, description, true, false, types.POINTS)
+		watermark, err := api.TextWatermark(label.Label, description, true, recipe.Restamp, types.POINTS)
 		if err != nil {
 			return nil, stampFailure("create page watermark", err)
 		}

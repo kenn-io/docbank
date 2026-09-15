@@ -48,6 +48,15 @@ func readVisibleLabels(t *testing.T, pdf []byte) []string {
 
 func assertRenderedStampAt(t *testing.T, pdf []byte, position string, marginPoints int) {
 	t.Helper()
+	for _, decoded := range renderPDFPages(t, pdf) {
+		ink, ok := visibleInkBounds(decoded)
+		require.True(t, ok, "page contains no rendered stamp pixels")
+		assertInkAt(t, decoded.Bounds(), ink, position, marginPoints)
+	}
+}
+
+func renderPDFPages(t *testing.T, pdf []byte) []image.Image {
+	t.Helper()
 	requirePopplerQualification(t)
 	directory := t.TempDir()
 	prefix := filepath.Join(directory, "page")
@@ -59,6 +68,7 @@ func assertRenderedStampAt(t *testing.T, pdf []byte, position string, marginPoin
 	require.NoError(t, err)
 	sort.Strings(paths)
 	require.NotEmpty(t, paths)
+	pages := make([]image.Image, 0, len(paths))
 	for pageIndex, path := range paths {
 		file, err := os.Open(path)
 		require.NoError(t, err)
@@ -66,11 +76,10 @@ func assertRenderedStampAt(t *testing.T, pdf []byte, position string, marginPoin
 		closeErr := file.Close()
 		require.NoError(t, err)
 		require.NoError(t, closeErr)
-		ink, ok := visibleInkBounds(decoded)
-		require.True(t, ok, "%s contains no rendered stamp pixels", filepath.Base(path))
-		assertInkAt(t, decoded.Bounds(), ink, position, marginPoints)
+		pages = append(pages, decoded)
 		retainGolden(t, path, pageIndex+1)
 	}
+	return pages
 }
 
 func visibleInkBounds(rendered image.Image) (image.Rectangle, bool) {

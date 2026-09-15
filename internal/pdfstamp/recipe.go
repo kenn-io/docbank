@@ -85,7 +85,7 @@ func (r Recipe) Validate() error {
 	if r.RotationPolicy != "follow_page" {
 		return errors.New("bates-stamp/v1 requires the follow_page rotation policy")
 	}
-	wantOptions := []string{"onTop=true", "update=false"}
+	wantOptions := []string{"onTop=true", "update=restamp"}
 	if r.EngineIdentity.Name != "pdfcpu" || r.EngineIdentity.Version != "v0.15.0" ||
 		r.EngineIdentity.API != "AddWatermarksMap" || !slices.Equal(r.EngineIdentity.Options, wantOptions) {
 		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.15.0 engine")
@@ -120,6 +120,9 @@ func validateLabelPart(name, value string) error {
 	for _, character := range value {
 		if character < 0x20 || character > 0x7e {
 			return fmt.Errorf("bates stamp %s contains a character unsupported by Helvetica", name)
+		}
+		if character == '%' || character == '\\' {
+			return fmt.Errorf("bates stamp %s contains a pdfcpu text escape", name)
 		}
 	}
 	return nil

@@ -21,7 +21,7 @@ func validRecipe(t *testing.T) Recipe {
 		Units: "point", RotationPolicy: "follow_page",
 		EngineIdentity: EngineIdentity{
 			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
-			Options: []string{"onTop=true", "update=false"},
+			Options: []string{"onTop=true", "update=restamp"},
 		},
 	}
 }
@@ -33,7 +33,7 @@ func TestRecipeSHA256UsesTheCanonicalNormalizedRecipe(t *testing.T) {
 	digest, err := recipe.SHA256()
 
 	require.NoError(t, err)
-	assert.Equal(t, "9513955cec69689641c0f9be49e36b0417b92519c03d01b48daf3abd93e7995b", digest)
+	assert.Equal(t, "f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787", digest)
 }
 
 func TestRecipeRejectsUnsupportedStampBehavior(t *testing.T) {
@@ -181,10 +181,13 @@ func TestStampAllowsExplicitRestamp(t *testing.T) {
 
 func TestVerifyStampedLabelsRejectsASubstitutedOutputLabel(t *testing.T) {
 	source := syntheticPDF(t, 1, "Letter")
-	stamped, err := stampPages(source, []string{"OUR000099"}, "Helvetica")
+	recipe := validRecipe(t)
+	recipe.StartAt = 99
+	var stamped bytes.Buffer
+	_, err := Stamp(t.Context(), bytes.NewReader(source), []PageLabel{{SourcePage: 1, Label: "OUR000099"}}, recipe, &stamped)
 	require.NoError(t, err)
 
-	err = verifyStampedLabels(stamped, []PageLabel{{SourcePage: 1, Label: "OUR000041"}})
+	err = verifyStampedLabels(stamped.Bytes(), []PageLabel{{SourcePage: 1, Label: "OUR000041"}})
 
 	require.ErrorIs(t, err, ErrStampEngineFailure)
 }

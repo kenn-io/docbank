@@ -40,7 +40,7 @@ func syntheticPages(t *testing.T, pages []fpdf.SizeType, sizeAt func(int) fpdf.S
 func syntheticRotated(t *testing.T, degrees int) []byte {
 	t.Helper()
 	var output bytes.Buffer
-	err := api.Rotate(bytes.NewReader(syntheticPDF(t, 1, "Letter")), &output, degrees, nil, nil)
+	err := api.Rotate(bytes.NewReader(syntheticPDF(t, 1, "Letter")), &output, degrees, nil, stampConfiguration())
 	require.NoError(t, err)
 	return output.Bytes()
 }
@@ -96,7 +96,7 @@ func syntheticEncrypted(t *testing.T) []byte {
 
 func pageCount(t *testing.T, pdf []byte) int {
 	t.Helper()
-	count, err := api.PageCount(bytes.NewReader(pdf), nil)
+	count, err := api.PageCount(bytes.NewReader(pdf), stampConfiguration())
 	require.NoError(t, err)
 	return count
 }
@@ -110,7 +110,7 @@ func fontFor(fixture string) string {
 
 func stampOne(t *testing.T, pdf []byte, label, font string) ([]byte, error) {
 	t.Helper()
-	count, err := api.PageCount(bytes.NewReader(pdf), nil)
+	count, err := api.PageCount(bytes.NewReader(pdf), stampConfiguration())
 	if err != nil {
 		return nil, fmt.Errorf("read source page count: %w", err)
 	}
@@ -135,7 +135,7 @@ func stampWithLabels(t *testing.T, documents [][]byte, labels []string) []byte {
 	}
 	require.Equal(t, len(labels), offset)
 	var merged bytes.Buffer
-	require.NoError(t, api.MergeRaw(stamped, &merged, false, nil))
+	require.NoError(t, api.MergeRaw(stamped, &merged, false, stampConfiguration()))
 	return merged.Bytes()
 }
 
@@ -150,7 +150,7 @@ func stampPages(pdf []byte, labels []string, font string) ([]byte, error) {
 		watermarks[index+1] = watermark
 	}
 	var output bytes.Buffer
-	if err := api.AddWatermarksMap(bytes.NewReader(pdf), &output, watermarks, nil); err != nil {
+	if err := api.AddWatermarksMap(bytes.NewReader(pdf), &output, watermarks, stampConfiguration()); err != nil {
 		return nil, fmt.Errorf("add watermarks: %w", err)
 	}
 	return output.Bytes(), nil
