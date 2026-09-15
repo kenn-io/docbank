@@ -211,7 +211,14 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
+	defer func() {
+		// database/sql may finish its cancellation rollback before the callback
+		// or Commit observes it. Preserve cancellation alongside ErrTxDone.
+		if errors.Is(retErr, sql.ErrTxDone) && ctx.Err() != nil {
+			retErr = errors.Join(ctx.Err(), retErr)
+		}
+	}()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)

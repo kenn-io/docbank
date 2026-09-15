@@ -436,6 +436,9 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 		}
 		return nil
 	})
+	if err != nil && ctx.Err() != nil {
+		return processed, ctx.Err()
+	}
 	if err == nil && processed {
 		err = worker.processClaim(ctx, claim, work)
 	}

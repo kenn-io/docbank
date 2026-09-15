@@ -1598,6 +1598,16 @@ type unavailableEmbeddingStore struct {
 	*store.Store
 
 	validateErr, renewErr, publishErr, releaseErr error
+	beforeClaim                                   func()
+}
+
+func (s *unavailableEmbeddingStore) ClaimEmbeddingWork(ctx context.Context, jobID, owner string, at time.Time,
+	lease time.Duration, fingerprints []string,
+) (EmbeddingWorkClaim, EmbeddingWork, bool, error) {
+	if s.beforeClaim != nil {
+		s.beforeClaim()
+	}
+	return s.Store.ClaimEmbeddingWork(ctx, jobID, owner, at, lease, fingerprints)
 }
 
 func (s *unavailableEmbeddingStore) ValidateEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, at time.Time) error {
@@ -1630,6 +1640,22 @@ func (s *unavailableEmbeddingStore) PublishEmbeddingWork(ctx context.Context, cl
 		return err
 	}
 	return s.Store.PublishEmbeddingWork(ctx, claim, work, head, prior, receipt, at)
+}
+
+func TestEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t *testing.T) {
+	fixture, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	worker.catalog = &unavailableEmbeddingStore{Store: fixture.catalog, beforeClaim: cancel}
+	processed, err := worker.RunJob(ctx, job.ID)
+	require.False(t, processed)
+	require.ErrorIs(t, err, context.Canceled)
+	worker.catalog = fixture.catalog
+	processed, err = worker.RunJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.True(t, processed, "cancellation must leave the intent ready for the next worker")
 }
 
 func TestEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T) {
