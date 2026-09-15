@@ -101,6 +101,11 @@ func (s *Store) PruneContentVersions(
 		if err != nil {
 			return err
 		}
+		if err := retainMediaAuthorityVersionsTx(tx, candidateSet, retainedSet); err != nil {
+			return err
+		}
+		checkpointRequired = checkpointRequired && candidateSet[node.CurrentVersionID]
+		retainContentVersionDependencies(versions, candidateSet, retainedSet)
 		result.Node = node
 		result.Cutoff = cutoff
 		result.CheckpointRequired = checkpointRequired
@@ -166,6 +171,41 @@ func (s *Store) PruneContentVersions(
 		result.DependencyRetained = []ContentVersion{}
 	}
 	return result, nil
+}
+
+func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]bool) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(candidates))
+	args := make([]any, 0, len(candidates))
+	for id := range candidates {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := tx.Query(`SELECT content_version_id FROM media_source_versions
+		WHERE content_version_id IN (`+placeholders(len(ids))+`)
+		UNION SELECT content_version_id FROM media_input_artifacts
+		WHERE content_version_id IN (`+placeholders(len(ids))+`)`, append(args, args...)...)
+	if err != nil {
+		return fmt.Errorf("checking media authority before version pruning: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("reading retained media content version: %w", err)
+		}
+		delete(candidates, id)
+		retained[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("checking media authority before version pruning: %w", err)
+	}
+	return nil
 }
 
 // ValidateVersionPruneSelector applies the authoritative store-level selector
@@ -300,23 +340,29 @@ func selectVersionPruneCandidates(
 
 	dependencyRetained := make(map[string]bool)
 	if !checkpointRequired {
-		changed := true
-		for changed {
-			changed = false
-			for _, version := range versions {
-				if candidates[version.ID] || version.SourceVersionID == nil {
-					continue
-				}
-				sourceID := *version.SourceVersionID
-				if candidates[sourceID] {
-					delete(candidates, sourceID)
-					dependencyRetained[sourceID] = true
-					changed = true
-				}
+		retainContentVersionDependencies(versions, candidates, dependencyRetained)
+	}
+	return candidates, dependencyRetained, cutoff, checkpointRequired, nil
+}
+
+func retainContentVersionDependencies(
+	versions []ContentVersion, candidates, retained map[string]bool,
+) {
+	changed := true
+	for changed {
+		changed = false
+		for _, version := range versions {
+			if candidates[version.ID] || version.SourceVersionID == nil {
+				continue
+			}
+			sourceID := *version.SourceVersionID
+			if candidates[sourceID] {
+				delete(candidates, sourceID)
+				retained[sourceID] = true
+				changed = true
 			}
 		}
 	}
-	return candidates, dependencyRetained, cutoff, checkpointRequired, nil
 }
 
 func contentVersionOwnersTx(tx *sql.Tx, versionIDs []string) (map[string]int64, error) {

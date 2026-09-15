@@ -384,6 +384,58 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 	assert.NotNil(t, revert.Responses["200"])
 }
 
+func TestOpenAPIDeclaresMediaSubmissionBodies(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
+	for _, test := range []struct {
+		path, operationID, metadataField string
+	}{
+		{"/api/v1/media/sources", "submitMediaSource", "occurrence"},
+		{"/api/v1/media/sources/{source_id}/artifacts", "importMediaArtifact", "occurrence_id"},
+	} {
+		t.Run(test.operationID, func(t *testing.T) {
+			op := doc.Paths[test.path].Post
+			require.NotNil(t, op)
+			assert.Equal(t, test.operationID, op.OperationID)
+			require.NotNil(t, op.RequestBody)
+			assert.True(t, op.RequestBody.Required)
+			form := op.RequestBody.Content["multipart/form-data"]
+			require.NotNil(t, form)
+			assert.ElementsMatch(t, []string{"metadata", "file"}, form.Schema.Required)
+			assert.Equal(t, "object", form.Schema.Type)
+			file := form.Schema.Properties["file"]
+			require.NotNil(t, file)
+			assert.Equal(t, "string", file.Type)
+			assert.Equal(t, "binary", file.Format)
+			require.NotNil(t, form.Encoding["metadata"])
+			assert.Equal(t, "application/json", form.Encoding["metadata"].ContentType)
+			require.NotNil(t, form.Encoding["file"])
+			assert.Equal(t, "*/*", form.Encoding["file"].ContentType)
+			metadata := resolveOpenAPISchema(t, schemas, form.Schema.Properties["metadata"])
+			for _, field := range []string{"operation_id", "filename", "media_type", "sha256", "byte_length", test.metadataField} {
+				assert.Contains(t, metadata.Properties, field)
+				assert.Contains(t, metadata.Required, field)
+			}
+			if test.operationID == "submitMediaSource" {
+				body := op.RequestBody.Content["application/json"]
+				require.NotNil(t, body)
+				reference := resolveOpenAPISchema(t, schemas, body.Schema)
+				for _, field := range []string{"operation_id", "reference_url", "occurrence"} {
+					assert.Contains(t, reference.Properties, field)
+					assert.Contains(t, reference.Required, field)
+				}
+			} else {
+				require.Len(t, op.Parameters, 1)
+				parameter := op.Parameters[0]
+				assert.Equal(t, "source_id", parameter.Name)
+				assert.Equal(t, "path", parameter.In)
+				assert.True(t, parameter.Required)
+				assert.Equal(t, "string", parameter.Schema.Type)
+			}
+		})
+	}
+}
+
 func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
 	pruneRequest := doc.Components.Schemas.Map()["VersionPruneRequest"]

@@ -154,25 +154,73 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
-	jobs, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
-	require.NoError(t, err)
-	require.Equal(t, "retry_wait", status.State)
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancel()
-	interrupted, err := service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Equal(t, jobs, interrupted)
+	ctx, cancel := context.WithCancel(t.Context())
+	var jobs []string
+	var runErr error
+	finished := make(chan struct{})
+	go func() {
+		jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil)
+		close(finished)
+	}()
+	t.Cleanup(func() { cancel(); <-finished })
+	var pendingID string
+	require.Eventually(t, func() bool {
+		statuses, statusErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, profile.record.Fingerprint)
+		if statusErr != nil {
+			return false
+		}
+		for _, status := range statuses {
+			if status.State == "retry_wait" {
+				pendingID = status.ID
+				return true
+			}
+		}
+		return false
+	}, 3*time.Second, time.Millisecond)
+	cancel()
+	<-finished
+	require.ErrorIs(t, runErr, context.Canceled)
+	require.Equal(t, []string{pendingID}, jobs)
 	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
 	clockOffset.Store(int64(2 * time.Minute))
-	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, nil)
+	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, jobs, retried)
-	status, err = fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
+	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
+}
+
+func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
+	fixture, fake, worker, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	workerContext, stopWorker := context.WithCancel(t.Context())
+	stopWorker()
+	require.ErrorIs(t, worker.Run(workerContext), context.Canceled)
+	var profile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))
+	profile.Rendition = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.RetentionDisclosure.RetainProviderMarkdown = false
+	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
+	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+		Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
+		Profiles: map[string]ProfileConfig{"direct": {Profile: profile,
+			EmbeddingProviders: map[string]document.EmbeddingProvider{original.BindingID: provider}}}})
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
+	require.NoError(t, err)
+	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	job, err := service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err, "foreground processing must progress without a background worker")
+	status, err := service.Status(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+	require.Equal(t, 1, status.CompletedBindings)
 }
 
 func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.T) {
@@ -206,17 +254,19 @@ func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.
 			selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
 			plan, err := service.Plan(t.Context(), selector)
 			require.NoError(t, err)
+			var grants []store.ProcessingConsentGrantRequest
 			for _, binding := range profile.Embeddings {
 				if stop == "later-consent-missing" && binding.Name == "third" {
 					continue
 				}
-				_, err := fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+				grants = append(grants, store.ProcessingConsentGrantRequest{
 					Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
 					ProfileFingerprint: plan.ProfileFingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 					InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
 				})
-				require.NoError(t, err)
 			}
+			_, err = fixture.catalog.GrantConsentSet(t.Context(), grants)
+			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var announced []Job
@@ -428,7 +478,8 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	service := &Service{catalog: fixture.catalog}
 	result, err := service.renditionResult(t.Context(), published.ID)
 	require.NoError(t, err)
-	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID, attachmentID: published.AttachmentID}, result)
+	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID,
+		attachmentID: published.AttachmentID, authorizationGrantID: published.AuthorizationGrantID}, result)
 	_, err = service.renditionResult(t.Context(), rejected.ID)
 	require.ErrorIs(t, err, ErrConsentRequired)
 }

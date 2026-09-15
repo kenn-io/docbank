@@ -161,6 +161,13 @@ Key assumptions reviewers MUST account for:
    allowlist as a vulnerability. DO flag a change that stops classifying a
    reference form the inspector already covered.
 
+16. REUSE AUTHORITATIVE TEST EVIDENCE: review the exact immutable commit range
+   in an isolated checkout and read its existing authority report before asking
+   for more tests. Reuse recorded passing evidence for unchanged scopes. Request
+   only exact covering tests for changed production code or a concrete unresolved
+   risk; do not request full-package or full-suite reruns merely because review
+   executes separately.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

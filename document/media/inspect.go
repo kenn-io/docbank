@@ -31,8 +31,9 @@ import (
 )
 
 const (
-	capabilityRecordVersion  = 1
-	maxInspectionSourceBytes = int64(1 << 30)
+	capabilityRecordVersion = 1
+	// MaxInspectionSourceBytes is the largest source byte limit accepted by InspectCapability.
+	MaxInspectionSourceBytes = int64(1 << 30)
 
 	ooxmlWorksheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
 	ooxmlSlideType     = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
@@ -337,8 +338,8 @@ func validateInspectionPolicy(policy InspectionPolicy) error {
 	if err != nil || baseType == "" {
 		return errors.New("media: declared media type is invalid")
 	}
-	if policy.ExpectedBytes <= 0 || policy.ExpectedBytes > maxInspectionSourceBytes ||
-		policy.MaxSourceBytes <= 0 || policy.MaxSourceBytes > maxInspectionSourceBytes ||
+	if policy.ExpectedBytes <= 0 || policy.ExpectedBytes > MaxInspectionSourceBytes ||
+		policy.MaxSourceBytes <= 0 || policy.MaxSourceBytes > MaxInspectionSourceBytes ||
 		policy.ExpectedBytes > policy.MaxSourceBytes {
 		return errors.New("media: source byte bounds are invalid")
 	}

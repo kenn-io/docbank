@@ -399,6 +399,9 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return err
 	}
 	if layout.hasPostV3Metadata() {
+		if err := exportMediaMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 		if err := exportVisualPreviews(ctx, tx, write); err != nil {
 			return err
 		}
@@ -1052,6 +1055,15 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM derivative_pack_purge_pending)
 		    + (SELECT COUNT(*) FROM processing_consent_grants)
 		    + (SELECT COUNT(*) FROM processing_consent_revocations)
+		    + (SELECT COUNT(*) FROM media_sources)
+		    + (SELECT COUNT(*) FROM media_source_versions)
+		    + (SELECT COUNT(*) FROM media_source_heads)
+		    + (SELECT COUNT(*) FROM media_occurrences)
+		    + (SELECT COUNT(*) FROM media_visibility_fences)
+		    + (SELECT COUNT(*) FROM media_input_artifacts)
+		    + (SELECT COUNT(*) FROM media_operations)
+		    + (SELECT COUNT(*) FROM media_acquisitions)
+		    + (SELECT COUNT(*) FROM media_protected_refs)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
 		         FROM current_processing_incarnation WHERE singleton=1)),
@@ -1157,6 +1169,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if isEmbeddingMetadataType(kind) {
 		return importEmbeddingMetadataRecord(ctx, tx, kind, raw)
+	}
+	if isMediaMetadataType(kind) {
+		return s.importMediaMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -1472,7 +1487,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataVisualPreviewGenerationType:    {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:          {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
 	metadataCollectionLabelType:            {metadataTypeField, "ingest_id", "label", "revision", "updated_at"},
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
@@ -1519,7 +1534,7 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version":           {"mime_type": true, "source_version_id": true},
+	"content_version":           {"mime_type": true, auditSourceVersionIDField: true},
 	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
 	metadataCollectionLabelType: {"label": true},
 	metadataSavedQueryRunType: {
@@ -1899,6 +1914,9 @@ func validateMetadataStateWithVaultIdentity(
 			return err
 		}
 		if err := validateBatchTagReceiptMetadataState(ctx, tx); err != nil {
+			return err
+		}
+		if err := validateMediaMetadataState(ctx, tx); err != nil {
 			return err
 		}
 		if err := validateProcessingMetadataState(ctx, tx); err != nil {

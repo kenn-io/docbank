@@ -43,7 +43,7 @@ func (service *Service) EnqueueEmailDocumentProcessing(
 	if err != nil {
 		return document.EmailDocumentProcessingReceipt{}, err
 	}
-	prepared, err := service.prepareExecutableRendition(ctx, node, version, profile)
+	prepared, err := service.prepareExecutableRendition(ctx, node, version, profile, "")
 	if err != nil {
 		return document.EmailDocumentProcessingReceipt{}, err
 	}

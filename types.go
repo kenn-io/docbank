@@ -94,6 +94,107 @@ type ProcessingProfileConfig struct {
 	Tokenizers           map[string]document.Tokenizer
 }
 
+// MediaTimestamp preserves a source timestamp claim without inferring a time
+// when the caller supplied partial, named-zone, omitted, or invalid evidence.
+type MediaTimestamp struct {
+	Normalized     string `json:"normalized"`
+	Raw            string `json:"raw"`
+	Precision      string `json:"precision"`
+	Timezone       string `json:"timezone"`
+	ZoneText       string `json:"zone_text,omitempty"`
+	OffsetSeconds  *int   `json:"offset_seconds,omitempty"`
+	FractionDigits int    `json:"fraction_digits"`
+}
+
+type MediaProcessingRequest struct {
+	Profile         string `json:"profile"`
+	SuppliedInputID string `json:"supplied_input_id,omitempty"`
+}
+
+type MediaOccurrenceInput struct {
+	Ref          string         `json:"ref"`
+	Revision     string         `json:"revision"`
+	Filename     string         `json:"filename"`
+	PersonRef    string         `json:"person_ref,omitempty"`
+	SpeakerLabel string         `json:"speaker_label,omitempty"`
+	Message      MediaTimestamp `json:"message"`
+}
+
+// SuppliedMediaRequest retains exact caller-provided WAV or MP3 bytes. A nil
+// Processing value means retention only.
+type SuppliedMediaRequest struct {
+	OperationID              string
+	Content                  io.Reader
+	Filename                 string
+	MediaType                string
+	SHA256                   string
+	ByteLength               int64
+	ExistingContentVersionID string
+	Occurrence               MediaOccurrenceInput
+	Processing               *MediaProcessingRequest
+}
+
+type RemoteRecordingRequest struct {
+	OperationID       string
+	ReferenceURL      string
+	ProviderHint      string
+	CredentialBinding string
+	Acquire           bool
+	Occurrence        MediaOccurrenceInput
+	Processing        *MediaProcessingRequest
+}
+
+type MediaReceipt struct {
+	VaultUID         string `json:"vault_uid"`
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id,omitempty"`
+	ContentVersionID string `json:"content_version_id,omitempty"`
+	OccurrenceID     string `json:"occurrence_id,omitempty"`
+	OperationID      string `json:"operation_id"`
+	JobID            string `json:"job_id,omitempty"`
+	Outcome          string `json:"outcome,omitempty"`
+	OperationState   string `json:"operation_state"`
+	CoverageState    string `json:"coverage_state"`
+	SuppliedInputID  string `json:"supplied_input_id,omitempty"`
+}
+
+type MediaArtifactRequest struct {
+	OperationID, SourceID, OccurrenceID string
+	Kind, Origin, Provider, Language    string
+	Filename, MediaType, SHA256         string
+	ByteLength                          int64
+	Content                             io.Reader
+	Processing                          *MediaProcessingRequest
+}
+
+type MediaListOptions struct {
+	Cursor, Profile, Variant, SourceID string
+	Limit                              int
+}
+
+type MediaSourceRow struct {
+	SourceID, SourceVersionID, ContentVersionID, Filename, CaptureLabel string
+	Outcome, CoverageState, Excerpt                                     string
+}
+
+type MediaSourcePage struct {
+	Items      []MediaSourceRow
+	Total      int
+	NextCursor string
+}
+
+type MediaOccurrenceRow struct {
+	OccurrenceID, SourceID, SourceVersionID, Ref, Revision string
+	Filename, PersonRef, SpeakerLabel                      string
+	Message                                                MediaTimestamp
+}
+
+type MediaOccurrencePage struct {
+	Items      []MediaOccurrenceRow
+	Total      int
+	NextCursor string
+}
+
 // ProcessingSelector binds work to one stable node, immutable content
 // version, and named processing profile.
 type ProcessingSelector struct {
@@ -161,6 +262,19 @@ type StartProcessingRequest struct {
 	PlanFingerprint string                `json:"plan_fingerprint"`
 	Consent         bool                  `json:"consent"`
 }
+
+type ProcessingConsentGrantRequest struct {
+	PlanRequest     ProcessingPlanRequest
+	PlanFingerprint string
+	ExpiresAt       *time.Time
+}
+
+type ProcessingConsentGrant struct {
+	PlanFingerprint, ProfileFingerprint string
+	ExpiresAt                           *time.Time
+}
+
+type ProcessingConsentRevocation struct{ RevokedAt time.Time }
 
 type ProcessingJob struct {
 	ID                 string   `json:"id"`

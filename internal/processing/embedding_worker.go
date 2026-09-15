@@ -91,10 +91,16 @@ type EmbeddingRuntime interface {
 	Classify(err error) (EmbeddingProviderFailure, time.Duration)
 }
 
-// EmbeddingRuntimeRegistry resolves exact immutable descriptor fingerprints.
+// EmbeddingRuntimeRegistry resolves provider clients by immutable descriptor
+// and execution policy by the admitted profile and binding.
 type EmbeddingRuntimeRegistry struct {
 	mu       sync.RWMutex
 	runtimes map[string]EmbeddingRuntime
+	bindings map[embeddingRuntimeBinding]EmbeddingRuntime
+}
+
+type embeddingRuntimeBinding struct {
+	profileFingerprint, bindingID, descriptorFingerprint string
 }
 
 func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
@@ -112,7 +118,9 @@ func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
 }
 
 func NewEmbeddingRuntimeRegistry() *EmbeddingRuntimeRegistry {
-	return &EmbeddingRuntimeRegistry{runtimes: make(map[string]EmbeddingRuntime)}
+	return &EmbeddingRuntimeRegistry{
+		runtimes: make(map[string]EmbeddingRuntime), bindings: make(map[embeddingRuntimeBinding]EmbeddingRuntime),
+	}
 }
 
 func (registry *EmbeddingRuntimeRegistry) Ready() bool {
@@ -125,11 +133,8 @@ func (registry *EmbeddingRuntimeRegistry) Ready() bool {
 }
 
 func (registry *EmbeddingRuntimeRegistry) Register(fingerprint string, runtime EmbeddingRuntime) error {
-	if registry == nil || len(fingerprint) != sha256.Size*2 || embeddingInterfaceNil(runtime) || !runtime.Ready() {
+	if registry == nil || !validEmbeddingRuntimeFingerprint(fingerprint) || embeddingInterfaceNil(runtime) || !runtime.Ready() {
 		return errors.New("embedding runtime registration is invalid")
-	}
-	if _, err := hex.DecodeString(fingerprint); err != nil {
-		return errors.New("embedding runtime descriptor fingerprint is invalid")
 	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
@@ -140,12 +145,47 @@ func (registry *EmbeddingRuntimeRegistry) Register(fingerprint string, runtime E
 	return nil
 }
 
+// RegisterBinding pins profile-local execution policy, including error
+// classification, without duplicating the provider descriptor registration.
+func (registry *EmbeddingRuntimeRegistry) RegisterBinding(profileFingerprint, bindingID,
+	descriptorFingerprint string, runtime EmbeddingRuntime,
+) error {
+	if registry == nil || !validEmbeddingRuntimeFingerprint(profileFingerprint) || bindingID == "" ||
+		!validEmbeddingRuntimeFingerprint(descriptorFingerprint) || embeddingInterfaceNil(runtime) || !runtime.Ready() {
+		return errors.New("embedding binding runtime registration is invalid")
+	}
+	key := embeddingRuntimeBinding{profileFingerprint, bindingID, descriptorFingerprint}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if _, exists := registry.runtimes[descriptorFingerprint]; !exists {
+		return errors.New("embedding binding runtime descriptor is not registered")
+	}
+	if _, exists := registry.bindings[key]; exists {
+		return errors.New("embedding binding runtime is already registered")
+	}
+	registry.bindings[key] = runtime
+	return nil
+}
+
+func validEmbeddingRuntimeFingerprint(fingerprint string) bool {
+	if len(fingerprint) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(fingerprint)
+	return err == nil
+}
+
 func (registry *EmbeddingRuntimeRegistry) Prepare(ctx context.Context, work EmbeddingWork) (EmbeddingExecution, error) {
 	if registry == nil {
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
 	}
 	registry.mu.RLock()
-	runtime := registry.runtimes[work.Descriptor.Fingerprint]
+	runtime := registry.bindings[embeddingRuntimeBinding{
+		work.ProcessingProfile.Fingerprint, work.Binding.Name, work.Descriptor.Fingerprint,
+	}]
+	if embeddingInterfaceNil(runtime) {
+		runtime = registry.runtimes[work.Descriptor.Fingerprint]
+	}
 	registry.mu.RUnlock()
 	if embeddingInterfaceNil(runtime) {
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable

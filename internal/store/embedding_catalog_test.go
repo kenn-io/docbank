@@ -1324,14 +1324,13 @@ func TestEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T) {
 	_, fence, err = s.BeginEmbeddingProviderEgress(t.Context(), claim, work, &second, at)
 	require.ErrorIs(t, err, ErrProcessingConsentRevoked)
 	require.Nil(t, fence)
-	// Fresh work can use the replacement grant after a failed prior check.
-	fresh, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, at)
-	require.NoError(t, err)
-	fence.Close()
-	require.NotEqual(t, first.GrantID, fresh.GrantID)
+	// Omitting a caller-held receipt cannot discard the job's admitted grant.
+	_, fence, err = s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, at)
+	require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+	require.Nil(t, fence)
 }
 
-func TestEmbeddingJobReplacementConsentPreservesClaimsAndRetryBudget(t *testing.T) {
+func TestEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T) {
 	for _, state := range []string{"queued", "running", "retry_wait", "authorization_failed", "exhausted"} {
 		t.Run(state, func(t *testing.T) {
 			s, version, profile, _ := newEmbeddingCatalogFixture(t)
@@ -1373,44 +1372,53 @@ func TestEmbeddingJobReplacementConsentPreservesClaimsAndRetryBudget(t *testing.
 			consent := replacement.Authorization
 			_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
 			require.NoError(t, err)
-			same, err := s.EnqueueEmbeddingJob(t.Context(), replacement)
+			successor, err := s.EnqueueEmbeddingJob(t.Context(), replacement)
 			require.NoError(t, err)
-			require.Equal(t, job.ID, same.ID)
+			require.NotEqual(t, job.ID, successor.ID)
 			var claims int
 			require.NoError(t, s.db.QueryRow(`SELECT claim_count FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&claims))
 			require.Equal(t, count, claims)
 			if state == "running" {
 				require.NoError(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at))
 				_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, at)
-				fence.Close()
 				require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+				require.Nil(t, fence)
 				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureAuthorization, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at))
-				_, err = s.EnqueueEmbeddingJob(t.Context(), replacement)
-				require.NoError(t, err)
 			}
 			if state == "retry_wait" {
-				_, _, found, err := s.ClaimNextEmbeddingWork(t.Context(), "early-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+				_, _, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "early-worker", at,
+					time.Minute, []string{request.Descriptor.Fingerprint})
 				require.NoError(t, err)
 				require.False(t, found, "replacement consent must preserve retry delay")
 			}
 			at = at.Add(2 * time.Minute)
-			next, rebound, found, err := s.ClaimNextEmbeddingWork(t.Context(), "next-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+			next, rebound, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "old-worker",
+				at, time.Minute, []string{request.Descriptor.Fingerprint})
 			require.NoError(t, err)
-			if state == "exhausted" {
-				require.False(t, found, "replacement consent must not restart exhausted provider retries")
-				return
+			if state == "running" || state == "authorization_failed" || state == "exhausted" {
+				require.False(t, found, "replacement consent must not restart terminal admitted work")
+			} else {
+				require.True(t, found)
+				require.Equal(t, request.Authorization.Principal, rebound.Consent.Principal)
+				require.Equal(t, request.Authorization.Scope, rebound.Consent.Scope)
+				require.NotNil(t, rebound.Consent.PriorAuthorization)
+				_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), next, rebound, nil, at)
+				require.ErrorIs(t, err, ErrProcessingConsentRevoked)
+				require.Nil(t, fence)
 			}
+			freshClaim, fresh, found, err := s.ClaimEmbeddingWork(t.Context(), successor.ID, "fresh-worker",
+				at, time.Minute, []string{request.Descriptor.Fingerprint})
+			require.NoError(t, err)
 			require.True(t, found)
-			require.Equal(t, consent.Principal, rebound.Consent.Principal)
-			require.Equal(t, consent.Scope, rebound.Consent.Scope)
-			_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), next, rebound, nil, at)
+			require.Equal(t, replacement.Authorization.Principal, fresh.Consent.Principal)
+			_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), freshClaim, fresh, nil, at)
 			require.NoError(t, err)
 			fence.Close()
 		})
 	}
 }
 
-func TestEmbeddingJobReconciliationRecoversFreshGrantForSameScope(t *testing.T) {
+func TestEmbeddingJobReconciliationCreatesSuccessorForFreshGrant(t *testing.T) {
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, version, profile, "fresh-grant")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1427,22 +1435,27 @@ func TestEmbeddingJobReconciliationRecoversFreshGrantForSameScope(t *testing.T) 
 	require.NoError(t, err)
 	_, err = s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{Mutate: embeddingTestMutation, At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
 	require.NoError(t, err)
-	recovered := false
-	for {
-		next, rebound, found, err := s.ClaimNextEmbeddingWork(t.Context(), "next-worker", time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
-		require.NoError(t, err)
-		if !found {
-			break
+	_, _, found, err = s.ClaimEmbeddingWork(t.Context(), job.ID, "next-worker",
+		time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.False(t, found, "reconciliation must preserve the original authorization failure")
+	statuses, err := s.EmbeddingJobsForVersionProfile(t.Context(), version, profile.Fingerprint)
+	require.NoError(t, err)
+	var successor EmbeddingJobStatus
+	for _, status := range statuses {
+		if status.BindingID == request.BindingID && status.ID != job.ID {
+			successor = status
 		}
-		if next.AttemptID != job.ID {
-			continue
-		}
-		_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), next, rebound, nil, time.Now().UTC())
-		require.NoError(t, err)
-		fence.Close()
-		recovered = true
 	}
-	require.True(t, recovered, "reconciliation must revive the original authorization-failed job")
+	require.NotEmpty(t, successor.ID, "fresh consent must replace the exact failed binding")
+	require.Equal(t, "queued", successor.State)
+	claim, work, found, err = s.ClaimEmbeddingWork(t.Context(), successor.ID, "successor-worker",
+		time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), claim, work, nil, time.Now().UTC())
+	require.NoError(t, err)
+	fence.Close()
 }
 
 func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
@@ -1572,7 +1585,7 @@ func TestEmbeddingJobEnqueueRejectsStaleSource(t *testing.T) {
 func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "restore-abandoned")
-	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	original, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
 	at := time.Now().UTC()
 	claim, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "first-worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
@@ -1600,20 +1613,33 @@ func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 	reconciled, err = s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{Mutate: embeddingTestMutation, At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{request.Descriptor.Fingerprint}})
 	require.NoError(t, err)
 	require.Positive(t, reconciled.Enqueued)
-	resumed := false
-	for i := range 10 {
-		next, _, available, err := s.ClaimNextEmbeddingWork(t.Context(), "restored-worker", time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
-		require.NoError(t, err)
-		if !available {
-			break
+	statuses, err := s.EmbeddingJobsForVersionProfile(t.Context(), versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	var successor EmbeddingJobStatus
+	for _, status := range statuses {
+		if status.BindingID != request.BindingID {
+			continue
 		}
-		if next.AttemptID == claim.AttemptID {
-			resumed = true
-			require.Greater(t, next.Epoch, claim.Epoch)
+		if status.ID == original.ID {
+			require.Equal(t, "abandoned", status.State)
+			require.Equal(t, int64(0), status.AuthorizationRevocationFence)
+			continue
 		}
-		require.Less(t, i, 9)
+		successor = status
 	}
-	require.True(t, resumed, "restored source with fresh consent must resume its existing job")
+	require.NotEmpty(t, successor.ID)
+	require.Equal(t, "queued", successor.State)
+	require.Positive(t, successor.AuthorizationRevocationFence)
+	next, _, available, err := s.ClaimEmbeddingWork(t.Context(), successor.ID, "restored-worker",
+		time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, available)
+	require.Equal(t, successor.ID, next.AttemptID,
+		"restored source with fresh consent must run a fenced successor")
+	_, _, available, err = s.ClaimEmbeddingWork(t.Context(), original.ID, "restored-worker-2",
+		time.Now().UTC(), time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.False(t, available, "the abandoned original must remain unavailable")
 	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, time.Now().UTC()), ErrEmbeddingJobFenced)
 }
 

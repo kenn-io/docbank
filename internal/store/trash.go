@@ -390,6 +390,22 @@ func (s *Store) trashEmpty(
 		where += ` AND trashed_at <= ?`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
+	// Media source revisions and input artifacts are immutable retained
+	// authority. A root containing either kind is outside trash-empty
+	// eligibility so one pinned document cannot abort deletion of unrelated
+	// roots at the transaction's deferred foreign-key check.
+	where += ` AND NOT EXISTS (
+		WITH RECURSIVE subtree(id) AS (
+			SELECT nodes.id
+			UNION ALL
+			SELECT child.id FROM nodes child JOIN subtree parent ON child.parent_id=parent.id
+		)
+		SELECT 1 FROM content_versions version JOIN subtree ON subtree.id=version.node_id
+		WHERE EXISTS (SELECT 1 FROM media_source_versions source
+			WHERE source.content_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM media_input_artifacts input
+			WHERE input.content_version_id=version.version_id)
+	)`
 	selection := `SELECT id FROM nodes WHERE ` + where + ` ORDER BY trashed_at ASC, id ASC`
 	selectionArgs := append([]any(nil), args...)
 	if maxRoots > 0 {

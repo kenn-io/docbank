@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strconv"
 	"testing"
 	"time"
 
@@ -50,6 +51,36 @@ func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 			now.Add(3*time.Minute), now.Add(4*time.Minute)),
 		ErrRenditionJobFenced,
 	)
+}
+
+func TestRenditionJobWaiterCannotAdoptReplacementConsent(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
+		Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+	})
+	require.NoError(t, err)
+	grantRenditionJobConsent(t, s, request)
+	replacementJob, replacementWaiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, replacementJob.ID)
+	require.NotEqual(t, waiter.ID, replacementWaiter.ID)
+
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:replacement-consent", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.ErrorIs(t, err, ErrRenditionJobWaiterReselected)
+	rejected, err := s.RenditionJobWaiterByID(t.Context(), waiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", rejected.State)
+	require.Equal(t, RenditionFailureConsent, rejected.FailureCode)
 }
 
 func TestRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T) {
@@ -619,7 +650,8 @@ func TestRenditionJobMetadataRestoreRejectsWaiterRetainedPolicySubset(t *testing
 		waiter.ID = renditionScopedID(
 			"waiter", waiter.JobID, waiter.ContentVersionID, waiter.ProfileFingerprint,
 			authority.principal, authority.scope, authority.disclosure,
-			authority.inputsJSON, authority.retainedJSON)
+			authority.inputsJSON, authority.retainedJSON, waiter.AuthorizationGrantID,
+			waiter.AuthorizationIncarnationID, strconv.FormatInt(waiter.AuthorizationRevocationFence, 10))
 		encoded, err := json.Marshal(waiter, json.Deterministic(true))
 		require.NoError(t, err)
 		malformed.Write(encoded)
@@ -657,7 +689,8 @@ func TestRenditionJobMetadataRestoreRejectsNonOriginalWaiterConsent(t *testing.T
 			waiter.ID = renditionScopedID(
 				"waiter", waiter.JobID, waiter.ContentVersionID, waiter.ProfileFingerprint,
 				authority.principal, authority.scope, authority.disclosure,
-				authority.inputsJSON, authority.retainedJSON)
+				authority.inputsJSON, authority.retainedJSON, waiter.AuthorizationGrantID,
+				waiter.AuthorizationIncarnationID, strconv.FormatInt(waiter.AuthorizationRevocationFence, 10))
 			line, err = json.Marshal(waiter, json.Deterministic(true))
 			require.NoError(t, err)
 		} else {
@@ -768,7 +801,8 @@ func TestRenditionJobMetadataRestoreRejectsCapturedPolicyOutsideProfile(t *testi
 				waiter.ID = renditionScopedID(
 					"waiter", waiter.JobID, waiter.ContentVersionID, waiter.ProfileFingerprint,
 					authority.principal, authority.scope, authority.disclosure,
-					authority.inputsJSON, authority.retainedJSON)
+					authority.inputsJSON, authority.retainedJSON, waiter.AuthorizationGrantID,
+					waiter.AuthorizationIncarnationID, strconv.FormatInt(waiter.AuthorizationRevocationFence, 10))
 				waiter.AttachmentID = renditionScopedID(
 					"attachment", waiter.JobID, waiter.ContentVersionID, waiter.ProfileFingerprint)
 				line, err = json.Marshal(waiter, json.Deterministic(true))
@@ -887,7 +921,7 @@ func TestRenditionJobMetadataRoundTripPreservesSealedDurableResumeAuthority(t *t
 		"fresh consent may authorize only the known durable handle; no new snapshot is accepted")
 }
 
-func TestRenditionJobNoHandleRetrySelectsFreshAuthority(t *testing.T) {
+func TestRenditionJobNoHandleRetryKeepsAdmissionAuthority(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
@@ -931,12 +965,8 @@ func TestRenditionJobNoHandleRetrySelectsFreshAuthority(t *testing.T) {
 	require.NoError(t, err)
 	work, err := s.RenditionJobWorkByClaim(
 		t.Context(), freshClaim, now.Add(3*time.Second))
-	require.NoError(t, err)
-	assert.Equal(t, waiter.ID, work.Waiter.ID)
-	_, err = s.BeginRenditionProvider(
-		t.Context(), freshClaim, work.Waiter.ID,
-		now.Add(4*time.Second), renditionJobTestSnapshot(request))
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrProcessingConsentRequired)
+	require.Empty(t, work.Waiter.ID)
 }
 
 func TestRenditionJobMetadataRoundTripPreservesActiveStagedBuildRoot(t *testing.T) {

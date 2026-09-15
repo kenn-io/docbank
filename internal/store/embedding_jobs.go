@@ -30,16 +30,20 @@ type EmbeddingJobRequest struct {
 type EmbeddingJob struct{ ID string }
 
 // EmbeddingJobStatus is the bounded provider-neutral state exposed to an
-// aggregate processing service. It deliberately excludes receipts, consent
-// identities, source names, and provider payloads.
+// aggregate processing service. It carries only the admitted authority needed
+// to select sibling bindings, and excludes principals, source names, provider
+// payloads, and complete receipts.
 type EmbeddingJobStatus struct {
-	ID                 string
-	ContentVersionID   string
-	ProfileFingerprint string
-	BindingID          string
-	Activation         document.EmbeddingActivation
-	State              string
-	FailureCode        EmbeddingFailureCode
+	ID                           string
+	ContentVersionID             string
+	ProfileFingerprint           string
+	BindingID                    string
+	Activation                   document.EmbeddingActivation
+	State                        string
+	FailureCode                  EmbeddingFailureCode
+	AuthorizationGrantID         string
+	AuthorizationIncarnationID   string
+	AuthorizationRevocationFence int64
 }
 
 type EmbeddingJobClaim struct {
@@ -125,8 +129,7 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 	generationProjection := request.InputGeneration
 	generationProjection.GenerationJSON = nil
 	generationProjection.EvidenceJSON = nil
-	jobID := embeddingJobID(s.vaultID, request.ContentVersionID, profile.Fingerprint,
-		binding.Name, binding.InputKind, request.InputGeneration.ID)
+	var jobID string
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		suppression, suppressionErr := loadEmbeddingPurgeSuppressionTx(ctx, tx,
 			EmbeddingHeadKey{request.ContentVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
@@ -151,40 +154,56 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		if err := insertInputGenerationTx(ctx, tx, generationProjection); err != nil {
 			return err
 		}
-		if _, err := authorizeProviderOperationTx(ctx, tx, s.vaultID, request.Authorization, time.Now().UTC()); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
-			job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
-			generation_id,vector_space_id,principal,scope,state,available_at,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?) ON CONFLICT(job_id) DO NOTHING`,
-			jobID, s.vaultID, request.ContentVersionID, profile.Fingerprint, binding.Name,
-			binding.InputKind, request.InputGeneration.ID, space.ID, authority.principal,
-			authority.scope, now, now, now)
+		authorization, err := authorizeProviderOperationTx(ctx, tx, s.vaultID,
+			request.Authorization, time.Now().UTC())
 		if err != nil {
 			return err
 		}
-		// Abandonment fences an attempt, not the retained intent. Reopen only
-		// after rechecking current source authority in this transaction; consent
-		// and the exact generation were validated above. Keep claim epochs and
-		// retry counts so old workers stay fenced and retry budgets stay bounded.
-		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued',
-			principal=?,scope=?,failure_code=NULL,updated_at=? WHERE job_id=? AND state='abandoned'
-			AND EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
-			  AND n.current_version_id=v.version_id AND n.trashed_at IS NULL WHERE v.version_id=?)`,
-			authority.principal, authority.scope, now, jobID, request.ContentVersionID); err != nil {
+		jobID = embeddingJobID(s.vaultID, request.ContentVersionID, profile.Fingerprint,
+			binding.Name, binding.InputKind, request.InputGeneration.ID, authorization.GrantID,
+			authorization.ProcessingIncarnationID, authorization.RevocationFence)
+		satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, request.ContentVersionID,
+			profile.Fingerprint, binding, request.InputGeneration.ID, space.ID)
+		if err != nil {
 			return err
 		}
-		// Consent was checked above. Rebind idle work without resetting provider
-		// retry counts or delays. Only an authorization failure becomes runnable
-		// again; running claims keep their original authority until they finish.
-		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET principal=?,scope=?,
-			state=CASE WHEN state='failed' AND failure_code=? THEN 'queued' ELSE state END,
-			failure_code=CASE WHEN state='failed' AND failure_code=? THEN NULL ELSE failure_code END,
-			updated_at=? WHERE job_id=? AND state IN ('queued','retry_wait','failed')
-			AND (principal<>? OR scope<>? OR (state='failed' AND failure_code=?))`,
-			authority.principal, authority.scope, EmbeddingFailureAuthorization, EmbeddingFailureAuthorization,
-			now, jobID, authority.principal, authority.scope, EmbeddingFailureAuthorization); err != nil {
+		initialState := "queued"
+		if satisfied {
+			initialState = "completed"
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
+			job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
+			generation_id,vector_space_id,principal,scope,authorization_grant_id,
+			authorization_incarnation_id,authorization_revocation_fence,
+			state,available_at,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO NOTHING`,
+			jobID, s.vaultID, request.ContentVersionID, profile.Fingerprint, binding.Name,
+			binding.InputKind, request.InputGeneration.ID, space.ID, authority.principal,
+			authority.scope, authorization.GrantID, authorization.ProcessingIncarnationID,
+			authorization.RevocationFence, initialState, now, now, now)
+		if err != nil {
+			return err
+		}
+		// A provider authorization failure may be retried only when this exact
+		// authority-bound job is enqueued again after its original grant passes the
+		// authorization check above. Revoked authority selects a different job
+		// identity and cannot reopen this row.
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued',
+			claim_owner=NULL,lease_expires_at=NULL,available_at=?,failure_code=NULL,updated_at=?
+			WHERE job_id=? AND state='failed' AND failure_code='authorization'`,
+			now, now, jobID); err != nil {
+			return err
+		}
+		// Abandonment fences an attempt, not the retained intent. Reopen only
+		// after rechecking current source authority in this transaction. The job
+		// retains its admitted consent receipt, while the exact generation was
+		// validated above. Keep claim epochs and retry counts so old workers stay
+		// fenced and retry budgets stay bounded.
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued',
+			failure_code=NULL,updated_at=? WHERE job_id=? AND state='abandoned'
+			AND EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
+			  AND n.current_version_id=v.version_id AND n.trashed_at IS NULL WHERE v.version_id=?)`,
+			now, jobID, request.ContentVersionID); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE embedding_jobs SET claim_epoch=max(claim_epoch,
@@ -201,9 +220,12 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 	}
 	var status EmbeddingJobStatus
 	var failure sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code
+	err := s.db.QueryRowContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code,
+		authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence
 		FROM embedding_jobs WHERE job_id=?`, id).Scan(&status.ID, &status.ContentVersionID,
-		&status.ProfileFingerprint, &status.BindingID, &status.State, &failure)
+		&status.ProfileFingerprint, &status.BindingID, &status.State, &failure,
+		&status.AuthorizationGrantID,
+		&status.AuthorizationIncarnationID, &status.AuthorizationRevocationFence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EmbeddingJobStatus{}, ErrNotFound
 	}
@@ -229,24 +251,56 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 	profileFingerprint string,
 ) ([]EmbeddingJobStatus, error) {
+	return s.embeddingJobsForVersionProfile(ctx, versionID, profileFingerprint, "", false)
+}
+
+// EmbeddingJobsForVersionProfileConsentSet returns only jobs admitted by the
+// independently scoped grants recorded with one reviewed processing request.
+func (s *Store) EmbeddingJobsForVersionProfileConsentSet(ctx context.Context, versionID,
+	profileFingerprint, admittedGrantID string,
+) ([]EmbeddingJobStatus, error) {
+	return s.embeddingJobsForVersionProfile(ctx, versionID, profileFingerprint,
+		admittedGrantID, true)
+}
+
+func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
+	profileFingerprint, admittedGrantID string, filterAuthority bool,
+) ([]EmbeddingJobStatus, error) {
 	if err := validateUUIDv4(versionID); err != nil {
 		return nil, ErrNotFound
 	}
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return nil, ErrNotFound
 	}
+	if filterAuthority {
+		if err := validateUUIDv4(admittedGrantID); err != nil {
+			return nil, ErrNotFound
+		}
+	}
 	profile, err := loadProcessingProfile(ctx, s.db, profileFingerprint)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code
+	query := `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code,
+		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence
 		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
 		WHERE j.content_version_id=? AND j.profile_fingerprint=?
 		AND (j.input_kind='original_file' OR EXISTS (
 			SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
 			AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id
-		)) ORDER BY j.binding_id,j.job_id`,
-		versionID, profileFingerprint)
+		))`
+	args := []any{versionID, profileFingerprint}
+	if filterAuthority {
+		query += ` AND EXISTS(
+			SELECT 1 FROM processing_consent_grants anchor
+			JOIN processing_consent_grants member
+			  ON member.consent_set_id=anchor.consent_set_id
+			WHERE anchor.grant_id=? AND member.grant_id=j.authorization_grant_id
+		)`
+		args = append(args, admittedGrantID)
+	}
+	query += ` ORDER BY j.binding_id,j.job_id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +310,9 @@ func (s *Store) EmbeddingJobsForVersionProfile(ctx context.Context, versionID,
 		var status EmbeddingJobStatus
 		var failure sql.NullString
 		if err := rows.Scan(&status.ID, &status.ContentVersionID, &status.ProfileFingerprint,
-			&status.BindingID, &status.State, &failure); err != nil {
+			&status.BindingID, &status.State, &failure, &status.AuthorizationGrantID,
+			&status.AuthorizationIncarnationID,
+			&status.AuthorizationRevocationFence); err != nil {
 			return nil, err
 		}
 		if failure.Valid {
@@ -459,7 +515,12 @@ func (s *Store) BeginEmbeddingProviderEgress(ctx context.Context, claim Embeddin
 			return err
 		}
 		request := work.Consent
-		request.PriorAuthorization = prior
+		if request.PriorAuthorization == nil {
+			return ErrEmbeddingJobFenced
+		}
+		if prior != nil && !sameProviderAuthorizationAuthority(*request.PriorAuthorization, *prior) {
+			return ErrEmbeddingJobFenced
+		}
 		var err error
 		auth, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, time.Now().UTC())
 		return err
@@ -589,8 +650,13 @@ func finishEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, clai
 
 func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID string) (EmbeddingJobWork, error) {
 	var versionID, profileID, bindingID, generationID, spaceID, principal, scope string
-	err := tx.QueryRowContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,generation_id,vector_space_id,principal,scope
-		FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&versionID, &profileID, &bindingID, &generationID, &spaceID, &principal, &scope)
+	var grantID, incarnationID string
+	var revocationFence int64
+	err := tx.QueryRowContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,generation_id,
+		vector_space_id,principal,scope,authorization_grant_id,authorization_incarnation_id,
+		authorization_revocation_fence FROM embedding_jobs WHERE job_id=?`, jobID).Scan(
+		&versionID, &profileID, &bindingID, &generationID, &spaceID, &principal, &scope,
+		&grantID, &incarnationID, &revocationFence)
 	if err != nil {
 		return EmbeddingJobWork{}, err
 	}
@@ -623,7 +689,15 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 		SourceBlobHash: sourceHash, SourceBytes: sourceBytes, SourceFilename: filename, SourceMediaType: mediaType,
 		Consent: ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profileID, DisclosureFingerprint: binding.DisclosureFingerprint,
-			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}}, nil
+			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+			PriorAuthorization: &ProviderOperationAuthorization{GrantID: grantID,
+				ProcessingIncarnationID: incarnationID, RevocationFence: revocationFence}}}, nil
+}
+
+func sameProviderAuthorizationAuthority(left, right ProviderOperationAuthorization) bool {
+	return left.GrantID == right.GrantID &&
+		left.ProcessingIncarnationID == right.ProcessingIncarnationID &&
+		left.RevocationFence == right.RevocationFence
 }
 
 func embeddingBindingFromProfile(profile ProcessingProfileRecord, name string) (document.EmbeddingBindingV1, document.FingerprintSet, error) {

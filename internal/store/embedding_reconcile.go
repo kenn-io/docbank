@@ -136,19 +136,24 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if !found {
 					continue
 				}
-				var state, failure, principal, scope string
-				err = tx.QueryRowContext(ctx, `SELECT state,COALESCE(failure_code,''),principal,scope
-					FROM embedding_jobs WHERE job_id=?`, embeddingJobID(s.vaultID, generation.SourceVersionID,
-					profile.Fingerprint, binding.Name, binding.InputKind, generation.ID)).Scan(&state, &failure, &principal, &scope)
+				prior := consent.PriorAuthorization
+				if prior == nil {
+					return errors.New("embedding reconciliation consent lacks admission authority")
+				}
+				jobID := embeddingJobID(s.vaultID, generation.SourceVersionID, profile.Fingerprint,
+					binding.Name, binding.InputKind, generation.ID, prior.GrantID,
+					prior.ProcessingIncarnationID, prior.RevocationFence)
+				var state string
+				var failure sql.NullString
+				err = tx.QueryRowContext(ctx, `SELECT state,failure_code
+					FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&state, &failure)
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
-				if err == nil {
-					reauthorize := state == "failed" && failure == string(EmbeddingFailureAuthorization)
-					rebind := (state == "queued" || state == "retry_wait") && (principal != consent.Principal || scope != consent.Scope)
-					if state != "abandoned" && !reauthorize && !rebind {
-						continue
-					}
+				recoverableAuthorization := state == "failed" && failure.Valid &&
+					EmbeddingFailureCode(failure.String) == EmbeddingFailureAuthorization
+				if err == nil && state != "abandoned" && !recoverableAuthorization {
+					continue
 				}
 				candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
 					ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
@@ -253,7 +258,8 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 		candidate := ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile, DisclosureFingerprint: disclosure,
 			InputClasses: []string{string(inputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
-		if _, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at); err == nil {
+		if authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at); err == nil {
+			candidate.PriorAuthorization = &authorization
 			return candidate, true, nil
 		} else if !errors.Is(err, ErrProcessingConsentRequired) && !errors.Is(err, ErrProcessingConsentExpired) && !errors.Is(err, ErrProcessingConsentRevoked) {
 			return ProviderOperationAuthorizationRequest{}, false, err

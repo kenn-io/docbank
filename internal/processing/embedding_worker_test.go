@@ -489,6 +489,22 @@ func TestEmbeddingRuntimeRegistryClassifiesWithExactExecutingRuntime(t *testing.
 	assert.Equal(t, store.EmbeddingFailureInputRejected, fixture.catalog.failures[headKey(work)])
 }
 
+func TestEmbeddingRuntimeRegistryClassifiesPerProfileBinding(t *testing.T) {
+	fixture := newEmbeddingWorkerFixture(t)
+	work := fixture.work("profile-binding-classifier", document.EmbeddingInputRenditionChunk, "semantic")
+	registry := NewEmbeddingRuntimeRegistry()
+	require.NoError(t, registry.Register(work.Descriptor.Fingerprint, fixture.runtime))
+	require.NoError(t, registry.RegisterBinding(work.ProcessingProfile.Fingerprint, work.Binding.Name,
+		work.Descriptor.Fingerprint, embeddingScopedClassifierRuntime{
+			EmbeddingRuntime: fixture.runtime, classification: EmbeddingProviderTransient,
+		}))
+
+	execution, err := registry.Prepare(t.Context(), work)
+	require.NoError(t, err)
+	classification, _ := execution.Classify(errors.New("synthetic provider failure"))
+	require.Equal(t, EmbeddingProviderTransient, classification)
+}
+
 type embeddingWorkerFixture struct {
 	t               *testing.T
 	now             time.Time
@@ -875,6 +891,16 @@ func (embeddingTransientClassifierRuntime) Prepare(context.Context, EmbeddingWor
 }
 func (embeddingTransientClassifierRuntime) Classify(error) (EmbeddingProviderFailure, time.Duration) {
 	return EmbeddingProviderTransient, 0
+}
+
+type embeddingScopedClassifierRuntime struct {
+	EmbeddingRuntime
+
+	classification EmbeddingProviderFailure
+}
+
+func (runtime embeddingScopedClassifierRuntime) Classify(error) (EmbeddingProviderFailure, time.Duration) {
+	return runtime.classification, 0
 }
 
 type embeddingWorkerProvider struct {
