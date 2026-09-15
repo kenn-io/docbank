@@ -283,7 +283,7 @@ func TestCountPPTXSlidesAcceptsNamespaceDeclarationsNamedLikeAttributes(t *testi
 			presentationNamespace := pptxPresentationNamespaces.value(family)
 			relationshipIDNamespace := pptxRelationshipIDNamespaces.value(family)
 			relationshipType := pptxSlideRelationshipTypes.value(family)
-			presentation := `<p:presentation xmlns:p="` + presentationNamespace + `" xmlns:id="` + relationshipIDNamespace + `"><p:sldIdLst><p:sldId id="256" id:id="rId1"/></p:sldIdLst></p:presentation>`
+			presentation := `<p:presentation xmlns:p="` + presentationNamespace + `"><p:sldIdLst><p:sldId xmlns:id="` + relationshipIDNamespace + `" id="256" id:id="rId1"/></p:sldIdLst></p:presentation>`
 			relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship xmlns:Type="urn:example:namespace" Id="rId1" Type="` + relationshipType + `" Target="slides/slide1.xml"/></Relationships>`
 			archive := documentZIP(t, map[string]string{
 				pptxPresentationPath:      presentation,
