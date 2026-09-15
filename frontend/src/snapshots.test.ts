@@ -286,18 +286,20 @@ describe("exact snapshot target capture", () => {
   it("copies and verifies every member before returning mutation-ready targets", async () => {
     const first = await twoPageFirst();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await second()));
-    const result = await captureSnapshotTargets("session", first, new AbortController().signal);
+    const result = await captureSnapshotTargets("session", first, new AbortController().signal, { 1: { expectedRevision: 1, revision: 4 }, 51: { expectedRevision: 48, revision: 49 } });
 
     expect(result.snapshot).toBe(first);
     expect(result.members).toHaveLength(51);
     expect(result.members[0]).toEqual({
       node_id: 1, content_version_id: captureRows[0].content_version_id,
-      blob_hash: captureRows[0].blob_hash, size: 1, revision: 1,
+      blob_hash: captureRows[0].blob_hash, size: 1, revision: 4,
     });
     expect(result.members[50]).toEqual({
       node_id: 51, content_version_id: captureRows[50].content_version_id,
       blob_hash: captureRows[50].blob_hash, size: 51, revision: 51,
     });
+    expect(first.rows[0].revision).toBe(1);
+    expect(await snapshotMemberHash(result.members)).toBe(first.member_hash);
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/workspace/queries/"))).toBe(true);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags"))).toHaveLength(0);
   });

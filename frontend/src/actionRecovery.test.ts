@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { prepareAction, ACTION_MAX_BYTES, type PreparedAction } from "./actionJournal.js";
+import { prepareAction, actionPlanDigest, ACTION_MAX_BYTES, type PreparedAction } from "./actionJournal.js";
+import { batchTagRequestDigest } from "./batch-tags.js";
 import { decodeRecovery, encodeRecovery } from "./actionRecovery.js";
 import { snapshotMemberHash, type SnapshotMember, type VerifiedSnapshotTargets, type WorkspaceQueryResponse } from "./snapshots.js";
 
@@ -29,6 +30,17 @@ describe("recovery file codec", () => {
     const action = await fixture();
     const encoded = await encodeRecovery(action);
     await expect(decodeRecovery(encoded)).resolves.toEqual(action);
+  });
+
+  it("checks consistency without authenticating targets supplied by a file creator", async () => {
+    const original = await fixture();
+    const members = [{ ...original.batches[0].members[0], node_id: 9 }];
+    const request = { ...original.batches[0].request, nodes: [{ node_id: 9, revision: members[0].revision }] };
+    const changed = { ...original, source: { ...original.source, member_hash: await snapshotMemberHash(members) },
+      batches: [{ ...original.batches[0], members, request, request_digest: await batchTagRequestDigest(request) }] };
+    changed.plan_digest = await actionPlanDigest(changed);
+    const decoded = await decodeRecovery(await encodeRecovery(changed));
+    expect(decoded.batches[0].request.nodes).toEqual([{ node_id: 9, revision: 4 }]);
   });
 
   it.each([

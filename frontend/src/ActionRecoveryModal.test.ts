@@ -149,7 +149,7 @@ it("saves a credential-free checkpoint and requires its readback before the firs
   expect(journal.checkpointReads).toBe(1);
   expect(journal.batchCalls).toBe(0);
 
-  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault, action, tag, operation, and exact target count/ }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault, action, tag, operation, and exact targets/ }));
   await fireEvent.click(screen.getByRole("button", { name: /Confirm and run/ }));
   await screen.findByText(/Action complete/);
   expect(journal.batchCalls).toBe(1);
@@ -231,4 +231,32 @@ it("shows a paused reload as retained work that needs explicit resume", async ()
   expect(screen.getByText(/action is paused/i)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Confirm and resume action" })).toBeTruthy();
   expect(journal.batchCalls).toBe(0);
+});
+
+it("keeps a deleted-tag action available for checkpoint export and abandonment", async () => {
+  const action = { ...await prepared(), checkpoint_verified: true };
+  const journal = new MemoryJournal(action);
+  const onclose = vi.fn();
+  render(ActionRecoveryModal, { session: "session", sessionVaultID: vaultID,
+    journal, initialAction: action, tag: null, onprogress: vi.fn(), onclose, onauthfailure: vi.fn() });
+  expect(screen.getByText(/tag is no longer available/i)).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Confirm and run action" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Save recovery checkpoint" }) as HTMLButtonElement).disabled).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Abandon action…" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Abandon action without rollback" }));
+  await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+  expect(journal.action).toBeNull();
+});
+
+it("shows exact file-supplied identities before target confirmation", async () => {
+  const action = await prepared();
+  render(ActionRecoveryModal, { session: "session", sessionVaultID: vaultID,
+    journal: new MemoryJournal(action), initialAction: action, tag,
+    onprogress: vi.fn(), onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(screen.getByText("Review exact targets"));
+  expect(screen.getByRole("cell", { name: "7" })).toBeTruthy();
+  expect(screen.getByText(member.content_version_id)).toBeTruthy();
+  expect(screen.getByText(member.blob_hash)).toBeTruthy();
+  expect(screen.getByText(/Checksums detect inconsistent files/)).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: /exact targets$/ })).toBeTruthy();
 });

@@ -95,7 +95,7 @@
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
   import { isAppShortcutSuppressed, moveInspection } from "./shortcuts.js";
-  import { applySnapshotReceiptOverlay, visibleSnapshotOverlay, type SnapshotReceiptOverlays } from "./snapshotOverlays.js";
+  import { applySnapshotReceiptOverlay, snapshotTargetRevision, visibleSnapshotOverlay, type SnapshotReceiptOverlays } from "./snapshotOverlays.js";
   import { ActionJournal, prepareAction, type PersistedAction } from "./actionJournal.js";
   import { readActionVaultID } from "./actionRunner.js";
   import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
@@ -226,7 +226,7 @@
   const selectedSnapshotRows = $derived(snapshotPage?.rows.filter((row) => snapshotSelection.has(row.node_id)) ?? []);
   const snapshotTargets = $derived(selectedSnapshotRows.map((row) => ({
     node_id: row.node_id,
-    revision: Math.max(row.revision, snapshotOverlays[row.node_id]?.revision ?? row.revision),
+    revision: snapshotTargetRevision(row, snapshotOverlays),
   })));
   const allVisibleSnapshotRowsSelected = $derived(
     Boolean(snapshotPage?.rows.length) && selectedSnapshotRows.length === snapshotPage?.rows.length,
@@ -1110,24 +1110,20 @@
     snapshotOverlays = applySnapshotReceiptOverlay(snapshotOverlays, receipt, tagLabel);
   }
 
-  function applyActionReceipts(action: Readonly<PersistedAction>): void {
-    for (const batch of action.batches) {
-      if (batch.receipt) applySnapshotReceipt(batch.receipt as BatchTagReceipt);
-    }
-  }
-
   async function showRecovery(
     journal: ActionJournal,
     action: PersistedAction,
     vaultID: string,
   ): Promise<void> {
-    const currentTag = await tagByID(webSession, action.tag_id);
+    const currentTag = await tagByID(webSession, action.tag_id).catch((cause) => {
+      if (cause instanceof APIError && cause.status === 404) return null;
+      throw cause;
+    });
     recoveryJournal = journal;
     recoveryAction = action;
     recoveryTag = currentTag;
     recoveryVaultID = vaultID;
     snapshotActionsOpen = false;
-    applyActionReceipts(action);
   }
 
   async function startSnapshotAction(choice: SnapshotActionChoice): Promise<void> {
@@ -1148,7 +1144,7 @@
     try {
       // Complete enumeration and hash/byte verification happen before random
       // operation identities are prepared or anything is persisted.
-      const targets = await captureSnapshotTargets(webSession, firstPage, capture.signal);
+      const targets = await captureSnapshotTargets(webSession, firstPage, capture.signal, snapshotOverlays);
       const vaultID = await readActionVaultID(webSession);
       const journal = await ActionJournal.open(vaultID);
       const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
@@ -1197,6 +1193,21 @@
       const action = await journal.load();
       if (!action) throw new Error("No retained action is available for this vault. Select a recovery file instead.");
       await showRecovery(journal, action, vaultID);
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      snapshotActionBusy = false;
+    }
+  }
+
+  async function abandonSnapshotAction(): Promise<void> {
+    if (snapshotActionBusy) return;
+    snapshotActionBusy = true;
+    snapshotActionError = "";
+    try {
+      await ActionJournal.abandon(await readActionVaultID(webSession));
+      snapshotActionsOpen = false;
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
@@ -2541,17 +2552,18 @@
         onstart={(choice) => void startSnapshotAction(choice)}
         onimport={(bytes) => void importSnapshotAction(bytes)}
         onresume={() => void resumeSnapshotAction()}
+        onabandon={() => void abandonSnapshotAction()}
         onclose={() => { if (!snapshotActionBusy) snapshotActionsOpen = false; }}
       />
     {/if}
-    {#if recoveryJournal && recoveryAction && recoveryTag}
+    {#if recoveryJournal && recoveryAction}
       <ActionRecoveryModal
         session={webSession}
         sessionVaultID={recoveryVaultID}
         journal={recoveryJournal}
         initialAction={recoveryAction}
         tag={recoveryTag}
-        onprogress={(action) => { recoveryAction = action; applyActionReceipts(action); }}
+        onprogress={(action, receipt) => { recoveryAction = action; if (receipt) applySnapshotReceipt(receipt); }}
         onclose={() => { recoveryJournal = null; recoveryAction = null; recoveryTag = null; recoveryVaultID = ""; }}
         onauthfailure={handleFailure}
       />

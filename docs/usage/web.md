@@ -205,11 +205,15 @@ In a frozen snapshot, checkboxes select only documents on the visible page.
 captured population does not expand when an untagged query starts receiving
 the tag: completed changes appear as overlays while the frozen rows and facet
 membership remain unchanged.
+New actions use confirmed tag revisions only when the receipts connect back
+to the frozen document revision. Other document changes still make it stale.
+Once prepared, an action keeps its original requests and expected revisions.
 
 Before any prepared action can mutate the vault, save its recovery checkpoint,
 select that saved file back, and confirm the displayed vault, action, tag,
-operation, and exact target count. The browser also journals the action in
-IndexedDB for that origin. Another tab on the same origin can resume it, but
+operation, and exact targets. **Review exact targets** lists node IDs, content
+versions, hashes, sizes, and expected revisions in pages of 50. The browser also
+journals the action in IndexedDB for that origin. Another tab can resume it, but
 only the original operation identities, requests, and expected revisions are
 retried. If a response is lost after the daemon commits, **Retry same
 operation** recovers the retained receipt without applying the change twice.
@@ -221,11 +225,20 @@ readback and explicit confirmation. A stale document revision fences the
 action without silently refreshing its target or partially applying that
 batch.
 
+Recovery files contain instructions supplied by their creator. Checksums detect
+inconsistent files; they do not authenticate the creator. Review the exact
+targets before confirming an imported action. Receipts inside a file do not
+update the snapshot's observed revisions; only receipts returned by the daemon
+during this session do that.
+
 Recovery files contain private stable document identities, content-version
 identities, hashes, sizes, and revisions. They omit paths, names, query text,
 and browser credentials, but still need the same protection as vault metadata.
 Abandoning removes the browser journal and does not roll back changes that
 already committed.
+If a tag was deleted, recovery still lets you save the checkpoint or abandon
+the action. **Abandon retained action** also clears an unreadable journal for
+the current vault, so corrupt browser data cannot block later actions.
 
 ## Manage tag definitions
 

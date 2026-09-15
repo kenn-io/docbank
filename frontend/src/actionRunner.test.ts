@@ -51,6 +51,23 @@ function receipt(action: PersistedAction, index = 0): BatchTagReceipt { const ba
 afterEach(() => vi.restoreAllMocks());
 
 describe("recoverable action runner", () => {
+  it("publishes revision evidence only for receipts returned by the daemon", async () => {
+    const base = await persisted(1_001);
+    const imported = receipt(base, 0);
+    const action: PersistedAction = { ...base, batches: base.batches.map((batch) => batch.index === 0
+      ? { ...batch, state: "complete", receipt: imported } : batch) };
+    const journal = new MemoryJournal(action);
+    const confirmed = receipt(base, 1);
+    const observed: BatchTagReceipt[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => input === "/api/v1/audit/status"
+      ? audit() : new Response(JSON.stringify(confirmed)));
+    await runAction("session", journal, new AbortController().signal, (_action, receipt) => {
+      if (receipt) observed.push(receipt);
+    });
+    expect(observed).toEqual([confirmed]);
+    expect(journal.action.state).toBe("complete");
+  });
+
   it("stops a stale batch without refreshing its captured revisions", async () => {
     const journal = new MemoryJournal(await persisted(1_001));
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

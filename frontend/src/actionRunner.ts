@@ -1,14 +1,14 @@
 import { APIError, requestJSON } from "./api.js";
-import { changeBatchTags } from "./batch-tags.js";
+import { changeBatchTags, type BatchTagReceipt } from "./batch-tags.js";
 import type { ActionJournalAccess, PersistedAction } from "./actionJournal.js";
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export type ActionProgress = (action: Readonly<PersistedAction>) => void;
+export type ActionProgress = (action: Readonly<PersistedAction>, confirmedReceipt?: BatchTagReceipt) => void;
 
-function publish(onProgress: ActionProgress, action: PersistedAction): void {
+function publish(onProgress: ActionProgress, action: PersistedAction, confirmedReceipt?: BatchTagReceipt): void {
   try {
-    onProgress(action);
+    onProgress(action, confirmedReceipt);
   } catch {
     // Rendering progress cannot change whether a durable mutation is sent or recorded.
   }
@@ -50,7 +50,7 @@ export async function runAction(
       const receipt = await changeBatchTags(session, batch.request as Parameters<typeof changeBatchTags>[1]);
       await journal.recordReceipt(batch.index, receipt);
       action = (await journal.load()) ?? action;
-      publish(onProgress, action);
+      publish(onProgress, action, receipt);
     } catch (error) {
       if (error instanceof APIError && error.status === 412 && error.code === "stale_revision") {
         await journal.markStale(batch.index);
