@@ -39,6 +39,23 @@ func TestFromStoreErrorMapsCustodianConflict(t *testing.T) {
 	assert.Equal(t, "custodian_conflict", mapped.Code)
 }
 
+func TestFromStoreErrorMapsPersonConflicts(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{store.ErrPersonMergeConflict, "person_merge_conflict"},
+		{store.ErrPersonRetired, "person_retired"},
+	} {
+		t.Run(test.code, func(t *testing.T) {
+			mapped := &Error{}
+			require.ErrorAs(t, FromStoreError(test.err), &mapped)
+			assert.Equal(t, http.StatusConflict, mapped.Status)
+			assert.Equal(t, test.code, mapped.Code)
+		})
+	}
+}
+
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	for _, test := range []struct {
 		err  error

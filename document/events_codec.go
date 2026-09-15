@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
+	"golang.org/x/net/idna"
 )
 
 // ErrDocumentEventsOutputBound reports that an otherwise valid event record
@@ -227,12 +228,7 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 			}
 			textBytes += len(actor.ActorKey) + len(actor.Address) + len(actor.Claim) + len(actor.DisplayName)
 			if actor.ActorKey != "" {
-				separator := strings.IndexByte(actor.ActorKey, ':')
-				if separator <= 0 {
-					return fmt.Errorf("document event %d actor %d has an invalid actor key", index, actorIndex)
-				}
-				canonicalKey, err := ActorKeyV1(actor.ActorKey[:separator], actor.ActorKey[separator+1:])
-				if err != nil || canonicalKey != actor.ActorKey {
+				if err := ValidateActorKeyV1(actor.ActorKey); err != nil {
 					return fmt.Errorf("document event %d actor %d has an invalid actor key", index, actorIndex)
 				}
 			}
@@ -324,10 +320,112 @@ func cloneDocumentEventsV1(value DocumentEventsV1) DocumentEventsV1 {
 	return value
 }
 
+// ValidateActorKeyV1 checks a persisted key without applying person-entry policy.
+func ValidateActorKeyV1(key string) error {
+	if len(key) > MaxActorKeyBytes {
+		return errors.New("actor key exceeds the byte limit")
+	}
+	kind, value, ok := strings.Cut(key, ":")
+	canonicalKey, err := ActorKeyV1(kind, value)
+	if !ok || err != nil || canonicalKey != key {
+		return errors.New("invalid actor key")
+	}
+	return nil
+}
+
+// ActorKeyV1 preserves the document-events/v1 normalization contract. Person
+// entry validation is stricter and must not change how persisted keys are read.
 func ActorKeyV1(kind, value string) (string, error) {
-	identity, err := NormalizePersonIdentity(PersonIdentityKind(kind), value)
+	if !utf8.ValidString(value) {
+		return "", errors.New("actor key value is not valid UTF-8")
+	}
+	var normalized string
+	var err error
+	switch kind {
+	case "email":
+		normalized, err = normalizeActorEmail(value)
+	case "phone":
+		normalized = normalizeActorPhone(value)
+	case "handle":
+		if canonical.IsSHA256Hex(value) {
+			normalized = value
+		} else {
+			normalized, err = normalizeActorHandle(value)
+		}
+	case "external_uid":
+		if !canonical.IsSHA256Hex(value) {
+			return "", errors.New("external actor key is not a digest")
+		}
+		normalized = value
+	case "name_alias":
+		normalized = FoldPersonName(value)
+	default:
+		return "", errors.New("actor key kind is unknown")
+	}
 	if err != nil {
 		return "", err
 	}
-	return ActorKey(identity)
+	if normalized == "" {
+		return "", errors.New("actor key value is empty")
+	}
+	key := kind + ":" + normalized
+	if len(key) > MaxActorKeyBytes {
+		return "", fmt.Errorf("actor key is longer than %d bytes", MaxActorKeyBytes)
+	}
+	return key, nil
+}
+
+func asciiLower(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, value)
+}
+
+func normalizeActorEmail(value string) (string, error) {
+	trimmed := strings.Trim(strings.TrimSpace(value), "<>")
+	if trimmed == "" {
+		return "", nil
+	}
+	at := strings.LastIndex(trimmed, "@")
+	if at <= 0 || at == len(trimmed)-1 {
+		return "", errors.New("actor key email has no domain")
+	}
+	local, domain := trimmed[:at], trimmed[at+1:]
+	if strings.ContainsAny(domain, "[]") {
+		return "", errors.New("actor key email domain is a literal")
+	}
+	ascii, err := idna.Lookup.ToASCII(strings.ToLower(domain))
+	if err != nil {
+		return "", fmt.Errorf("actor key email domain is not resolvable: %w", err)
+	}
+	return asciiLower(local) + "@" + ascii, nil
+}
+
+func normalizeActorPhone(value string) string {
+	var digits strings.Builder
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	bare := digits.String()
+	if bare == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.TrimSpace(value), "+") && len(bare) >= 7 && len(bare) <= 15 {
+		return "+" + bare
+	}
+	return bare
+}
+
+func normalizeActorHandle(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	slash := strings.Index(trimmed, "/")
+	if slash <= 0 || slash == len(trimmed)-1 {
+		return "", errors.New("actor key handle is not service/value")
+	}
+	return asciiLower(trimmed[:slash]) + "/" + trimmed[slash+1:], nil
 }

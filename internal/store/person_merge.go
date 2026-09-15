@@ -334,18 +334,31 @@ func mergeExternalRetirementsTx(ctx context.Context, tx *sql.Tx, survivorID, abs
 		if err := rows.Scan(&system, &archiveID, &survivorUID, &absorbedUID); err != nil {
 			return nil, err
 		}
-		var target string
-		err := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, system, archiveID, absorbedUID).Scan(&target)
-		if err == nil && target == survivorUID {
+		survivor, err := resolvePersonUIDTx(ctx, tx, system, archiveID, survivorUID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrPersonMergeConflict
+		}
+		if err != nil {
+			return nil, err
+		}
+		absorbed, err := resolvePersonUIDTx(ctx, tx, system, archiveID, absorbedUID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrPersonMergeConflict
+		}
+		if err != nil {
+			return nil, err
+		}
+		if survivor.ResolvedUID != absorbed.ResolvedUID {
+			return nil, ErrPersonMergeConflict
+		}
+		switch survivor.ResolvedUID {
+		case survivorUID:
 			retirements = append(retirements, mergeExternalRetirement{absorbedID, system, archiveID, absorbedUID})
-			continue
-		}
-		err = tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, system, archiveID, survivorUID).Scan(&target)
-		if err == nil && target == absorbedUID {
+		case absorbedUID:
 			retirements = append(retirements, mergeExternalRetirement{survivorID, system, archiveID, survivorUID})
-			continue
+		default:
+			return nil, ErrPersonMergeConflict
 		}
-		return nil, ErrPersonMergeConflict
 	}
 	return retirements, rows.Err()
 }

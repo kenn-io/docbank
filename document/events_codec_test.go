@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 type actorKeyVector struct {
@@ -76,6 +77,36 @@ func TestDocumentEventsKeepsUnscopedHandleKeys(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDocumentEventsPreservesActorKeyV1(t *testing.T) {
+	keys := map[string]string{
+		"phone leading zero": "phone:+0123456",
+		"phone bound":        "phone:" + strings.Repeat("1", 378),
+		"email Unicode":      "email:Üser@example.test",
+		"email quoted local": `email:"ada lovelace"@example.test`,
+		"email parsed local": "email:ada lovelace@example.test",
+		"email bound":        "email:" + strings.Repeat("a", 365) + "@example.test",
+		"handle Unicode":     "handle:Äpp/user-a",
+		"handle bound":       "handle:chat/" + strings.Repeat("a", 372),
+		"name bound":         "name_alias:" + strings.Repeat("a", 373),
+		"name control":       "name_alias:ada\x00lovelace",
+	}
+	for name, key := range keys {
+		t.Run(name, func(t *testing.T) {
+			kind, value, _ := strings.Cut(key, ":")
+			normalized, err := ActorKeyV1(kind, value)
+			require.NoError(t, err)
+			require.Equal(t, key, normalized)
+			record := validDocumentEvents()
+			record.Events[0].Actors[0].ActorKey = key
+			raw, err := canonical.Marshal(record)
+			require.NoError(t, err)
+			decoded, _, err := DecodeDocumentEventsV1(raw)
+			require.NoError(t, err)
+			require.Equal(t, key, decoded.Events[0].Actors[0].ActorKey)
+		})
+	}
+}
+
 func TestDocumentEventsCodecCanonicalEmptyRecord(t *testing.T) {
 	value := DocumentEventsV1{VaultUID: "vault-uid-1", ContentVersionID: "cv-1", ContractVersion: DocumentEventsContractV1,
 		DocumentKind: "other", Diagnostics: []DocumentEventDiagnosticV1{}, Events: []DocumentEventV1{},
@@ -107,19 +138,22 @@ func TestDocumentEventsCodecRejectsMalformedAndNonCanonicalJSON(t *testing.T) {
 
 func TestDocumentEventsCodecRejectsContractViolations(t *testing.T) {
 	tests := map[string]func(*DocumentEventsV1){
-		"bad event id":         func(v *DocumentEventsV1) { v.Events[0].EventID = strings.Repeat("b", 64) },
-		"bad axis key":         func(v *DocumentEventsV1) { v.Events[0].AxisKey = "2019" },
-		"bad fraction count":   func(v *DocumentEventsV1) { v.Events[0].FractionDigits = 1 },
-		"unknown role":         func(v *DocumentEventsV1) { v.Events[0].Actors[0].Role = "owner" },
-		"malformed actor key":  func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "email:ada@EXAMPLE.TEST" },
-		"duplicate actor slot": func(v *DocumentEventsV1) { v.Events[0].Actors = append(v.Events[0].Actors, v.Events[0].Actors[0]) },
-		"duplicate event slot": func(v *DocumentEventsV1) { v.Events = append(v.Events, v.Events[0]) },
-		"missing source":       func(v *DocumentEventsV1) { v.Sources = []DocumentEventSourceV1{} },
-		"unknown primary":      func(v *DocumentEventsV1) { v.Primaries[0].EventID = strings.Repeat("b", 64) },
-		"duplicate primary":    func(v *DocumentEventsV1) { v.Primaries = append(v.Primaries, v.Primaries[0]) },
-		"safe sensitive":       func(v *DocumentEventsV1) { v.Primaries[0].Disclosure = "safe"; v.Events[0].Sensitive = true },
-		"safe sensitive actor": func(v *DocumentEventsV1) { v.Primaries[0].Disclosure = "safe"; v.Events[0].Actors[0].Sensitive = true },
-		"invalid UTF-8 value":  func(v *DocumentEventsV1) { v.Events[0].RawValue = string([]byte{0xff}) },
+		"bad event id":           func(v *DocumentEventsV1) { v.Events[0].EventID = strings.Repeat("b", 64) },
+		"bad axis key":           func(v *DocumentEventsV1) { v.Events[0].AxisKey = "2019" },
+		"bad fraction count":     func(v *DocumentEventsV1) { v.Events[0].FractionDigits = 1 },
+		"unknown role":           func(v *DocumentEventsV1) { v.Events[0].Actors[0].Role = "owner" },
+		"malformed actor key":    func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "email:ada@EXAMPLE.TEST" },
+		"short handle digest":    func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "handle:" + strings.Repeat("a", 63) },
+		"nonhex external key":    func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "external_uid:" + strings.Repeat("g", 64) },
+		"uppercase external key": func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "external_uid:" + strings.Repeat("A", 64) },
+		"duplicate actor slot":   func(v *DocumentEventsV1) { v.Events[0].Actors = append(v.Events[0].Actors, v.Events[0].Actors[0]) },
+		"duplicate event slot":   func(v *DocumentEventsV1) { v.Events = append(v.Events, v.Events[0]) },
+		"missing source":         func(v *DocumentEventsV1) { v.Sources = []DocumentEventSourceV1{} },
+		"unknown primary":        func(v *DocumentEventsV1) { v.Primaries[0].EventID = strings.Repeat("b", 64) },
+		"duplicate primary":      func(v *DocumentEventsV1) { v.Primaries = append(v.Primaries, v.Primaries[0]) },
+		"safe sensitive":         func(v *DocumentEventsV1) { v.Primaries[0].Disclosure = "safe"; v.Events[0].Sensitive = true },
+		"safe sensitive actor":   func(v *DocumentEventsV1) { v.Primaries[0].Disclosure = "safe"; v.Events[0].Actors[0].Sensitive = true },
+		"invalid UTF-8 value":    func(v *DocumentEventsV1) { v.Events[0].RawValue = string([]byte{0xff}) },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -232,11 +266,9 @@ func TestActorKeyGoldenVector(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, vector.Key, key)
 			assert.LessOrEqual(t, len(key), MaxActorKeyBytes)
-			if vector.ScopeKind == "" {
-				wrapped, err := ActorKeyV1(vector.Kind, input)
-				require.NoError(t, err)
-				assert.Equal(t, key, wrapped)
-			}
+			wrapped, err := ActorKeyV1(vector.Kind, identity.ValueNormalized)
+			require.NoError(t, err)
+			assert.Equal(t, key, wrapped)
 		})
 	}
 	_, err = ActorKeyV1("address", "x@y.test")

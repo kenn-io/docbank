@@ -71,7 +71,8 @@ func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) 
 	require.NoError(t, err)
 	person, _, err = s.PersonByID(ctx, person.PersonID)
 	require.NoError(t, err)
-	require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "new", []string{"old"}))
+	require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "middle", []string{"old"}))
+	require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "new", []string{"middle"}))
 	newIdentity := oldIdentity
 	newIdentity.UID = "new"
 	_, err = s.LinkExternalIdentity(ctx, newIdentity, person.Revision)
@@ -102,6 +103,11 @@ func TestPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T) {
 	identity.UID = "two"
 	_, err = s.LinkExternalIdentity(t.Context(), identity, person.Revision)
 	require.ErrorIs(t, err, ErrPersonIdentityConflict)
+	identities, err := s.PersonExternalIdentities(t.Context(), person.PersonID)
+	require.NoError(t, err)
+	require.Len(t, identities, 1)
+	require.Equal(t, "one", identities[0].UID)
+	require.Equal(t, "current", identities[0].UIDState)
 }
 
 func TestPersonExternalIdentityCannotBeLinkedToAnotherPerson(t *testing.T) {

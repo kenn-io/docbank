@@ -106,34 +106,50 @@ func TestMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T) {
 }
 
 func TestMergePersonsAcceptsResolvedCurrentExternalUIDs(t *testing.T) {
-	s := newTestStore(t)
-	survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
-	require.NoError(t, err)
-	absorbed, err := s.CreatePerson(t.Context(), "Ada Old", "operator")
-	require.NoError(t, err)
-	for person, uid := range map[Person]string{survivor: "current", absorbed: "retired"} {
-		_, err = s.LinkExternalIdentity(t.Context(), PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault",
-			ArchiveID: "synthetic", UID: uid, UIDKind: "vcard_uid", UIDState: "current"}, person.Revision)
-		require.NoError(t, err)
+	for _, test := range []struct {
+		name, survivorUID, absorbedUID string
+		multihop                       bool
+	}{
+		{"direct", "current", "retired", false},
+		{"multihop to survivor", "current", "retired", true},
+		{"multihop to absorbed", "retired", "current", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
+			require.NoError(t, err)
+			absorbed, err := s.CreatePerson(t.Context(), "Ada Old", "operator")
+			require.NoError(t, err)
+			for person, uid := range map[Person]string{survivor: test.survivorUID, absorbed: test.absorbedUID} {
+				_, err = s.LinkExternalIdentity(t.Context(), PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault",
+					ArchiveID: "synthetic", UID: uid, UIDKind: "vcard_uid", UIDState: "current"}, person.Revision)
+				require.NoError(t, err)
+			}
+			if test.multihop {
+				require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "middle", []string{"retired"}))
+				require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "current", []string{"middle"}))
+			} else {
+				require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "current", []string{"retired"}))
+			}
+			survivor, _, err = s.PersonByID(t.Context(), survivor.PersonID)
+			require.NoError(t, err)
+			absorbed, _, err = s.PersonByID(t.Context(), absorbed.PersonID)
+			require.NoError(t, err)
+			operationID, err := newUUIDv4()
+			require.NoError(t, err)
+			_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+			require.NoError(t, err)
+			identities, err := s.PersonExternalIdentities(t.Context(), survivor.PersonID)
+			require.NoError(t, err)
+			require.Len(t, identities, 2)
+			states := map[string]string{}
+			for _, identity := range identities {
+				states[identity.UID] = identity.UIDState
+			}
+			require.Equal(t, "current", states["current"])
+			require.Equal(t, "retired", states["retired"])
+		})
 	}
-	require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "current", []string{"retired"}))
-	survivor, _, err = s.PersonByID(t.Context(), survivor.PersonID)
-	require.NoError(t, err)
-	absorbed, _, err = s.PersonByID(t.Context(), absorbed.PersonID)
-	require.NoError(t, err)
-	operationID, err := newUUIDv4()
-	require.NoError(t, err)
-	_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
-	require.NoError(t, err)
-	identities, err := s.PersonExternalIdentities(t.Context(), survivor.PersonID)
-	require.NoError(t, err)
-	require.Len(t, identities, 2)
-	states := map[string]string{}
-	for _, identity := range identities {
-		states[identity.UID] = identity.UIDState
-	}
-	require.Equal(t, "current", states["current"])
-	require.Equal(t, "retired", states["retired"])
 }
 
 func TestMergePersonsRewritesAliasChainsToOneHop(t *testing.T) {

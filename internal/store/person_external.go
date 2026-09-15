@@ -70,14 +70,10 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		if isNew && count >= document.MaxPersonExternalIdentities {
 			return ErrPersonIdentityConflict
 		}
+		var previous string
 		if identity.UIDState == "current" {
-			var previous string
 			currentErr := tx.QueryRowContext(ctx, `SELECT uid FROM person_external_identities WHERE person_id=? AND system=? AND archive_id=? AND uid_state='current' AND uid<>?`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID).Scan(&previous)
 			if currentErr == nil {
-				var target string
-				if err := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, identity.System, identity.ArchiveID, previous).Scan(&target); err != nil || target != identity.UID {
-					return ErrPersonIdentityConflict
-				}
 				if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='retired',updated_at=? WHERE person_id=? AND system=? AND archive_id=? AND uid=?`, now, identity.PersonID, identity.System, identity.ArchiveID, previous); err != nil {
 					return err
 				}
@@ -88,6 +84,20 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		_, err = tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(system,archive_id,uid) DO UPDATE SET uid_kind=excluded.uid_kind,uid_state=excluded.uid_state,last_seen_revision=excluded.last_seen_revision,display_name_snapshot=excluded.display_name_snapshot,updated_at=excluded.updated_at`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID, identity.UIDKind, identity.UIDState, identity.LastSeenRevision, identity.DisplayNameSnapshot, now, now)
 		if err != nil {
 			return err
+		}
+		if previous != "" {
+			// Validate after staging the new current UID so the shared resolver can
+			// follow the complete transition. Any failure rolls back both writes.
+			resolved, err := resolvePersonUIDTx(ctx, tx, identity.System, identity.ArchiveID, previous)
+			if errors.Is(err, ErrNotFound) {
+				return ErrPersonIdentityConflict
+			}
+			if err != nil {
+				return err
+			}
+			if resolved.ResolvedUID != identity.UID {
+				return ErrPersonIdentityConflict
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, identity.PersonID); err != nil {
 			return err

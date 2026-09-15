@@ -81,7 +81,9 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 		if err != nil || ascii == "" {
 			return bad()
 		}
-		out.ValueNormalized = strings.ToLower(local + "@" + ascii)
+		address.Name = ""
+		address.Address = strings.ToLower(local + "@" + ascii)
+		out.ValueNormalized = strings.Trim(address.String(), "<>")
 		out.Normalization = "email_v1"
 		out.AutoLinkEligible = true
 	case "phone":
@@ -151,8 +153,8 @@ func personTupleDigest(values []string) (string, error) {
 
 func ActorKey(identity NormalizedIdentity) (string, error) {
 	key := string(identity.Kind) + ":" + identity.ValueNormalized
-	if identity.ValueNormalized == "" || len(key) > MaxActorKeyBytes {
-		return "", errors.New("invalid actor key")
+	if err := ValidateActorKeyV1(key); err != nil {
+		return "", err
 	}
 	switch identity.Kind {
 	case "email", "phone", "handle", "name_alias":

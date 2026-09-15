@@ -1,6 +1,7 @@
 package document
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,4 +29,23 @@ func TestPeopleIdentityCollisionBoundaries(t *testing.T) {
 	require.Equal(t, "fi ada", FoldPersonName("ﬁ   ADA"))
 	_, err = NormalizePersonIdentity("email", "a@example.test\r\nBcc:b@example.test")
 	require.Error(t, err)
+	_, err = NormalizePersonIdentity("phone", "+0123456")
+	require.Error(t, err)
+	_, err = NormalizePersonIdentity("phone", strings.Repeat("1", 16))
+	require.Error(t, err)
+}
+
+func TestPersonEmailActorKeyPreservesQuotedLocalPart(t *testing.T) {
+	for _, test := range []struct{ raw, key string }{
+		{`"<Ada"@example.test`, `email:"<ada"@example.test`},
+		{`" Ada"@example.test`, `email:" ada"@example.test`},
+	} {
+		t.Run(test.raw, func(t *testing.T) {
+			identity, err := NormalizePersonIdentity("email", test.raw)
+			require.NoError(t, err)
+			key, err := ActorKey(identity)
+			require.NoError(t, err)
+			require.Equal(t, test.key, key)
+		})
+	}
 }
