@@ -22,9 +22,12 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestConvertedDOCXUsesExistingPDFProcessing(t *testing.T) {
-	source, _ := sourceFor(t, syntheticDOCX())
-	converted, err := Convert(t.Context(), source, policyFor(t, helperExecutable(t, "ok"), DefaultLimits()))
-	require.NoError(t, err)
+	t.Run("within MaxUnits", func(t *testing.T) { testConvertedDOCXProcessing(t, "ok", false) })
+	t.Run("above MaxUnits", func(t *testing.T) { testConvertedDOCXProcessing(t, "pages", true) })
+}
+
+func testConvertedDOCXProcessing(t *testing.T, mode string, wantReject bool) {
+	t.Helper()
 	normalize, err := document.NewNormalizePolicy(100_000)
 	require.NoError(t, err)
 	policy, err := mistral.NewPolicy(mistral.PolicyConfig{
@@ -37,17 +40,7 @@ func TestConvertedDOCXUsesExistingPDFProcessing(t *testing.T) {
 	require.NoError(t, err)
 	authorization, err := policy.Authorize(manifest, "pdf")
 	require.NoError(t, err)
-	directory := filepath.Join(t.TempDir(), "spool")
-	require.NoError(t, safefileio.EnsurePrivateDir(directory))
-	generated, err := converted.Source()
-	require.NoError(t, err)
-	prepared, err := mistral.Prepare(t.Context(), generated.Content, policy, mistral.PrepareOptions{
-		Directory: directory, DeclaredMediaType: generated.MediaType, ExpectedSize: generated.Size,
-		ExpectedSHA256: generated.SHA256, MaxSpoolBytes: 1 << 20, MinFreeBytes: 1,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
-	require.Equal(t, converted.Receipt().PDFSHA256, prepared.SHA256())
+	var converted *Result
 	requests := 0
 	client, err := mistral.NewClient(policy, mistral.ClientConfig{
 		APIKey: "synthetic-key",
@@ -79,27 +72,32 @@ func TestConvertedDOCXUsesExistingPDFProcessing(t *testing.T) {
 		})},
 	})
 	require.NoError(t, err)
+	limits := DefaultLimits()
+	limits.MaxPages = policy.Values().MaxUnits
+	source, _ := sourceFor(t, syntheticDOCX())
+	converted, err = Convert(t.Context(), source, policyFor(t, helperExecutable(t, mode), limits))
+	if wantReject {
+		require.Nil(t, converted)
+		require.EqualError(t, err, "generated PDF exceeds page limit or has no pages")
+		require.Zero(t, requests)
+		t.Log("MaxUnits=3 rendered_pages=4 result_nil=true provider_requests=0")
+		return
+	}
+	require.NoError(t, err)
+	directory := filepath.Join(t.TempDir(), "spool")
+	require.NoError(t, safefileio.EnsurePrivateDir(directory))
+	generated, err := converted.Source()
+	require.NoError(t, err)
+	prepared, err := mistral.Prepare(t.Context(), generated.Content, policy, mistral.PrepareOptions{
+		Directory: directory, DeclaredMediaType: generated.MediaType, ExpectedSize: generated.Size,
+		ExpectedSHA256: generated.SHA256, MaxSpoolBytes: 1 << 20, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
+	require.Equal(t, converted.Receipt().PDFSHA256, prepared.SHA256())
 	result, err := client.Process(t.Context(), prepared, authorization)
 	require.NoError(t, err)
 	require.Equal(t, 1, requests)
 	require.Equal(t, converted.Receipt().Pages, result.UnitsProcessed)
 	require.NotZero(t, result.Document)
-}
-
-func TestDOCXOverMaxUnitsRejectedBeforeEgress(t *testing.T) {
-	limits := DefaultLimits()
-	limits.MaxPages = 4
-	source, _ := sourceFor(t, syntheticDOCX())
-	converted, err := Convert(t.Context(), source, policyFor(t, helperExecutable(t, "pages"), limits))
-	require.NoError(t, err)
-	normalize, err := document.NewNormalizePolicy(100_000)
-	require.NoError(t, err)
-	policy, err := mistral.NewPolicy(mistral.PolicyConfig{
-		Region: mistral.RegionEU, Model: mistral.DefaultModel, Retention: mistral.RetentionZDR,
-		Training: mistral.TrainingOptedOut, MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20,
-		MaxUnits: 3, NormalizePolicy: normalize,
-	})
-	require.NoError(t, err)
-	require.Greater(t, converted.Receipt().Pages, policy.Values().MaxUnits)
-	// The application rejects the receipt before it calls Prepare or Process.
 }

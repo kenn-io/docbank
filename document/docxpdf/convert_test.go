@@ -334,25 +334,93 @@ func TestNewPolicyValidatesLimitsAndFingerprint(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, base.Fingerprint(), changed.Fingerprint())
 	changedLimits := defaults
-	changedLimits.MaxPages--
-	changed, err = NewPolicy(renderer, changedLimits)
+	for _, edit := range []func(*Limits){
+		func(l *Limits) { l.MaxSourceBytes-- }, func(l *Limits) { l.MaxPDFBytes-- },
+		func(l *Limits) { l.MaxPages-- }, func(l *Limits) { l.Timeout-- },
+	} {
+		changedLimits = defaults
+		edit(&changedLimits)
+		changed, err = NewPolicy(renderer, changedLimits)
+		require.NoError(t, err)
+		require.NotEqual(t, base.Fingerprint(), changed.Fingerprint())
+	}
+	changedPath := helperExecutable(t, "pin-change")
+	changedRenderer := renderer
+	changedRenderer.Executable = changedPath
+	changed, err = NewPolicy(changedRenderer, defaults)
 	require.NoError(t, err)
 	require.NotEqual(t, base.Fingerprint(), changed.Fingerprint())
-	changedExecutable := helperExecutable(t, "pin-change")
-	require.NoError(t, os.WriteFile(changedExecutable, append(mustRead(t, changedExecutable), []byte("identity")...), 0o700))
-	changed, err = NewPolicy(Renderer{Executable: changedExecutable, ExecutableSHA256: executableSHA256(t, changedExecutable), RuntimeIdentity: testRuntimeIdentity}, defaults)
+	beforeSHA := changed.Fingerprint()
+	require.NoError(t, os.WriteFile(changedPath, append(mustRead(t, changedPath), []byte("identity")...), 0o700))
+	changedRenderer.ExecutableSHA256 = executableSHA256(t, changedPath)
+	changed, err = NewPolicy(changedRenderer, defaults)
 	require.NoError(t, err)
-	require.NotEqual(t, base.Fingerprint(), changed.Fingerprint())
-	marker := filepath.Join(t.TempDir(), "must-not-launch")
+	require.NotEqual(t, beforeSHA, changed.Fingerprint())
 	noLaunchExecutable := helperExecutable(t, "no-launch")
-	_, err = NewPolicy(Renderer{Executable: noLaunchExecutable, ExecutableSHA256: executableSHA256(t, noLaunchExecutable), RuntimeIdentity: marker}, defaults)
+	marker := noLaunchExecutable + ".started"
+	_, err = NewPolicy(Renderer{Executable: noLaunchExecutable, ExecutableSHA256: executableSHA256(t, noLaunchExecutable), RuntimeIdentity: testRuntimeIdentity}, defaults)
 	require.NoError(t, err)
 	_, err = os.Stat(marker)
 	require.ErrorIs(t, err, os.ErrNotExist)
+	command := exec.Command(noLaunchExecutable)
+	_ = command.Run()
+	_, err = os.Stat(marker)
+	require.NoError(t, err)
 	source, _ := sourceFor(t, syntheticDOCX())
 	result, err := Convert(t.Context(), source, Policy{})
 	require.Nil(t, result)
 	require.EqualError(t, err, "DOCX PDF policy is invalid; use NewPolicy")
+}
+
+func TestConvertRejectsOversizedAndCancelledSources(t *testing.T) {
+	data := syntheticDOCX()
+	executable := helperExecutable(t, "no-launch")
+	limits := DefaultLimits()
+	limits.MaxSourceBytes = int64(len(data)) - 1
+	policy := policyFor(t, executable, limits)
+	source, reader := sourceFor(t, data)
+	result, err := Convert(t.Context(), source, policy)
+	require.Nil(t, result)
+	require.EqualError(t, err, "DOCX source exceeds byte limit")
+	require.Equal(t, 1, reader.closeCount)
+	policy = policyFor(t, executable, DefaultLimits())
+	t.Run("already cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		source, reader := sourceFor(t, data)
+		result, err := Convert(ctx, source, policy)
+		require.Nil(t, result)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, reader.closeCount)
+	})
+	t.Run("cancelled during read", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		source, reader := sourceFor(t, data)
+		reader.Reader = readerFunc(func(p []byte) (int, error) { cancel(); return copy(p, data), nil })
+		result, err := Convert(ctx, source, policy)
+		require.Nil(t, result)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, reader.closeCount)
+	})
+	_, err = os.Stat(executable + ".started")
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (r readerFunc) Read(p []byte) (int, error) { return r(p) }
+
+func TestConvertRechecksPinBeforeNativeRestart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native restart is Unix-only")
+	}
+	executable := helperExecutable(t, "restart-swap")
+	policy := policyFor(t, executable, DefaultLimits())
+	source, _ := sourceFor(t, syntheticDOCX())
+	result, err := Convert(t.Context(), source, policy)
+	require.Nil(t, result)
+	require.EqualError(t, err, "DOCX renderer identity changed")
 }
 
 func TestResultAccessorsReturnCopies(t *testing.T) {

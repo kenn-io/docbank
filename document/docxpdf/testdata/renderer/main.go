@@ -13,6 +13,13 @@ import (
 )
 
 func main() {
+	mode := strings.TrimSuffix(filepath.Base(os.Args[0]), filepath.Ext(os.Args[0]))
+	mode = strings.TrimPrefix(mode, "renderer-")
+	if mode == "no-launch" {
+		if err := os.WriteFile(os.Args[0]+".started", []byte("started"), 0o600); err != nil {
+			fail("write launch marker")
+		}
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--grandchild" {
 		grandchild()
 	}
@@ -62,8 +69,6 @@ func main() {
 	if _, err := os.Stat(os.Args[9]); err != nil {
 		fail("input file is missing")
 	}
-	mode := strings.TrimSuffix(filepath.Base(os.Args[0]), filepath.Ext(os.Args[0]))
-	mode = strings.TrimPrefix(mode, "renderer-")
 	switch mode {
 	case "fail":
 		_, _ = io.WriteString(os.Stderr, "synthetic renderer failure")
@@ -79,7 +84,7 @@ func main() {
 			fail("create output directory")
 		}
 	case "size":
-		writeOutput(workingDirectory, bytes.Repeat([]byte("x"), 2048))
+		writeOutput(workingDirectory, bytes.Repeat([]byte("x"), 1025))
 	case "pages":
 		writeOutput(workingDirectory, syntheticPDF(4))
 	case "noise":
@@ -112,6 +117,18 @@ func main() {
 		}
 		writeOutput(workingDirectory, syntheticPDF(3))
 	case "restart-always":
+		os.Exit(81)
+	case "restart-swap":
+		data, err := os.ReadFile(os.Args[0])
+		if err != nil {
+			fail("read executable")
+		}
+		if err := os.WriteFile(os.Args[0]+".replacement", append(data, 'x'), 0o700); err != nil {
+			fail("write executable")
+		}
+		if err := os.Rename(os.Args[0]+".replacement", os.Args[0]); err != nil {
+			fail("replace executable")
+		}
 		os.Exit(81)
 	default:
 		writeOutput(workingDirectory, syntheticPDF(3))
