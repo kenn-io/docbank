@@ -82,6 +82,7 @@ type Server struct {
 	auditPreviews *auditPreviewRegistry
 	webSessions   *webSessionRegistry
 	webDownloads  *webDownloadRegistry
+	packageRoots  *packageRootRegistry
 	snapshots     *store.QuerySnapshotService
 	masterOwner   string
 }
@@ -142,6 +143,7 @@ func NewServer(d Deps) *Server {
 		deps: d, api: humaAPI, auditPreviews: newAuditPreviewRegistry(),
 		snapshots: snapshots, masterOwner: masterOwner,
 		webDownloads: newWebDownloadRegistry(d.VaultRoot),
+		packageRoots: newPackageRootRegistry(),
 	}
 	s.webSessions = newWebSessionRegistry(func(owner string) {
 		if s.snapshots != nil {
@@ -180,6 +182,7 @@ func NewServer(d Deps) *Server {
 	registerProcessingRoutes(humaAPI, d)
 	registerEmailRoutes(mux, humaAPI, d, g)
 	registerTimelineRoutes(humaAPI, d, g)
+	registerPackageRoutes(mux, humaAPI, d, g, s.packageRoots)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	s.registerHealth(mux)
@@ -247,6 +250,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		snapshotDone <- s.snapshots.Close()
 	}()
 	sessionErr := s.webSessions.closeAll(ctx)
+	if s.packageRoots != nil {
+		sessionErr = errors.Join(sessionErr, s.packageRoots.closeAll())
+	}
 	if s.deps.Processing != nil {
 		sessionErr = errors.Join(sessionErr, s.deps.Processing.Shutdown(ctx))
 	}

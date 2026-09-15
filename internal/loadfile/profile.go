@@ -45,6 +45,9 @@ var namedProfiles = map[string]Profile{
 		Columns:  []string{"ImageKey", "VolumeName", "ImagePath", "DocumentBreak", "PageCount", "FolderBreak", "BoxBreak"},
 		Encoding: encodingNameUTF8,
 	},
+	"lfp-ipro-v1": {
+		ID: "lfp-ipro-v1", Field: ',', Encoding: encodingNameUTF8,
+	},
 }
 
 func ReadProfile(id string) (Profile, error) {

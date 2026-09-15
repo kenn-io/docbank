@@ -50,6 +50,26 @@ CREATE TABLE IF NOT EXISTS blobs (
     created_at TEXT NOT NULL
 );
 
+-- Package previews are expiring control state. Full normalized manifests and
+-- diagnostics live in staged blobs held only for the lifetime of this row.
+CREATE TABLE IF NOT EXISTS package_preflights (
+    preflight_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    profile_sha256 TEXT NOT NULL,
+    mapping_sha256 TEXT NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    manifest_blob_sha256 TEXT NOT NULL,
+    diagnostics_blob_sha256 TEXT,
+    canonical_json BLOB NOT NULL,
+    diagnostics_json BLOB NOT NULL,
+    blocking INTEGER NOT NULL CHECK (blocking IN (0,1)),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS package_preflights_expiry ON package_preflights(expires_at);
+
 -- MD5 is auxiliary interoperability metadata over the same exact logical
 -- bytes. SHA-256 remains the sole content identity and authority.
 CREATE TABLE IF NOT EXISTS blob_checksums (

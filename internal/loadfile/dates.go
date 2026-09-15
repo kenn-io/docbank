@@ -298,11 +298,11 @@ func decimal(raw string) int {
 }
 
 func ambiguousTimeDiagnostic(detail string) []Diagnostic {
-	return []Diagnostic{{Code: "package_mapping_ambiguous", Severity: "blocking", Detail: detail}}
+	return []Diagnostic{{Code: "package_mapping_ambiguous", Severity: diagnosticSeverityBlocking, Detail: detail}}
 }
 
 func blockingTimeDiagnostic(code, detail string) []Diagnostic {
-	return []Diagnostic{{Code: code, Severity: "blocking", Detail: detail}}
+	return []Diagnostic{{Code: code, Severity: diagnosticSeverityBlocking, Detail: detail}}
 }
 
 func declaredDateLayout(format string) string {

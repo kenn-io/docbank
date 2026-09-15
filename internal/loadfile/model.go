@@ -2,6 +2,17 @@
 // provider-independent intermediate model.
 package loadfile
 
+const diagnosticSeverityBlocking = "blocking"
+const maxDiagnosticsPerOperation = 100_000
+
+func appendDiagnosticBounded(diagnostics *[]Diagnostic, diagnostic Diagnostic) error {
+	if len(*diagnostics) == maxDiagnosticsPerOperation {
+		return ErrLoadfileLimit
+	}
+	*diagnostics = append(*diagnostics, diagnostic)
+	return nil
+}
+
 type Package struct {
 	Profile     Profile
 	Volumes     []Volume

@@ -47,6 +47,8 @@ var blobRootReferences = []blobReference{
 var blobGCHolds = []blobReference{
 	{table: "rendition_blob_staging", column: columnBlobHash},
 	{table: "derivative_blob_purge_pending", column: columnBlobHash},
+	{table: "package_preflights", column: "manifest_blob_sha256"},
+	{table: "package_preflights", column: "diagnostics_blob_sha256"},
 }
 
 // blobUnreferencedSQL returns an AND-joined predicate that is true when no

@@ -62,12 +62,14 @@ func scanOPT(source io.Reader, profile Profile, maxRows int, emit func(ImageRef)
 		line := strings.TrimSuffix(scanner.Text(), "\r")
 		values := strings.Split(line, ",")
 		if len(values) != len(optColumns) {
-			diagnostics = append(diagnostics, Diagnostic{
+			if err := appendDiagnosticBounded(&diagnostics, Diagnostic{
 				Code:       "opt_field_count",
-				Severity:   "blocking",
+				Severity:   diagnosticSeverityBlocking,
 				RowOrdinal: rowOrdinal,
 				Detail:     fmt.Sprintf("OPT row has %d fields; profile declares %d", len(values), len(optColumns)),
-			})
+			}); err != nil {
+				return diagnostics, err
+			}
 			continue
 		}
 		for _, value := range values {
@@ -78,19 +80,27 @@ func scanOPT(source io.Reader, profile Profile, maxRows int, emit func(ImageRef)
 
 		documentBreak, diagnostic := parseOPTFlag(values[indexes["DocumentBreak"]], "DocumentBreak", rowOrdinal)
 		if diagnostic != nil {
-			diagnostics = append(diagnostics, *diagnostic)
+			if err := appendDiagnosticBounded(&diagnostics, *diagnostic); err != nil {
+				return diagnostics, err
+			}
 		}
 		folderBreak, diagnostic := parseOPTFlag(values[indexes["FolderBreak"]], "FolderBreak", rowOrdinal)
 		if diagnostic != nil {
-			diagnostics = append(diagnostics, *diagnostic)
+			if err := appendDiagnosticBounded(&diagnostics, *diagnostic); err != nil {
+				return diagnostics, err
+			}
 		}
 		boxBreak, diagnostic := parseOPTFlag(values[indexes["BoxBreak"]], "BoxBreak", rowOrdinal)
 		if diagnostic != nil {
-			diagnostics = append(diagnostics, *diagnostic)
+			if err := appendDiagnosticBounded(&diagnostics, *diagnostic); err != nil {
+				return diagnostics, err
+			}
 		}
 		pageCount, diagnostic := parseOPTPageCount(values[indexes["PageCount"]], rowOrdinal)
 		if diagnostic != nil {
-			diagnostics = append(diagnostics, *diagnostic)
+			if err := appendDiagnosticBounded(&diagnostics, *diagnostic); err != nil {
+				return diagnostics, err
+			}
 		}
 
 		if documentBreak || pageOrdinal == 0 {
@@ -148,7 +158,7 @@ func parseOPTFlag(raw, column string, rowOrdinal int) (bool, *Diagnostic) {
 	default:
 		return false, &Diagnostic{
 			Code:       "opt_flag_invalid",
-			Severity:   "blocking",
+			Severity:   diagnosticSeverityBlocking,
 			Column:     column,
 			RowOrdinal: rowOrdinal,
 			Detail:     fmt.Sprintf("OPT %s must be Y or empty", column),
@@ -166,7 +176,7 @@ func parseOPTPageCount(raw string, rowOrdinal int) (int, *Diagnostic) {
 	}
 	return 0, &Diagnostic{
 		Code:       "opt_page_count_invalid",
-		Severity:   "blocking",
+		Severity:   diagnosticSeverityBlocking,
 		Column:     "PageCount",
 		RowOrdinal: rowOrdinal,
 		Detail:     "OPT PageCount must be an empty or unsigned decimal integer",

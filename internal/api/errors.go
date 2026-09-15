@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -120,6 +122,18 @@ var storeErrCodes = []struct {
 	{packstore.ErrPhysicalAuthorityMissing, http.StatusInternalServerError, "physical_authority_missing"},
 }
 
+var packageErrCodes = []struct {
+	target error
+	status int
+	code   string
+}{
+	{loadfile.ErrInvalidProfile, http.StatusUnprocessableEntity, "invalid_package_profile"},
+	{loadfile.ErrInvalidMapping, http.StatusUnprocessableEntity, "invalid_package_mapping"},
+	{loadfile.ErrMappingAmbiguous, http.StatusUnprocessableEntity, "package_mapping_ambiguous"},
+	{loadfile.ErrUnsafeReference, http.StatusUnprocessableEntity, "package_reference_unsafe"},
+	{store.ErrPreflightBlocking, http.StatusUnprocessableEntity, "package_preflight_blocking"},
+}
+
 // FromStoreError maps the store's typed errors onto the wire envelope; an
 // unrecognized error becomes an opaque 500 (message still surfaced — this
 // is a single-user local daemon, not a hardened multi-tenant service).
@@ -129,13 +143,13 @@ func FromStoreError(err error) error {
 	}
 	var exhausted *packstore.ExhaustedError
 	if errors.As(err, &exhausted) && exhausted.Headline != nil {
-		for _, m := range storeErrCodes {
+		for _, m := range slices.Concat(storeErrCodes, packageErrCodes) {
 			if errors.Is(exhausted.Headline, m.target) {
 				return NewError(m.status, m.code, err.Error())
 			}
 		}
 	}
-	for _, m := range storeErrCodes {
+	for _, m := range slices.Concat(storeErrCodes, packageErrCodes) {
 		if errors.Is(err, m.target) {
 			return NewError(m.status, m.code, err.Error())
 		}
