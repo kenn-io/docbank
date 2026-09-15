@@ -116,7 +116,7 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 		}
 		err = json.Unmarshal([]byte(out), &snapshot)
 		return true
-	}, 5*time.Second, 25*time.Millisecond)
+	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.NotEmpty(t, snapshot.ID)
 

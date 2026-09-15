@@ -168,6 +168,12 @@ Key assumptions reviewers MUST account for:
    risk; do not request full-package or full-suite reruns merely because review
    executes separately.
 
+17. DOCX CONVERSION USES A TRUSTED RUNTIME: document/docxpdf accepts trusted
+   DOCX files, including links and fields, and runs operator-protected
+   LibreOffice with caller permissions. Executable hashing detects drift;
+   atomic whole-install pinning and filesystem/network confinement are
+   operator responsibilities. See docs/internal/docx-pdf.md.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
