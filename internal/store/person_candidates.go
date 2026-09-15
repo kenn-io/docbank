@@ -227,8 +227,12 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 }
 
 func (s *Store) OpenPersonCandidateCount(ctx context.Context) (int64, bool, error) {
+	return openPersonCandidateCount(ctx, s.db)
+}
+
+func openPersonCandidateCount(ctx context.Context, q metadataQuerier) (int64, bool, error) {
 	var count int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open'`).Scan(&count); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open'`).Scan(&count); err != nil {
 		return 0, false, err
 	}
 	return count, count >= document.MaxOpenPersonCandidates, nil

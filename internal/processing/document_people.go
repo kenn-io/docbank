@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
@@ -20,6 +22,12 @@ type DocumentPeopleCatalog interface {
 	DocumentPeopleResolverInputs(ctx context.Context, versionID string) (store.DocumentPeopleInputs, error)
 	PublishDocumentPeople(ctx context.Context, publication store.DocumentPeoplePublication) (store.DocumentPeopleHead, error)
 	MarkDocumentPeopleFailed(ctx context.Context, input store.DocumentPeopleInputs, reason string) error
+}
+
+type DocumentPeopleBackfillCatalog interface {
+	DocumentPeopleCatalog
+	MissingDocumentPeopleTargetsAfter(ctx context.Context, fingerprint, after string, limit int) ([]store.DocumentPeopleTarget, error)
+	RefreshDocumentPeopleBuilds(ctx context.Context) error
 }
 
 type DocumentPeopleBackfillResult struct {
@@ -169,4 +177,41 @@ func BackfillDocumentPeopleTargets(ctx context.Context, catalog DocumentPeopleCa
 		}
 	}
 	return result, errors.Join(failures...)
+}
+
+func NewDocumentPeopleBackfill(
+	catalog DocumentPeopleBackfillCatalog,
+	mutate func(context.Context, func() error) error,
+	logger *slog.Logger,
+) *Backfill[store.DocumentPeopleTarget] {
+	underGate := func(ctx context.Context, fn func() error) error {
+		if mutate == nil {
+			return fn()
+		}
+		return mutate(ctx, fn)
+	}
+	backfill := &Backfill[store.DocumentPeopleTarget]{
+		Name: "document-people", Page: 25, IdleDelay: time.Second,
+		Mutate: mutate, Logger: logger,
+		Key: func(target store.DocumentPeopleTarget) string { return target.ContentVersionID },
+		Process: func(ctx context.Context, target store.DocumentPeopleTarget) error {
+			_, err := BackfillDocumentPeopleTargets(ctx, catalog, []store.DocumentPeopleTarget{target})
+			return err
+		},
+	}
+	var lastBuildRefresh time.Time
+	backfill.List = func(ctx context.Context, after string, limit int) ([]store.DocumentPeopleTarget, error) {
+		targets, err := catalog.MissingDocumentPeopleTargetsAfter(
+			ctx, DocumentPeopleResolverFingerprint, after, limit,
+		)
+		now := backfill.now()
+		if err == nil && (len(targets) == 0 || now.Sub(lastBuildRefresh) >= time.Second) {
+			err = underGate(ctx, func() error { return catalog.RefreshDocumentPeopleBuilds(ctx) })
+			if err == nil {
+				lastBuildRefresh = now
+			}
+		}
+		return targets, err
+	}
+	return backfill
 }

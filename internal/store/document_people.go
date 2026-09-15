@@ -654,6 +654,11 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 		if err != nil {
 			return err
 		}
+		if headState == documentPeopleStateUnavailable {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM document_people_dirty WHERE content_version_id=? AND revision=?`, input.ContentVersionID, input.DirtyRevision); err != nil {
+				return err
+			}
+		}
 		return s.RefreshPersonRollups(ctx, tx, oldIDs)
 	})
 }
