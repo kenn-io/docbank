@@ -501,6 +501,16 @@ func TestCountPPTXSlidesScansEveryRelationshipPart(t *testing.T) {
 			target:           "https://example.invalid/image.png",
 		},
 		{
+			name:             "whitespace around external URL",
+			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+			target:           " \t https://example.invalid/image.png \t ",
+		},
+		{
+			name:             "encoded whitespace around external URL",
+			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+			target:           "%20https://example.invalid/image.png%09",
+		},
+		{
 			name:             "external video",
 			relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video",
 			target:           "https://example.invalid/video.mp4",
@@ -519,6 +529,8 @@ func TestCountPPTXSlidesScansEveryRelationshipPart(t *testing.T) {
 		{name: "malformed escape", relationshipType: "http://example.test/image", target: "media/%ZZ.png"},
 		{name: "package root escape", relationshipType: "http://example.test/image", target: "../../../outside.png"},
 		{name: "source-relative root escape", relationshipType: "http://example.test/image", target: "../../../media/image.png"},
+		{name: "whitespace around package root escape", relationshipType: "http://example.test/image", target: " \t ../../../outside.png \t "},
+		{name: "encoded whitespace around package root escape", relationshipType: "http://example.test/image", target: "%09..%2F..%2F..%2Foutside.png%20"},
 		{name: "external TargetMode", relationshipType: "http://example.test/image", target: "media/image.png", targetMode: "External"},
 	}
 	for _, test := range tests {

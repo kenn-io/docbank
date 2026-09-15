@@ -701,6 +701,7 @@ func validatePPTXXMLStructure(data []byte) error {
 }
 
 func resolvePPTXTargetFrom(sourcePath, target string) (pptxResolvedTarget, error) {
+	target = strings.TrimSpace(target)
 	if target == "" {
 		return pptxResolvedTarget{}, errors.New("PPTX relationship target is not an internal path")
 	}
@@ -708,6 +709,7 @@ func resolvePPTXTargetFrom(sourcePath, target string) (pptxResolvedTarget, error
 	if err != nil {
 		return pptxResolvedTarget{}, errors.New("PPTX relationship target is not a valid URI")
 	}
+	decoded = strings.TrimSpace(decoded)
 	if err := validatePPTXTargetURI(target, decoded); err != nil {
 		return pptxResolvedTarget{}, err
 	}
@@ -734,7 +736,23 @@ func resolvePPTXTargetFrom(sourcePath, target string) (pptxResolvedTarget, error
 	if err != nil {
 		return pptxResolvedTarget{}, fmt.Errorf("normalize PPTX relationship target: %w", err)
 	}
-	return pptxResolvedTarget{keys: rawTarget.keys(), decoded: rawTarget.decoded}, nil
+	decodedTarget, err := canonicalPPTXDecodedPath(resolveSpelling(decoded))
+	if err != nil {
+		return pptxResolvedTarget{}, fmt.Errorf("normalize decoded PPTX relationship target: %w", err)
+	}
+	keys := rawTarget.keys()
+	if !slices.Contains(keys, decodedTarget) {
+		keys = append(keys, decodedTarget)
+	}
+	return pptxResolvedTarget{keys: keys, decoded: decodedTarget}, nil
+}
+
+func canonicalPPTXDecodedPath(value string) (string, error) {
+	cleaned, err := cleanPPTXPath(value)
+	if err != nil {
+		return "", err
+	}
+	return pptxPathKey(cleaned), nil
 }
 
 func canonicalPPTXPartName(partName string) (pptxPathAliases, error) {
@@ -764,15 +782,17 @@ func canonicalPPTXPartName(partName string) (pptxPathAliases, error) {
 }
 
 func validatePPTXTargetURI(target, decoded string) error {
+	target = strings.TrimSpace(target)
+	decoded = strings.TrimSpace(decoded)
+	if hasPPTXURIPathScheme(decoded) || strings.HasPrefix(decoded, "//") {
+		return errors.New("PPTX relationship target is external")
+	}
 	parsed, err := url.Parse(target)
 	if err != nil {
 		return errors.New("PPTX relationship target is not a valid URI")
 	}
 	if parsed.Scheme != "" || parsed.Host != "" || parsed.Opaque != "" ||
 		strings.HasPrefix(target, "//") || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("PPTX relationship target is external")
-	}
-	if hasPPTXURIPathScheme(decoded) || strings.HasPrefix(decoded, "//") {
 		return errors.New("PPTX relationship target is external")
 	}
 	return nil
