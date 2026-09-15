@@ -167,6 +167,10 @@ func metadataAdapter(input DocumentEventInput) (
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
+		for index := range fieldActors {
+			fieldActors[index].actor.EvidenceKind = source.EvidenceKind
+			fieldActors[index].actor.EvidenceID = source.EvidenceID
+		}
 		if len(fieldActors) > document.MaxDocumentEventActors-len(actors) {
 			return nil, nil, nil, nil, fmt.Errorf("metadata contains more than %d actor associations: %w",
 				document.MaxDocumentEventActors, store.ErrDocumentEventEvidenceUnavailable)

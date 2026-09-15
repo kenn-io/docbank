@@ -76,8 +76,16 @@ var currentSchemaTables = [...]string{
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blobs", "blob_packs", "vault_metadata", "blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts",
+	"document_event_state", "document_event_generations", "document_event_heads",
+	"document_event_builds", "document_event_dirty", "document_event_attempts",
+	"document_events", "document_event_actors", "document_event_primaries",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 	"vector_index_reader_leases", "vector_index_unavailable_coverage",
+	"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
+	"person_aliases", "person_merges", "person_splits", "custodian_assignments",
+	"person_document_assertions", "person_match_candidates", "document_people_state",
+	"document_people_dirty", "document_people_heads", "document_people", "document_people_generations",
+	"document_people_builds", "person_rollups",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in
@@ -244,8 +252,16 @@ func validateCurrentSchemaColumns(
 		"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 		"blob_stores", "blob_locations", "blob_pack_entries",
 		"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts",
+		"document_event_state", "document_event_generations", "document_event_heads",
+		"document_event_builds", "document_event_dirty", "document_event_attempts",
+		"document_events", "document_event_actors", "document_event_primaries",
 		"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 		"vector_index_reader_leases", "vector_index_unavailable_coverage",
+		"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
+		"person_aliases", "person_merges", "person_splits", "custodian_assignments",
+		"person_document_assertions", "person_match_candidates", "document_people_state",
+		"document_people_dirty", "document_people_heads", "document_people", "document_people_generations",
+		"document_people_builds", "person_rollups",
 	} {
 		got, err := tableColumns(db, table)
 		if err != nil {
@@ -304,7 +320,7 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 		return nil, fmt.Errorf("committing temporary schema transaction: %w", err)
 	}
 	columns = make(map[string][]string, len(currentSchemaTables))
-	for _, table := range currentSchemaTables {
+	for _, table := range &currentSchemaTables {
 		columns[table], err = tableColumns(db, table)
 		if err != nil {
 			return nil, err

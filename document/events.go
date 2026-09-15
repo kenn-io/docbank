@@ -57,13 +57,15 @@ const (
 )
 
 type DocumentEventActorV1 struct {
-	ActorKey    string    `json:"actor_key"`
-	Address     string    `json:"address"`
-	Claim       string    `json:"claim"`
-	DisplayName string    `json:"display_name"`
-	Ordinal     int       `json:"ordinal"`
-	Role        EventRole `json:"role"`
-	Sensitive   bool      `json:"sensitive"`
+	ActorKey     string            `json:"actor_key"`
+	Address      string            `json:"address"`
+	Claim        string            `json:"claim"`
+	DisplayName  string            `json:"display_name"`
+	EvidenceID   string            `json:"evidence_id,omitzero"`
+	EvidenceKind EventEvidenceKind `json:"evidence_kind,omitzero"`
+	Ordinal      int               `json:"ordinal"`
+	Role         EventRole         `json:"role"`
+	Sensitive    bool              `json:"sensitive"`
 }
 
 type DocumentEventV1 struct {

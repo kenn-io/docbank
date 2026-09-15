@@ -32,6 +32,13 @@ func TestFromStoreErrorMapsUnsupportedAuditMutation(t *testing.T) {
 	assert.Equal(t, "audit_mutation_unsupported", mapped.Code)
 }
 
+func TestFromStoreErrorMapsCustodianConflict(t *testing.T) {
+	mapped := &Error{}
+	require.ErrorAs(t, FromStoreError(store.ErrCustodianConflict), &mapped)
+	assert.Equal(t, http.StatusConflict, mapped.Status)
+	assert.Equal(t, "custodian_conflict", mapped.Code)
+}
+
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	for _, test := range []struct {
 		err  error
