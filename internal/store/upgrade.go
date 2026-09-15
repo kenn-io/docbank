@@ -78,6 +78,11 @@ var currentSchemaTables = [...]string{
 	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 	"vector_index_reader_leases", "vector_index_unavailable_coverage",
+	"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
+	"person_aliases", "person_merges", "person_splits", "custodian_assignments",
+	"person_document_assertions", "person_match_candidates", "document_people_state",
+	"document_people_dirty", "document_people_heads", "document_people", "document_people_generations",
+	"document_people_builds", "person_rollups",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in
@@ -246,6 +251,11 @@ func validateCurrentSchemaColumns(
 		"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts",
 		"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 		"vector_index_reader_leases", "vector_index_unavailable_coverage",
+		"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
+		"person_aliases", "person_merges", "person_splits", "custodian_assignments",
+		"person_document_assertions", "person_match_candidates", "document_people_state",
+		"document_people_dirty", "document_people_heads", "document_people", "document_people_generations",
+		"document_people_builds", "person_rollups",
 	} {
 		got, err := tableColumns(db, table)
 		if err != nil {
@@ -304,7 +314,7 @@ func deriveCurrentSchemaColumns(driver docsqlite.Driver) (columns map[string][]s
 		return nil, fmt.Errorf("committing temporary schema transaction: %w", err)
 	}
 	columns = make(map[string][]string, len(currentSchemaTables))
-	for _, table := range currentSchemaTables {
+	for _, table := range &currentSchemaTables {
 		columns[table], err = tableColumns(db, table)
 		if err != nil {
 			return nil, err

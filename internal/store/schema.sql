@@ -1510,3 +1510,247 @@ CREATE TABLE IF NOT EXISTS email_document_relations (
     PRIMARY KEY(operation_id, occurrence_order)
 );
 CREATE INDEX IF NOT EXISTS email_document_relations_child ON email_document_relations(child_version_id);
+
+CREATE TABLE IF NOT EXISTS persons (
+    person_id TEXT PRIMARY KEY NOT NULL,
+    display_name TEXT NOT NULL,
+    display_name_folded TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    state TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS person_identities (
+    identity_id TEXT PRIMARY KEY NOT NULL,
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value_normalized TEXT NOT NULL,
+    value_display TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_value TEXT NOT NULL,
+    normalization TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS person_identities_identifier
+    ON person_identities(person_id, kind, scope_kind, scope_value, value_normalized) WHERE kind <> 'name_alias';
+CREATE UNIQUE INDEX IF NOT EXISTS person_identities_alias
+    ON person_identities(person_id, value_normalized) WHERE kind = 'name_alias';
+CREATE INDEX IF NOT EXISTS person_identities_value
+    ON person_identities(value_normalized, kind, scope_kind, scope_value, person_id);
+
+CREATE TABLE IF NOT EXISTS person_external_identities (
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    system TEXT NOT NULL,
+    archive_id TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    uid_kind TEXT NOT NULL,
+    uid_state TEXT NOT NULL,
+    last_seen_revision INTEGER,
+    display_name_snapshot TEXT NOT NULL,
+    linked_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (system, archive_id, uid)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS person_external_current
+    ON person_external_identities(person_id, system, archive_id) WHERE uid_state = 'current';
+
+CREATE TABLE IF NOT EXISTS person_external_uid_aliases (
+    system TEXT NOT NULL,
+    archive_id TEXT NOT NULL,
+    retired_uid TEXT NOT NULL,
+    surviving_uid TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (system, archive_id, retired_uid)
+);
+
+CREATE TABLE IF NOT EXISTS person_aliases (
+    retired_person_id TEXT PRIMARY KEY NOT NULL,
+    surviving_person_id TEXT,
+    reason TEXT NOT NULL,
+    retired_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS person_merges (
+    merge_id TEXT PRIMARY KEY NOT NULL,
+    operation_id TEXT NOT NULL UNIQUE,
+    request_sha256 TEXT NOT NULL,
+    survivor_person_id TEXT NOT NULL,
+    absorbed_person_id TEXT NOT NULL,
+    absorbed_display_name TEXT NOT NULL,
+    moved_json BLOB NOT NULL,
+    survivor_revision_before INTEGER NOT NULL,
+    survivor_revision_after INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS custodian_assignments (
+    assignment_id TEXT PRIMARY KEY NOT NULL,
+    scope_kind TEXT NOT NULL,
+    ingest_id TEXT REFERENCES ingests(id) ON DELETE CASCADE,
+    package_id TEXT,
+    package_record_id TEXT,
+    node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+    content_version_id TEXT REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    person_id TEXT REFERENCES persons(person_id) ON DELETE SET NULL,
+    raw_label TEXT NOT NULL,
+    raw_label_folded TEXT NOT NULL,
+    rank TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    recorded_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_collection
+    ON custodian_assignments(ingest_id) WHERE scope_kind='collection' AND rank='primary' AND retired_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_package
+    ON custodian_assignments(package_id, package_record_id) WHERE scope_kind='package' AND rank='primary' AND retired_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_document
+    ON custodian_assignments(content_version_id) WHERE scope_kind='document' AND rank='primary' AND retired_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_document_assertions (
+    assertion_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    note TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    UNIQUE (content_version_id, person_id, role)
+);
+
+CREATE TABLE IF NOT EXISTS person_match_candidates (
+    candidate_id TEXT PRIMARY KEY NOT NULL,
+    actor_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    suggested_person_id TEXT,
+    reason TEXT NOT NULL,
+    evidence_json BLOB NOT NULL,
+    evidence_sha256 TEXT NOT NULL,
+    occurrence_count INTEGER NOT NULL CHECK (occurrence_count >= 1),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    state TEXT NOT NULL,
+    decided_person_id TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_open
+    ON person_match_candidates(actor_key, suggested_person_id, reason, evidence_sha256) WHERE suggested_person_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_open_unsuggested
+    ON person_match_candidates(actor_key, reason, evidence_sha256) WHERE suggested_person_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS document_people_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    contract_version TEXT NOT NULL,
+    resolver_fingerprint TEXT NOT NULL,
+    binding_epoch INTEGER NOT NULL CHECK (binding_epoch > 0),
+    publication_epoch INTEGER NOT NULL CHECK (publication_epoch > 0),
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_people_dirty (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    marked_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS document_people_heads (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    event_generation_id TEXT NOT NULL,
+    inputs_sha256 TEXT NOT NULL,
+    generation_id TEXT NOT NULL,
+    unresolved_actors INTEGER NOT NULL DEFAULT 0,
+    suppressed_actors INTEGER NOT NULL DEFAULT 0,
+    candidate_overflow INTEGER NOT NULL DEFAULT 0,
+    resolver_fingerprint TEXT NOT NULL,
+    binding_epoch INTEGER NOT NULL,
+    edge_count INTEGER NOT NULL CHECK (edge_count >= 0),
+    state TEXT NOT NULL,
+    failure_reason TEXT NOT NULL,
+    published_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_people (
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    actor_key TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    raw_label TEXT NOT NULL,
+    claim_count INTEGER NOT NULL CHECK (claim_count >= 1),
+    first_axis_key TEXT,
+    last_axis_key TEXT,
+    sensitive INTEGER NOT NULL CHECK (sensitive IN (0, 1)),
+    PRIMARY KEY (content_version_id, person_id, role, actor_key, evidence_kind, evidence_id)
+);
+
+CREATE TABLE IF NOT EXISTS person_rollups (
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    disclosure_class TEXT NOT NULL,
+    document_count INTEGER NOT NULL,
+    first_axis_key TEXT,
+    last_axis_key TEXT,
+    role_counts_json BLOB NOT NULL,
+    publication_epoch INTEGER NOT NULL,
+    visibility_epoch INTEGER NOT NULL,
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY (person_id, disclosure_class)
+);
+
+CREATE TABLE IF NOT EXISTS document_people_generations (
+    generation_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    inputs_sha256 TEXT NOT NULL,
+    resolver_fingerprint TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS document_people_generations_immutable_update
+BEFORE UPDATE ON document_people_generations BEGIN
+    SELECT RAISE(ABORT, 'document people generations are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS person_splits (
+    operation_id TEXT PRIMARY KEY NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    receipt_json BLOB NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_people_builds (
+    operation_id TEXT PRIMARY KEY NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    resolver_fingerprint TEXT NOT NULL,
+    target_epoch INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    scanned INTEGER NOT NULL DEFAULT 0,
+    published INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS document_people_person ON document_people(person_id, role, node_id, content_version_id);
+CREATE INDEX IF NOT EXISTS document_people_node ON document_people(node_id, content_version_id, person_id);
+CREATE INDEX IF NOT EXISTS document_people_actor ON document_people(actor_key, person_id);
+CREATE INDEX IF NOT EXISTS persons_name_folded ON persons(display_name_folded, person_id);
+CREATE INDEX IF NOT EXISTS person_identities_person ON person_identities(person_id, kind);
+CREATE INDEX IF NOT EXISTS person_external_person ON person_external_identities(person_id);
+CREATE INDEX IF NOT EXISTS custodian_assignments_person ON custodian_assignments(person_id, scope_kind);
+CREATE INDEX IF NOT EXISTS person_rollups_documents ON person_rollups(disclosure_class, document_count DESC, person_id);
+CREATE INDEX IF NOT EXISTS person_rollups_last ON person_rollups(disclosure_class, last_axis_key DESC, person_id);
