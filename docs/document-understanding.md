@@ -27,6 +27,7 @@ canonical evidence is the validated text and source locations behind it.
 | Stage exact bytes for an authorized provider upload | `document/upload` |
 | Bind outbound connections to a declared destination | `document/providerhttp` |
 | Convert CSV locally for PDF OCR | `document/csvpdf` |
+| Convert DOCX locally for bounded PDF OCR | `document/docxpdf` |
 
 These are reusable Go contracts. Vault-owned publication, consent, backup, and
 search are described in [Document processing](architecture/document-processing.md).
@@ -514,6 +515,51 @@ The receipt does not authorize upload. Your application must:
 3. Retain the conversion policy with that consent.
 
 This Go API does not add CSV OCR to the daemon or CLI.
+
+## Convert DOCX locally for bounded PDF OCR
+
+Use `document/docxpdf` when an application needs to count Word pages before
+uploading. It runs an operator configured LibreOffice executable in a private
+per-call profile, verifies the DOCX bytes, and returns the exact generated PDF
+that it counted. The renderer is trusted local software with the calling
+user's operating system permissions.
+
+```go
+policy, err := docxpdf.NewPolicy(renderer, docxpdf.DefaultLimits())
+if err != nil {
+    return err
+}
+converted, err := docxpdf.Convert(ctx, originalDOCX, policy)
+if err != nil {
+    return err
+}
+if converted.Receipt().Pages > mistralPolicy.Values().MaxUnits {
+    return errors.New("DOCX PDF exceeds the Mistral page limit")
+}
+pdfSource, err := converted.Source()
+if err != nil {
+    return err
+}
+// Pass pdfSource to the existing PDF Prepare, Authorize, and Process flow.
+```
+
+`Convert` verifies the declared source size and SHA-256, detects a genuine
+DOCX package, and closes the input on every path. It limits source and PDF
+bytes, page count, and renderer time. It validates and counts the output PDF
+before returning. `Receipt` records both source and generated identities. It
+does not grant upload permission. The application must authorize the
+generated PDF through the existing Mistral PDF policy and retain the receipt
+with its consent record.
+
+`DefaultLimits` allows 50 MiB for the DOCX, 50 MiB for the generated PDF,
+1,000 pages, and ten minutes for conversion. Tighten those values for the
+application's own memory, disk, and spending limits. They do not cap native
+LibreOffice memory or temporary disk use during rendering. The renderer
+installation and fonts affect pagination, so record them in `RuntimeIdentity`.
+
+This package is a staged library. It does not add a daemon route, CLI command,
+Mistral DOCX authority, or DOCX unit counter. Callers choose whether to adopt
+the generated PDF. Existing original DOCX authority stays unchanged.
 
 ## Package boundary
 
