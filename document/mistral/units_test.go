@@ -267,6 +267,106 @@ func TestCountPPTXSlides(t *testing.T) {
 	}
 }
 
+func TestCountPPTXSlidesAcceptsCompleteStrictPackage(t *testing.T) {
+	archive := pptxArchiveWithFamily(t, pptxNamespaceFamilyStrict, []pptxTestSlide{{
+		id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
+	}}, nil)
+
+	units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+	assert.Equal(t, 1, units)
+}
+
+func TestCountPPTXSlidesRejectsMixedAndUnknownNamespaceFamilies(t *testing.T) {
+	strictPresentation := pptxPresentationNamespaces.value(pptxNamespaceFamilyStrict)
+	transitionalPresentation := pptxPresentationNamespaces.value(pptxNamespaceFamilyTransitional)
+	strictRelationshipID := pptxRelationshipIDNamespaces.value(pptxNamespaceFamilyStrict)
+	transitionalRelationshipID := pptxRelationshipIDNamespaces.value(pptxNamespaceFamilyTransitional)
+	transitionalOfficeDocument := pptxOfficeDocumentRelationshipTypes.value(pptxNamespaceFamilyTransitional)
+	strictSlide := pptxSlideRelationshipTypes.value(pptxNamespaceFamilyStrict)
+	transitionalSlide := pptxSlideRelationshipTypes.value(pptxNamespaceFamilyTransitional)
+	slides := []pptxTestSlide{{id: "256", relationshipID: "rId1", target: "slides/slide1.xml"}}
+
+	tests := []struct {
+		name   string
+		family pptxNamespaceFamily
+		extra  map[string]string
+	}{
+		{
+			name:   "presentation child uses transitional namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationPath: `<p:presentation xmlns:p="` + strictPresentation + `" xmlns:r="` + strictRelationshipID + `"><p:sldIdLst xmlns:p="` + transitionalPresentation + `"><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>`,
+			},
+		},
+		{
+			name:   "presentation child uses strict namespace",
+			family: pptxNamespaceFamilyTransitional,
+			extra: map[string]string{
+				pptxPresentationPath: `<p:presentation xmlns:p="` + transitionalPresentation + `" xmlns:r="` + transitionalRelationshipID + `"><p:sldIdLst xmlns:p="` + strictPresentation + `"><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>`,
+			},
+		},
+		{
+			name:   "presentation relationship ID uses transitional namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationPath: `<p:presentation xmlns:p="` + strictPresentation + `" xmlns:r="` + strictRelationshipID + `"><p:sldIdLst><p:sldId id="256" xmlns:r="` + transitionalRelationshipID + `" r:id="rId1"/></p:sldIdLst></p:presentation>`,
+			},
+		},
+		{
+			name:   "relationship child uses unknown namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationRelsPath: `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship xmlns="urn:example:unknown" Id="rId1" Type="` + strictSlide + `" Target="slides/slide1.xml"/></Relationships>`,
+			},
+		},
+		{
+			name:   "relationship root uses unknown namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationRelsPath: `<Relationships xmlns="urn:example:unknown"><Relationship Id="rId1" Type="` + strictSlide + `" Target="slides/slide1.xml"/></Relationships>`,
+			},
+		},
+		{
+			name:   "slide relationship type uses transitional namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationRelsPath: `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + transitionalSlide + `" Target="slides/slide1.xml"/></Relationships>`,
+			},
+		},
+		{
+			name:   "office document relationship type uses transitional namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxRootRelationshipsPath: `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + transitionalOfficeDocument + `" Target="ppt/presentation.xml"/></Relationships>`,
+			},
+		},
+		{
+			name:   "unknown presentation namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationPath: `<p:presentation xmlns:p="urn:example:unknown" xmlns:r="` + strictRelationshipID + `"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>`,
+			},
+		},
+		{
+			name:   "unknown relationship namespace",
+			family: pptxNamespaceFamilyStrict,
+			extra: map[string]string{
+				pptxPresentationRelsPath: `<Relationships xmlns="urn:example:unknown"><Relationship Id="rId1" Type="` + strictSlide + `" Target="slides/slide1.xml"/></Relationships>`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			archive := pptxArchiveWithFamily(t, test.family, slides, test.extra)
+			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
+			require.Error(t, err)
+			t.Logf("error=%v", err)
+		})
+	}
+}
+
 func TestCountPPTXSlidesAcceptsEscapedAndDefaultTargets(t *testing.T) {
 	for _, test := range []struct {
 		name, target, entryName, contentTypeName string
@@ -467,6 +567,25 @@ func TestCountPPTXSlidesRejectsInvalidPackageAliases(t *testing.T) {
 			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
 			require.ErrorContains(t, err, test.want)
 			t.Logf("part_name=%s error=%v", test.partName, err)
+		})
+	}
+}
+
+func TestCountPPTXSlidesRejectsEncodedSeparatorsInRawPartNames(t *testing.T) {
+	for _, partName := range []string{
+		"ppt/slides/_rels/slide%2F1.xml.rels",
+		"ppt/slides/_rels/slide%2f1.xml.rels",
+		"ppt/slides/_rels/slide%5C1.xml.rels",
+		"ppt/slides/_rels/slide%5c1.xml.rels",
+	} {
+		t.Run(partName, func(t *testing.T) {
+			relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId2" Type="http://example.test/image" Target="https://example.invalid/image.png"/></Relationships>`
+			archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
+				id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
+			}}, map[string]string{partName: relationships})
+			_, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
+			require.ErrorContains(t, err, "encoded path separator")
+			t.Logf("part_name=%s error=%v", partName, err)
 		})
 	}
 }
@@ -677,7 +796,7 @@ func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) 
 	client := renditionServerClient(t, policy, manifest, descriptor, server)
 
 	tests := []struct {
-		name, relationship string
+		name, relationship, entryName string
 	}{
 		{
 			name: "malformed nested relationship",
@@ -689,13 +808,23 @@ func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) 
 			relationship: `<Relationships xmlns="` + pptxRelationshipNamespace +
 				`"><Relationship Id="rId2" Type="http://example.test/image" Target="https://example.invalid/image.png"/></Relationships>`,
 		},
+		{
+			name: "encoded relationship-part separator",
+			relationship: `<Relationships xmlns="` + pptxRelationshipNamespace +
+				`"><Relationship Id="rId2" Type="http://example.test/image" Target="https://example.invalid/image.png"/></Relationships>`,
+			entryName: "ppt/slides/_rels/slide%2F1.xml.rels",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			entryName := test.entryName
+			if entryName == "" {
+				entryName = "ppt/slides/_rels/slide1.xml.rels"
+			}
 			archive := pptxArchiveWithEntries(t, []pptxTestSlide{{
 				id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
 			}}, map[string]string{
-				"ppt/slides/_rels/slide1.xml.rels": test.relationship,
+				entryName: test.relationship,
 			})
 			fixture := pptxRenditionFixture(t, descriptor, archive)
 			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
@@ -704,6 +833,40 @@ func TestRenditionClientRejectsMalformedAndExternalPPTXBeforeHTTP(t *testing.T) 
 			t.Logf("requests=%d error=%v", requests.Load(), err)
 		})
 	}
+}
+
+func TestRenditionClientAcceptsCompleteStrictPPTXWithOneRequest(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 3)
+	manifest := syntheticManifest(t, policy, true)
+	for index := range manifest.Results {
+		if manifest.Results[index].FormatID == "pptx" {
+			manifest.Results[index].ReasonCode = ""
+			manifest.Results[index].UnitBoundMethod = UnitBoundLocalExact
+			manifest.Results[index].UnitCount = 1
+			manifest.Results[index].UnitsProcessed = 1
+			manifest.Results[index].LocalUnits = 1
+		}
+	}
+	require.NoError(t, manifest.ValidateComplete())
+	descriptor := renditionDescriptor(t, policy, manifest, "pptx")
+	source := pptxArchiveWithFamily(t, pptxNamespaceFamilyStrict, []pptxTestSlide{{
+		id: "256", relationshipID: "rId1", target: "slides/slide1.xml",
+	}}, nil)
+	fixture := pptxRenditionFixture(t, descriptor, source)
+	var requests atomic.Int64
+	response := fmt.Sprintf(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"strict"}],"usage_info":{"pages_processed":1,"doc_size_bytes":%d}}`, len(source))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, response)
+	}))
+	t.Cleanup(server.Close)
+	client := renditionServerClient(t, policy, manifest, descriptor, server)
+
+	result, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), requests.Load())
+	assert.Len(t, result.Evidence.Units, 1)
 }
 
 func TestPrepareAcceptsBOMPPTX(t *testing.T) {
@@ -744,8 +907,16 @@ func pptxArchive(t *testing.T, slides []pptxTestSlide) []byte {
 
 func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[string]string) []byte {
 	t.Helper()
+	return pptxArchiveWithFamily(t, pptxNamespaceFamilyTransitional, slides, extra)
+}
+
+func pptxArchiveWithFamily(t *testing.T, family pptxNamespaceFamily, slides []pptxTestSlide, extra map[string]string) []byte {
+	t.Helper()
+	presentationNamespace := pptxPresentationNamespaces.value(family)
+	relationshipIDNamespace := pptxRelationshipIDNamespaces.value(family)
+	slideRelationshipType := pptxSlideRelationshipTypes.value(family)
 	presentation := strings.Builder{}
-	presentation.WriteString(`<p:presentation xmlns:p="` + pptxPresentationNamespace + `" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst>`)
+	presentation.WriteString(`<p:presentation xmlns:p="` + presentationNamespace + `" xmlns:r="` + relationshipIDNamespace + `"><p:sldIdLst>`)
 	for _, slide := range slides {
 		show := ""
 		if slide.hidden {
@@ -762,7 +933,7 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 		if slide.targetMode != "" {
 			mode = ` TargetMode="` + slide.targetMode + `"`
 		}
-		fmt.Fprintf(&relationships, `<Relationship Id="%s" Type="%s" Target="%s"%s/>`, slide.relationshipID, pptxRelationshipType, slide.target, mode)
+		fmt.Fprintf(&relationships, `<Relationship Id="%s" Type="%s" Target="%s"%s/>`, slide.relationshipID, slideRelationshipType, slide.target, mode)
 	}
 	relationships.WriteString(`</Relationships>`)
 
@@ -771,7 +942,7 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 	entries := map[string]string{
 		pptxPresentationPath:      presentation.String(),
 		pptxPresentationRelsPath:  relationships.String(),
-		pptxRootRelationshipsPath: validPPTXRootRelationships(),
+		pptxRootRelationshipsPath: validPPTXRootRelationshipsForFamily(family),
 		ooxmlContentTypesName:     "",
 	}
 	for _, slide := range slides {
@@ -790,7 +961,7 @@ func pptxArchiveWithEntries(t *testing.T, slides []pptxTestSlide, extra map[stri
 			if slide.entryName != "" {
 				entryName = slide.entryName
 			}
-			entries[entryName] = `<p:sld xmlns:p="` + pptxPresentationNamespace + `"/>`
+			entries[entryName] = `<p:sld xmlns:p="` + presentationNamespace + `"/>`
 		}
 	}
 	contentTypes.WriteString(`</Types>`)
@@ -830,7 +1001,11 @@ func validPPTXRelationshipsWithTarget(target string) string {
 }
 
 func validPPTXRootRelationships() string {
-	return `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + pptxOfficeDocumentRelType + `" Target="ppt/presentation.xml"/></Relationships>`
+	return validPPTXRootRelationshipsForFamily(pptxNamespaceFamilyTransitional)
+}
+
+func validPPTXRootRelationshipsForFamily(family pptxNamespaceFamily) string {
+	return `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship Id="rId1" Type="` + pptxOfficeDocumentRelationshipTypes.value(family) + `" Target="ppt/presentation.xml"/></Relationships>`
 }
 
 func validPPTXContentTypes() string {

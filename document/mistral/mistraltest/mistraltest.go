@@ -40,10 +40,6 @@ func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.Capability
 		if candidate.Family == "pdf" {
 			options.Pages = fmt.Sprintf("0-%d", manifest.MaxUnits-1)
 		}
-		if candidate.ID == "pptx" {
-			imageLimit := 0
-			options.ImageLimit = &imageLimit
-		}
 		result := mistral.CapabilityResult{
 			FormatID: candidate.ID, Family: candidate.Family, MediaType: candidate.MediaType,
 			UnitKind: candidate.UnitKind, Status: mistral.ProbeStatusPassed,

@@ -170,11 +170,11 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	require.Equal(transport.t, "Bearer synthetic-key", request.Header.Get("Authorization"), "call %d", call)
 	body, err := io.ReadAll(request.Body)
 	require.NoError(transport.t, err)
+	assert.NotContains(transport.t, string(body), strings.Join([]string{"image", "limit"}, "_"))
 	var input struct {
 		Pages         string `json:"pages"`
 		ExtractHeader bool   `json:"extract_header"`
 		ExtractFooter bool   `json:"extract_footer"`
-		ImageLimit    *int   `json:"image_limit"`
 		Document      struct {
 			URL string `json:"document_url"`
 		} `json:"document"`
@@ -186,13 +186,6 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	mediaType := strings.TrimPrefix(strings.SplitN(input.Document.URL, ";base64,", 2)[0], "data:")
 	candidate, found := candidateByMediaType(mediaType)
 	require.True(transport.t, found)
-	if candidate.ID == "pptx" {
-		require.NotNil(transport.t, input.ImageLimit)
-		assert.Equal(transport.t, 0, *input.ImageLimit)
-		transport.t.Logf("pptx_request image_limit=%d", *input.ImageLimit)
-	} else {
-		assert.Nil(transport.t, input.ImageLimit)
-	}
 	if candidate.ID == "pdf" && input.Pages == "0-0" && transport.boundMode == "request_failed" {
 		return probeHTTPResponse(request, http.StatusServiceUnavailable, `{}`), nil
 	}

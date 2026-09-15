@@ -71,6 +71,7 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 		assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
 		body, err := io.ReadAll(request.Body)
 		require.NoError(t, err)
+		assert.NotContains(t, string(body), strings.Join([]string{"image", "limit"}, "_"))
 		var wire struct {
 			Document struct {
 				URL string `json:"document_url"`
@@ -228,11 +229,8 @@ func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
 			Document struct {
 				URL string `json:"document_url"`
 			} `json:"document"`
-			ImageLimit *int `json:"image_limit"`
 		}
 		require.NoError(t, json.Unmarshal(body, &wire))
-		require.NotNil(t, wire.ImageLimit)
-		assert.Equal(t, 0, *wire.ImageLimit)
 		encoded := strings.TrimPrefix(wire.Document.URL,
 			"data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,")
 		require.NotEqual(t, wire.Document.URL, encoded)
