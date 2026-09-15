@@ -284,6 +284,31 @@ func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T
 	}
 }
 
+func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(`DROP TABLE persons`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			reopened, err := Open(dbPath, test.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "unexpected persons layout")
+		})
+	}
+}
+
 func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })

@@ -83,6 +83,10 @@ var currentSchemaTables = [...]string{
 	"media_visibility_fences", "media_input_artifacts", "media_operations", "media_acquisitions",
 	"media_protected_refs",
 	"processing_consent_grants", "rendition_job_waiters", "embedding_jobs",
+	"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
+	"person_aliases", "person_merges", "person_splits", "custodian_assignments",
+	"document_people_state",
+	"document_people_dirty",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in
