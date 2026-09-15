@@ -268,8 +268,11 @@ func (s *Store) PurgeDerivatives(
 			}
 		}
 
-		emailSuppressions, emailPayloads, err := purgeEmailCatalogTx(ctx, tx, request, asOf, &report)
+		emailSuppressions, emailPayloads, emailVersions, err := purgeEmailCatalogTx(ctx, tx, request, asOf, &report)
 		if err != nil {
+			return err
+		}
+		if _, err := invalidateDocumentEventsForVersionsTx(ctx, tx, emailVersions); err != nil {
 			return err
 		}
 		versionSet := stringSet(request.ContentVersionIDs)

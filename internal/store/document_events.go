@@ -103,6 +103,9 @@ func (s *Store) PublishDocumentEvents(
 func invalidateDocumentEventsForVersionsTx(
 	ctx context.Context, tx *sql.Tx, versionIDs []string,
 ) (int64, error) {
+	if err := invalidateDocumentPeopleForVersionsTx(ctx, tx, versionIDs); err != nil {
+		return 0, fmt.Errorf("invalidating document people: %w", err)
+	}
 	seen := make(map[string]struct{}, len(versionIDs))
 	var invalidated int64
 	for _, versionID := range versionIDs {
