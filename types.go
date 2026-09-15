@@ -56,6 +56,22 @@ type DocumentEventCoverage struct {
 	PublicationEpoch     int64
 }
 
+// DocumentPeopleBuild is the durable progress receipt for one full person-attribution rebuild.
+type DocumentPeopleBuild struct {
+	OperationID, RequestSHA256, ResolverFingerprint, State string
+	TargetEpoch, Scanned, Published, Failed                int64
+	StartedAt, UpdatedAt, FinishedAt                       string
+}
+
+// DocumentPeopleCoverage reports current-file person-attribution coverage.
+type DocumentPeopleCoverage struct {
+	ContractVersion, ResolverFingerprint                                     string
+	BindingEpoch, PublicationEpoch                                           int64
+	Published, Pending, Failed, Unavailable                                  int64
+	UnresolvedActors, SuppressedActors, UnresolvedCustodians, OpenCandidates int64
+	CandidateQueueFull                                                       bool
+}
+
 // ProcessingOptions binds named portable profiles to process-local provider
 // implementations. Secrets remain inside the provider values; profiles and
 // plans contain only immutable non-secret identity.

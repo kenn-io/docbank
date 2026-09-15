@@ -159,3 +159,25 @@ or three failures of the same target. Explicit rebuilds remain strict indexing r
 daemon receipts finish `failed` when a target is failed or unavailable, and
 the embedded call returns that truthful receipt with an error while any target
 is pending, failed, or unavailable.
+
+## Document–person attribution
+
+The daemon also rebuilds document–person links from retained actors, custodian
+assignments, and operator decisions. It waits for event data before deriving
+links for a version.
+
+Start or replay a full rebuild with `POST /api/v1/people/rebuilds`, supplying a
+canonical UUIDv4 `operation_id`. Read progress with
+`GET /api/v1/people/rebuilds/{operation_id}` and current-file coverage with
+`GET /api/v1/people/coverage`. These responses contain counts, not person evidence.
+The rebuild counts every retained version. Missing event data and retryable
+failures keep it running; terminal unavailable results finish the receipt as
+`failed`.
+
+Embedded callers run `Vault.RebuildDocumentEvents` before
+`Vault.RebuildDocumentPeople` and read coverage with `Vault.DocumentPeopleCoverage`.
+An incomplete rebuild returns its receipt and an error. Retry with the same
+operation ID after the prerequisite or failure is resolved.
+
+Backups preserve person and custody records. Restore rebuilds the links without
+copying old rebuild receipts; see [Backup and recovery](backup.md).

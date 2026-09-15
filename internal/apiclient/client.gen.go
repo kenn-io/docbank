@@ -5908,6 +5908,144 @@ func (c *Client) TrashPath(ctx context.Context, options *TrashPathRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// GetPeopleCoverage Read current-file person attribution coverage
+func (c *Client) GetPeopleCoverage(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPeopleCoverageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/coverage",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPeopleCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPeopleCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPeopleCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPeopleCoverageErrorResponse](resp, "GetPeopleCoverageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/coverage")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RebuildDocumentPeople Start or replay person attribution rebuild
+func (c *Client) RebuildDocumentPeople(ctx context.Context, options *RebuildDocumentPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RebuildDocumentPeopleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/rebuilds",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RebuildDocumentPeopleResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(RebuildDocumentPeopleResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RebuildDocumentPeopleResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RebuildDocumentPeopleErrorResponse](resp, "RebuildDocumentPeopleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/rebuilds")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 202)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPeopleRebuild Read person attribution rebuild progress
+func (c *Client) GetPeopleRebuild(ctx context.Context, options *GetPeopleRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPeopleRebuildResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/rebuilds/{operation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPeopleRebuildResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPeopleRebuildResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPeopleRebuildResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPeopleRebuildErrorResponse](resp, "GetPeopleRebuildErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/rebuilds/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GrantDocumentProcessingConsent Grant consent for one exact reviewed processing plan
 func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResponse, error) {
 	var err error
@@ -12905,6 +13043,65 @@ func (o *TrashPathRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// RebuildDocumentPeopleRequestOptions is the options needed to make a request to RebuildDocumentPeople.
+type RebuildDocumentPeopleRequestOptions struct {
+	Body *RebuildDocumentPeopleBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RebuildDocumentPeopleRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RebuildDocumentPeopleRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RebuildDocumentPeopleRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RebuildDocumentPeopleRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPeopleRebuildRequestOptions is the options needed to make a request to GetPeopleRebuild.
+type GetPeopleRebuildRequestOptions struct {
+	PathParams *GetPeopleRebuildPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPeopleRebuildRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPeopleRebuildRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPeopleRebuildRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPeopleRebuildRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GrantDocumentProcessingConsentRequestOptions is the options needed to make a request to GrantDocumentProcessingConsent.
 type GrantDocumentProcessingConsentRequestOptions struct {
 	Body *GrantDocumentProcessingConsentBody
@@ -15247,6 +15444,10 @@ type AssignTagPathPath struct {
 	TagID string `json:"tag_id"`
 }
 
+type GetPeopleRebuildPath struct {
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
 type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
@@ -15470,6 +15671,8 @@ type UnassignTagPathBody = UnassignTagPathRequest
 type AssignTagPathBody = AssignTagPathRequest
 
 type TrashPathBody = TrashPathRequest
+
+type RebuildDocumentPeopleBody = PeopleRebuildRequest
 
 type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
 
@@ -16273,6 +16476,18 @@ type AssignTagPathErrorResponse = Error
 type TrashPathResponse = api.Node
 
 type TrashPathErrorResponse = Error
+
+type GetPeopleCoverageResponse = api.PeopleCoverage
+
+type GetPeopleCoverageErrorResponse = Error
+
+type RebuildDocumentPeopleResponse = api.PeopleBuild
+
+type RebuildDocumentPeopleErrorResponse = Error
+
+type GetPeopleRebuildResponse = api.PeopleBuild
+
+type GetPeopleRebuildErrorResponse = Error
 
 type GrantDocumentProcessingConsentResponse = api.ProcessingConsentGrant
 
@@ -17115,6 +17330,12 @@ type PageSelectionRequest = api.PageSelectionRequest
 type PageSource = document.PageSource
 
 type PendingFormatV1 = document.PendingFormatV1
+
+type PeopleBuild = api.PeopleBuild
+
+type PeopleCoverage = api.PeopleCoverage
+
+type PeopleRebuildRequest = api.PeopleRebuildRequest
 
 type Plan = bundle.Plan
 

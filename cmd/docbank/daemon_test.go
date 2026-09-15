@@ -28,7 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestDocumentEventBackfillIsRegisteredOnce(t *testing.T) {
+func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
@@ -44,13 +44,13 @@ func TestDocumentEventBackfillIsRegisteredOnce(t *testing.T) {
 		supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(), 1,
 		api.NewOperationGate(), logger,
 	))
-	registered := 0
+	registered := map[string]int{}
 	for _, job := range supervisor.Snapshot() {
-		if job.Name == "derive:document-events" {
-			registered++
+		if job.Name == "derive:document-events" || job.Name == "derive:document-people" {
+			registered[job.Name]++
 		}
 	}
-	require.Equal(t, 1, registered)
+	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1}, registered)
 }
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {

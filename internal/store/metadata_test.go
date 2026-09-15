@@ -1129,6 +1129,15 @@ func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 		input      string
 	}{
 		{
+			name: "document people rebuild receipt",
+			insert: `INSERT INTO document_people_builds(operation_id,request_sha256,resolver_fingerprint,target_epoch,
+				state,started_at,updated_at,finished_at)
+				VALUES('10000000-0000-4000-8000-000000000001','` + metadataHashCurrent + `','` + metadataHashCurrent + `',1,
+					'completed','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+			countQuery: `SELECT COUNT(*) FROM document_people_builds`,
+			input:      header + root,
+		},
+		{
 			name: "rendition blob staging",
 			insert: `INSERT INTO rendition_blob_staging(blob_hash)
 				VALUES('` + metadataHashCurrent + `')`,
