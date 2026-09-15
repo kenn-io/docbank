@@ -195,10 +195,10 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = schema{"type": "boolean"}
 	input := rootObjectSchema(properties, "query", "profile")
-	input["oneOf"] = []any{
-		schema{"required": []string{"content_version_ids"}},
-		schema{"required": []string{"filters"}},
-	}
+	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
+	input["if"] = schema{"required": []string{"content_version_ids"}}
+	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
+	input["else"] = schema{"required": []string{"filters"}}
 	result := objectSchema(schema{
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
