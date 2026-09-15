@@ -240,6 +240,15 @@ func RestoreWithPlacement(
 
 func verifyRestoredRenditionHeads(
 	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
+) error {
+	return verifyRestoredRenditionHeadsWithPeopleRebuild(
+		ctx, target, databasePath, driver, processing.RebuildDocumentPeople,
+	)
+}
+
+func verifyRestoredRenditionHeadsWithPeopleRebuild(
+	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
+	rebuildPeople func(context.Context, *store.Store) error,
 ) (retErr error) {
 	metadata, err := store.OpenForRestore(databasePath, driver)
 	if err != nil {
@@ -265,6 +274,9 @@ func verifyRestoredRenditionHeads(
 	}
 	if err := processing.RebuildDocumentEvents(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored timeline index: %w", err)
+	}
+	if err := rebuildPeople(ctx, metadata); err != nil {
+		return fmt.Errorf("backupapp: rebuilding restored person index: %w", err)
 	}
 	if err := metadata.RebuildRenditionLexicalProjection(ctx); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored lexical projection: %w", err)

@@ -286,7 +286,7 @@ func provenanceAuditRecord(
 	return audit.Record{Kind: "provenance", Fields: []audit.Field{
 		{Name: "identity", Value: identityValue},
 		{Name: metadataNodeIDField, Value: audit.Unsigned(auditNodeID)},
-		{Name: "ingest_id", Value: ingestValue},
+		{Name: metadataIngestIDField, Value: ingestValue},
 		{Name: "original_path", Value: audit.Bytes([]byte(originalPath))},
 		{Name: "original_mtime", Value: mtimeValue},
 		{Name: "supersedes", Value: supersedesValue},
@@ -358,8 +358,8 @@ func tagDefinitionAuditRecord(tag Tag) (audit.Record, error) {
 func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	switch record.Kind {
 	case metadataIngestType:
-		value, err := auditField(record, "ingest_id")
-		return audit.Record{Kind: "ingest_identity", Fields: []audit.Field{{Name: "ingest_id", Value: value}}}, err
+		value, err := auditField(record, metadataIngestIDField)
+		return audit.Record{Kind: "ingest_identity", Fields: []audit.Field{{Name: metadataIngestIDField, Value: value}}}, err
 	case "provenance":
 		value, err := auditField(record, "identity")
 		return audit.Record{Kind: "provenance_identity_ref", Fields: []audit.Field{{Name: "identity", Value: value}}}, err
@@ -368,10 +368,10 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 		if err != nil {
 			return audit.Record{}, err
 		}
-		contentVersionID, err := auditField(record, "content_version_id")
+		contentVersionID, err := auditField(record, metadataContentVersionIDField)
 		return audit.Record{Kind: "provenance_version_binding_identity", Fields: []audit.Field{
 			{Name: "provenance_identity", Value: provenanceIdentity},
-			{Name: "content_version_id", Value: contentVersionID},
+			{Name: metadataContentVersionIDField, Value: contentVersionID},
 		}}, err
 	case auditTagAssignmentKind:
 		tagID, err := auditField(record, "tag_id")
@@ -431,7 +431,7 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 					return nil, err
 				}
 				provenanceIdentities[identity] = true
-				ingestID, err := auditUUIDField(record, "ingest_id")
+				ingestID, err := auditUUIDField(record, metadataIngestIDField)
 				if err != nil {
 					return nil, err
 				}
@@ -455,7 +455,7 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 	for _, record := range records {
 		switch record.Kind {
 		case metadataIngestType:
-			id, err := auditUUIDField(record, "ingest_id")
+			id, err := auditUUIDField(record, metadataIngestIDField)
 			if err != nil {
 				return nil, err
 			}

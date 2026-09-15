@@ -148,7 +148,7 @@ func ingestAuditRecord(ingest metadataIngest) (audit.Record, error) {
 		return audit.Record{}, err
 	}
 	return audit.Record{Kind: metadataIngestType, Fields: []audit.Field{
-		{Name: "ingest_id", Value: id},
+		{Name: metadataIngestIDField, Value: id},
 		{Name: "started_at", Value: startedAt},
 		{Name: "source_kind", Value: sourceKind},
 		{Name: "source_desc", Value: audit.Bytes([]byte(ingest.SourceDesc))},

@@ -20,6 +20,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
 		"lookupContentReferences",
 		"listCollections", "getCollection", "listCollectionMembers", "getCollectionLabel", "setCollectionLabel",
+		"rebuildDocumentPeople", "getPeopleRebuild", "getPeopleCoverage",
 		"getEmailMetadata", "ensureEmailMetadata", "getEmailMetadataGeneration", "getEmailPart",
 		"listTags", "resolveTagByName", "getTag", "listTagNodes", "listNodeTags",
 		"createTag", "renameTag", "deleteTag", "assignTag", "unassignTag",
