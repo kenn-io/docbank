@@ -125,10 +125,15 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 		kind       EventEvidenceKind
 		id, digest string
 	}
+	type sourceIdentity struct {
+		kind EventEvidenceKind
+		id   string
+	}
 	eventIDs := make(map[string]struct{}, len(value.Events))
 	eventSensitivity := make(map[string]bool, len(value.Events))
 	slots := make(map[eventSlot]string, len(value.Events))
 	sources := make(map[sourceRef]struct{}, len(value.Sources))
+	sourceIdentities := make(map[sourceIdentity]struct{}, len(value.Sources))
 	textBytes := len(value.VaultUID) + len(value.ContentVersionID) + len(value.ContractVersion)
 	for index, source := range value.Sources {
 		if !ValidEventEvidenceKind(source.EvidenceKind) || source.EvidenceID == "" || !canonical.IsSHA256Hex(source.EvidenceSHA256) {
@@ -142,6 +147,7 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 			return fmt.Errorf("document event source %d is duplicated", index)
 		}
 		sources[ref] = struct{}{}
+		sourceIdentities[sourceIdentity{source.EvidenceKind, source.EvidenceID}] = struct{}{}
 		textBytes += len(source.EvidenceID) + len(source.EvidenceSHA256)
 	}
 	actorCount := 0
@@ -219,13 +225,24 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 			if !ValidEventRole(actor.Role) || actor.Ordinal < 0 {
 				return fmt.Errorf("document event %d actor %d is invalid", index, actorIndex)
 			}
+			if (actor.EvidenceKind == "") != (actor.EvidenceID == "") ||
+				(actor.EvidenceKind != "" && !ValidEventEvidenceKind(actor.EvidenceKind)) {
+				return fmt.Errorf("document event %d actor %d has invalid actor evidence", index, actorIndex)
+			}
+			if actor.EvidenceKind != "" {
+				if _, exists := sourceIdentities[sourceIdentity{actor.EvidenceKind, actor.EvidenceID}]; !exists {
+					return fmt.Errorf("document event %d actor %d references unknown actor evidence", index, actorIndex)
+				}
+			}
 			if len(actor.Claim) > MaxDocumentEventActorClaimBytes || len(actor.ActorKey) > MaxActorKeyBytes {
 				return fmt.Errorf("document event %d actor %d exceeds a bound", index, actorIndex)
 			}
-			if err := validStrings("document event actor", actor.ActorKey, actor.Address, actor.Claim, actor.DisplayName, string(actor.Role)); err != nil {
+			if err := validStrings("document event actor", actor.ActorKey, actor.Address, actor.Claim,
+				actor.DisplayName, actor.EvidenceID, string(actor.EvidenceKind), string(actor.Role)); err != nil {
 				return err
 			}
-			textBytes += len(actor.ActorKey) + len(actor.Address) + len(actor.Claim) + len(actor.DisplayName)
+			textBytes += len(actor.ActorKey) + len(actor.Address) + len(actor.Claim) + len(actor.DisplayName) +
+				len(actor.EvidenceID) + len(actor.EvidenceKind)
 			if actor.ActorKey != "" {
 				separator := strings.IndexByte(actor.ActorKey, ':')
 				if separator <= 0 {

@@ -309,6 +309,38 @@ func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsCurrentDatabaseWithoutDocumentEventTables(t *testing.T) {
+	tables := []string{
+		"document_event_state", "document_event_generations", "document_event_heads",
+		"document_event_builds", "document_event_dirty", "document_event_attempts",
+		"document_events", "document_event_actors", "document_event_primaries",
+	}
+	for _, table := range tables {
+		for _, test := range v090UpgradeDrivers() {
+			t.Run(table+"/"+test.name, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, test.driver)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+
+				db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+				})
+				require.NoError(t, err)
+				_, err = db.Exec("DROP TABLE " + table)
+				require.NoError(t, err)
+				require.NoError(t, db.Close())
+
+				reopened, err := Open(dbPath, test.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, "unexpected "+table+" layout")
+			})
+		}
+	}
+}
+
 func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })

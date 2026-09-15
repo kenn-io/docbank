@@ -37,7 +37,7 @@ func TestDocumentEventDeriverDescriptor(t *testing.T) {
 	sum := sha256.Sum256([]byte(documentEventsDeriverDescriptor))
 	require.Equal(t, DocumentEventsDeriverFingerprint, hex.EncodeToString(sum[:]))
 	require.Equal(t,
-		"docbank-document-events:f10-metadata+content-version+provenance-binding:v1",
+		"docbank-document-events:f10-metadata+content-version+provenance-binding+actor-evidence:v2",
 		documentEventsDeriverDescriptor,
 	)
 }
