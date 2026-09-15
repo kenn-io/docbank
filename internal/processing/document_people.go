@@ -160,3 +160,21 @@ func backfillDocumentPeopleTarget(ctx context.Context, catalog DocumentPeopleCat
 	}
 	return errors.Join(err, catalog.MarkDocumentPeopleFailed(ctx, input, reason))
 }
+
+// RebuildDocumentPeople rebuilds missing derived attribution after metadata import.
+func RebuildDocumentPeople(ctx context.Context, catalog *store.Store) error {
+	cursor := ""
+	for {
+		targets, err := catalog.MissingDocumentPeopleTargetsAfter(ctx, document.PersonResolverFingerprint(), cursor, 100)
+		if err != nil {
+			return err
+		}
+		if len(targets) == 0 {
+			return nil
+		}
+		if _, err := BackfillDocumentPeopleTargets(ctx, catalog, targets); err != nil {
+			return err
+		}
+		cursor = targets[len(targets)-1].ContentVersionID
+	}
+}

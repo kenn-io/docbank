@@ -266,6 +266,9 @@ func verifyRestoredRenditionHeads(
 	if err := processing.RebuildDocumentEvents(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored timeline index: %w", err)
 	}
+	if err := processing.RebuildDocumentPeople(ctx, metadata); err != nil {
+		return fmt.Errorf("backupapp: rebuilding restored person index: %w", err)
+	}
 	if err := metadata.RebuildRenditionLexicalProjection(ctx); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored lexical projection: %w", err)
 	}

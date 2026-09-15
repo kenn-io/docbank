@@ -119,7 +119,11 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 	if err := validateUUIDv4(versionID); err != nil {
 		return DocumentPeopleInputs{}, fmt.Errorf("invalid content version ID: %w", err)
 	}
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		audited, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, `SELECT cv.node_id,n.revision,h.generation_id FROM content_versions cv
 			JOIN nodes n ON n.id=cv.node_id
 			JOIN document_event_heads h ON h.content_version_id=cv.version_id WHERE cv.version_id=?`, versionID).
@@ -157,25 +161,28 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 			if err != nil {
 				return err
 			}
-			if len(matches) == 0 && actorKeyAutoProvisionEligible(claim.ActorKey) {
-				// Provisioning an unbound exact key cannot change prior resolutions.
-				// Only authority edits need to advance the global binding epoch.
-				person, err := provisionActorPersonTx(ctx, tx, claim)
-				if err != nil {
-					return err
+			// Audited rebuilds may read authority, but cannot create it without an audit record.
+			if !audited {
+				if len(matches) == 0 && actorKeyAutoProvisionEligible(claim.ActorKey) {
+					// Provisioning an unbound exact key cannot change prior resolutions.
+					// Only authority edits need to advance the global binding epoch.
+					person, err := provisionActorPersonTx(ctx, tx, claim)
+					if err != nil {
+						return err
+					}
+					matches = []Person{person}
+				} else if len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:") {
+					retained, err := s.openActorCandidatesTx(ctx, tx, versionID, claims, matches)
+					if err != nil {
+						return err
+					}
+					if !retained {
+						input.CandidateOverflow++
+					}
 				}
-				matches = []Person{person}
-			} else if len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:") {
-				retained, err := s.openActorCandidatesTx(ctx, tx, versionID, claims, matches)
-				if err != nil {
-					return err
-				}
-				if !retained {
-					input.CandidateOverflow++
-				}
-				if strings.HasPrefix(actorKey, "name_alias:") {
-					matches = nil
-				}
+			}
+			if strings.HasPrefix(actorKey, "name_alias:") {
+				matches = nil
 			}
 			input.Bindings[actorKey] = matches
 		}
@@ -492,7 +499,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 		state = documentPeopleStateUnavailable
 	}
 	var head DocumentPeopleHead
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := checkPeoplePublicationFence(ctx, tx, p); err != nil {
 			return err
 		}
@@ -591,7 +598,7 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 	if reason != "derivation_failed" && reason != "input_over_limit" {
 		return errors.New("invalid document people failure reason")
 	}
-	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		p := DocumentPeoplePublication{People: document.DocumentPeopleV1{ContentVersionID: input.ContentVersionID, EventGenerationID: input.EventGenerationID}, NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch}
 		if err := checkPeoplePublicationFence(ctx, tx, p); err != nil {
 			return err

@@ -28,6 +28,7 @@ const (
 	metadataAttachmentIDField     = "attachment_id"
 	metadataGenerationIDField     = "generation_id"
 	metadataContentVersionIDField = "content_version_id"
+	metadataIngestIDField         = "ingest_id"
 )
 
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
@@ -358,20 +359,6 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
 	}
-	// ponytail: refuse partial backups until person authority has JSONL records.
-	if layout.hasPersons() {
-		for _, table := range []string{"persons", "person_identities", "person_external_identities",
-			"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits", "custodian_assignments",
-			"person_match_candidates", "person_document_assertions"} {
-			var populated bool
-			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+")").Scan(&populated); err != nil {
-				return fmt.Errorf("checking person authority for export: %w", err)
-			}
-			if populated {
-				return errors.New("metadata export and backup do not yet support person authority")
-			}
-		}
-	}
 	vaultID, err := readVaultIdentity(ctx, tx, layout.legacyV090())
 	if err != nil {
 		return fmt.Errorf("reading vault identity: %w", err)
@@ -415,6 +402,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasPersons() {
+		if err := exportPersonMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if layout.hasPostV3Metadata() {
 		if err := exportMediaMetadata(ctx, tx, write); err != nil {
@@ -1244,6 +1236,9 @@ func (s *Store) importMetadataRecord(
 	if isMediaMetadataType(kind) {
 		return s.importMediaMetadataRecord(ctx, tx, kind, raw)
 	}
+	if isPersonMetadataType(kind) {
+		return importPersonMetadataRecord(ctx, tx, kind, raw)
+	}
 	switch kind {
 	case "blob":
 		var v metadataBlob
@@ -1572,6 +1567,16 @@ var metadataRequiredFields = map[string][]string{
 	metadataSourceMetadataHeadType:         {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
 	metadataVisualPreviewGenerationType:    {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:          {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
+	metadataPersonType:                     personMetadataRequiredFields[metadataPersonType],
+	metadataPersonIdentityType:             personMetadataRequiredFields[metadataPersonIdentityType],
+	metadataPersonExternalType:             personMetadataRequiredFields[metadataPersonExternalType],
+	metadataPersonExternalAliasType:        personMetadataRequiredFields[metadataPersonExternalAliasType],
+	metadataPersonAliasType:                personMetadataRequiredFields[metadataPersonAliasType],
+	metadataPersonMergeType:                personMetadataRequiredFields[metadataPersonMergeType],
+	metadataPersonSplitType:                personMetadataRequiredFields[metadataPersonSplitType],
+	metadataCustodianAssignmentType:        personMetadataRequiredFields[metadataCustodianAssignmentType],
+	metadataPersonAssertionType:            personMetadataRequiredFields[metadataPersonAssertionType],
+	metadataPersonCandidateType:            personMetadataRequiredFields[metadataPersonCandidateType],
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
 	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
@@ -1631,6 +1636,10 @@ var metadataNullableFields = map[string]map[string]bool{
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
 	metadataProcessingConsentGrantType: {"expires_at": true},
+	metadataPersonExternalType:         personMetadataNullableFields[metadataPersonExternalType],
+	metadataPersonAliasType:            personMetadataNullableFields[metadataPersonAliasType],
+	metadataCustodianAssignmentType:    personMetadataNullableFields[metadataCustodianAssignmentType],
+	metadataPersonCandidateType:        personMetadataNullableFields[metadataPersonCandidateType],
 	metadataRenditionJobType: {
 		"execution_snapshot": true, "claim_owner": true, "lease_expires_at": true,
 		"provider_resume_handle": true, "selected_waiter_id": true,
@@ -2016,6 +2025,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateVisualPreviewMetadataState(ctx, tx, vaultID); err != nil {
 			return err
+		}
+		if layout.hasPersons() {
+			if err := validatePersonMetadataState(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if layout.schemaVersion >= 13 {
 			if err := exportEmailDocumentMetadata(ctx, tx, func(any) error { return nil }); err != nil {
