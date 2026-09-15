@@ -17,6 +17,8 @@ import (
 var ErrPersonMergeConflict = errors.New("person merge conflict")
 
 type PersonMergeMoved struct {
+	AssertionIDs           []string                          `json:"assertion_ids"`
+	SupersededCandidate    []string                          `json:"superseded_candidate_ids"`
 	IdentityIDs            []string                          `json:"identity_ids"`
 	DeduplicatedIdentities []PersonMergeDeduplicatedIdentity `json:"deduplicated_identities"`
 	ExternalUIDs           []PersonExternalUID               `json:"external_uids"`
@@ -157,6 +159,12 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, absorbedID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=? WHERE surviving_person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
@@ -206,6 +214,7 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 	moved := PersonMergeMoved{
 		IdentityIDs: []string{}, DeduplicatedIdentities: []PersonMergeDeduplicatedIdentity{},
 		ExternalUIDs: []PersonExternalUID{}, AssignmentIDs: []string{},
+		AssertionIDs: []string{}, SupersededCandidate: []string{},
 	}
 	queries := []struct {
 		query string
@@ -213,6 +222,8 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 	}{
 		{`SELECT identity_id FROM person_identities WHERE person_id=? ORDER BY identity_id`, &moved.IdentityIDs},
 		{`SELECT assignment_id FROM custodian_assignments WHERE person_id=? ORDER BY assignment_id`, &moved.AssignmentIDs},
+		{`SELECT assertion_id FROM person_document_assertions WHERE person_id=? ORDER BY assertion_id`, &moved.AssertionIDs},
+		{`SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id=? AND state='open' ORDER BY candidate_id`, &moved.SupersededCandidate},
 	}
 	for _, item := range queries {
 		values, err := collectPersonMergeColumnTx(ctx, tx, item.query, absorbedID)
@@ -307,6 +318,14 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 		return ErrPersonMergeConflict
 	}
 	var conflict bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a
+		JOIN person_document_assertions s ON s.person_id=? AND a.person_id=?
+		AND s.content_version_id=a.content_version_id AND s.role=a.role)`, survivorID, absorbedID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict {
+		return ErrPersonMergeConflict
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_external_identities
 		WHERE person_id IN (?,?) AND uid_state='current' GROUP BY system,archive_id HAVING COUNT(*)>1)`, survivorID, absorbedID).Scan(&conflict); err != nil {
 		return err

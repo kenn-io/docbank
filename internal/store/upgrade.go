@@ -86,7 +86,7 @@ var currentSchemaTables = [...]string{
 	"processing_consent_grants", "rendition_job_waiters", "embedding_jobs",
 	"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
 	"person_aliases", "person_merges", "person_splits", "custodian_assignments",
-	"document_people_state",
+	"document_people_state", "person_match_candidates", "person_document_assertions",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in

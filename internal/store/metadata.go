@@ -361,7 +361,8 @@ func exportMetadataSnapshotWithVaultIdentity(
 	// ponytail: refuse partial backups until person authority has JSONL records.
 	if layout.hasPersons() {
 		for _, table := range []string{"persons", "person_identities", "person_external_identities",
-			"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits", "custodian_assignments"} {
+			"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits", "custodian_assignments",
+			"person_match_candidates", "person_document_assertions"} {
 			var populated bool
 			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+")").Scan(&populated); err != nil {
 				return fmt.Errorf("checking person authority for export: %w", err)
@@ -1099,6 +1100,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM person_merges)
 		    + (SELECT COUNT(*) FROM person_splits)
 		    + (SELECT COUNT(*) FROM custodian_assignments)
+		    + (SELECT COUNT(*) FROM person_match_candidates)
+		    + (SELECT COUNT(*) FROM person_document_assertions)
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state
 		       WHERE singleton != 1 OR binding_epoch != 1)

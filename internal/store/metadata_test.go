@@ -21,7 +21,7 @@ import (
 )
 
 func TestMetadataExportRefusesUnexportedPersonAuthority(t *testing.T) {
-	for _, kind := range []string{"person", "external_alias", "unresolved_custodian"} {
+	for _, kind := range []string{"person", "external_alias", "unresolved_custodian", "candidate", "rejected_candidate"} {
 		t.Run(kind, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -30,6 +30,13 @@ func TestMetadataExportRefusesUnexportedPersonAuthority(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, s.ExportMetadata(ctx, io.Discard))
 			switch kind {
+			case "candidate", "rejected_candidate":
+				candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
+					ContentVersionID: file.CurrentVersionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
+				}}))
+				if kind == "rejected_candidate" {
+					_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
+				}
 			case "person":
 				_, err = s.CreatePerson(ctx, "Example Person", "operator")
 			case "external_alias":
