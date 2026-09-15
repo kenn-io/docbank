@@ -1270,6 +1270,32 @@ func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmbeddingJobFenced, "purged intent must not be resubmitted to a provider")
 }
 
+func TestEmbeddingJobReleasePreservesSuccessorClaim(t *testing.T) {
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, s, versionID, profile, "release")
+	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	first, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found)
+	wrongOwner := first
+	wrongOwner.Owner = "other-worker"
+	require.NoError(t, s.ReleaseEmbeddingWork(t.Context(), wrongOwner, at))
+	require.NoError(t, s.ValidateEmbeddingWork(t.Context(), first, work, at))
+	require.NoError(t, s.ReleaseEmbeddingWork(t.Context(), first, at))
+	successor, work, found, err := s.ClaimNextEmbeddingWork(t.Context(), "worker", at, time.Minute, []string{request.Descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, found, "released work must be claimable before lease expiry")
+	require.NoError(t, s.ReleaseEmbeddingWork(t.Context(), first, at))
+	require.NoError(t, s.ValidateEmbeddingWork(t.Context(), successor, work, at))
+	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), successor, at))
+	require.NoError(t, s.ReleaseEmbeddingWork(t.Context(), successor, at))
+	job, err := s.EmbeddingJobByID(t.Context(), successor.AttemptID)
+	require.NoError(t, err)
+	require.Equal(t, "abandoned", job.State, "late cleanup must not reopen terminal work")
+}
+
 func TestEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "abandonment")

@@ -45,6 +45,7 @@ type embeddingWorkerCatalog interface {
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
+	ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time) error
 	ValidateEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, at time.Time) error
 	BeginEmbeddingProviderEgress(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, prior *store.ProviderOperationAuthorization, at time.Time) (store.ProviderOperationAuthorization, *store.ProviderEgressFence, error)
 	AbandonEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time) error
@@ -320,7 +321,7 @@ func (worker *EmbeddingWorker) Run(ctx context.Context) error {
 		processed, err := worker.ScanOnce(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return err
 			}
 			storageFailures++
 			if !errors.Is(err, ErrEmbeddingPersistence) || storageFailures >= worker.retryLimit {
@@ -398,7 +399,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		processed++
 		if err := worker.processClaim(ctx, claim, work); err != nil {
 			if ctx.Err() != nil {
-				return processed, ctx.Err()
+				return processed, err
 			}
 			if errors.Is(err, ErrEmbeddingPersistence) || !isEmbeddingWorkFence(err) {
 				return processed, err
@@ -440,7 +441,7 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return processed, ctx.Err()
+			return processed, err
 		}
 		if isEmbeddingWorkFence(err) {
 			err = worker.gate.MutateContext(ctx, func() error {
@@ -471,6 +472,19 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 		}
 		cancelAttempt()
 		retErr = errors.Join(retErr, stopLease())
+		if ctx.Err() != nil {
+			retErr = ctx.Err()
+			// Work and lease renewal have stopped. Release this claim before
+			// shutdown closes storage, so a restart need not await lease expiry.
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := worker.gate.MutateContext(releaseCtx, func() error {
+				return worker.catalog.ReleaseEmbeddingWork(releaseCtx, claim, worker.clock().UTC())
+			}); err != nil {
+				// Keep cleanup failure distinct from normal worker cancellation.
+				retErr = ErrEmbeddingPersistence
+			}
+		}
 	}()
 	if err := validateEmbeddingWork(work, worker.maxRows, worker.maxDimensions); err != nil || int64(len(work.InputGeneration.Inputs))*int64(work.Descriptor.Dimension)*4 > worker.maxVectorBlobBytes {
 		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)

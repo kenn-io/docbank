@@ -177,7 +177,7 @@ func (worker *MediaContinuationWorker) Run(ctx context.Context) error {
 	}
 	for {
 		processed, err := worker.RunOne(ctx)
-		if err != nil && !worker.Service.mediaProcessingRetryable(err) {
+		if err != nil && (ctx.Err() != nil || !worker.Service.mediaProcessingRetryable(err)) {
 			return err
 		}
 		if processed && err == nil {
@@ -264,6 +264,9 @@ func (worker *MediaContinuationWorker) runContinuation(
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
 				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil); runErr != nil {
+				if ctx.Err() != nil {
+					return false, runErr
+				}
 				return worker.failContinuation(ctx, continuation, runErr)
 			}
 			status, err = service.Status(ctx, continuation.JobID)

@@ -532,6 +532,28 @@ func (s *Store) BeginEmbeddingProviderEgress(ctx context.Context, claim Embeddin
 	return auth, fence, nil
 }
 
+// ReleaseEmbeddingWork makes a stopped attempt immediately claimable again.
+// Completed jobs and claims owned by a successor are left unchanged.
+func (s *Store) ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
+			SET state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=?,updated_at=?
+			WHERE job_id=? AND state='running' AND claim_owner=? AND claim_epoch=? AND lease_expires_at>?`,
+			at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout),
+			claim.AttemptID, claim.Owner, claim.Epoch, at.UTC().Format(timestampLayout))
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed == 0 {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
+			WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
+		return err
+	})
+}
+
 // AbandonEmbeddingWork retires disposable work without publishing a failure
 // against authority that no longer belongs to this claim. A successor claim
 // (or an expired or already completed job) is never changed.

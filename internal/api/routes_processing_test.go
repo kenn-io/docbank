@@ -318,22 +318,21 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	jobID := event.Job.EmbeddingJobIDs[0]
 	interrupted, err := catalog.EmbeddingJobByID(t.Context(), jobID)
 	require.NoError(t, err)
-	require.Equal(t, "running", interrupted.State)
+	require.Equal(t, "queued", interrupted.State)
 	require.Empty(t, interrupted.FailureCode)
-	// A restarted daemon reclaims the same durable job once its lease expires.
+	// A restarted daemon reclaims the same durable job immediately after cleanup.
 	runtime, err := processing.NewProviderEmbeddingRuntime(inner, catalog.Blobs, t.TempDir(),
 		func(error) (processing.EmbeddingProviderFailure, time.Duration) {
 			return processing.EmbeddingProviderInvalidResponse, 0
 		})
 	require.NoError(t, err)
-	now := time.Now().Add(10 * time.Minute)
 	worker, err := processing.NewEmbeddingWorker(processing.EmbeddingWorkerConfig{
 		Catalog: catalog.Store, Authority: catalog.Store, Blobs: catalog.Blobs,
 		GenerationBlobs: catalog.Blobs, Runtime: runtime, Gate: api.NewOperationGate(),
 		Owner: "restarted-processing-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 		RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
 		AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
-		MaxVectorBlobBytes: 64 << 20, Clock: func() time.Time { return now },
+		MaxVectorBlobBytes:     64 << 20,
 		DescriptorFingerprints: []string{inner.Descriptor().Fingerprint},
 	})
 	require.NoError(t, err)

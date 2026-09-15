@@ -1253,6 +1253,9 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 	require.NoError(t, db.Close())
 	require.Equal(t, "failed", unauthorizedEmbeddingState)
 	require.Equal(t, "authorization", unauthorizedEmbeddingFailure)
+	// Restart with an embedding call in flight, not before a worker claims it.
+	embedder.release = make(chan struct{})
+	beforeRestartCalls := embedder.calls.Load()
 	plan, err = vault.PlanProcessing(t.Context(), planRequest)
 	require.NoError(t, err)
 	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
@@ -1263,7 +1266,10 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 		"00000000-0000-4000-8000-000000000453", receipt.SourceID,
 		docbank.MediaProcessingRequest{Profile: "media-semantic"})
 	require.NoError(t, err)
+	require.Eventually(t, func() bool { return embedder.calls.Load() > beforeRestartCalls },
+		10*time.Second, time.Millisecond)
 	require.NoError(t, vault.Close())
+	close(embedder.release)
 	vault, err = docbank.New(t.Context(), config)
 	require.NoError(t, err)
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {

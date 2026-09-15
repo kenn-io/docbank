@@ -1448,6 +1448,10 @@ func (c *embeddingWorkerFakeCatalog) AbandonEmbeddingWork(context.Context, Embed
 	return nil
 }
 
+func (c *embeddingWorkerFakeCatalog) ReleaseEmbeddingWork(context.Context, EmbeddingWorkClaim, time.Time) error {
+	return nil
+}
+
 func TestEmbeddingWorkerReleasesMaintenanceGateDuringRetryDelay(t *testing.T) {
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("retry-maintenance", document.EmbeddingInputRenditionChunk, "semantic")
@@ -1593,7 +1597,7 @@ func TestEmbeddingWorkerRecoversConsentRevokedBeforePublication(t *testing.T) {
 type unavailableEmbeddingStore struct {
 	*store.Store
 
-	validateErr, renewErr, publishErr error
+	validateErr, renewErr, publishErr, releaseErr error
 }
 
 func (s *unavailableEmbeddingStore) ValidateEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, at time.Time) error {
@@ -1610,6 +1614,14 @@ func (s *unavailableEmbeddingStore) RenewEmbeddingWork(ctx context.Context, clai
 	}
 	return s.Store.RenewEmbeddingWork(ctx, claim, at, lease)
 }
+
+func (s *unavailableEmbeddingStore) ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time) error {
+	if s.releaseErr != nil {
+		return s.releaseErr
+	}
+	return s.Store.ReleaseEmbeddingWork(ctx, claim, at)
+}
+
 func (s *unavailableEmbeddingStore) PublishEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork,
 	head store.EmbeddingHeadRecord, prior store.ProviderOperationAuthorization, receipt EmbeddingAttemptReceipt, at time.Time) error {
 	if s.publishErr != nil {
@@ -1618,6 +1630,40 @@ func (s *unavailableEmbeddingStore) PublishEmbeddingWork(ctx context.Context, cl
 		return err
 	}
 	return s.Store.PublishEmbeddingWork(ctx, claim, work, head, prior, receipt, at)
+}
+
+func TestEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T) {
+	for _, test := range []struct{ targeted, cleanupFails bool }{
+		{false, false}, {false, true}, {true, false}, {true, true},
+	} {
+		t.Run(fmt.Sprintf("targeted=%t/cleanup-fails=%t", test.targeted, test.cleanupFails), func(t *testing.T) {
+			fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			catalog := &unavailableEmbeddingStore{Store: fixture.catalog}
+			if test.cleanupFails {
+				catalog.releaseErr = errors.New("synthetic storage outage")
+			}
+			worker.catalog = catalog
+			job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			fake.runtime.mutate[request.BindingID] = func(result document.EmbeddingResult) document.EmbeddingResult {
+				cancel()
+				return result
+			}
+			if test.targeted {
+				_, err = worker.RunJob(ctx, job.ID)
+			} else {
+				err = worker.Run(ctx)
+			}
+			if test.cleanupFails {
+				require.ErrorIs(t, err, ErrEmbeddingPersistence)
+				require.NotErrorIs(t, err, context.Canceled, "cleanup failure must not look like normal shutdown")
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		})
+	}
 }
 
 func TestEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t *testing.T) {
