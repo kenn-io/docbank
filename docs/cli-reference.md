@@ -1200,7 +1200,7 @@ visible occurrence and recording version. Its receipt returns the input ID.
 Pass that value with `media retry --supplied-input-id INPUT_ID` when more than one
 transcript exists for the recording. The selected input remains fixed for the
 job; importing another transcript does not change work already queued.
-Artifact imports retain inputs only and reject a processing profile. Use
+Artifact imports retain inputs only. Use
 `media retry` to request processing after the import.
 
 Processing is explicit. The built-in `supplied-transcript` profile turns the
@@ -1215,8 +1215,7 @@ the last successful transcript's coverage while a retry is pending or fails;
 revoking that transcript's occurrence makes its coverage `stale`. Before any
 successful processing, coverage describes the current attempt.
 Media processing requires a profile with a rendition provider. Profiles that
-only produce embeddings are rejected. The media list commands currently reject
-profile and variant filters.
+only produce embeddings are rejected.
 
 Remote references are read from `--reference-file PATH`, or from stdin with
 `--reference-file -`. They are never accepted as a command-line URL. Reference

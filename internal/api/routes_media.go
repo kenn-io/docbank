@@ -31,16 +31,14 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listMediaSources", Method: http.MethodGet,
 		Path: "/api/v1/media/sources", Summary: "List caller-visible media sources"},
 		func(ctx context.Context, input *struct {
-			Cursor  string `query:"cursor" maxLength:"4096"`
-			Limit   int    `query:"limit" default:"100" minimum:"1" maximum:"250"`
-			Profile string `query:"profile" maxLength:"128"`
-			Variant string `query:"variant" maxLength:"128"`
+			Cursor string `query:"cursor" maxLength:"4096"`
+			Limit  int    `query:"limit" default:"100" minimum:"1" maximum:"250"`
 		}) (*sourcePageOutput, error) {
 			if d.Processing == nil {
 				return nil, mediaUnavailable()
 			}
 			page, err := d.Processing.ListMediaSources(ctx, processing.MediaListOptions{
-				Cursor: input.Cursor, Limit: input.Limit, Profile: input.Profile, Variant: input.Variant})
+				Cursor: input.Cursor, Limit: input.Limit})
 			if err != nil {
 				return nil, fromMediaError(err)
 			}
@@ -350,8 +348,7 @@ func handleMediaArtifactUpload(w http.ResponseWriter, r *http.Request, d Deps) {
 		OperationID: metadata.OperationID, SourceID: r.PathValue("source_id"), OccurrenceID: metadata.OccurrenceID,
 		Kind: metadata.Kind, Origin: metadata.Origin, Provider: metadata.Provider, Language: metadata.Language,
 		Filename: metadata.Filename, MediaType: metadata.MediaType, SHA256: metadata.SHA256,
-		ByteLength: metadata.ByteLength, Content: staged,
-		Processing: toOptionalMediaProcessing(metadata.Processing)})
+		ByteLength: metadata.ByteLength, Content: staged})
 	if err != nil {
 		writeError(w, fromMediaError(err))
 		return
@@ -499,7 +496,6 @@ func fromMediaError(err error) *Error {
 	}{
 		{processing.ErrMediaCapabilityUnavailable, http.StatusServiceUnavailable, "capability_unavailable"},
 		{processing.ErrMediaProcessingUnsupported, http.StatusUnprocessableEntity, "media_processing_unsupported"},
-		{processing.ErrMediaFilterUnsupported, http.StatusUnprocessableEntity, "media_filter_unsupported"},
 		{processing.ErrMediaCursorInvalid, http.StatusUnprocessableEntity, "invalid_cursor"},
 		{processing.ErrMediaPlanInvalid, http.StatusUnprocessableEntity, "invalid_media_plan"},
 		{processing.ErrMediaPlanExpired, http.StatusConflict, "expired_media_plan"},

@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -20,11 +19,9 @@ const mediaPageTokenDomain = "media-page/v1\x00" //nolint:gosec // HMAC domain s
 
 var ErrMediaCursorInvalid = errors.New("invalid media page cursor")
 
-var ErrMediaFilterUnsupported = errors.New("media profile and variant filters are unsupported")
-
 type MediaListOptions struct {
-	Cursor, Profile, Variant, SourceID string
-	Limit                              int
+	Cursor, SourceID string
+	Limit            int
 }
 
 type MediaSourceRow struct {
@@ -51,9 +48,9 @@ type MediaOccurrencePage struct {
 }
 
 type mediaPageClaim struct {
-	Version, Principal, Kind, Profile, Variant, SourceID string
-	Fence                                                int64
-	Offset, Limit                                        int
+	Version, Principal, Kind, SourceID string
+	Fence                              int64
+	Offset, Limit                      int
 }
 
 func (service *Service) ListMediaSources(ctx context.Context, options MediaListOptions) (MediaSourcePage, error) {
@@ -86,8 +83,8 @@ func (service *Service) ListMediaSources(ctx context.Context, options MediaListO
 	}
 	if offset+len(items) < total {
 		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v1",
-			Principal: service.principal, Kind: "sources", Profile: options.Profile,
-			Variant: options.Variant, Fence: fence, Offset: offset + len(items), Limit: options.Limit})
+			Principal: service.principal, Kind: "sources",
+			Fence: fence, Offset: offset + len(items), Limit: options.Limit})
 	}
 	return result, err
 }
@@ -232,9 +229,6 @@ func (service *Service) mediaPage(
 	if service == nil {
 		return 0, 0, ErrMediaCapabilityUnavailable
 	}
-	if options.Profile != "" || options.Variant != "" {
-		return 0, 0, ErrMediaFilterUnsupported
-	}
 	if options.Limit < 1 || options.Limit > 250 {
 		return 0, 0, errors.New("media page limit must be between 1 and 250")
 	}
@@ -247,7 +241,7 @@ func (service *Service) mediaPage(
 	}
 	claim, err := service.verifyMediaPage(options.Cursor)
 	if err != nil || claim.Version != "v1" || claim.Principal != service.principal || claim.Kind != kind ||
-		claim.Profile != options.Profile || claim.Variant != options.Variant || claim.SourceID != options.SourceID ||
+		claim.SourceID != options.SourceID ||
 		claim.Limit != options.Limit || claim.Fence != fence || claim.Offset < 0 {
 		return 0, 0, ErrMediaCursorInvalid
 	}
@@ -302,5 +296,3 @@ func mediaOccurrenceID(principal, ref, revision string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
-
-var _ = slices.Clone([]string(nil))

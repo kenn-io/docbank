@@ -164,12 +164,11 @@ type MediaArtifactRequest struct {
 	Filename, MediaType, SHA256         string
 	ByteLength                          int64
 	Content                             io.Reader
-	Processing                          *MediaProcessingRequest
 }
 
 type MediaListOptions struct {
-	Cursor, Profile, Variant, SourceID string
-	Limit                              int
+	Cursor, SourceID string
+	Limit            int
 }
 
 type MediaSourceRow struct {

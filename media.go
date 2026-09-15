@@ -52,7 +52,6 @@ func (v *Vault) ImportRecordingArtifact(ctx context.Context, request MediaArtifa
 		Kind: request.Kind, Origin: request.Origin, Provider: request.Provider, Language: request.Language,
 		Filename: request.Filename, MediaType: request.MediaType, SHA256: request.SHA256,
 		ByteLength: request.ByteLength, Content: request.Content,
-		Processing: toInternalMediaProcessing(request.Processing),
 	})
 	if err != nil {
 		return MediaReceipt{}, err
@@ -87,7 +86,7 @@ func (v *Vault) ListMediaSources(ctx context.Context, options MediaListOptions) 
 	}
 	defer v.lifecycle.RUnlock()
 	page, err := v.processing.ListMediaSources(ctx, internalprocessing.MediaListOptions{
-		Cursor: options.Cursor, Profile: options.Profile, Variant: options.Variant,
+		Cursor:   options.Cursor,
 		SourceID: options.SourceID, Limit: options.Limit})
 	if err != nil {
 		return MediaSourcePage{}, err

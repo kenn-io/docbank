@@ -8,13 +8,17 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"image/color"
+	"io"
 	"math"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2133,6 +2137,80 @@ func TestInspectCapabilityProvesGeminiMP3Duration(t *testing.T) {
 	assert.Equal(t, "audio/mpeg", record.MediaType)
 	assert.Equal(t, "mp3", record.Format)
 	assert.Equal(t, int64(262), record.Measurements.DurationMS)
+}
+
+func TestInspectAudioUsesBoundedMemory(t *testing.T) {
+	// Keep this test sequential: the allocation measurement belongs to this
+	// inspection, without the package's parallel inspections running beside it.
+	for _, test := range []struct {
+		filename, mediaType string
+		data                []byte
+	}{
+		{"recording.wav", "audio/wav", wavBytes(8_000, 16<<20)},
+		{"recording.mp3", "audio/mpeg", syntheticMP3Frames((16 << 20) / 417)},
+	} {
+		t.Run(test.filename, func(t *testing.T) {
+			policy := inspectionPolicy(test.data, test.filename, test.mediaType)
+			policy.MaxSourceBytes = media.MaxInspectionSourceBytes
+			policy.MaxDurationMS = 24 * 60 * 60 * 1000
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			record, err := media.InspectCapability(bytes.NewReader(test.data), policy)
+			runtime.ReadMemStats(&after)
+			require.NoError(t, err)
+			require.True(t, record.Eligible, record.Reason)
+			require.NoError(t, media.ValidateCapabilityRecord(record))
+			assert.Equal(t, policy.ExpectedBytes, record.SourceBytes)
+			assert.Equal(t, policy.ExpectedSHA256, record.SourceSHA256)
+			allocated := after.TotalAlloc - before.TotalAlloc
+			t.Logf("inspected %d source bytes using %d allocated bytes", record.SourceBytes, allocated)
+			assert.Less(t, allocated, uint64(2<<20), "audio inspection must not buffer the recording")
+		})
+	}
+}
+
+func TestInspectAudioValidatesCompleteStream(t *testing.T) {
+	for _, test := range []struct {
+		filename, mediaType string
+		data                []byte
+	}{
+		{"recording.wav", "audio/wav", mediatest.WAV()},
+		{"recording.mp3", "audio/mpeg", mediatest.MP3()},
+	} {
+		t.Run(test.filename, func(t *testing.T) {
+			policy := inspectionPolicy(test.data, test.filename, test.mediaType)
+			policy.MaxDurationMS = 1_000
+			t.Run("digest includes skipped payload", func(t *testing.T) {
+				changed := slices.Clone(test.data)
+				changed[len(changed)-1] ^= 1
+				_, err := media.InspectCapability(bytes.NewReader(changed), policy)
+				require.ErrorContains(t, err, "SHA-256")
+			})
+			t.Run("truncated payload", func(t *testing.T) {
+				_, err := media.InspectCapability(bytes.NewReader(test.data[:len(test.data)-1]), policy)
+				require.ErrorContains(t, err, "byte length")
+			})
+			t.Run("source ceiling", func(t *testing.T) {
+				policy.MaxSourceBytes = policy.ExpectedBytes
+				reader := io.MultiReader(bytes.NewReader(test.data), strings.NewReader("extra"))
+				record, err := media.InspectCapability(reader, policy)
+				require.NoError(t, err)
+				require.False(t, record.Eligible)
+				require.Equal(t, media.CapabilityReasonSourceBytes, record.Reason)
+			})
+			t.Run("source read failure", func(t *testing.T) {
+				failure := errors.New("synthetic source read failure")
+				reader := io.MultiReader(bytes.NewReader(test.data[:12]), iotest.ErrReader(failure))
+				_, err := media.InspectCapability(reader, policy)
+				require.ErrorIs(t, err, failure)
+			})
+			t.Run("final bytes with read failure", func(t *testing.T) {
+				reader := iotest.DataErrReader(iotest.TimeoutReader(bytes.NewReader(test.data)))
+				_, err := media.InspectCapability(reader, policy)
+				require.ErrorIs(t, err, iotest.ErrTimeout)
+			})
+		})
+	}
 }
 
 func TestInspectCapabilityProvesRealMP3WithBoundedID3Tags(t *testing.T) {

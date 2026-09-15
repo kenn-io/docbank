@@ -15,11 +15,6 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-type MediaSourceOptions struct {
-	Cursor, Profile, Variant string
-	Limit                    int
-}
-
 type MediaOccurrenceOptions struct {
 	Cursor, SourceID string
 	Limit            int
@@ -43,30 +38,18 @@ func (c *Client) SubmitRemoteRecording(
 }
 
 func (c *Client) MediaSources(ctx context.Context, cursor string, limit int) (api.MediaSourcePage, error) {
-	return c.MediaSourcesWithOptions(ctx, MediaSourceOptions{Cursor: cursor, Limit: limit})
-}
-
-func (c *Client) MediaSourcesWithOptions(
-	ctx context.Context, options MediaSourceOptions,
-) (api.MediaSourcePage, error) {
-	if options.Limit < 1 || options.Limit > 250 {
+	if limit < 1 || limit > 250 {
 		return api.MediaSourcePage{}, errors.New("media source limit must be between 1 and 250")
 	}
-	query := url.Values{"limit": {strconv.Itoa(options.Limit)}}
-	if options.Cursor != "" {
-		query.Set("cursor", options.Cursor)
-	}
-	if options.Profile != "" {
-		query.Set("profile", options.Profile)
-	}
-	if options.Variant != "" {
-		query.Set("variant", options.Variant)
+	query := url.Values{"limit": {strconv.Itoa(limit)}}
+	if cursor != "" {
+		query.Set("cursor", cursor)
 	}
 	var result api.MediaSourcePage
 	if err := c.do(ctx, http.MethodGet, "/api/v1/media/sources?"+query.Encode(), nil, nil, &result); err != nil {
 		return api.MediaSourcePage{}, err
 	}
-	if result.Items == nil || result.Total < len(result.Items) || len(result.Items) > options.Limit {
+	if result.Items == nil || result.Total < len(result.Items) || len(result.Items) > limit {
 		return api.MediaSourcePage{}, errors.New("daemon returned an invalid media source page")
 	}
 	seen := make(map[string]struct{}, len(result.Items))

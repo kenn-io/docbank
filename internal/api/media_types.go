@@ -142,17 +142,16 @@ type MediaOccurrenceRevokeBody struct {
 }
 
 type MediaArtifactMetadata struct {
-	OperationID  string               `json:"operation_id"`
-	OccurrenceID string               `json:"occurrence_id"`
-	Kind         string               `json:"kind"`
-	Origin       string               `json:"origin,omitempty"`
-	Provider     string               `json:"provider,omitempty"`
-	Language     string               `json:"language,omitempty"`
-	Filename     string               `json:"filename"`
-	MediaType    string               `json:"media_type"`
-	SHA256       string               `json:"sha256"`
-	ByteLength   int64                `json:"byte_length"`
-	Processing   *MediaProcessingBody `json:"processing,omitempty"`
+	OperationID  string `json:"operation_id"`
+	OccurrenceID string `json:"occurrence_id"`
+	Kind         string `json:"kind"`
+	Origin       string `json:"origin,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	Language     string `json:"language,omitempty"`
+	Filename     string `json:"filename"`
+	MediaType    string `json:"media_type"`
+	SHA256       string `json:"sha256"`
+	ByteLength   int64  `json:"byte_length"`
 }
 
 type MediaConsentReceipt struct {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"path"
 	"strings"
 	"unicode/utf8"
@@ -279,12 +280,7 @@ func (service *Service) SubmitSuppliedMedia(
 		if enqueueErr != nil {
 			return MediaReceipt{}, errors.Join(enqueueErr, service.failMediaProcessing(ctx, stored, enqueueErr))
 		}
-		err = service.mediaMutation(context.WithoutCancel(ctx), func() error {
-			var updateErr error
-			stored, updateErr = service.catalog.SetMediaProcessingJob(
-				context.WithoutCancel(ctx), request.OperationID, service.principal, job.ID)
-			return updateErr
-		})
+		stored, err = service.recordMediaProcessingJob(ctx, stored, job.ID)
 		if err != nil {
 			return MediaReceipt{}, err
 		}
@@ -436,6 +432,13 @@ func validateSuppliedMediaRequest(request SuppliedMediaRequest) error {
 	}
 	if strings.ContainsAny(request.Filename, "/\\\x00") || path.Base(request.Filename) != request.Filename {
 		return errors.New("media filename must be a base name")
+	}
+	mediaType, _, err := mime.ParseMediaType(request.MediaType)
+	ext := strings.ToLower(path.Ext(request.Filename))
+	validIdentity := ext == ".wav" && (mediaType == "audio/wav" || mediaType == "audio/x-wav") ||
+		ext == ".mp3" && mediaType == "audio/mpeg"
+	if err != nil || !validIdentity {
+		return errors.New("supplied media requires a WAV or MP3 filename and media type")
 	}
 	if err := validateMediaTimestamp(request.Occurrence.Message); err != nil {
 		return err

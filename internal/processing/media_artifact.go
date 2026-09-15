@@ -20,7 +20,6 @@ type MediaArtifactRequest struct {
 	Filename, MediaType, SHA256         string
 	ByteLength                          int64
 	Content                             io.Reader
-	Processing                          *MediaProcessingRequest
 }
 
 func (service *Service) ImportRecordingArtifact(
@@ -28,9 +27,6 @@ func (service *Service) ImportRecordingArtifact(
 ) (MediaReceipt, error) {
 	if service == nil {
 		return MediaReceipt{}, ErrMediaCapabilityUnavailable
-	}
-	if request.Processing != nil {
-		return MediaReceipt{}, ErrMediaProcessingUnsupported
 	}
 	if request.Kind != "media" && request.Kind != "caption" && request.Kind != "transcript" {
 		return MediaReceipt{}, errors.New("media artifact kind must be media, caption, or transcript")
@@ -56,10 +52,9 @@ func (service *Service) ImportRecordingArtifact(
 		SourceID, OccurrenceID, Kind, Origin, Provider, Language, SHA256 string
 		Filename, MediaType                                              string
 		ByteLength                                                       int64
-		Processing                                                       *MediaProcessingRequest
 	}{request.SourceID, request.OccurrenceID, request.Kind, request.Origin,
 		request.Provider, request.Language, request.SHA256, request.Filename, request.MediaType,
-		request.ByteLength, request.Processing})
+		request.ByteLength})
 	if err != nil {
 		return MediaReceipt{}, err
 	}
@@ -192,12 +187,7 @@ func (service *Service) RetryMedia(
 	if err != nil {
 		return MediaReceipt{}, errors.Join(err, service.failMediaProcessing(ctx, stored, err))
 	}
-	err = service.mediaMutation(context.WithoutCancel(ctx), func() error {
-		var updateErr error
-		stored, updateErr = service.catalog.SetMediaProcessingJob(
-			context.WithoutCancel(ctx), operationID, service.principal, job.ID)
-		return updateErr
-	})
+	stored, err = service.recordMediaProcessingJob(ctx, stored, job.ID)
 	return mediaReceiptFromStore(stored), err
 }
 

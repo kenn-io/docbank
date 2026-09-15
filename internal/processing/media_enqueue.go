@@ -85,11 +85,7 @@ func (service *Service) EnqueueAuthorized(
 		return Job{}, ErrPlanChanged
 	}
 	want := service.renditionConsentRequest(profile)
-	if authorization.Principal != want.Principal || authorization.Scope != want.Scope ||
-		authorization.ProfileFingerprint != want.ProfileFingerprint ||
-		authorization.DisclosureFingerprint != want.DisclosureFingerprint ||
-		!slices.Equal(authorization.InputClasses, want.InputClasses) ||
-		!slices.Equal(authorization.RetainedArtifactClasses, want.RetainedArtifactClasses) {
+	if !sameMediaAuthorization(authorization, want) {
 		return Job{}, ErrPlanChanged
 	}
 	if authorization.PriorAuthorization == nil {
@@ -251,11 +247,7 @@ func (worker *MediaContinuationWorker) runContinuation(
 		if err != nil {
 			return worker.failContinuation(ctx, continuation, err)
 		}
-		err = service.mediaMutation(context.WithoutCancel(ctx), func() error {
-			_, updateErr := service.catalog.SetMediaProcessingJob(context.WithoutCancel(ctx),
-				continuation.OperationID, continuation.ProcessingPrincipal, job.ID)
-			return updateErr
-		})
+		_, err = service.recordMediaProcessingJob(ctx, continuation, job.ID)
 		return true, err
 	}
 	status, err := service.Status(ctx, continuation.JobID)
@@ -305,6 +297,19 @@ func sameMediaAuthorization(got, want store.ProviderOperationAuthorizationReques
 		got.DisclosureFingerprint == want.DisclosureFingerprint &&
 		slices.Equal(got.InputClasses, want.InputClasses) &&
 		slices.Equal(got.RetainedArtifactClasses, want.RetainedArtifactClasses)
+}
+
+func (service *Service) recordMediaProcessingJob(
+	ctx context.Context, receipt store.MediaPublicationReceipt, jobID string,
+) (store.MediaPublicationReceipt, error) {
+	ctx = context.WithoutCancel(ctx)
+	var stored store.MediaPublicationReceipt
+	err := service.mediaMutation(ctx, func() error {
+		var err error
+		stored, err = service.catalog.SetMediaProcessingJob(ctx, receipt.OperationID, receipt.ProcessingPrincipal, jobID)
+		return err
+	})
+	return stored, err
 }
 
 func (worker *MediaContinuationWorker) failContinuation(

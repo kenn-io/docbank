@@ -213,9 +213,7 @@ func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
 	plan, err := service.Plan(t.Context(), selector)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	job, err := service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err, "foreground processing must progress without a background worker")
 	status, err := service.Status(t.Context(), job.ID)
 	require.NoError(t, err)

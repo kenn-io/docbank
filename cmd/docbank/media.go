@@ -76,8 +76,7 @@ var mediaListCmd = &cobra.Command{Use: "list", Short: "List caller-visible recor
 		if err != nil {
 			return err
 		}
-		page, err := c.MediaSourcesWithOptions(cmd.Context(), client.MediaSourceOptions{
-			Cursor: mediaCursor, Limit: mediaLimit, Profile: mediaProfile})
+		page, err := c.MediaSources(cmd.Context(), mediaCursor, mediaLimit)
 		if err != nil {
 			return err
 		}
@@ -132,7 +131,7 @@ var mediaImportCmd = &cobra.Command{Use: "import-artifact <source-id>", Short: "
 			OperationID: mediaOperationID, OccurrenceID: mediaOccurrenceID, Kind: mediaArtifactKind,
 			Origin: mediaOrigin, Provider: mediaProvider, Language: mediaLanguage,
 			Filename: supplied.Filename, MediaType: supplied.MediaType, SHA256: supplied.SHA256,
-			ByteLength: supplied.ByteLength, Processing: mediaProcessingFlags()}, file)
+			ByteLength: supplied.ByteLength}, file)
 		if err != nil {
 			return err
 		}
@@ -278,7 +277,7 @@ func init() {
 		command.Flags().StringVar(&mediaPersonRef, "person-ref", "", "optional person reference")
 		command.Flags().StringVar(&mediaSpeakerLabel, "speaker-label", "", "optional speaker label")
 	}
-	for _, command := range []*cobra.Command{mediaSubmitCmd, mediaRetryCmd, mediaImportCmd} {
+	for _, command := range []*cobra.Command{mediaSubmitCmd, mediaRetryCmd} {
 		command.Flags().StringVar(&mediaProfile, "processing-profile", "", "explicit processing profile")
 		command.Flags().StringVar(&mediaInputID, "supplied-input-id", "", "exact supplied input identity")
 	}
@@ -288,7 +287,6 @@ func init() {
 	}
 	mediaListCmd.Flags().StringVar(&mediaCursor, "cursor", "", "opaque page cursor")
 	mediaListCmd.Flags().IntVar(&mediaLimit, "limit", 100, "page size")
-	mediaListCmd.Flags().StringVar(&mediaProfile, "processing-profile", "", "processing profile filter")
 	mediaImportCmd.Flags().StringVar(&mediaFile, "file", "", "artifact file path")
 	mediaImportCmd.Flags().StringVar(&mediaOccurrenceID, "occurrence-id", "", "bound occurrence identity")
 	mediaImportCmd.Flags().StringVar(&mediaArtifactKind, "kind", "", "media, caption, or transcript")

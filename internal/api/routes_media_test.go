@@ -306,13 +306,7 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 		OperationID: "00000000-0000-4000-8000-000000000402", OccurrenceID: receipt.OccurrenceID,
 		Kind: "transcript", Filename: "call.txt", MediaType: "text/plain",
 		SHA256: processingTestHash(transcript), ByteLength: int64(len(transcript)),
-		Processing: &api.MediaProcessingBody{Profile: processing.SuppliedMediaProfileName},
 	}
-	_, err = c.ImportMediaArtifact(t.Context(), receipt.SourceID, metadata, strings.NewReader(transcript))
-	code, ok := client.ProblemCode(err)
-	require.True(t, ok, "explicit processing must return a validation error: %v", err)
-	require.Equal(t, "media_processing_unsupported", code)
-	metadata.Processing = nil
 	_, err = c.ImportMediaArtifact(t.Context(), receipt.SourceID, metadata, strings.NewReader(transcript))
 	require.NoError(t, err)
 	version, err := catalog.ContentVersionByID(t.Context(), receipt.ContentVersionID)
@@ -355,19 +349,6 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 			var problem api.Error
 			require.NoError(t, json.Unmarshal([]byte(body), &problem))
 			require.Equal(t, test.code, problem.Code)
-		})
-	}
-}
-
-func TestMediaRoutesRejectUnsupportedSourceFilters(t *testing.T) {
-	ts, _ := newTestServer(t, configureMediaTestService(t))
-	for _, filter := range []string{"profile", "variant"} {
-		t.Run(filter, func(t *testing.T) {
-			response, body := get(t, ts, "/api/v1/media/sources?limit=10&"+filter+"=selected", nil)
-			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-			var problem api.Error
-			require.NoError(t, json.Unmarshal([]byte(body), &problem))
-			require.Equal(t, "media_filter_unsupported", problem.Code)
 		})
 	}
 }
