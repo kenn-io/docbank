@@ -899,18 +899,8 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 		if err := candidates.Scan(&candidateID, &raw); err != nil {
 			return err
 		}
-		occurrences, err := decodeStoredCandidateEvidence(raw)
-		if err != nil {
-			return err
-		}
-		for _, occurrence := range occurrences {
-			var exists bool
-			if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=?)`, occurrence.ContentVersionID).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				return fmt.Errorf("person candidate %s references missing content version", candidateID)
-			}
+		if _, err := decodeStoredCandidateEvidence(raw); err != nil {
+			return fmt.Errorf("decoding person candidate %s evidence: %w", candidateID, err)
 		}
 	}
 	return candidates.Err()

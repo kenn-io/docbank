@@ -29,13 +29,20 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 		if err != nil {
 			return err
 		}
+		affectedPeople, err := peoplePersonsForNodeSubtree(ctx, tx, n.ID)
+		if err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if active {
 			trashed, origPath, err = s.trashAuditedTx(ctx, tx, n, ifRev)
-			return err
+			if err != nil {
+				return err
+			}
+			return refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople)
 		}
 		if n.TrashedAt != nil {
 			return fmt.Errorf("node %d already trashed: %w", id, ErrNotFound)
@@ -51,7 +58,10 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 			return err
 		}
 		trashed, err = nodeByIDTx(tx, id)
-		return err
+		if err != nil {
+			return err
+		}
+		return refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople)
 	})
 	if err != nil {
 		return Node{}, "", err
@@ -81,6 +91,10 @@ func (s *Store) TrashPathRevision(
 		if n.ID == s.rootID {
 			return ErrIsRoot
 		}
+		affectedPeople, err := peoplePersonsForNodeSubtree(ctx, tx, n.ID)
+		if err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -89,7 +103,10 @@ func (s *Store) TrashPathRevision(
 			trashed, origPath, err = s.trashAuditedTx(
 				ctx, tx, n, ifRev,
 			)
-			return err
+			if err != nil {
+				return err
+			}
+			return refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople)
 		}
 		if ifRev != UnconditionalRev && n.Revision != ifRev {
 			return fmt.Errorf("node %d at revision %d, expected %d: %w",
@@ -102,7 +119,10 @@ func (s *Store) TrashPathRevision(
 			return err
 		}
 		trashed, err = nodeByIDTx(tx, n.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		return refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople)
 	})
 	if err != nil {
 		return Node{}, "", err
@@ -172,6 +192,10 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 		if err != nil {
 			return err
 		}
+		affectedPeople, err := peoplePersonsForNodeSubtree(ctx, tx, n.ID)
+		if err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -195,7 +219,10 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 		if err == nil {
 			restoredPath, err = pathOf(ctx, tx, restored.ID)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople)
 	})
 	if err != nil {
 		return Node{}, "", err
@@ -449,6 +476,10 @@ func (s *Store) trashEmpty(
 		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 			return err
 		}
+		affectedPeople, err := peoplePersonsForVersions(ctx, tx, versionIDs)
+		if err != nil {
+			return err
+		}
 		// One trash-empty operation advances each affected tag once, even when
 		// several assignments disappear. A row-level node_tags trigger would
 		// instead expose physical cascade cardinality as revision semantics.
@@ -471,6 +502,9 @@ func (s *Store) trashEmpty(
 		)
 		if err != nil {
 			return fmt.Errorf("emptying trash: %w", err)
+		}
+		if err := refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople); err != nil {
+			return err
 		}
 		rep.Deleted, err = res.RowsAffected()
 		if err != nil {

@@ -54,7 +54,7 @@ func SourceMetadataCanonicalKeyAllowed(key string) bool {
 		return false
 	}
 	for segment := range strings.SplitSeq(key, ".") {
-		if forbiddenSourceMetadataSegments[segment] {
+		if forbiddenSourceMetadataSegments[segment] || strings.Contains(segment, "custodian") {
 			return false
 		}
 	}

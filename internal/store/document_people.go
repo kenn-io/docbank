@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
@@ -110,7 +111,6 @@ func (s *Store) DocumentPeopleResolverInputs(ctx context.Context, versionID stri
 			return err
 		}
 		input.Actors = actors
-		changed := false
 		claimsByKey := make(map[string][]DocumentEventActorClaim, len(actors))
 		orderedKeys := make([]string, 0, len(actors))
 		for _, claim := range actors {
@@ -126,7 +126,7 @@ func (s *Store) DocumentPeopleResolverInputs(ctx context.Context, versionID stri
 			if err != nil {
 				return err
 			}
-			// Automatic people and candidate creation changes retained authority.
+			// Automatic people and candidate creation is local to this target.
 			// An audited vault can still rebuild its derived index from retained
 			// bindings, but unresolved actors remain unresolved until an audited
 			// authority mutation is implemented.
@@ -136,7 +136,7 @@ func (s *Store) DocumentPeopleResolverInputs(ctx context.Context, versionID stri
 					if err != nil {
 						return err
 					}
-					matches, changed = []Person{person}, true
+					matches = []Person{person}
 				} else if len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:") {
 					retained, err := s.openActorCandidatesTx(ctx, tx, versionID, claims, matches)
 					if err != nil {
@@ -148,11 +148,6 @@ func (s *Store) DocumentPeopleResolverInputs(ctx context.Context, versionID stri
 				}
 			}
 			input.Bindings[actorKey] = matches
-		}
-		if changed {
-			if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339()); err != nil {
-				return err
-			}
 		}
 		if err := loadDocumentPeopleCustodiansTx(ctx, tx, versionID, &input); err != nil {
 			return err
@@ -223,6 +218,7 @@ func documentEventActorClaimsTx(ctx context.Context, tx *sql.Tx, generationID st
 			&claim.UTCKey, &sensitive); err != nil {
 			return nil, err
 		}
+		claim.DisplayName = boundedPersonLabel(claim.DisplayName)
 		claim.Sensitive = sensitive != 0
 		claims = append(claims, claim)
 	}
@@ -320,6 +316,7 @@ func provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentEvent
 	if display == "" {
 		display = value
 	}
+	display = boundedPersonLabel(display)
 	if !validPersonName(display) {
 		return Person{}, ErrInvalidPerson
 	}
@@ -386,12 +383,24 @@ func (s *Store) openActorCandidatesTx(ctx context.Context, tx *sql.Tx, versionID
 
 func candidateDisplayName(claim DocumentEventActorClaim) string {
 	if strings.TrimSpace(claim.DisplayName) != "" {
-		return claim.DisplayName
+		return boundedPersonLabel(claim.DisplayName)
 	}
 	if strings.TrimSpace(claim.Address) != "" {
-		return claim.Address
+		return boundedPersonLabel(claim.Address)
 	}
-	return claim.ActorKey
+	return boundedPersonLabel(claim.ActorKey)
+}
+
+func boundedPersonLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= document.MaxPersonDisplayNameBytes {
+		return value
+	}
+	value = value[:document.MaxPersonDisplayNameBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return strings.TrimSpace(value)
 }
 
 func loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
@@ -501,7 +510,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 				return err
 			}
 		}
-		oldIDs, err := documentPeoplePersonIDsTx(ctx, tx, p.People.ContentVersionID)
+		oldIDs, err := peoplePersonsForVersion(ctx, tx, p.People.ContentVersionID)
 		if err != nil {
 			return err
 		}
@@ -583,7 +592,7 @@ func documentPeopleHeadChangedTx(ctx context.Context, tx *sql.Tx, p DocumentPeop
 	return h.GenerationID != generationID || h.InputsSHA256 != p.InputsSHA256 || h.ResolverFingerprint != p.ResolverFingerprint || h.BindingEpoch != p.BindingEpoch || h.State != state || h.FailureReason != "" || h.EdgeCount != int64(len(p.People.Edges)), nil
 }
 
-func documentPeoplePersonIDsTx(ctx context.Context, tx *sql.Tx, versionID string) ([]string, error) {
+func peoplePersonsForVersion(ctx context.Context, tx *sql.Tx, versionID string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT person_id FROM document_people WHERE content_version_id=? ORDER BY person_id`, versionID)
 	if err != nil {
 		return nil, err
@@ -598,6 +607,100 @@ func documentPeoplePersonIDsTx(ctx context.Context, tx *sql.Tx, versionID string
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func peoplePersonsForVersions(ctx context.Context, tx *sql.Tx, versionIDs []string) ([]string, error) {
+	personIDs := []string{}
+	for _, versionID := range slices.Compact(slices.Sorted(slices.Values(versionIDs))) {
+		ids, err := peoplePersonsForVersion(ctx, tx, versionID)
+		if err != nil {
+			return nil, err
+		}
+		personIDs = append(personIDs, ids...)
+	}
+	return slices.Compact(slices.Sorted(slices.Values(personIDs))), nil
+}
+
+func peoplePersonsForNodeSubtree(ctx context.Context, tx *sql.Tx, nodeID int64) (_ []string, retErr error) {
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE subtree(id) AS (
+		SELECT id FROM nodes WHERE id=?
+		UNION ALL
+		SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id=s.id
+	)
+	SELECT DISTINCT dp.person_id FROM document_people dp JOIN subtree s ON s.id=dp.node_id
+	ORDER BY dp.person_id`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func refreshPersonRollupsForLifecycleTx(ctx context.Context, tx *sql.Tx, personIDs []string) error {
+	personIDs = slices.Compact(slices.Sorted(slices.Values(personIDs)))
+	if len(personIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE document_people_state
+		SET publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339()); err != nil {
+		return err
+	}
+	return refreshPersonRollupsTx(ctx, tx, personIDs)
+}
+
+func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
+	versionIDs = slices.Compact(slices.Sorted(slices.Values(versionIDs)))
+	personIDs := []string{}
+	changed := false
+	for _, versionID := range versionIDs {
+		versionPeople, err := peoplePersonsForVersion(ctx, tx, versionID)
+		if err != nil {
+			return err
+		}
+		personIDs = append(personIDs, versionPeople...)
+		result, err := tx.ExecContext(ctx, `DELETE FROM document_people_heads WHERE content_version_id=?`, versionID)
+		if err != nil {
+			return err
+		}
+		removed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		versionChanged := len(versionPeople) != 0 || removed != 0
+		changed = changed || versionChanged
+		if _, err := tx.ExecContext(ctx, `DELETE FROM document_people WHERE content_version_id=?`, versionID); err != nil {
+			return err
+		}
+		var retained bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=?)`, versionID).Scan(&retained); err != nil {
+			return err
+		}
+		if retained && versionChanged {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO document_people_dirty(content_version_id,reason,marked_at)
+				VALUES(?,'evidence changed',?) ON CONFLICT(content_version_id) DO UPDATE SET
+				revision=revision+1,reason=excluded.reason,marked_at=excluded.marked_at`, versionID, nowRFC3339()); err != nil {
+				return err
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+	personIDs = slices.Compact(slices.Sorted(slices.Values(personIDs)))
+	if len(personIDs) == 0 {
+		_, err := tx.ExecContext(ctx, `UPDATE document_people_state
+			SET publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
+		return err
+	}
+	return refreshPersonRollupsForLifecycleTx(ctx, tx, personIDs)
 }
 
 func documentPeopleHeadTx(ctx context.Context, tx *sql.Tx, versionID string) (DocumentPeopleHead, error) {
@@ -647,7 +750,7 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 			bindingEpoch == input.BindingEpoch && failureReason == reason {
 			return nil
 		}
-		oldIDs, err := documentPeoplePersonIDsTx(ctx, tx, input.ContentVersionID)
+		oldIDs, err := peoplePersonsForVersion(ctx, tx, input.ContentVersionID)
 		if err != nil {
 			return err
 		}
@@ -727,6 +830,10 @@ func (s *Store) MissingDocumentPeopleTargetsAfter(ctx context.Context, fingerpri
 }
 
 func (s *Store) RefreshPersonRollups(ctx context.Context, tx *sql.Tx, personIDs []string) error {
+	return refreshPersonRollupsTx(ctx, tx, personIDs)
+}
+
+func refreshPersonRollupsTx(ctx context.Context, tx *sql.Tx, personIDs []string) error {
 	if tx == nil {
 		return errors.New("nil person rollup transaction")
 	}
@@ -737,7 +844,7 @@ func (s *Store) RefreshPersonRollups(ctx context.Context, tx *sql.Tx, personIDs 
 	}
 	for _, personID := range personIDs {
 		for _, class := range []string{"safe", "all"} {
-			query := `SELECT dp.content_version_id,dp.role,COALESCE(dp.first_axis_key,''),COALESCE(dp.last_axis_key,'') FROM document_people dp JOIN nodes n ON n.id=dp.node_id AND n.current_version_id=dp.content_version_id WHERE dp.person_id=?`
+			query := `SELECT dp.content_version_id,dp.role,COALESCE(dp.first_axis_key,''),COALESCE(dp.last_axis_key,'') FROM document_people dp JOIN nodes n ON n.id=dp.node_id AND n.current_version_id=dp.content_version_id WHERE dp.person_id=? AND n.trashed_at IS NULL`
 			if class == "safe" {
 				query += ` AND dp.sensitive=0`
 			}

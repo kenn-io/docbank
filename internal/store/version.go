@@ -664,6 +664,10 @@ func installContentVersionWithOperationTx(
 	ctx context.Context, tx *sql.Tx, n Node, blobHash string, size int64, mimeType, transitionKind string,
 	sourceVersionID *string, operation contentVersionOperation,
 ) (Node, ContentVersion, error) {
+	affectedPeople, err := peoplePersonsForVersion(ctx, tx, n.CurrentVersionID)
+	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	newRevision := n.Revision + 1
 	var storedMime any
 	if mimeType != "" {
@@ -696,6 +700,9 @@ func installContentVersionWithOperationTx(
 	version, err := scanContentVersion(tx.QueryRow(
 		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, operation.versionID))
 	if err != nil {
+		return Node{}, ContentVersion{}, err
+	}
+	if err := refreshPersonRollupsForLifecycleTx(ctx, tx, affectedPeople); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	return updated, version, nil
