@@ -1963,8 +1963,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_identity_unsuggested
 CREATE TABLE IF NOT EXISTS document_people_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     binding_epoch INTEGER NOT NULL CHECK (binding_epoch > 0),
+    publication_epoch INTEGER NOT NULL DEFAULT 1 CHECK (publication_epoch > 0),
+    resolver_fingerprint TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS document_people_generations (
+    generation_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    inputs_sha256 TEXT NOT NULL, resolver_fingerprint TEXT NOT NULL,
+    canonical_json BLOB NOT NULL, checksum TEXT NOT NULL, created_at TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS document_people_generations_immutable_update
+BEFORE UPDATE ON document_people_generations BEGIN
+    SELECT RAISE(ABORT, 'document people generations are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS document_people_heads (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    event_generation_id TEXT NOT NULL, inputs_sha256 TEXT NOT NULL, generation_id TEXT NOT NULL,
+    unresolved_actors INTEGER NOT NULL, suppressed_actors INTEGER NOT NULL, candidate_overflow INTEGER NOT NULL,
+    resolver_fingerprint TEXT NOT NULL, binding_epoch INTEGER NOT NULL, node_revision INTEGER NOT NULL,
+    edge_count INTEGER NOT NULL CHECK (edge_count >= 0),
+    state TEXT NOT NULL, failure_reason TEXT NOT NULL, published_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_people (
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL, role TEXT NOT NULL, actor_key TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL, evidence_id TEXT NOT NULL, confidence TEXT NOT NULL, basis TEXT NOT NULL,
+    raw_label TEXT NOT NULL, claim_count INTEGER NOT NULL CHECK (claim_count >= 1),
+    first_axis_key TEXT, last_axis_key TEXT,
+    sensitive INTEGER NOT NULL CHECK (sensitive IN (0, 1)),
+    PRIMARY KEY (content_version_id, person_id, role, actor_key, evidence_kind, evidence_id)
+);
+CREATE INDEX IF NOT EXISTS document_people_person ON document_people(person_id, content_version_id);
 
 -- Invalidate before version or node deletion cascades remove assertions.
 CREATE TRIGGER IF NOT EXISTS content_versions_invalidate_person_bindings

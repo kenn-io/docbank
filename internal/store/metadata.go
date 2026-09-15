@@ -1125,9 +1125,12 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM custodian_assignments)
 		    + (SELECT COUNT(*) FROM person_match_candidates)
 		    + (SELECT COUNT(*) FROM person_document_assertions)
+		    + (SELECT COUNT(*) FROM document_people_generations)
+		    + (SELECT COUNT(*) FROM document_people_heads)
+		    + (SELECT COUNT(*) FROM document_people)
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state
-		       WHERE singleton != 1 OR binding_epoch != 1)
+		       WHERE singleton != 1 OR binding_epoch != 1 OR publication_epoch != 1 OR resolver_fingerprint != '')
 		    + (SELECT COUNT(*) FROM package_preflights)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
