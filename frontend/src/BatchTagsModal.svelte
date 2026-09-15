@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { Button, Checkbox, Modal, SelectDropdown, Spinner, type SelectDropdownOption } from "@kenn-io/kit-ui";
   import { APIError, type Tag } from "./api.js";
   import type { SelectionTarget } from "./selection.js";
@@ -15,10 +15,11 @@
     onchanged: (receipt: BatchTagReceipt) => void;
     onauthfailure: (cause: unknown) => void;
     context?: "live" | "snapshot";
+    initialChoice?: { tagID: string; assign: boolean };
   }
-  let { session, targets, catalog, catalogTotal, disabled, onclose, onchanged, onauthfailure, context = "live" }: Props = $props();
+  let { session, targets, catalog, catalogTotal, disabled, onclose, onchanged, onauthfailure, context = "live", initialChoice }: Props = $props();
   let currentTargets = $state(untrack(() => targets.map((target) => ({ ...target }))));
-  let tagID = $state("");
+  let tagID = $state(untrack(() => initialChoice?.tagID ?? ""));
   let preview = $state<BatchTagPreview>();
   let uncertain = $state<BatchTagRequest>();
   let loading = $state(false);
@@ -30,6 +31,7 @@
   let generation = 0;
   let alive = true;
   onDestroy(() => { alive = false; generation++; });
+  onMount(() => { if (tagID) void loadPreview(); });
 
   const options = $derived<SelectDropdownOption[]>([
     { value: "", label: "Choose a tag…" },
@@ -126,8 +128,12 @@
         disabled ariaLabel="Selected tag membership" label={`${assignedCount} of ${currentTargets.length} selected documents have this tag.`} />
     {/if}
     <div class="actions">
-      <Button tone="info" disabled={!canChange || assignedCount === currentTargets.length} onclick={() => change(true)}>Add to all</Button>
-      <Button disabled={!canChange || assignedCount === 0} onclick={() => change(false)}>Remove from all</Button>
+      {#if !initialChoice || initialChoice.assign}
+        <Button tone="info" disabled={!canChange || assignedCount === currentTargets.length} onclick={() => change(true)}>Add to all</Button>
+      {/if}
+      {#if !initialChoice || !initialChoice.assign}
+        <Button disabled={!canChange || assignedCount === 0} onclick={() => change(false)}>Remove from all</Button>
+      {/if}
     </div>
     {#if pending}<div class="loading"><Spinner size={16} /> Confirming operation…</div>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}

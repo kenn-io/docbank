@@ -143,4 +143,34 @@ it("reruns supported facets and sorting from the complete accepted query", async
   expect(bodies.at(-1)).toMatchObject({ page_size: 100, facets: [
     "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
   ] });
+
+  await waitFor(() => expect((screen.getByRole("button", { name: "Tag or recover" }) as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Discard query draft" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe(initialQuery.text);
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await waitFor(() => expect(bodies).toHaveLength(4));
+  expect(bodies[3].query).toEqual(bodies[2].query);
+});
+
+it("hides the live detail card when a snapshot has no selected row", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0, created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?")) return json({ directory: root, items: [{ ...root, id: 2000, name: "live-folder", path: "/live-folder" }], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0") return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/workspace/queries") return json(snapshot(JSON.parse(String(init?.body)).query, [], {}, 0));
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "live-folder" }));
+  expect(screen.getByLabelText("Folder for live-folder")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  expect(screen.queryByLabelText("Folder for live-folder")).toBeNull();
 });

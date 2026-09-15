@@ -42,7 +42,7 @@ it("shows every requested facet with selected-zero, missing, other, and unavaila
 
 it("preserves expression, syntax, exclusions, and unrelated filters when applying supported buckets", async () => {
   const onchange = vi.fn();
-  render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange });
+  const view = render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange });
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 4 documents" }));
   const sentQuery = onchange.mock.calls.at(-1)?.[0] as Query;
   expect(sentQuery.text).toBe(originalQuery.text);
@@ -57,6 +57,10 @@ it("preserves expression, syntax, exclusions, and unrelated filters when applyin
   expect(onchange.mock.calls.at(-1)?.[0].filters).toMatchObject({
     modified_after: "2026-02-01T00:00:00Z", modified_before: "2026-03-01T00:00:00Z",
   });
+  await view.rerender({ query: onchange.mock.calls.at(-1)?.[0] });
+  await fireEvent.click(screen.getByRole("button", { name: "February 2026, 5 documents, selected" }));
+  expect(onchange.mock.calls.at(-1)?.[0].filters.modified_after).toBeUndefined();
+  expect(onchange.mock.calls.at(-1)?.[0].filters.modified_before).toBeUndefined();
 });
 
 it("maps only tags missing and duplicate documents to supported QueryV1 filters", async () => {

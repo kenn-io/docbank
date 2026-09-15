@@ -48,8 +48,8 @@
     if (!match) return undefined;
     const year = Number(match[1]);
     const month = Number(match[2]) - 1;
-    const after = new Date(Date.UTC(year, month, 1)).toISOString();
-    const before = new Date(Date.UTC(year, month + 1, 1)).toISOString();
+    const after = new Date(Date.UTC(year, month, 1)).toISOString().replace(".000Z", "Z");
+    const before = new Date(Date.UTC(year, month + 1, 1)).toISOString().replace(".000Z", "Z");
     return { after, before };
   }
 
