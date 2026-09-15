@@ -20,6 +20,12 @@ lists the checks contributors must preserve.
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
+`document/mistral` owns per-document unit authority for provider uploads. Its
+existing local counter registry derives PPTX slide counts and XLSX worksheet
+counts from package membership before any request leaves the process. The
+provider response must report the same unit count before the adapter publishes
+source evidence. Capability manifests remain required for both local bounds.
+
 ## Common change paths
 
 ### Add a data operation

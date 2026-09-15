@@ -63,6 +63,7 @@ var failureReasonCodes = []string{
 var expectedUnitBounds = map[string]UnitBoundMethod{
 	formatIDPDF: UnitBoundProviderRequest,
 	"pptx":      UnitBoundLocalExact,
+	"xlsx":      UnitBoundLocalExact,
 }
 
 func expectedUnitBound(formatID string) UnitBoundMethod {
