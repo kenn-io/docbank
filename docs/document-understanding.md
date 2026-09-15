@@ -51,7 +51,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
-| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF OCR, including the rendition-provider adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF and conditional PPTX OCR, including the rendition-provider adapter |
 | [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
@@ -190,9 +190,13 @@ The operator prepares that evidence in this order:
 Fixture generation creates 21 formats deterministically. Five legacy formats
 require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`, `numbers`,
 and `msg`. Fixture and staging directories must be private. The initial
-capability contract can authorize at most PDF because it is the only format
-with a probe-tested pre-upload unit bound. Other formats may extract during a
-probe but remain unauthorized for production uploads.
+capability contract authorizes PDF through a provider-request bound. PPTX is
+eligible only when the authenticated probe records a local slide count and the
+provider reports the same number of processed units. Other formats may extract
+during a probe but remain unauthorized for production uploads.
+
+If manifest validation reports that PPTX "does not explain its unverified
+bound", rerun the authenticated capability probe to replace the manifest.
 
 For each production document:
 
@@ -210,10 +214,17 @@ options from the policy and authorization, bounds the response, and converts
 validated provider output into `document.SourceDocument`. Call `Release` on
 every success or failure path.
 
-The rendition adapter also counts source units locally before submission. For
-PDFs it compares the returned page count with that inspected count and rejects
-a mismatch. See [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
+The rendition adapter counts source units locally before submission. For PDFs it
+compares the returned page count with that inspected count. For PPTX it counts
+the listed PresentationML slides, rejects invalid slide references or over-limit decks before
+upload, and compares the provider's processed count with that local count. See
+[Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
+
+The PPTX count includes hidden slides. This assumes Mistral processes every
+listed slide; the probe fixture contains one visible slide and does not verify
+hidden-slide behavior. If Mistral skips hidden slides, the count comparison
+fails after upload and may incur provider charges.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,

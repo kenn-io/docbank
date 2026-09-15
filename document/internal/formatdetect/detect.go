@@ -1347,6 +1347,7 @@ func detectZIPFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
 }
 
 func hasOOXMLMainType(content []byte, partName, contentType string) bool {
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
 	if len(content) == 0 || !validXMLDocument(content) {
 		return false
 	}
@@ -1524,6 +1525,7 @@ func detectTextFormat(content []byte, mediaType string) (CandidateFormat, error)
 }
 
 func validXMLDocument(content []byte) bool {
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
 	decoder := xml.NewDecoder(bytes.NewReader(content))
 	depth := 0
 	roots := 0

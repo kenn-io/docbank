@@ -169,6 +169,13 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 			manifest.Results[0].UnitBoundMethod = UnitBoundNone
 			manifest.Results[0].ReasonCode = reasonBoundUnitsMismatch
 		}, want: "observations without a unit bound"},
+		{name: "unexplained PPTX bound", mutate: func(manifest *CapabilityManifest) {
+			for index := range manifest.Results {
+				if manifest.Results[index].FormatID == "pptx" {
+					manifest.Results[index].ReasonCode = ""
+				}
+			}
+		}, want: "does not explain its unverified bound"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

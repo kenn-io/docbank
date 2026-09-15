@@ -19,7 +19,7 @@ import (
 
 // SyntheticManifest returns a complete, validated manifest for application
 // tests. When pdfBound is true, PDF has provider-request upload authority;
-// every other format remains unbounded.
+// PPTX and every other format remain unbounded.
 func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.CapabilityManifest, error) {
 	values := policy.Values()
 	if values.Provider == "" {
@@ -51,7 +51,8 @@ func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.Capability
 			ReturnedModel: values.Model, UnitCount: 1, UnitsProcessed: 1,
 			UnitBoundMethod: mistral.UnitBoundNone,
 		}
-		if candidate.ID == "pdf" {
+		switch candidate.ID {
+		case "pdf":
 			result.UnitCount = 2
 			result.UnitsProcessed = 2
 			if pdfBound {
@@ -62,6 +63,8 @@ func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.Capability
 			} else {
 				result.ReasonCode = probecontract.ReasonBoundUnitsMismatch
 			}
+		case "pptx":
+			result.ReasonCode = probecontract.ReasonBoundUnitsMismatch
 		}
 		manifest.Results = append(manifest.Results, result)
 	}
