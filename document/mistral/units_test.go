@@ -277,6 +277,28 @@ func TestCountPPTXSlidesAcceptsCompleteStrictPackage(t *testing.T) {
 	assert.Equal(t, 1, units)
 }
 
+func TestCountPPTXSlidesAcceptsNamespaceDeclarationsNamedLikeAttributes(t *testing.T) {
+	for _, family := range []pptxNamespaceFamily{pptxNamespaceFamilyTransitional, pptxNamespaceFamilyStrict} {
+		t.Run(fmt.Sprintf("family-%d", family), func(t *testing.T) {
+			presentationNamespace := pptxPresentationNamespaces.value(family)
+			relationshipIDNamespace := pptxRelationshipIDNamespaces.value(family)
+			relationshipType := pptxSlideRelationshipTypes.value(family)
+			presentation := `<p:presentation xmlns:p="` + presentationNamespace + `" xmlns:id="` + relationshipIDNamespace + `"><p:sldIdLst><p:sldId id="256" id:id="rId1"/></p:sldIdLst></p:presentation>`
+			relationships := `<Relationships xmlns="` + pptxRelationshipNamespace + `"><Relationship xmlns:Type="urn:example:namespace" Id="rId1" Type="` + relationshipType + `" Target="slides/slide1.xml"/></Relationships>`
+			archive := documentZIP(t, map[string]string{
+				pptxPresentationPath:      presentation,
+				pptxPresentationRelsPath:  relationships,
+				pptxRootRelationshipsPath: validPPTXRootRelationshipsForFamily(family),
+				ooxmlContentTypesName:     validPPTXContentTypes(),
+				"ppt/slides/slide1.xml":   `<p:sld xmlns:p="` + presentationNamespace + `"/>`,
+			})
+			units, err := countPPTXSlides(bytes.NewReader(archive), int64(len(archive)))
+			require.NoError(t, err)
+			assert.Equal(t, 1, units)
+		})
+	}
+}
+
 func TestCountPPTXSlidesRejectsMixedAndUnknownNamespaceFamilies(t *testing.T) {
 	strictPresentation := pptxPresentationNamespaces.value(pptxNamespaceFamilyStrict)
 	transitionalPresentation := pptxPresentationNamespaces.value(pptxNamespaceFamilyTransitional)

@@ -565,6 +565,9 @@ func (slide *pptxSlideID) UnmarshalXML(decoder *xml.Decoder, start xml.StartElem
 	}
 	relationshipIDNamespace := pptxRelationshipIDNamespaces.value(family)
 	for _, attribute := range start.Attr {
+		if attribute.Name.Space == "xmlns" {
+			continue
+		}
 		if attribute.Name.Local != "id" || attribute.Name.Space == "" || attribute.Name.Space == relationshipIDNamespace {
 			continue
 		}
@@ -599,6 +602,9 @@ func (relationship *pptxRelationship) UnmarshalXML(decoder *xml.Decoder, start x
 		return errors.New("PPTX relationships have an unexpected element")
 	}
 	for _, attribute := range start.Attr {
+		if attribute.Name.Space == "xmlns" {
+			continue
+		}
 		switch attribute.Name.Local {
 		case "Id", "Type", "Target", "TargetMode":
 			if attribute.Name.Space != "" {
