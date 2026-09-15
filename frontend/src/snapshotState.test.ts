@@ -121,6 +121,27 @@ describe("snapshot request-epoch state", () => {
     expect(states.at(-1)).toMatchObject({ status: "ready", query: otherQuery });
   });
 
+  it("retains the accepted page and retries after a transient paging failure", async () => {
+    const states: Readonly<SnapshotState>[] = [];
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(response(await receipt({
+        rows: Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1)),
+        total: 51, total_bytes: 1326, next_cursor: "next-1",
+      })))
+      .mockRejectedValueOnce(new TypeError("Connection lost"))
+      .mockResolvedValueOnce(response(await receipt({
+        rows: [snapshotRow(51)], total: 51, total_bytes: 1326, previous_cursor: "previous-1",
+      })));
+    const session = new SnapshotSession("session", (state) => states.push(state));
+    await session.run(query, { page_size: 50 });
+    const accepted = states.at(-1)!;
+    await session.page("next");
+    expect(states.at(-1)).toMatchObject({ ...accepted, error: new TypeError("Connection lost") });
+    await session.page("next");
+    expect(states.at(-1)).toMatchObject({ status: "ready", offset: 50 });
+    expect(states.at(-1)!.error).toBeUndefined();
+  });
+
   it.each(["workspace", "saved"])("retains the accepted page and paging after a failed %s rerun", async (kind) => {
     const states: Readonly<SnapshotState>[] = [];
     const first = await receipt({

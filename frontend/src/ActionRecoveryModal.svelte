@@ -12,7 +12,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
-  import type { Tag } from "./api.js";
+  import { APIError, type Tag } from "./api.js";
   import { runAction } from "./actionRunner.js";
 
   interface Props {
@@ -117,7 +117,7 @@
     } catch (cause) {
       try { await reload(); } catch { /* Preserve the mutation error. */ }
       failure = cause instanceof Error ? cause.message : String(cause);
-      if (failure.toLowerCase().includes("session") || failure.toLowerCase().includes("unauth")) onauthfailure(cause);
+      if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
     } finally {
       running = false;
       controller = undefined;

@@ -120,7 +120,7 @@ export class SnapshotSession {
         status: "ready", firstPage, page, query, options, offset,
       });
     } catch (error) {
-      const status = error instanceof APIError && error.status === 410 ? "expired" : "error";
+      const status = error instanceof APIError && error.status === 410 ? "expired" : "ready";
       this.fail(epoch, error, {
         status, firstPage, page: acceptedPage, query, options, offset: accepted.offset,
       });

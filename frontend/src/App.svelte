@@ -206,6 +206,7 @@
   let manageTagsTarget = $state<Row | null>(null);
   let batchTagsTargets = $state<SelectionTarget[] | null>(null);
   let batchTagsContext = $state<"live" | "snapshot">("live");
+  let batchTagsChoice = $state<SnapshotActionChoice>();
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
@@ -595,6 +596,7 @@
 
   async function loadRoot(): Promise<void> {
     invalidateTagHotkeyMutation();
+    leaveSnapshotMode();
     clearBulkSelection();
     const request = ++generation;
     const session = webSession;
@@ -1011,6 +1013,7 @@
 
   function openBatchTags(targets: readonly SelectionTarget[]): void {
     if (loading) return;
+    batchTagsChoice = undefined;
     batchTagsContext = "live";
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
@@ -1132,6 +1135,7 @@
     snapshotActionError = "";
     if (choice.scope === "selection") {
       if (snapshotTargets.length === 0 || snapshotTargets.length > 1000) return;
+      batchTagsChoice = choice;
       batchTagsContext = "snapshot";
       batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
       snapshotActionsOpen = false;
@@ -1493,6 +1497,7 @@
 
   function currentQueryDraft(): Query {
     if (savedQueryDraft) return savedQueryDraft;
+    if (snapshotState.query) return snapshotState.query;
     return {
       ...parseQuery("{}"),
       text: searchQuery,
@@ -2075,7 +2080,7 @@
               {/if}
             </div>
           </Card>
-        {:else if selected}
+        {:else if !snapshotActive && selected}
           <Card
             level="raised"
             padding="sm"
@@ -2359,6 +2364,7 @@
         onclear={() => selectVisibleSnapshotRows(false)}
         onselectvisible={() => selectVisibleSnapshotRows()}
         ontags={() => {
+          batchTagsChoice = undefined;
           batchTagsContext = "snapshot";
           batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
         }}
@@ -2518,6 +2524,7 @@
         catalogTotal={tagCatalogTotal}
         disabled={loading}
         context={batchTagsContext}
+        initialChoice={batchTagsChoice}
         onclose={() => (batchTagsTargets = null)}
         onchanged={handleBatchTagsChanged}
         onauthfailure={handleFailure}

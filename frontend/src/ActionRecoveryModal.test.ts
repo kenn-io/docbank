@@ -2,6 +2,7 @@ import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
+import { APIError } from "./api.js";
 import { prepareAction, type PersistedAction } from "./actionJournal.js";
 import { encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
@@ -82,6 +83,22 @@ beforeEach(() => {
 });
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it.each([
+  { cause: new APIError("Access denied", 401, "unauthorized"), expired: true },
+  { cause: new Error("Confirm with the fresh session"), expired: false },
+])("classifies authentication errors by HTTP status: $expired", async ({ cause, expired }) => {
+  const action = { ...await prepared(), checkpoint_verified: true };
+  const journal = new MemoryJournal(action);
+  journal.confirmResume = async () => { throw cause; };
+  const onauthfailure = vi.fn();
+  render(ActionRecoveryModal, { session: "session", sessionVaultID: vaultID,
+    journal, initialAction: action, tag, onprogress: vi.fn(), onclose: vi.fn(), onauthfailure });
+  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Confirm and run action" }));
+  await screen.findByText(cause.message);
+  expect(onauthfailure).toHaveBeenCalledTimes(expired ? 1 : 0);
+});
 
 it("saves a credential-free checkpoint and requires its readback before the first mutation", async () => {
   const action = await prepared();
