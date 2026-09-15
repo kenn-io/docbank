@@ -73,6 +73,8 @@ func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "middle", []string{"old"}))
 	require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "new", []string{"middle"}))
+	person, _, err = s.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
 	newIdentity := oldIdentity
 	newIdentity.UID = "new"
 	_, err = s.LinkExternalIdentity(ctx, newIdentity, person.Revision)
@@ -88,6 +90,67 @@ func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) 
 	require.NoError(t, s.UnlinkExternalIdentity(ctx, "msgvault", "synthetic", "new", person.Revision))
 	_, err = s.ResolveExternalPersonUID(ctx, "msgvault", "synthetic", "old")
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestRecordExternalUIDAliasesRetiresCurrentIdentity(t *testing.T) {
+	for _, targetExists := range []bool{false, true} {
+		t.Run(fmt.Sprintf("target exists=%t", targetExists), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			owner, err := s.CreatePerson(ctx, "Original owner", "operator")
+			require.NoError(t, err)
+			identity := PersonExternalIdentity{PersonID: owner.PersonID, System: "msgvault", ArchiveID: "synthetic",
+				UID: "old", UIDKind: "vcard_uid", UIDState: "current"}
+			_, err = s.LinkExternalIdentity(ctx, identity, owner.Revision)
+			require.NoError(t, err)
+			owner, _, err = s.PersonByID(ctx, owner.PersonID)
+			require.NoError(t, err)
+			var target Person
+			if targetExists {
+				target, err = s.CreatePerson(ctx, "Surviving owner", "operator")
+				require.NoError(t, err)
+				_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: target.PersonID, System: "msgvault", ArchiveID: "synthetic",
+					UID: "new", UIDKind: "vcard_uid", UIDState: "current"}, target.Revision)
+				require.NoError(t, err)
+			}
+			require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "new", []string{"old"}))
+			identities, err := s.PersonExternalIdentities(ctx, owner.PersonID)
+			require.NoError(t, err)
+			require.Len(t, identities, 1)
+			require.Equal(t, "retired", identities[0].UIDState)
+			keys, err := s.ActorKeysForPerson(ctx, PersonActorKeysRequest{PersonID: owner.PersonID})
+			require.NoError(t, err)
+			require.Empty(t, keys.Items)
+			changed, _, err := s.PersonByID(ctx, owner.PersonID)
+			require.NoError(t, err)
+			require.Equal(t, owner.Revision+1, changed.Revision)
+			_, err = s.LinkExternalIdentity(ctx, identity, owner.Revision)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			_, err = s.LinkExternalIdentity(ctx, identity, changed.Revision)
+			require.ErrorIs(t, err, ErrPersonIdentityConflict)
+			resolved, err := s.ResolveExternalPersonUID(ctx, "msgvault", "synthetic", "old")
+			if targetExists {
+				require.NoError(t, err)
+				require.Equal(t, target.PersonID, resolved.PersonID)
+			} else {
+				require.ErrorIs(t, err, ErrNotFound)
+			}
+		})
+	}
+}
+
+func TestLinkExternalIdentityRejectsCurrentAlias(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Example Person", "operator")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "new", []string{"old"}))
+	_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic",
+		UID: "old", UIDKind: "vcard_uid", UIDState: "current"}, person.Revision)
+	require.ErrorIs(t, err, ErrPersonIdentityConflict)
+	identities, err := s.PersonExternalIdentities(ctx, person.PersonID)
+	require.NoError(t, err)
+	require.Empty(t, identities)
 }
 
 func TestPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T) {
@@ -188,11 +251,18 @@ func TestPersonActorKeysPaginationValidatesCursor(t *testing.T) {
 
 func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
 	s := newTestStore(t)
+	person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
+	require.NoError(t, err)
+	_, err = s.LinkExternalIdentity(t.Context(), PersonExternalIdentity{PersonID: person.PersonID,
+		System: "msgvault", ArchiveID: "synthetic", UID: "extra", UIDKind: "vcard_uid", UIDState: "current"}, person.Revision)
+	require.NoError(t, err)
+	person, _, err = s.PersonByID(t.Context(), person.PersonID)
+	require.NoError(t, err)
 	require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "b", []string{"a"}))
 	require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "a", []string{"c"}))
 	var epoch int64
 	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
-	err := s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "c", []string{"extra", "a"})
+	err = s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "c", []string{"extra", "a"})
 	require.ErrorContains(t, err, "cycle")
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM person_external_uid_aliases WHERE retired_uid='extra'`).Scan(&count))
@@ -203,6 +273,13 @@ func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
 	var unchangedEpoch int64
 	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&unchangedEpoch))
 	require.Equal(t, epoch, unchangedEpoch)
+	identities, err := s.PersonExternalIdentities(t.Context(), person.PersonID)
+	require.NoError(t, err)
+	require.Len(t, identities, 1)
+	require.Equal(t, "current", identities[0].UIDState)
+	unchanged, _, err := s.PersonByID(t.Context(), person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, person.Revision, unchanged.Revision)
 }
 
 func TestActorKeysForPersonForwardsMergedPersonID(t *testing.T) {

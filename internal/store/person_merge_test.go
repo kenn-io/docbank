@@ -105,7 +105,7 @@ func TestMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
-func TestMergePersonsAcceptsResolvedCurrentExternalUIDs(t *testing.T) {
+func TestMergePersonsPreservesExternalUIDTransitions(t *testing.T) {
 	for _, test := range []struct {
 		name, survivorUID, absorbedUID string
 		multihop                       bool

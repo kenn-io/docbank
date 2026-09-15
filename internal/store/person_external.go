@@ -70,34 +70,21 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		if isNew && count >= document.MaxPersonExternalIdentities {
 			return ErrPersonIdentityConflict
 		}
-		var previous string
 		if identity.UIDState == "current" {
-			currentErr := tx.QueryRowContext(ctx, `SELECT uid FROM person_external_identities WHERE person_id=? AND system=? AND archive_id=? AND uid_state='current' AND uid<>?`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID).Scan(&previous)
-			if currentErr == nil {
-				if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='retired',updated_at=? WHERE person_id=? AND system=? AND archive_id=? AND uid=?`, now, identity.PersonID, identity.System, identity.ArchiveID, previous); err != nil {
-					return err
-				}
-			} else if !errors.Is(currentErr, sql.ErrNoRows) {
-				return currentErr
+			var conflict bool
+			if err := tx.QueryRowContext(ctx, `SELECT
+				EXISTS(SELECT 1 FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?)
+				OR EXISTS(SELECT 1 FROM person_external_identities WHERE person_id=? AND system=? AND archive_id=? AND uid_state='current' AND uid<>?)`,
+				identity.System, identity.ArchiveID, identity.UID, identity.PersonID, identity.System, identity.ArchiveID, identity.UID).Scan(&conflict); err != nil {
+				return err
+			}
+			if conflict {
+				return ErrPersonIdentityConflict
 			}
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(system,archive_id,uid) DO UPDATE SET uid_kind=excluded.uid_kind,uid_state=excluded.uid_state,last_seen_revision=excluded.last_seen_revision,display_name_snapshot=excluded.display_name_snapshot,updated_at=excluded.updated_at`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID, identity.UIDKind, identity.UIDState, identity.LastSeenRevision, identity.DisplayNameSnapshot, now, now)
 		if err != nil {
 			return err
-		}
-		if previous != "" {
-			// Validate after staging the new current UID so the shared resolver can
-			// follow the complete transition. Any failure rolls back both writes.
-			resolved, err := resolvePersonUIDTx(ctx, tx, identity.System, identity.ArchiveID, previous)
-			if errors.Is(err, ErrNotFound) {
-				return ErrPersonIdentityConflict
-			}
-			if err != nil {
-				return err
-			}
-			if resolved.ResolvedUID != identity.UID {
-				return ErrPersonIdentityConflict
-			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, identity.PersonID); err != nil {
 			return err
@@ -144,16 +131,28 @@ func (s *Store) UnlinkExternalIdentity(ctx context.Context, system, archiveID, u
 	})
 }
 
+// RecordExternalUIDAliases retires any current identities for retiredUIDs and
+// advances their owners' revisions in the same transaction as recording aliases.
 func (s *Store) RecordExternalUIDAliases(ctx context.Context, system, archiveID, survivingUID string, retiredUIDs []string) error {
 	if !validExternalTuple(system, archiveID, survivingUID) || len(retiredUIDs) > document.MaxPersonExternalIdentities {
 		return ErrInvalidPerson
 	}
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		now := nowRFC3339()
 		for _, retired := range retiredUIDs {
 			if !validExternalTuple(system, archiveID, retired) || retired == survivingUID {
 				return ErrInvalidPerson
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES(?,?,?,?,?) ON CONFLICT(system,archive_id,retired_uid) DO UPDATE SET surviving_uid=excluded.surviving_uid,observed_at=excluded.observed_at`, system, archiveID, retired, survivingUID, nowRFC3339()); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES(?,?,?,?,?) ON CONFLICT(system,archive_id,retired_uid) DO UPDATE SET surviving_uid=excluded.surviving_uid,observed_at=excluded.observed_at`, system, archiveID, retired, survivingUID, now); err != nil {
+				return err
+			}
+			// An alias and its current identity must transition together so readers
+			// never see an active key whose resolution points somewhere else.
+			if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=(
+				SELECT person_id FROM person_external_identities WHERE system=? AND archive_id=? AND uid=? AND uid_state='current')`, now, system, archiveID, retired); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='retired',updated_at=? WHERE system=? AND archive_id=? AND uid=? AND uid_state='current'`, now, system, archiveID, retired); err != nil {
 				return err
 			}
 		}

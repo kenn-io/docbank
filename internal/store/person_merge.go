@@ -133,10 +133,6 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err != nil {
 			return err
 		}
-		retirements, err := mergeExternalRetirementsTx(ctx, tx, survivorID, absorbedID)
-		if err != nil {
-			return err
-		}
 		if err := validatePersonMergeBoundsTx(ctx, tx, survivorID, absorbedID); err != nil {
 			return err
 		}
@@ -146,11 +142,6 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		}
 		if len(movedRaw) > document.MaxPersonMergeMovedBytes {
 			return ErrPersonMergeConflict
-		}
-		for _, retirement := range retirements {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='retired',updated_at=? WHERE person_id=? AND system=? AND archive_id=? AND uid=?`, nowRFC3339(), retirement.personID, retirement.system, retirement.archiveID, retirement.uid); err != nil {
-				return err
-			}
 		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
@@ -315,52 +306,15 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 	if identities > document.MaxPersonIdentitiesPerPerson || external > document.MaxPersonExternalIdentities {
 		return ErrPersonMergeConflict
 	}
+	var conflict bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_external_identities
+		WHERE person_id IN (?,?) AND uid_state='current' GROUP BY system,archive_id HAVING COUNT(*)>1)`, survivorID, absorbedID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict {
+		return ErrPersonMergeConflict
+	}
 	return nil
-}
-
-type mergeExternalRetirement struct {
-	personID, system, archiveID, uid string
-}
-
-func mergeExternalRetirementsTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (_ []mergeExternalRetirement, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT s.system,s.archive_id,s.uid,a.uid FROM person_external_identities s JOIN person_external_identities a ON a.system=s.system AND a.archive_id=s.archive_id WHERE s.person_id=? AND a.person_id=? AND s.uid_state='current' AND a.uid_state='current'`, survivorID, absorbedID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	retirements := []mergeExternalRetirement{}
-	for rows.Next() {
-		var system, archiveID, survivorUID, absorbedUID string
-		if err := rows.Scan(&system, &archiveID, &survivorUID, &absorbedUID); err != nil {
-			return nil, err
-		}
-		survivor, err := resolvePersonUIDTx(ctx, tx, system, archiveID, survivorUID)
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrPersonMergeConflict
-		}
-		if err != nil {
-			return nil, err
-		}
-		absorbed, err := resolvePersonUIDTx(ctx, tx, system, archiveID, absorbedUID)
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrPersonMergeConflict
-		}
-		if err != nil {
-			return nil, err
-		}
-		if survivor.ResolvedUID != absorbed.ResolvedUID {
-			return nil, ErrPersonMergeConflict
-		}
-		switch survivor.ResolvedUID {
-		case survivorUID:
-			retirements = append(retirements, mergeExternalRetirement{absorbedID, system, archiveID, absorbedUID})
-		case absorbedUID:
-			retirements = append(retirements, mergeExternalRetirement{survivorID, system, archiveID, survivorUID})
-		default:
-			return nil, ErrPersonMergeConflict
-		}
-	}
-	return retirements, rows.Err()
 }
 
 func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (PersonSplitReceipt, error) {
