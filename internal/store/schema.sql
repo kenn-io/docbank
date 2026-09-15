@@ -237,6 +237,38 @@ CREATE TABLE IF NOT EXISTS document_event_heads (
         REFERENCES document_event_generations(content_version_id, generation_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS document_events (
+    generation_id TEXT NOT NULL REFERENCES document_event_generations(generation_id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL, source_key TEXT NOT NULL, date_kind TEXT NOT NULL,
+    source_kind_raw TEXT NOT NULL, date_value TEXT NOT NULL, raw_value TEXT NOT NULL,
+    precision TEXT NOT NULL, fraction_digits INTEGER NOT NULL CHECK (fraction_digits BETWEEN 0 AND 9),
+    timezone_kind TEXT NOT NULL, zone_text TEXT NOT NULL, offset_seconds INTEGER,
+    axis_key TEXT NOT NULL, utc_key TEXT, claim_basis TEXT NOT NULL, parse_confidence TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL, evidence_id TEXT NOT NULL, evidence_sha256 TEXT NOT NULL,
+    evidence_locator BLOB NOT NULL, sensitive INTEGER NOT NULL CHECK (sensitive IN (0, 1)),
+    PRIMARY KEY (generation_id, event_id),
+    UNIQUE (generation_id, source_key, date_kind)
+);
+
+CREATE TABLE IF NOT EXISTS document_event_actors (
+    generation_id TEXT NOT NULL, event_id TEXT NOT NULL, role TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0), actor_key TEXT NOT NULL,
+    display_name TEXT NOT NULL, address TEXT NOT NULL, claim_json BLOB NOT NULL,
+    evidence_kind TEXT NOT NULL, evidence_id TEXT NOT NULL,
+    sensitive INTEGER NOT NULL CHECK (sensitive IN (0, 1)),
+    PRIMARY KEY (generation_id, event_id, role, ordinal),
+    FOREIGN KEY (generation_id, event_id)
+        REFERENCES document_events(generation_id, event_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS document_event_primaries (
+    generation_id TEXT NOT NULL, scope_class TEXT NOT NULL, disclosure TEXT NOT NULL,
+    event_id TEXT NOT NULL, rule_id TEXT NOT NULL, reason TEXT NOT NULL,
+    PRIMARY KEY (generation_id, scope_class, disclosure),
+    FOREIGN KEY (generation_id, event_id)
+        REFERENCES document_events(generation_id, event_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS document_event_builds (
     operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, deriver_fingerprint TEXT NOT NULL,
     state TEXT NOT NULL, target_epoch INTEGER NOT NULL,
@@ -268,6 +300,21 @@ CREATE INDEX IF NOT EXISTS provenance_version_bindings_version
 CREATE TRIGGER IF NOT EXISTS document_event_generations_immutable_update
 BEFORE UPDATE ON document_event_generations BEGIN
     SELECT RAISE(ABORT, 'document event generations are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS document_events_immutable_update
+BEFORE UPDATE ON document_events BEGIN
+    SELECT RAISE(ABORT, 'document events are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS document_event_actors_immutable_update
+BEFORE UPDATE ON document_event_actors BEGIN
+    SELECT RAISE(ABORT, 'document event actors are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS document_event_primaries_immutable_update
+BEFORE UPDATE ON document_event_primaries BEGIN
+    SELECT RAISE(ABORT, 'document event primaries are immutable');
 END;
 
 CREATE TRIGGER IF NOT EXISTS document_event_heads_deleted

@@ -130,6 +130,7 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 	eventSensitivity := make(map[string]bool, len(value.Events))
 	slots := make(map[eventSlot]string, len(value.Events))
 	sources := make(map[sourceRef]struct{}, len(value.Sources))
+	sourceIdentities := make(map[documentEventSourceIdentity]struct{}, len(value.Sources))
 	textBytes := len(value.VaultUID) + len(value.ContentVersionID) + len(value.ContractVersion)
 	for index, source := range value.Sources {
 		if !ValidEventEvidenceKind(source.EvidenceKind) || source.EvidenceID == "" || !canonical.IsSHA256Hex(source.EvidenceSHA256) {
@@ -143,6 +144,7 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 			return fmt.Errorf("document event source %d is duplicated", index)
 		}
 		sources[ref] = struct{}{}
+		sourceIdentities[documentEventSourceIdentity{source.EvidenceKind, source.EvidenceID}] = struct{}{}
 		textBytes += len(source.EvidenceID) + len(source.EvidenceSHA256)
 	}
 	actorCount := 0
@@ -211,33 +213,11 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 		if actorCount > MaxDocumentEventActors {
 			return fmt.Errorf("document events contain more than %d actor associations", MaxDocumentEventActors)
 		}
-		type actorSlot struct {
-			role    EventRole
-			ordinal int
+		actorTextBytes, err := validateDocumentEventActorsV1(index, event.Actors, sourceIdentities)
+		if err != nil {
+			return err
 		}
-		actorSlots := make(map[actorSlot]struct{}, len(event.Actors))
-		for actorIndex, actor := range event.Actors {
-			if !ValidEventRole(actor.Role) || actor.Ordinal < 0 {
-				return fmt.Errorf("document event %d actor %d is invalid", index, actorIndex)
-			}
-			if len(actor.Claim) > MaxDocumentEventActorClaimBytes || len(actor.ActorKey) > MaxActorKeyBytes {
-				return fmt.Errorf("document event %d actor %d exceeds a bound", index, actorIndex)
-			}
-			if err := validStrings("document event actor", actor.ActorKey, actor.Address, actor.Claim, actor.DisplayName, string(actor.Role)); err != nil {
-				return err
-			}
-			textBytes += len(actor.ActorKey) + len(actor.Address) + len(actor.Claim) + len(actor.DisplayName)
-			if actor.ActorKey != "" {
-				if err := ValidateActorKeyV1(actor.ActorKey); err != nil {
-					return fmt.Errorf("document event %d actor %d has an invalid actor key", index, actorIndex)
-				}
-			}
-			key := actorSlot{actor.Role, actor.Ordinal}
-			if _, exists := actorSlots[key]; exists {
-				return fmt.Errorf("document event %d duplicates actor role and ordinal", index)
-			}
-			actorSlots[key] = struct{}{}
-		}
+		textBytes += actorTextBytes
 	}
 	type primarySlot struct{ scope, disclosure string }
 	primarySlots := make(map[primarySlot]struct{}, len(value.Primaries))
@@ -279,6 +259,58 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 			ErrDocumentEventsOutputBound, MaxDocumentEventsEncodedBytes)
 	}
 	return nil
+}
+
+type documentEventSourceIdentity struct {
+	kind EventEvidenceKind
+	id   string
+}
+
+func validateDocumentEventActorsV1(
+	index int,
+	actors []DocumentEventActorV1,
+	sourceIdentities map[documentEventSourceIdentity]struct{},
+) (int, error) {
+	textBytes := 0
+	type actorSlot struct {
+		role    EventRole
+		ordinal int
+	}
+	actorSlots := make(map[actorSlot]struct{}, len(actors))
+	for actorIndex, actor := range actors {
+		if !ValidEventRole(actor.Role) || actor.Ordinal < 0 {
+			return 0, fmt.Errorf("document event %d actor %d is invalid", index, actorIndex)
+		}
+		if (actor.EvidenceKind == "") != (actor.EvidenceID == "") ||
+			(actor.EvidenceKind != "" && !ValidEventEvidenceKind(actor.EvidenceKind)) {
+			return 0, fmt.Errorf("document event %d actor %d has invalid actor evidence", index, actorIndex)
+		}
+		if actor.EvidenceKind != "" {
+			if _, exists := sourceIdentities[documentEventSourceIdentity{actor.EvidenceKind, actor.EvidenceID}]; !exists {
+				return 0, fmt.Errorf("document event %d actor %d references unknown actor evidence", index, actorIndex)
+			}
+		}
+		if len(actor.Claim) > MaxDocumentEventActorClaimBytes || len(actor.ActorKey) > MaxActorKeyBytes {
+			return 0, fmt.Errorf("document event %d actor %d exceeds a bound", index, actorIndex)
+		}
+		if err := validStrings("document event actor", actor.ActorKey, actor.Address, actor.Claim,
+			actor.DisplayName, actor.EvidenceID, string(actor.EvidenceKind), string(actor.Role)); err != nil {
+			return 0, err
+		}
+		textBytes += len(actor.ActorKey) + len(actor.Address) + len(actor.Claim) + len(actor.DisplayName) +
+			len(actor.EvidenceID) + len(actor.EvidenceKind)
+		if actor.ActorKey != "" {
+			if err := ValidateActorKeyV1(actor.ActorKey); err != nil {
+				return 0, fmt.Errorf("document event %d actor %d has an invalid actor key", index, actorIndex)
+			}
+		}
+		key := actorSlot{actor.Role, actor.Ordinal}
+		if _, exists := actorSlots[key]; exists {
+			return 0, fmt.Errorf("document event %d duplicates actor role and ordinal", index)
+		}
+		actorSlots[key] = struct{}{}
+	}
+	return textBytes, nil
 }
 
 func validStrings(field string, values ...string) error {
