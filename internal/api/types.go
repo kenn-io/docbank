@@ -238,6 +238,21 @@ type MediaTimeSpan struct {
 	EndMS   int64 `json:"end_ms" minimum:"1"`
 }
 
+// DocumentSearchValidationRequest validates search semantics when an exact
+// resolved source fence is empty and therefore must not be searched.
+type DocumentSearchValidationRequest struct {
+	Query     string `json:"query" minLength:"1" maxLength:"8192"`
+	Mode      string `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit     int    `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile   string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID string `json:"binding_id,omitzero" maxLength:"128"`
+	Explain   bool   `json:"explain,omitzero"`
+}
+
+type DocumentSearchValidation struct {
+	Valid bool `json:"valid"`
+}
+
 type DocumentEvidenceReference struct {
 	Kind                   string         `json:"kind"`
 	BuildID                string         `json:"build_id,omitzero"`

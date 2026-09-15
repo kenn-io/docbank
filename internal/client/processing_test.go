@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -497,6 +498,242 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, versionID, report.Results[0].ContentVersionID)
+}
+
+func TestProcessingClientValidatesSourceFenceRequestBeforeSending(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+	c := client.New(server.URL, serverKey)
+	empty := &api.DocumentSourceFenceFilters{}
+	ids := make([]string, 4097)
+	for index := range ids {
+		ids[index] = fmt.Sprintf("00000000-0000-4000-8000-%012d", index)
+	}
+	for _, request := range []api.DocumentSourceFenceResolveRequest{
+		{},
+		{ContentVersionIDs: []string{"11111111-1111-4111-8111-111111111111"}, Filters: empty},
+		{ContentVersionIDs: []string{"bad"}},
+		{ContentVersionIDs: []string{
+			"11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111",
+		}},
+		{ContentVersionIDs: ids},
+	} {
+		_, err := c.ResolveDocumentSourceFence(t.Context(), request)
+		require.ErrorContains(t, err, "source fence request")
+	}
+	assert.Zero(t, requests, "invalid typed requests must not reach the daemon")
+}
+
+func TestProcessingClientValidatesSourceFenceResponseAuthority(t *testing.T) {
+	const (
+		vaultID  = "11111111-1111-4111-8111-111111111111"
+		firstID  = "22222222-2222-4222-8222-222222222222"
+		secondID = "33333333-3333-4333-8333-333333333333"
+	)
+	valid := api.DocumentSourceFenceResolution{
+		Fence:              api.ResolvedDocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{firstID, secondID}},
+		FenceFingerprint:   "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc",
+		ObservedScopeCount: 2,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*api.DocumentSourceFenceResolution)
+	}{
+		{name: "invalid vault", mutate: func(result *api.DocumentSourceFenceResolution) {
+			result.Fence.VaultUID = "bad"
+		}},
+		{name: "unsorted IDs", mutate: func(result *api.DocumentSourceFenceResolution) {
+			result.Fence.ContentVersionIDs[0], result.Fence.ContentVersionIDs[1] =
+				result.Fence.ContentVersionIDs[1], result.Fence.ContentVersionIDs[0]
+		}},
+		{name: "duplicate ID", mutate: func(result *api.DocumentSourceFenceResolution) {
+			result.Fence.ContentVersionIDs[1] = result.Fence.ContentVersionIDs[0]
+		}},
+		{name: "wrong fingerprint", mutate: func(result *api.DocumentSourceFenceResolution) {
+			result.FenceFingerprint = "sha256:" + strings.Repeat("f", 64)
+		}},
+		{name: "wrong observed count", mutate: func(result *api.DocumentSourceFenceResolution) {
+			result.ObservedScopeCount = 3
+		}},
+		{name: "oversized fence", mutate: func(result *api.DocumentSourceFenceResolution) {
+			result.Fence.ContentVersionIDs = make([]string, 4097)
+			for index := range result.Fence.ContentVersionIDs {
+				result.Fence.ContentVersionIDs[index] = fmt.Sprintf(
+					"00000000-0000-4000-8000-%012d", index)
+			}
+			result.ObservedScopeCount = len(result.Fence.ContentVersionIDs)
+		}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := valid
+			response.Fence.ContentVersionIDs = append([]string(nil), valid.Fence.ContentVersionIDs...)
+			testCase.mutate(&response)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(w, response))
+			}))
+			t.Cleanup(server.Close)
+			result, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+				api.DocumentSourceFenceResolveRequest{Filters: &api.DocumentSourceFenceFilters{}})
+			require.ErrorContains(t, err, "source fence response")
+			assert.Empty(t, result.Fence.ContentVersionIDs)
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, valid))
+	}))
+	t.Cleanup(server.Close)
+	result, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+		api.DocumentSourceFenceResolveRequest{Filters: &api.DocumentSourceFenceFilters{}})
+	require.NoError(t, err)
+	assert.Equal(t, valid, result)
+}
+
+func TestProcessingClientBindsExplicitFenceResponseToRequestedIDs(t *testing.T) {
+	const (
+		vaultID  = "11111111-1111-4111-8111-111111111111"
+		firstID  = "22222222-2222-4222-8222-222222222222"
+		secondID = "33333333-3333-4333-8333-333333333333"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{
+			Fence:              api.ResolvedDocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{firstID}},
+			FenceFingerprint:   "sha256:e0fab7ab0d999b45c0686583a338626c6cb791a4bc3261b3148a72630baaa1f6",
+			ObservedScopeCount: 1,
+		}))
+	}))
+	t.Cleanup(server.Close)
+	_, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+		api.DocumentSourceFenceResolveRequest{ContentVersionIDs: []string{secondID, firstID}})
+	require.ErrorContains(t, err, "explicit source authority changed")
+}
+
+func TestProcessingClientSortsClonedExplicitFenceIDsBeforeTransmission(t *testing.T) {
+	const (
+		vaultID  = "11111111-1111-4111-8111-111111111111"
+		firstID  = "22222222-2222-4222-8222-222222222222"
+		secondID = "33333333-3333-4333-8333-333333333333"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var received api.DocumentSourceFenceResolveRequest
+		if !assert.NoError(t, json.UnmarshalRead(request.Body, &received, json.RejectUnknownMembers(true))) {
+			http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, []string{firstID, secondID}, received.ContentVersionIDs)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{
+			Fence: api.ResolvedDocumentSourceFence{VaultUID: vaultID,
+				ContentVersionIDs: []string{firstID, secondID}},
+			FenceFingerprint:   "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc",
+			ObservedScopeCount: 2,
+		}))
+	}))
+	t.Cleanup(server.Close)
+	ids := []string{secondID, firstID}
+	_, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+		api.DocumentSourceFenceResolveRequest{ContentVersionIDs: ids})
+	require.NoError(t, err)
+	assert.Equal(t, []string{secondID, firstID}, ids, "client must not mutate caller-owned request slices")
+}
+
+func TestProcessingClientAcceptsEmptyFenceAndRejectsNullIDs(t *testing.T) {
+	const vaultID = "11111111-1111-4111-8111-111111111111"
+	for _, testCase := range []struct {
+		name    string
+		idsJSON string
+		wantErr string
+	}{
+		{name: "empty array", idsJSON: `[]`},
+		{name: "null array", idsJSON: `null`, wantErr: "non-null"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"fence":{"vault_uid":"`+vaultID+`","content_version_ids":`+
+					testCase.idsJSON+`},"fence_fingerprint":"sha256:460b958d02d96944be00a74a720c0b8af0248239d91c4351141b65d4b9551700","observed_scope_count":0}`)
+			}))
+			t.Cleanup(server.Close)
+			resolved, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+				api.DocumentSourceFenceResolveRequest{Filters: &api.DocumentSourceFenceFilters{}})
+			if testCase.wantErr != "" {
+				require.ErrorContains(t, err, testCase.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, resolved.Fence.ContentVersionIDs)
+			assert.Empty(t, resolved.Fence.ContentVersionIDs)
+		})
+	}
+}
+
+func TestProcessingClientPreservesTypedFilteredScopeOverflow(t *testing.T) {
+	for _, observed := range []int{4097, 4096, 0} {
+		t.Run(strconv.Itoa(observed), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				assert.NoError(t, json.MarshalWrite(w, api.Error{Title: "Unprocessable Entity",
+					Status: http.StatusUnprocessableEntity, Code: "scope_too_large",
+					Detail:             "source scope exceeds 4096 current live content versions; narrow the source scope",
+					ObservedScopeCount: observed}))
+			}))
+			t.Cleanup(server.Close)
+			_, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+				api.DocumentSourceFenceResolveRequest{Filters: &api.DocumentSourceFenceFilters{}})
+			require.Error(t, err)
+			code, ok := client.ProblemCode(err)
+			assert.True(t, ok)
+			assert.Equal(t, "scope_too_large", code)
+			var overflow *client.SourceFenceScopeTooLargeError
+			if observed > 4096 {
+				require.ErrorAs(t, err, &overflow)
+				assert.Equal(t, observed, overflow.ObservedScopeCount)
+			} else {
+				assert.NotErrorAs(t, err, &overflow, "non-overflow counts must not become typed overflow")
+			}
+		})
+	}
+}
+
+func TestProcessingClientNormalizesSourceFenceFiltersOnTheWire(t *testing.T) {
+	const (
+		vaultID   = "11111111-1111-4111-8111-111111111111"
+		versionID = "22222222-2222-4222-8222-222222222222"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var received api.DocumentSourceFenceResolveRequest
+		if !assert.NoError(t, json.UnmarshalRead(request.Body, &received, json.RejectUnknownMembers(true))) ||
+			!assert.NotNil(t, received.Filters) {
+			http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, "text/plain", received.Filters.MIMEType)
+		assert.Equal(t, "2026-08-28T10:00:00.000000000Z", received.Filters.ModifiedSince)
+		assert.Equal(t, "2026-08-28T11:00:00.000000000Z", received.Filters.ModifiedBefore)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{
+			Fence:              api.ResolvedDocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}},
+			FenceFingerprint:   "sha256:e0fab7ab0d999b45c0686583a338626c6cb791a4bc3261b3148a72630baaa1f6",
+			ObservedScopeCount: 1,
+		}))
+	}))
+	t.Cleanup(server.Close)
+	_, err := client.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+		api.DocumentSourceFenceResolveRequest{Filters: &api.DocumentSourceFenceFilters{
+			MIMEType: "TEXT/PLAIN", ModifiedSince: "2026-08-28T12:00:00+02:00",
+			ModifiedBefore: "2026-08-28T13:00:00+02:00",
+		}})
+	require.NoError(t, err)
 }
 
 func TestProcessingClientRejectsResultRevokedFromConsumerFence(t *testing.T) {

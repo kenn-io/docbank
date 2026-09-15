@@ -57,6 +57,18 @@ type WebConfig struct {
 	Enabled bool `toml:"enabled"` // default true
 }
 
+// MCPConfig controls the optional local MCP transports. The HTTP transport
+// remains disabled unless its separate inbound credential binding is named.
+type MCPConfig struct {
+	HTTP MCPHTTPConfig `toml:"http"`
+}
+
+// MCPHTTPConfig names the machine-local credential used to authenticate MCP
+// clients. The credential value is resolved only when the HTTP process starts.
+type MCPHTTPConfig struct {
+	CredentialBinding string `toml:"credential_binding"`
+}
+
 // BackupConfig configures the default immutable snapshot repository and its
 // compression policy. An empty Repo keeps backup commands available through
 // an explicit request path without silently choosing storage under the vault.
@@ -239,6 +251,7 @@ type ResolvedProcessingProfile struct {
 type Config struct {
 	Server             ServerConfig                       `toml:"server"`
 	Web                WebConfig                          `toml:"web"`
+	MCP                MCPConfig                          `toml:"mcp"`
 	Backup             BackupConfig                       `toml:"backup"`
 	Storage            StorageConfig                      `toml:"storage"`
 	StoreBindings      map[string]StoreBindingConfig      `toml:"store_bindings"`
@@ -448,6 +461,9 @@ func (c Config) Validate() error {
 	if err := validateProcessingProfiles(c); err != nil {
 		return err
 	}
+	if err := validateMCPConfig(c); err != nil {
+		return err
+	}
 	for _, watch := range c.Watches {
 		if err := validateWatch(watch); err != nil {
 			return err
@@ -462,6 +478,21 @@ func (c Config) Validate() error {
 	}
 	return fmt.Errorf("[server] bind_addr %q: the API is plain HTTP, so binds are "+
 		"loopback-only; reach a remote docbank through an SSH tunnel or VPN", host)
+}
+
+func validateMCPConfig(c Config) error {
+	reference := c.MCP.HTTP.CredentialBinding
+	if reference == "" {
+		return nil
+	}
+	if !credentialReferencePattern.MatchString(reference) {
+		return errors.New("[mcp.http] credential_binding must use credential:<name>")
+	}
+	name := strings.TrimPrefix(reference, "credential:")
+	if _, ok := c.CredentialBindings[name]; !ok {
+		return fmt.Errorf("[mcp.http] credential binding %q is not defined", reference)
+	}
+	return nil
 }
 
 var storeBindingNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)

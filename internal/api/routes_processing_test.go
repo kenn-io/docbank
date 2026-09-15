@@ -203,6 +203,136 @@ func TestProcessingCoverageTracksTrashRestoreAndSupersessionEligibility(t *testi
 	assert.Equal(t, 1, current.Renditions.Unavailable)
 }
 
+func TestProcessingSourceFenceResolveRouteSupportsExactIDsAndMetadataFilters(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	scope, err := catalog.Mkdir(t.Context(), catalog.RootID(), "scope")
+	require.NoError(t, err)
+	first := createFileWithContent(t, ts, catalog, "/first.txt", "first\n")
+	second, err := catalog.CreateFile(t.Context(), scope.ID, "second.pdf", testHash("second"), 6,
+		"Application/PDF; version=1")
+	require.NoError(t, err)
+	tag, err := catalog.CreateTag(t.Context(), "selected")
+	require.NoError(t, err)
+	_, err = catalog.AssignTag(t.Context(), tag.ID, second.ID, second.Revision)
+	require.NoError(t, err)
+
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		map[string]any{"content_version_ids": []string{second.CurrentVersionID, first.CurrentVersionID}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var explicit api.DocumentSourceFenceResolution
+	require.NoError(t, json.Unmarshal([]byte(body), &explicit))
+	assert.Equal(t, catalog.VaultID(), explicit.Fence.VaultUID)
+	assert.ElementsMatch(t, []string{first.CurrentVersionID, second.CurrentVersionID},
+		explicit.Fence.ContentVersionIDs)
+	assert.Equal(t, 2, explicit.ObservedScopeCount)
+	assert.Regexp(t, `^sha256:[0-9a-f]{64}$`, explicit.FenceFingerprint)
+
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		map[string]any{"filters": map[string]any{
+			"tag_id": tag.ID, "mime_type": "APPLICATION/PDF", "under_node_id": scope.ID,
+		}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var filtered api.DocumentSourceFenceResolution
+	require.NoError(t, json.Unmarshal([]byte(body), &filtered))
+	assert.Equal(t, []string{second.CurrentVersionID}, filtered.Fence.ContentVersionIDs)
+	assert.Equal(t, 1, filtered.ObservedScopeCount)
+
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		map[string]any{"filters": map[string]any{}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &filtered))
+	assert.Equal(t, 2, filtered.ObservedScopeCount)
+}
+
+func TestProcessingSourceFenceResolveRouteReturnsNonNullEmptyFence(t *testing.T) {
+	ts, _ := newTestServer(t, configureProcessingTestService(t))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		map[string]any{"filters": map[string]any{}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.Contains(t, body, `"content_version_ids":[]`)
+	assert.NotContains(t, body, `"content_version_ids":null`)
+	var resolved api.DocumentSourceFenceResolution
+	require.NoError(t, json.Unmarshal([]byte(body), &resolved))
+	assert.NotNil(t, resolved.Fence.ContentVersionIDs)
+	assert.Empty(t, resolved.Fence.ContentVersionIDs)
+	assert.Equal(t, 0, resolved.ObservedScopeCount)
+	assert.Regexp(t, `^sha256:[0-9a-f]{64}$`, resolved.FenceFingerprint)
+}
+
+func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/search-validation.txt", "synthetic search evidence\n")
+
+	for _, test := range []struct {
+		name, query, profile string
+	}{
+		{name: "whitespace query", query: "   ", profile: "private"},
+		{name: "unconfigured profile", query: "synthetic", profile: "missing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			validationResponse, validationBody := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
+				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile})
+			searchResponse, searchBody := do(t, ts, http.MethodPost, "/api/v1/search", nil,
+				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
+					"fence": map[string]any{"vault_uid": catalog.VaultID(),
+						"content_version_ids": []string{node.CurrentVersionID}}})
+			assert.Equal(t, searchResponse.StatusCode, validationResponse.StatusCode)
+			var validationProblem, searchProblem api.Error
+			require.NoError(t, json.Unmarshal([]byte(validationBody), &validationProblem))
+			require.NoError(t, json.Unmarshal([]byte(searchBody), &searchProblem))
+			assert.Equal(t, searchProblem.Code, validationProblem.Code)
+		})
+	}
+}
+
+func TestProcessingSourceFenceResolveRouteFailsClosedWithStableSanitizedErrors(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	current := createFileWithContent(t, ts, catalog, "/current.txt", "current\n")
+	oldID := current.CurrentVersionID
+	replacementHash, replacementSize, err := catalog.Blobs.Write(strings.NewReader("replacement\n"))
+	require.NoError(t, err)
+	current, _, err = catalog.ReplaceContent(t.Context(), current.ID, current.Revision,
+		replacementHash, replacementSize, "text/plain")
+	require.NoError(t, err)
+	tooMany := make([]string, processing.MaxSourceFenceIDs+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("00000000-0000-4000-8000-%012d", index)
+	}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		map[string]any{"content_version_ids": tooMany})
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	var scopeProblem api.Error
+	require.NoError(t, json.Unmarshal([]byte(body), &scopeProblem))
+	assert.Equal(t, "scope_too_large", scopeProblem.Code)
+	assert.Equal(t, processing.MaxSourceFenceIDs+1, scopeProblem.ObservedScopeCount)
+	assert.Contains(t, scopeProblem.Detail, "narrow the source scope")
+
+	for _, testCase := range []struct {
+		name       string
+		request    map[string]any
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "missing mode", request: map[string]any{}, wantStatus: http.StatusUnprocessableEntity, wantCode: "validation"},
+		{name: "both modes", request: map[string]any{"content_version_ids": []string{current.CurrentVersionID}, "filters": map[string]any{}}, wantStatus: http.StatusUnprocessableEntity, wantCode: "validation"},
+		{name: "unknown filter", request: map[string]any{"filters": map[string]any{"path": "/private/host/path"}}, wantStatus: http.StatusUnprocessableEntity, wantCode: "validation"},
+		{name: "stale version", request: map[string]any{"content_version_ids": []string{oldID}}, wantStatus: http.StatusConflict, wantCode: "stale_version"},
+		{name: "missing version", request: map[string]any{"content_version_ids": []string{"33333333-3333-4333-8333-333333333333"}}, wantStatus: http.StatusNotFound, wantCode: "not_found"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+				testCase.request)
+			assert.Equal(t, testCase.wantStatus, response.StatusCode, body)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(body), &problem))
+			assert.Equal(t, testCase.wantCode, problem.Code)
+			assert.NotContains(t, body, catalog.DBPath)
+			assert.NotContains(t, body, catalog.BlobsDir)
+			assert.NotContains(t, body, "SELECT")
+		})
+	}
+}
+
 func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node) api.ProcessingJob {
 	t.Helper()
 	selector := map[string]any{"node_id": node.ID,
@@ -509,6 +639,29 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	require.Equal(t, http.StatusOK, selectorResponse.StatusCode, selectorBody)
 	assert.Equal(t, renditionBody, selectorBody)
 	assert.Equal(t, job.AttachmentID, selectorResponse.Header.Get("X-Docbank-Rendition-Attachment"))
+
+	windowResponse, windowBody := do(t, ts, http.MethodPost, "/api/v1/renditions/windows", nil,
+		map[string]any{"vault_id": catalog.VaultID(), "node_id": node.ID,
+			"content_version_id": node.CurrentVersionID, "attachment_id": job.AttachmentID,
+			"offset": 5, "max_chars": 9})
+	require.Equal(t, http.StatusOK, windowResponse.StatusCode, windowBody)
+	var window api.RenditionTextWindow
+	require.NoError(t, json.Unmarshal([]byte(windowBody), &window))
+	runes := []rune(renditionBody)
+	assert.Equal(t, string(runes[5:14]), window.Text)
+	assert.Equal(t, 5, window.RequestedOffset)
+	assert.Equal(t, 14, window.NextOffset)
+	assert.Equal(t, len(window.Text), window.ResponseBytes)
+	assert.Equal(t, job.AttachmentID, window.AttachmentID)
+	assert.Equal(t, node.CurrentVersionID, window.ContentVersionID)
+	assert.Equal(t, "text/markdown", window.MediaType)
+
+	mismatchResponse, mismatchBody := do(t, ts, http.MethodPost, "/api/v1/renditions/windows", nil,
+		map[string]any{"vault_id": catalog.VaultID(), "node_id": node.ID + 1,
+			"content_version_id": node.CurrentVersionID, "attachment_id": job.AttachmentID,
+			"offset": 0, "max_chars": 1})
+	assert.Equal(t, http.StatusNotFound, mismatchResponse.StatusCode, mismatchBody)
+	assert.Contains(t, mismatchBody, `"code":"not_found"`)
 
 	coverageResponse, coverageBody := get(t, ts, "/api/v1/coverage?profile=private&vault_uid="+
 		catalog.VaultID()+"&content_version_id="+node.CurrentVersionID, nil)

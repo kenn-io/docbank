@@ -15,12 +15,15 @@ import (
 	"net/http"
 	"net/url"
 	pathpkg "path"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 var (
@@ -28,6 +31,20 @@ var (
 	ErrProcessingPlanChanged = errors.New("document processing plan changed")
 	ErrProcessingConsent     = errors.New("document processing consent is required")
 )
+
+// SourceFenceScopeTooLargeError preserves the daemon's full observed source
+// population when an exact bounded fence cannot be returned.
+type SourceFenceScopeTooLargeError struct {
+	ObservedScopeCount int
+	detail             string
+}
+
+func (e *SourceFenceScopeTooLargeError) Error() string {
+	if e.detail != "" {
+		return e.detail
+	}
+	return fmt.Sprintf("source scope contains %d current live content versions", e.ObservedScopeCount)
+}
 
 const (
 	maxProcessingEventStreamBytes int64 = 64 << 10
@@ -42,6 +59,105 @@ func (c *Client) ProcessingProfiles(ctx context.Context) ([]api.ProcessingProfil
 	var result []api.ProcessingProfileSummary
 	err := c.do(ctx, http.MethodGet, "/api/v1/processing/profiles", nil, nil, &result)
 	return result, err
+}
+
+// ResolveDocumentSourceFence captures exact current/live search authority in the daemon.
+func (c *Client) ResolveDocumentSourceFence(
+	ctx context.Context, request api.DocumentSourceFenceResolveRequest,
+) (api.DocumentSourceFenceResolution, error) {
+	normalized, err := validateDocumentSourceFenceRequest(request)
+	if err != nil {
+		return api.DocumentSourceFenceResolution{}, fmt.Errorf("source fence request is invalid: %w", err)
+	}
+	var result api.DocumentSourceFenceResolution
+	if err := c.do(ctx, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
+		normalized, &result); err != nil {
+		return api.DocumentSourceFenceResolution{}, err
+	}
+	if err := validateDocumentSourceFenceResolution(normalized, result); err != nil {
+		return api.DocumentSourceFenceResolution{}, fmt.Errorf("source fence response is invalid: %w", err)
+	}
+	return result, nil
+}
+
+func validateDocumentSourceFenceRequest(
+	request api.DocumentSourceFenceResolveRequest,
+) (api.DocumentSourceFenceResolveRequest, error) {
+	explicit := len(request.ContentVersionIDs) != 0
+	if explicit == (request.Filters != nil) {
+		return api.DocumentSourceFenceResolveRequest{}, errors.New("select exactly one request mode")
+	}
+	if explicit {
+		if len(request.ContentVersionIDs) > processing.MaxSourceFenceIDs {
+			return api.DocumentSourceFenceResolveRequest{}, fmt.Errorf(
+				"content version IDs exceed %d", processing.MaxSourceFenceIDs)
+		}
+		ids := slices.Clone(request.ContentVersionIDs)
+		for _, id := range ids {
+			if !validUUIDv4(id) {
+				return api.DocumentSourceFenceResolveRequest{}, errors.New("content version ID is invalid")
+			}
+		}
+		slices.Sort(ids)
+		for index, id := range ids {
+			if index > 0 && ids[index-1] == id {
+				return api.DocumentSourceFenceResolveRequest{}, errors.New("content version IDs must be unique")
+			}
+		}
+		request.ContentVersionIDs = ids
+		return request, nil
+	}
+	filters := *request.Filters
+	if filters.TagID != "" && !validUUIDv4(filters.TagID) {
+		return api.DocumentSourceFenceResolveRequest{}, errors.New("tag ID is invalid")
+	}
+	if filters.UnderNodeID < 0 {
+		return api.DocumentSourceFenceResolveRequest{}, errors.New("directory node ID must be positive")
+	}
+	var err error
+	filters.MIMEType, err = store.NormalizeSearchMIMEType(filters.MIMEType)
+	if err != nil {
+		return api.DocumentSourceFenceResolveRequest{}, err
+	}
+	filters.ModifiedSince, filters.ModifiedBefore, err = store.NormalizeSearchTimeBounds(
+		filters.ModifiedSince, filters.ModifiedBefore)
+	if err != nil {
+		return api.DocumentSourceFenceResolveRequest{}, err
+	}
+	request.Filters = &filters
+	return request, nil
+}
+
+func validateDocumentSourceFenceResolution(
+	request api.DocumentSourceFenceResolveRequest, result api.DocumentSourceFenceResolution,
+) error {
+	ids := result.Fence.ContentVersionIDs
+	if ids == nil {
+		return errors.New("content version IDs must be a non-null array")
+	}
+	if !validUUIDv4(result.Fence.VaultUID) || len(ids) > processing.MaxSourceFenceIDs ||
+		result.ObservedScopeCount != len(ids) {
+		return errors.New("fence authority is inconsistent")
+	}
+	for index, id := range ids {
+		if !validUUIDv4(id) || (index > 0 && ids[index-1] >= id) {
+			return errors.New("content version IDs are not sorted and unique")
+		}
+	}
+	if len(request.ContentVersionIDs) != 0 {
+		expected := slices.Clone(request.ContentVersionIDs)
+		slices.Sort(expected)
+		if !slices.Equal(expected, ids) {
+			return errors.New("explicit source authority changed")
+		}
+	}
+	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
+		VaultUID: result.Fence.VaultUID, ContentVersionIDs: ids,
+	})
+	if err != nil || result.FenceFingerprint != fingerprint {
+		return errors.New("fence fingerprint does not bind its authority")
+	}
+	return nil
 }
 
 func (c *Client) PlanProcessing(ctx context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error) {
@@ -60,7 +176,7 @@ func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessin
 	defer func() { _ = stream.Close() }()
 	first, err := stream.Next()
 	if err != nil {
-		return api.ProcessingJob{}, err
+		return api.ProcessingJob{}, &responseDecodeError{err: err}
 	}
 	terminal, err := stream.Next()
 	if terminal.Job != nil {
@@ -69,6 +185,22 @@ func (c *Client) StartProcessing(ctx context.Context, request api.StartProcessin
 		first.Job.EmbeddingJobIDs = terminal.Status.EmbeddingJobIDs
 	}
 	return *first.Job, err
+}
+
+// EnqueueProcessing returns as soon as the daemon publishes the durable job
+// identity. Closing the response stream does not cancel work that the daemon
+// has already enqueued under its own lifecycle.
+func (c *Client) EnqueueProcessing(ctx context.Context, request api.StartProcessingRequest, profileFingerprint string) (api.ProcessingJob, error) {
+	stream, err := c.StartProcessingStream(ctx, request, profileFingerprint)
+	if err != nil {
+		return api.ProcessingJob{}, err
+	}
+	defer func() { _ = stream.Close() }()
+	first, err := stream.Next()
+	if err != nil {
+		return api.ProcessingJob{}, &responseDecodeError{err: err}
+	}
+	return *first.Job, nil
 }
 
 // ProcessingEventStream incrementally validates the exact two-event processing
@@ -106,7 +238,7 @@ func (c *Client) StartProcessingStream(ctx context.Context,
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, &transportError{err: fmt.Errorf("starting processing: %w", err)}
+		return nil, classifyRequestFailure(resp, fmt.Errorf("starting processing: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		defer func() { _ = resp.Body.Close() }()
@@ -115,7 +247,7 @@ func (c *Client) StartProcessingStream(ctx context.Context,
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-ndjson" {
 		_ = resp.Body.Close()
-		return nil, errors.New("processing stream returned an invalid content type")
+		return nil, &responseDecodeError{err: errors.New("processing stream returned an invalid content type")}
 	}
 	bounded := &boundedReadCloser{body: resp.Body, remaining: maxProcessingEventStreamBytes}
 	return &ProcessingEventStream{body: bounded, decoder: jsontext.NewDecoder(bounded), bounded: bounded,
@@ -390,6 +522,21 @@ func (c *Client) SearchDocuments(ctx context.Context, request api.DocumentSearch
 		return api.DocumentSearchReport{}, fmt.Errorf("search response is invalid: %w", err)
 	}
 	return result, nil
+}
+
+// ValidateDocumentSearch asks the daemon to apply ordinary search semantics
+// without executing a search. It is used only for an exact empty source fence.
+func (c *Client) ValidateDocumentSearch(
+	ctx context.Context, request api.DocumentSearchValidationRequest,
+) error {
+	var result api.DocumentSearchValidation
+	if err := c.do(ctx, http.MethodPost, "/api/v1/search/validate", nil, request, &result); err != nil {
+		return err
+	}
+	if !result.Valid {
+		return errors.New("search validation response is invalid")
+	}
+	return nil
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
@@ -709,7 +856,7 @@ func (c *Client) Rendition(ctx context.Context, attachmentID string, maxBytes in
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, &transportError{err: fmt.Errorf("fetching rendition: %w", err)}
+		return nil, classifyRequestFailure(resp, fmt.Errorf("fetching rendition: %w", err))
 	}
 	stream, err := decodeRenditionResponse(resp, attachmentID, maxBytes)
 	if err != nil {
@@ -738,7 +885,7 @@ func (c *Client) RenditionForSelector(ctx context.Context, selector api.Processi
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, &transportError{err: fmt.Errorf("fetching rendition: %w", err)}
+		return nil, classifyRequestFailure(resp, fmt.Errorf("fetching rendition: %w", err))
 	}
 	stream, err := decodeRenditionResponse(resp, "", maxBytes)
 	if err != nil {
@@ -812,7 +959,7 @@ func (c *Client) RenditionRange(ctx context.Context, attachmentID string,
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, &transportError{err: fmt.Errorf("fetching rendition range: %w", err)}
+		return nil, classifyRequestFailure(resp, fmt.Errorf("fetching rendition range: %w", err))
 	}
 	if resp.StatusCode != http.StatusPartialContent {
 		defer func() { _ = resp.Body.Close() }()

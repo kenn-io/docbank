@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -32,6 +33,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -144,6 +146,16 @@ func IsTransportError(err error) bool {
 	return errors.As(err, &transport)
 }
 
+func classifyRequestFailure(resp *http.Response, err error) error {
+	if resp == nil {
+		return &transportError{err: err}
+	}
+	if resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	return &responseError{status: resp.StatusCode, err: err}
+}
+
 type responseDecodeError struct{ err error }
 
 func (e *responseDecodeError) Error() string { return e.err.Error() }
@@ -159,8 +171,9 @@ func IsResponseDecodeError(err error) bool {
 }
 
 type problemError struct {
-	code string
-	err  error
+	code               string
+	observedScopeCount int
+	err                error
 }
 
 func (e *problemError) Error() string { return e.err.Error() }
@@ -169,11 +182,46 @@ func (e *problemError) Unwrap() error { return e.err }
 // ProblemCode returns the daemon's stable RFC 7807 extension code when err
 // came from a decoded HTTP response or progress-stream error event.
 func ProblemCode(err error) (string, bool) {
-	var problem *problemError
-	if !errors.As(err, &problem) || problem.code == "" {
+	facts, ok := ExtractProblemFacts(err)
+	if !ok {
 		return "", false
 	}
-	return problem.code, true
+	return facts.Code, true
+}
+
+// ProblemFacts is the safe, stable subset of a decoded daemon problem.
+// MappedError is one package sentinel from the client's problem-code map;
+// detailed server text and the original error are never returned.
+type ProblemFacts struct {
+	Code               string
+	MappedError        error
+	ObservedScopeCount int
+}
+
+// ExtractProblemFacts copies stable problem metadata without exposing the
+// daemon's detailed error text to longer-lived protocol boundaries.
+func ExtractProblemFacts(err error) (ProblemFacts, bool) {
+	var problem *problemError
+	if !errors.As(err, &problem) || !validProblemCode(problem.code) {
+		return ProblemFacts{}, false
+	}
+	return ProblemFacts{
+		Code: problem.code, MappedError: codeToTypedErr[problem.code],
+		ObservedScopeCount: problem.observedScopeCount,
+	}, true
+}
+
+func validProblemCode(code string) bool {
+	if len(code) == 0 || len(code) > 64 || code[0] < 'a' || code[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(code); i++ {
+		b := code[i]
+		if (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 var (
@@ -273,6 +321,30 @@ func New(baseURL, apiKey string) *Client {
 	return &Client{base: baseURL, key: apiKey, hc: &http.Client{Timeout: 0}}
 }
 
+// APIKeyExclusionPolicy is an opaque, fixed policy that refuses one API key.
+// It retains only a hash of the forbidden value and reveals neither the value
+// nor its hash to callers.
+type APIKeyExclusionPolicy func(*Client) bool
+
+// NewAPIKeyExclusionPolicy builds a fixed policy for an independently bound
+// credential. The raw forbidden value is not captured by the returned policy.
+func NewAPIKeyExclusionPolicy(forbidden string) APIKeyExclusionPolicy {
+	forbiddenHash := sha256.Sum256([]byte(forbidden))
+	return func(c *Client) bool {
+		if c == nil || c.key == "" {
+			return false
+		}
+		keyHash := sha256.Sum256([]byte(c.key))
+		return subtle.ConstantTimeCompare(forbiddenHash[:], keyHash[:]) != 1
+	}
+}
+
+// Allows reports whether the ownership-proven client has a non-empty API key
+// distinct from the policy's forbidden credential.
+func (policy APIKeyExclusionPolicy) Allows(c *Client) bool {
+	return policy != nil && policy(c)
+}
+
 // Close releases idle transport connections owned by this client. It is most
 // useful to long-running callers that periodically reacquire a daemon client
 // after idle shutdown or process replacement.
@@ -315,6 +387,9 @@ var codeToTypedErr = map[string]error{
 	"audit_not_enrolled":            store.ErrAuditNotEnrolled,
 	"audit_mutation_unsupported":    store.ErrAuditMutationUnsupported,
 	"invalid_audit_cursor":          store.ErrInvalidAuditCursor,
+	"invalid_document_query":        store.ErrInvalidDocumentQuery,
+	"invalid_document_cursor":       store.ErrInvalidDocumentCursor,
+	"cursor_expired":                store.ErrDocumentCursorExpired,
 	"backup_locked":                 backup.ErrRepoLocked,
 	"backup_restore_target_active":  home.ErrVaultLocked,
 	"pack_retirement_deferred":      packstore.ErrPackRetirementDeferred,
@@ -352,12 +427,16 @@ func decodeError(resp *http.Response) error {
 
 func apiProblemError(e api.Error) error {
 	var cause error
-	if target, ok := codeToTypedErr[e.Code]; ok {
+	observedScopeCount := 0
+	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
+		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
+		observedScopeCount = e.ObservedScopeCount
+	} else if target, ok := codeToTypedErr[e.Code]; ok {
 		cause = fmt.Errorf("%s: %w", e.Detail, target)
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
-	return &problemError{code: e.Code, err: cause}
+	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, err: cause}
 }
 
 // do issues one JSON round-trip. Non-nil out must be a pointer; a non-2xx
@@ -408,9 +487,8 @@ func (c *Client) doRequest(
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, &transportError{err: fmt.Errorf(
-			"calling daemon (%s %s): %w", method, path, err,
-		)}
+		return nil, classifyRequestFailure(resp,
+			fmt.Errorf("calling daemon (%s %s): %w", method, path, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {

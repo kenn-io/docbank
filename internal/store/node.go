@@ -75,7 +75,11 @@ func scanNode(row interface{ Scan(args ...any) error }) (Node, error) {
 
 // NodeByID returns the node with the given id, live or trashed.
 func (s *Store) NodeByID(ctx context.Context, id int64) (Node, error) {
-	row := s.db.QueryRowContext(ctx,
+	return nodeByIDQuery(ctx, s.db, id)
+}
+
+func nodeByIDQuery(ctx context.Context, queryer rowQuerier, id int64) (Node, error) {
+	row := queryer.QueryRowContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, id)
 	n, err := scanNode(row)
 	if err != nil {

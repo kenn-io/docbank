@@ -27,7 +27,7 @@ The [changelog](changelog.md) records published releases.
 | Recover documents | Recoverable trash, explicit permanent deletion, garbage collection, and pack reclamation | [Trash and GC](usage/trash-and-gc.md) |
 | Recover a vault | Incremental backups, verified restore into a separate target, and snapshot removal through the embedded API | [Backup and restore](usage/backup.md) |
 | Add physical storage | Verified placement, repair, salvage, and evacuation across filesystem and S3-compatible stores | [Multi-store storage](usage/storage.md) |
-| Integrate an application | Authenticated HTTP API, offline OpenAPI generation, and separately rooted embedded Go vaults | [Agent integration](agents/integration.md) and [Embed in Go](embedding.md) |
+| Integrate an application | Authenticated HTTP API, bounded local MCP server, offline OpenAPI generation, and separately rooted embedded Go vaults | [Agent integration](agents/integration.md), [MCP](usage/mcp.md), and [Embed in Go](embedding.md) |
 
 Release archives cover Linux, macOS, and Windows on amd64 and arm64.
 `docbank update` installs a published release and coordinates daemon restart.
@@ -83,7 +83,6 @@ have HTTP APIs; neither client has a management screen for them.
 
 - Automatic PDF and Office extraction for new vault imports and broader
   processing workflows.
-- An MCP server for agent integrations.
 - Overlapping permanent audit scopes.
 - A retention contract for external references to Docbank nodes. Embedded
   source references currently record origin; they do not prevent deletion.

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-14
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -10,8 +11,9 @@ vault. Use `DOCBANK_HOME` to select its location. Add `config.toml` when you nee
 to change how the daemon runs.
 
 The file controls the listening address, authentication, idle timeout, backup
-repository, watched inboxes, and secondary-store connections. A vault with only
-a primary store needs no configuration file. Each registered secondary store
+repository, watched inboxes, the optional MCP HTTP credential binding, and
+secondary-store connections. A vault with only a primary store needs no
+configuration file. Each registered secondary store
 needs a matching connection profile after restart. Backup commands need either
 a configured repository or an explicit `--repo` flag.
 
@@ -90,8 +92,9 @@ to serialize daemon launch before the launcher owns or creates the vault root.
 ## config.toml
 
 `$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
-daemon run` / `daemon start`). It's optional. There are no general per-field
-environment overrides. `DOCBANK_HOME` selects the vault, and named credential
+daemon run` / `daemon start`). `docbank mcp --transport http` also reads and validates the whole file at
+startup, then resolves its named credential binding. The file is optional.
+There are no general per-field environment overrides. `DOCBANK_HOME` selects the vault, and named credential
 bindings can read explicitly configured environment variables.
 Backup commands can override their configured repository with `--repo`. An
 unrecognized key is treated as a typo and rejected at startup rather than
@@ -108,6 +111,9 @@ idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
 enabled = true
+
+[mcp.http]
+credential_binding = "" # empty = HTTP MCP cannot start
 
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
@@ -147,6 +153,9 @@ exclude = [".DS_Store", "cache/"]
   authenticated browser session on a fresh per-daemon loopback origin,
   independent of a configured `api_port`. Disabling it 404s `/` and `/assets/`;
   the API and `/docs` are unaffected. See [Web application](usage/web.md).
+- **`[mcp.http] credential_binding`** — names the separate inbound credential
+  used by `docbank mcp --transport http`. An empty value leaves stdio available
+  but makes HTTP startup fail. See [MCP HTTP credential](#mcp-http-credential).
 - **`[backup] repo`** — default immutable snapshot repository used when a
   backup command or API request omits `repo`. `~/...` expands against the
   daemon user's home; a relative path is resolved beneath `$DOCBANK_HOME`.
@@ -166,6 +175,39 @@ as `docbank storage pack`: ordinary mutations may briefly receive
 `maintenance_busy` and can retry. Automatic packing does not delete logical
 content and does not run GC or repack; those reclamation operations remain
 explicit operator choices.
+
+### MCP HTTP credential
+
+The MCP HTTP listener requires a named credential binding. Configuration keeps
+only the environment-variable name; the bearer value remains in the MCP
+process environment:
+
+```toml
+[mcp.http]
+credential_binding = "credential:mcp-http"
+
+[credential_bindings.mcp-http]
+environment_variable = "DOCBANK_MCP_HTTP_TOKEN"
+```
+
+Binding names start with a lowercase letter, contain only lowercase letters,
+digits, `_`, or `-`, and are capped at 63 characters. The configured
+environment-variable name must use ordinary shell-variable syntax. The bearer
+is non-empty, contains no spaces or control bytes, and is capped at 4,096
+bytes.
+
+Docbank resolves the bearer once when the MCP HTTP process starts; changing the
+environment does not rotate a running process. It must remain separate from
+`[server] api_key` and from an ephemeral daemon key published in the runtime
+record. HTTP startup acquires the effective daemon first and refuses a reused
+value. The same exclusion remains active if the daemon later restarts and the
+MCP process reacquires it.
+
+There is no raw bearer field in `config.toml`, command-line token flag, URL
+credential, or runtime-record publication. Supply the environment variable to
+the MCP child through an owner-controlled secret or process manager. This is a
+fixed local bearer, not OAuth; see [Model Context Protocol](usage/mcp.md) for
+the complete transport boundary.
 
 ### Watched inboxes
 
@@ -392,4 +434,4 @@ The daemon validates its listening address at startup. An invalid setting makes
 | Variable | Effect |
 |----------|--------|
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
-| `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run`, foreground or background. Invalid values are ignored and fall back to `info`. |
+| `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
