@@ -218,7 +218,7 @@
     </section>
 
     {#if action.state === "stale"}
-      <p class="state-copy">This action is stale. Its expected revisions will not be refreshed. Create an explicit new selection and action instead.</p>
+      <p class="state-copy">This action is stale. A document changed, or a tag or document is no longer available. Abandon this action and create a new one with a fresh selection. Its original targets and revisions will not be changed.</p>
     {:else if action.state === "uncertain"}
       <p class="state-copy">The result is uncertain. Retry same operation uses every original operation identity and expected revision.</p>
     {:else if action.state === "paused"}

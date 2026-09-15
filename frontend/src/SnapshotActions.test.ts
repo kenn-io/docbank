@@ -93,3 +93,21 @@ it("reads an imported recovery file without starting an action", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Resume retained action" }));
   expect(onresume).toHaveBeenCalledOnce();
 });
+
+it("discards a recovery file whose read finishes after the dialog closes", async () => {
+  const onimport = vi.fn();
+  const view = render(SnapshotActions, { selectedCount: 0, total: 1, catalog, catalogTotal: 1,
+    disabled: false, onstart: vi.fn(), onimport, onresume: vi.fn(), onabandon: vi.fn(),
+    onclose: () => view.unmount() });
+  let release!: (bytes: ArrayBuffer) => void;
+  const reading = new Promise<ArrayBuffer>((resolve) => { release = resolve; });
+  const file = new File(["{}"], "action.json", { type: "application/json" });
+  const read = vi.spyOn(file, "arrayBuffer").mockReturnValue(reading);
+  await fireEvent.change(screen.getByLabelText("Import action recovery file"), { target: { files: [file] } });
+  expect(read).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  release(new ArrayBuffer(0));
+  await reading;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(onimport).not.toHaveBeenCalled();
+});

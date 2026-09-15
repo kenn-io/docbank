@@ -87,14 +87,18 @@ describe("recoverable action runner", () => {
     expect(journal.action.state).toBe("complete");
   });
 
-  it("stops a stale batch without refreshing its captured revisions", async () => {
+  it.each([
+    { status: 412, code: "stale_revision", detail: "Document changed" },
+    { status: 404, code: "not_found", detail: "Tag not found" },
+    { status: 404, code: "not_found", detail: "Batch target is missing or trashed" },
+  ])("stops a batch after $detail without changing its captured inputs", async ({ status, code, detail }) => {
     const journal = new MemoryJournal(await persisted(1_001));
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (input === "/api/v1/audit/status") return audit();
-      return new Response(JSON.stringify({ code: "stale_revision", detail: "Document changed" }), { status: 412 });
+      return new Response(JSON.stringify({ code, detail }), { status });
     });
 
-    await expect(runAction("fresh-session", journal, new AbortController().signal, () => {})).rejects.toThrow("Document changed");
+    await expect(runAction("fresh-session", journal, new AbortController().signal, () => {})).rejects.toThrow(detail);
     expect(journal.action.state).toBe("stale");
     expect(journal.action.batches.map((batch) => batch.state)).toEqual(["stale", "prepared"]);
   });

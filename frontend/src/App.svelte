@@ -197,6 +197,8 @@
   let snapshotOverlays = $state<SnapshotReceiptOverlays>({});
   let snapshotActionsOpen = $state(false);
   let snapshotActionBusy = $state(false);
+  let snapshotActionController: AbortController | undefined;
+  let snapshotActionGeneration = 0;
   let snapshotActionError = $state("");
   let recoveryJournal = $state<ActionJournal | null>(null);
   let recoveryAction = $state<PersistedAction | null>(null);
@@ -331,6 +333,7 @@
         channel.close();
         detachShortcuts();
         snapshotController?.dispose();
+        cancelSnapshotAction();
       };
     }
     return detachShortcuts;
@@ -1031,6 +1034,7 @@
   }
 
   function leaveSnapshotMode(): void {
+    cancelSnapshotAction();
     if (snapshotState.status === "idle" && snapshotController === undefined) return;
     snapshotController?.dispose();
     snapshotController = undefined;
@@ -1058,6 +1062,7 @@
   }
 
   function runSnapshot(query: Query, options: SnapshotOptions): void {
+    cancelSnapshotAction();
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -1068,7 +1073,7 @@
 
   function runSnapshotAgain(): void {
     if (!snapshotState.query || !snapshotState.options) return;
-    void snapshotSession().run(snapshotState.query, snapshotState.options);
+    runSnapshot(snapshotState.query, snapshotState.options);
   }
 
   function changeSnapshotQuery(query: Query): void {
@@ -1111,15 +1116,38 @@
     snapshotOverlays = applySnapshotReceiptOverlay(snapshotOverlays, receipt, tagLabel);
   }
 
+  function cancelSnapshotAction(): void {
+    snapshotActionGeneration++;
+    snapshotActionController?.abort();
+    snapshotActionController = undefined;
+    snapshotActionBusy = false;
+    snapshotActionError = "";
+    snapshotActionsOpen = false;
+  }
+
+  function beginSnapshotAction() {
+    const session = webSession;
+    const request = ++snapshotActionGeneration;
+    const controller = new AbortController();
+    snapshotActionController = controller;
+    snapshotActionBusy = true;
+    snapshotActionError = "";
+    return { session, signal: controller.signal,
+      current: () => request === snapshotActionGeneration && session === webSession && !controller.signal.aborted };
+  }
+
   async function showRecovery(
     journal: ActionJournal,
     action: PersistedAction,
     vaultID: string,
+    operation: ReturnType<typeof beginSnapshotAction>,
   ): Promise<void> {
-    const currentTag = await tagByID(webSession, action.tag_id).catch((cause) => {
+    if (!operation.current()) return;
+    const currentTag = await tagByID(operation.session, action.tag_id).catch((cause) => {
       if (cause instanceof APIError && cause.status === 404) return null;
       throw cause;
     });
+    if (!operation.current()) return;
     recoveryJournal = journal;
     recoveryAction = action;
     recoveryTag = currentTag;
@@ -1140,79 +1168,101 @@
     }
     const firstPage = snapshotState.firstPage;
     if (!firstPage || firstPage.total === 0) return;
-    snapshotActionBusy = true;
-    const capture = new AbortController();
+    const operation = beginSnapshotAction();
     try {
       // Complete enumeration and hash/byte verification happen before random
       // operation identities are prepared or anything is persisted.
-      const targets = await captureSnapshotTargets(webSession, firstPage, capture.signal, snapshotOverlays);
-      const vaultID = await readActionVaultID(webSession);
+      const targets = await captureSnapshotTargets(operation.session, firstPage, operation.signal, snapshotOverlays);
+      if (!operation.current()) return;
+      const vaultID = await readActionVaultID(operation.session);
+      if (!operation.current()) return;
       const journal = await ActionJournal.open(vaultID);
       const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
-      await journal.prepare(prepared);
+      if (!operation.current()) return;
+      await journal.prepare(prepared, operation.signal);
       const action = await journal.load();
       if (!action) throw new Error("The prepared action was not retained in durable storage.");
-      await showRecovery(journal, action, vaultID);
+      await showRecovery(journal, action, vaultID, operation);
     } catch (cause) {
+      if (!operation.current()) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      snapshotActionBusy = false;
+      if (operation.current()) {
+        snapshotActionBusy = false;
+        snapshotActionController = undefined;
+      }
     }
   }
 
   async function importSnapshotAction(bytes: Uint8Array): Promise<void> {
     if (snapshotActionBusy) return;
-    snapshotActionBusy = true;
-    snapshotActionError = "";
+    const operation = beginSnapshotAction();
     try {
       const prepared = await decodeRecovery(bytes);
-      const vaultID = await readActionVaultID(webSession);
+      if (!operation.current()) return;
+      const vaultID = await readActionVaultID(operation.session);
+      if (!operation.current()) return;
       if (prepared.vault_id !== vaultID) throw new Error("The recovery action belongs to a different vault.");
       const journal = await ActionJournal.open(vaultID);
-      await journal.prepare(prepared);
+      if (!operation.current()) return;
+      await journal.prepare(prepared, operation.signal);
       await journal.verifyCheckpoint(bytes);
       const action = await journal.load();
       if (!action) throw new Error("The imported action was not retained in durable storage.");
-      await showRecovery(journal, action, vaultID);
+      await showRecovery(journal, action, vaultID, operation);
     } catch (cause) {
+      if (!operation.current()) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      snapshotActionBusy = false;
+      if (operation.current()) {
+        snapshotActionBusy = false;
+        snapshotActionController = undefined;
+      }
     }
   }
 
   async function resumeSnapshotAction(): Promise<void> {
     if (snapshotActionBusy) return;
-    snapshotActionBusy = true;
-    snapshotActionError = "";
+    const operation = beginSnapshotAction();
     try {
-      const vaultID = await readActionVaultID(webSession);
+      const vaultID = await readActionVaultID(operation.session);
+      if (!operation.current()) return;
       const journal = await ActionJournal.open(vaultID);
       const action = await journal.load();
       if (!action) throw new Error("No retained action is available for this vault. Select a recovery file instead.");
-      await showRecovery(journal, action, vaultID);
+      await showRecovery(journal, action, vaultID, operation);
     } catch (cause) {
+      if (!operation.current()) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      snapshotActionBusy = false;
+      if (operation.current()) {
+        snapshotActionBusy = false;
+        snapshotActionController = undefined;
+      }
     }
   }
 
   async function abandonSnapshotAction(): Promise<void> {
     if (snapshotActionBusy) return;
-    snapshotActionBusy = true;
-    snapshotActionError = "";
+    const operation = beginSnapshotAction();
     try {
-      await ActionJournal.abandon(await readActionVaultID(webSession));
+      const vaultID = await readActionVaultID(operation.session);
+      if (!operation.current()) return;
+      await ActionJournal.abandon(vaultID);
+      if (!operation.current()) return;
       snapshotActionsOpen = false;
     } catch (cause) {
+      if (!operation.current()) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      snapshotActionBusy = false;
+      if (operation.current()) {
+        snapshotActionBusy = false;
+        snapshotActionController = undefined;
+      }
     }
   }
 
@@ -2553,7 +2603,7 @@
         onimport={(bytes) => void importSnapshotAction(bytes)}
         onresume={() => void resumeSnapshotAction()}
         onabandon={() => void abandonSnapshotAction()}
-        onclose={() => { if (!snapshotActionBusy) snapshotActionsOpen = false; }}
+        onclose={cancelSnapshotAction}
       />
     {/if}
     {#if recoveryJournal && recoveryAction}

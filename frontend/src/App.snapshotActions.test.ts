@@ -235,3 +235,53 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   expect(journalState.action?.batches[0].request.nodes[0]).toEqual({ node_id: 1, revision: 4 });
   expect(first.rows[0].revision).toBe(3);
 });
+
+it.each([
+  { pending: "pages", discard: "Back to live folder" },
+  { pending: "audit", discard: "Run query" },
+  { pending: "tag", discard: "Lock web session" },
+  { pending: "pages", discard: "Cancel" },
+])("discards a capture waiting for $pending after $discard", async ({ pending, discard }) => {
+  history.replaceState(null, "", `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`);
+  const [first, second] = await pages();
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0, created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  let release!: (response: Response) => void;
+  const delayed = new Promise<Response>((resolve) => { release = resolve; });
+  let waiting = false;
+  let captureSignal: AbortSignal | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?")) return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0") return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse") return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/workspace/queries") return json(first);
+    const stage = url.includes("/pages") ? "pages" : url === "/api/v1/audit/status" ? "audit" : url === `/api/v1/tags/${tag.id}` ? "tag" : undefined;
+    if (stage === "pages") captureSignal = init?.signal ?? undefined;
+    if (stage === pending && (pending !== "audit" || captureSignal)) { waiting = true; return delayed; }
+    if (stage) return json(stage === "pages" ? second : stage === "audit" ? { vault_id: vaultID } : tag);
+    return json({});
+  });
+  render(App);
+  await screen.findByRole("region", { name: "Query editor" });
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
+  await waitFor(() => expect(waiting).toBe(true));
+  try {
+    await fireEvent.click(screen.getByRole("button", { name: discard, hidden: true }));
+    expect(captureSignal?.aborted).toBe(true);
+  } finally {
+    // Deliberately deliver the old response even after abort to exercise the
+    // operation guard as well as cancellation of the transport.
+    release(json(pending === "pages" ? second : pending === "audit" ? { vault_id: vaultID } : tag));
+  }
+  await delayed;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByRole("dialog", { name: "Recoverable snapshot action" })).toBeNull();
+  if (pending !== "tag") expect(journalState.action).toBeNull();
+});

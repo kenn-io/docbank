@@ -58,7 +58,10 @@ export async function runAction(
       action = await refreshBatch(action, batch.index);
       publish(onProgress, action, receipt);
     } catch (error) {
-      if (error instanceof APIError && error.status === 412 && error.code === "stale_revision") {
+      if (error instanceof APIError && (
+        (error.status === 412 && error.code === "stale_revision") ||
+        (error.status === 404 && error.code === "not_found")
+      )) {
         await journal.markStale(batch.index);
       } else {
         try {

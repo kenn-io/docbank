@@ -177,7 +177,7 @@ it("refuses a mismatched vault and explains stale actions require a new action",
   });
 
   expect(screen.getByRole("alert").textContent).toContain("different vault");
-  expect(screen.getByText(/Create an explicit new selection and action/)).toBeTruthy();
+  expect(screen.getByText(/Abandon this action and create a new one with a fresh selection/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Confirm and run/ })).toBeNull();
 });
 

@@ -107,13 +107,15 @@ export class ActionJournal implements ActionJournalAccess {
     return new ActionJournal(vaultID, await idbRequest(request));
   }
 
-  async prepare(action: PreparedAction): Promise<void> {
+  async prepare(action: PreparedAction, signal?: AbortSignal): Promise<void> {
     const bytes = await encodeRecovery(action);
     const normalized = await decodeRecovery(bytes);
+    signal?.throwIfAborted();
     if (normalized.vault_id !== this.vaultID) throw new Error("The recovery action belongs to a different vault.");
     const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", { durability: "strict" });
     const actions = transaction.objectStore(headerStore);
     const existing = await idbRequest(actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
+    if (signal?.aborted) abort(transaction, "Action preparation cancelled.");
     if (existing) {
       if (existing.action_id === normalized.action_id && existing.plan_digest === normalized.plan_digest) {
         await transactionDone(transaction);
@@ -138,7 +140,15 @@ export class ActionJournal implements ActionJournalAccess {
       vault_id: this.vaultID,
       state: batch.receipt ? "complete" : "prepared",
     } satisfies StoredBatch);
-    await transactionDone(transaction);
+    const cancel = () => {
+      try { transaction.abort(); } catch { /* A completed transaction cannot be cancelled. */ }
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      await transactionDone(transaction);
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
   }
 
   async load(): Promise<PersistedAction | null> {

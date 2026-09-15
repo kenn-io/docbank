@@ -142,11 +142,11 @@ async function collectRows(rawURL: string, query: Query): Promise<SnapshotPage> 
   return { ...first, rows, next_cursor: undefined };
 }
 
-async function retainedAction(page: Page): Promise<{
+async function retainedAction(page: Page, vaultID?: string): Promise<{
   header: RecoveryAction & { state: string; checkpoint_verified: boolean };
   batches: (RecoveryAction["batches"][number] & { state: string })[];
 }> {
-  return page.evaluate(async () => {
+  return page.evaluate(async (vaultID) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("docbank-action-journal-v1", 1);
       request.onsuccess = () => resolve(request.result);
@@ -158,14 +158,14 @@ async function retainedAction(page: Page): Promise<{
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-      const headers = await getAll(transaction.objectStore("actions").getAll());
-      const batches = await getAll(transaction.objectStore("batches").getAll());
+      const headers = (await getAll(transaction.objectStore("actions").getAll())).filter((header) => !vaultID || header.vault_id === vaultID);
+      const batches = (await getAll(transaction.objectStore("batches").getAll())).filter((batch) => !vaultID || batch.vault_id === vaultID);
       if (headers.length !== 1) throw new Error(`Expected one retained action, got ${headers.length}`);
       return { header: headers[0], batches };
     } finally {
       database.close();
     }
-  });
+  }, vaultID);
 }
 
 async function runSnapshot(page: Page): Promise<void> {
@@ -418,8 +418,40 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await expect(replayPage.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
     await replayPage.getByRole("button", { name: "Close query editor", exact: true }).click();
 
+    // Cancel while enumeration is waiting on a real page response, then run
+    // a new snapshot before that old response is delivered.
+    let releaseCapture!: () => void;
+    const captureGate = new Promise<void>((resolve) => { releaseCapture = resolve; });
+    let captureReady!: () => void;
+    const captureWaiting = new Promise<void>((resolve) => { captureReady = resolve; });
+    await page.route("**/api/v1/workspace/queries/*/pages", async (route) => {
+      const response = await route.fetch();
+      captureReady();
+      await captureGate;
+      await route.fulfill({ response });
+    }, { times: 1 });
     await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
     const actions = page.getByRole("dialog", { name: "Tag frozen snapshot" });
+    await actions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
+    await page.getByRole("option", { name: "Review checkpoint", exact: true }).click();
+    await actions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
+    await captureWaiting;
+    try {
+      const aborted = page.waitForEvent("requestfailed", (request) => new URL(request.url()).pathname.endsWith("/pages"));
+      await actions.getByRole("button", { name: "Cancel", exact: true }).click();
+      await aborted;
+      await page.getByRole("button", { name: "Back to live folder", exact: true }).click();
+      await page.getByRole("button", { name: "Edit query", exact: true }).click();
+      await runSnapshot(page);
+      await expect(page.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
+      await page.getByRole("button", { name: "Close query editor", exact: true }).click();
+    } finally {
+      releaseCapture();
+    }
+    await expect(page.getByRole("dialog", { name: "Recoverable snapshot action" })).toHaveCount(0);
+    console.log("snapshot acceptance: discarded capture aborted before a new snapshot action");
+
+    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
     await actions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
     await page.getByRole("option", { name: "Review checkpoint", exact: true }).click();
     await actions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
@@ -692,12 +724,54 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     const remaining = await retainedAction(restartedPage);
     expect(remaining.header.vault_id).toBe("99999999-9999-4999-8999-999999999999");
     expect(remaining.batches).toHaveLength(0);
+    // Dismiss after IndexedDB accepts the header write but before its
+    // transaction commits. The pending preparation must roll back as a unit.
+    await restartedPage.evaluate(() => {
+      const add = IDBObjectStore.prototype.add;
+      IDBObjectStore.prototype.add = function (...args) {
+        const request = add.apply(this, args);
+        if (this.name === "actions") {
+          IDBObjectStore.prototype.add = add;
+          request.addEventListener("success", () => {
+            const dialog = document.querySelector('[aria-label="Tag frozen snapshot"]');
+            const cancel = Array.from(dialog!.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Cancel");
+            if (!cancel) throw new Error("Capture cancellation control is missing");
+            cancel.click();
+          }, { once: true });
+        }
+        return request;
+      };
+    });
+    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
+    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
+    await restartedPage.getByRole("option", { name: "Fence marker", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
+    await expect(staleActions).toHaveCount(0);
+    const afterCancel = await retainedAction(restartedPage);
+    expect(afterCancel.header.vault_id).toBe("99999999-9999-4999-8999-999999999999");
+    expect(afterCancel.batches).toHaveLength(0);
+    console.log("snapshot acceptance: cancellation aborts pending journal writes");
     await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
     await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
     await restartedPage.getByRole("option", { name: "Fence marker", exact: true }).click();
     await staleActions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
     await expect(staleRecovery.getByText("1001 exact documents", { exact: true })).toBeVisible();
     console.log("snapshot acceptance: deleted tag and corrupt journal can be abandoned; new action prepared");
+    await verifyCheckpoint(restartedPage, checkpoint);
+    const finalTag = await restartedAPI.json<{ revision: number }>(`/api/v1/tags/${fenceTag.id}`);
+    const finalDeletion = await restartedAPI.request(`/api/v1/tags/${fenceTag.id}`, {
+      method: "DELETE", headers: { "If-Match": String(finalTag.revision) },
+    });
+    expect(finalDeletion.ok).toBe(true);
+    await staleRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
+    await staleRecovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
+    await expect(staleRecovery.getByText(/Abandon this action and create a new one with a fresh selection/)).toBeVisible();
+    expect((await retainedAction(restartedPage, saved.vault_id)).header.state).toBe("stale");
+    await expect(staleRecovery.getByRole("button", { name: /run action|same operation|resume action/ })).toHaveCount(0);
+    await staleRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
+    await staleRecovery.getByRole("button", { name: "Abandon action without rollback", exact: true }).click();
+    await expect(staleRecovery).toHaveCount(0);
+    console.log("snapshot acceptance: tag deleted after recovery opened stops the action without retry");
 
   } finally {
     const cleanupFailures: string[] = [];

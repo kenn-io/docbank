@@ -8,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { Button, Modal, SelectDropdown, type SelectDropdownOption } from "@kenn-io/kit-ui";
   import type { Tag } from "./api.js";
 
@@ -42,6 +43,8 @@
   let reading = $state(false);
   let failure = $state("");
   let abandonWarning = $state(false);
+  let active = true;
+  onDestroy(() => { active = false; });
 
   const options = $derived<SelectDropdownOption[]>([
     { value: "", label: "Choose a tag…" },
@@ -61,7 +64,8 @@
     reading = true;
     failure = "";
     try {
-      onimport(new Uint8Array(await file.arrayBuffer()));
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (active) onimport(bytes);
     } catch (cause) {
       failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
