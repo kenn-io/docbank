@@ -1,7 +1,8 @@
 // @vitest-environment node
+import { prepareAction } from "./actionRecovery.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BatchTagReceipt } from "./batch-tags.js";
-import { prepareAction, type ActionJournalAccess, type PersistedAction } from "./actionJournal.js";
+import { type ActionJournalAccess, type PersistedAction } from "./actionJournal.js";
 import { runAction } from "./actionRunner.js";
 import { snapshotMemberHash, type SnapshotMember, type VerifiedSnapshotTargets, type WorkspaceQueryResponse } from "./snapshots.js";
 
@@ -27,6 +28,11 @@ class MemoryJournal implements ActionJournalAccess {
   requests: string[] = [];
   constructor(action: PersistedAction) { this.action = action; }
   async load() { return this.action; }
+  async loadBatch(index: number) {
+    const action = this.action!;
+    return { action_id: action.action_id, state: action.state,
+      checkpoint_verified: action.checkpoint_verified, batch: action.batches[index] };
+  }
   consumeResumeConfirmation(actionID: string) { const yes = this.confirmed && actionID === this.action.action_id; this.confirmed = false; return yes; }
   async markSending(index: number) { this.set(index, "sending", "sending"); }
   async recordReceipt(index: number, receipt: BatchTagReceipt) {
@@ -51,6 +57,19 @@ function receipt(action: PersistedAction, index = 0): BatchTagReceipt { const ba
 afterEach(() => vi.restoreAllMocks());
 
 describe("recoverable action runner", () => {
+  it("loads the full plan only at the start and end of a multi-batch run", async () => {
+    const action = await persisted(2_001);
+    const journal = new MemoryJournal(action);
+    const load = vi.spyOn(journal, "load");
+    let index = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => input === "/api/v1/audit/status"
+      ? audit() : new Response(JSON.stringify(receipt(action, index++))));
+    const completed = await runAction("session", journal, new AbortController().signal, () => {});
+    expect(completed.state).toBe("complete");
+    expect(completed.batches).toHaveLength(3);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("publishes revision evidence only for receipts returned by the daemon", async () => {
     const base = await persisted(1_001);
     const imported = receipt(base, 0);

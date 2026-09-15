@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { prepareAction, actionPlanDigest, ACTION_MAX_BYTES, type PreparedAction } from "./actionJournal.js";
+import { prepareAction, actionPlanDigest, ACTION_MAX_BYTES, type PreparedAction } from "./actionRecovery.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import { decodeRecovery, encodeRecovery } from "./actionRecovery.js";
 import { snapshotMemberHash, type SnapshotMember, type VerifiedSnapshotTargets, type WorkspaceQueryResponse } from "./snapshots.js";

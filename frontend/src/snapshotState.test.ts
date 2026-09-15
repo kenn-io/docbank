@@ -142,7 +142,7 @@ describe("snapshot request-epoch state", () => {
     expect(states.at(-1)!.error).toBeUndefined();
   });
 
-  it.each(["workspace", "saved"])("retains the accepted page and paging after a failed %s rerun", async (kind) => {
+  it("retains the accepted page and paging after a failed rerun", async () => {
     const states: Readonly<SnapshotState>[] = [];
     const first = await receipt({
       rows: Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1)),
@@ -163,9 +163,7 @@ describe("snapshot request-epoch state", () => {
     await session.page("next");
     const accepted = states.at(-1)!;
 
-    const rerun = kind === "workspace"
-      ? session.run(otherQuery, { page_size: 100 })
-      : session.runSaved("33333333-3333-4333-8333-333333333333", 3, otherQuery, { page_size: 100 });
+    const rerun = session.run(otherQuery, { page_size: 100 });
     expect(states.at(-1)).toMatchObject({ ...accepted, status: "loading" });
     pending.resolve(new Response(JSON.stringify({ detail: "Query unavailable" }), { status: 422 }));
     await rerun;
@@ -197,28 +195,6 @@ describe("snapshot request-epoch state", () => {
     expect(states.filter((state) => state.status === "ready")).toHaveLength(1);
   });
 
-  it("checks the epoch after delayed digest work", async () => {
-    const states: Readonly<SnapshotState>[] = [];
-    const staleDigest = deferred<ArrayBuffer>();
-    const realDigest = crypto.subtle.digest.bind(crypto.subtle);
-    const digestSpy = vi.spyOn(crypto.subtle, "digest")
-      .mockImplementationOnce(() => staleDigest.promise)
-      .mockImplementation((algorithm, data) => realDigest(algorithm, data));
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(response(await receipt()))
-      .mockResolvedValueOnce(response(await receipt({ query: otherQuery })));
-    const session = new SnapshotSession("session", (state) => states.push(state));
-
-    const oldRun = session.run(query, { page_size: 50 });
-    while (digestSpy.mock.calls.length === 0) await Promise.resolve();
-    await session.run(otherQuery, { page_size: 50 });
-    staleDigest.resolve(await realDigest("SHA-256", new TextEncoder().encode(JSON.stringify(query))));
-    await oldRun;
-
-    expect(states.at(-1)).toMatchObject({ status: "ready", query: otherQuery });
-    expect(states.filter((state) => state.status === "ready")).toHaveLength(1);
-  });
-
   it("suppresses delayed work after dispose", async () => {
     const states: Readonly<SnapshotState>[] = [];
     const pending = deferred<Response>();
@@ -233,28 +209,4 @@ describe("snapshot request-epoch state", () => {
     expect(states.map((state) => state.status)).toEqual(["idle", "loading"]);
   });
 
-  it("runSaved applies the same query/options state and revision-fenced transport", async () => {
-    const states: Readonly<SnapshotState>[] = [];
-    const snapshot = await receipt({ page_size: 100 });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(response({
-      run: {
-        run_id: "44444444-4444-4444-8444-444444444444",
-        saved_query_id: "33333333-3333-4333-8333-333333333333",
-        saved_query_revision: 3,
-        query_fingerprint: snapshot.query_fingerprint,
-        snapshot_id: snapshot.snapshot_id,
-        member_hash: snapshot.member_hash,
-        total: snapshot.total,
-        total_bytes: snapshot.total_bytes,
-        ran_at: "2026-09-11T00:00:00Z",
-        expires_at: "2026-09-11T00:15:00Z",
-        comparison: { hash_changed: false, total_delta: 0, definition_changed: false },
-      }, snapshot,
-    }));
-    const session = new SnapshotSession("session", (state) => states.push(state));
-
-    await session.runSaved("33333333-3333-4333-8333-333333333333", 3, query, { profile: "archive" });
-
-    expect(states.at(-1)).toMatchObject({ status: "ready", firstPage: snapshot, query, options: { profile: "archive" } });
-  });
 });

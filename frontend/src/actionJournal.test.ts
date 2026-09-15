@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { prepareAction } from "./actionJournal.js";
+import { prepareAction } from "./actionRecovery.js";
 import { snapshotMemberHash, type SnapshotMember, type VerifiedSnapshotTargets, type WorkspaceQueryResponse } from "./snapshots.js";
 
 const vaultID = "11111111-1111-4111-8111-111111111111";

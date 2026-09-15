@@ -96,7 +96,8 @@
   import { sortTags } from "./tagPresentation.js";
   import { isAppShortcutSuppressed, moveInspection } from "./shortcuts.js";
   import { applySnapshotReceiptOverlay, snapshotTargetRevision, visibleSnapshotOverlay, type SnapshotReceiptOverlays } from "./snapshotOverlays.js";
-  import { ActionJournal, prepareAction, type PersistedAction } from "./actionJournal.js";
+  import { ActionJournal, type PersistedAction } from "./actionJournal.js";
+  import { prepareAction, decodeRecovery } from "./actionRecovery.js";
   import { readActionVaultID } from "./actionRunner.js";
   import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
   import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
@@ -1165,7 +1166,6 @@
     snapshotActionBusy = true;
     snapshotActionError = "";
     try {
-      const { decodeRecovery } = await import("./actionRecovery.js");
       const prepared = await decodeRecovery(bytes);
       const vaultID = await readActionVaultID(webSession);
       if (prepared.vault_id !== vaultID) throw new Error("The recovery action belongs to a different vault.");

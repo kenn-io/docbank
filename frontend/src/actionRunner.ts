@@ -37,19 +37,25 @@ export async function runAction(
   if (vaultID !== action.vault_id) throw new Error("The recovery action belongs to a different vault.");
   if (action.state === "stale") throw new Error("The action is stale and cannot be resumed without changing its original inputs.");
 
+  async function refreshBatch(current: PersistedAction, index: number): Promise<PersistedAction> {
+    const { batch, ...progress } = await journal.loadBatch(index);
+    if (progress.action_id !== current.action_id) throw new Error("The retained action changed. Open and confirm it again.");
+    return { ...current, ...progress, batches: current.batches.map((item) => item.index === index ? batch : item) };
+  }
+
   for (const planned of action.batches) {
-    action = (await journal.load()) ?? action;
+    action = await refreshBatch(action, planned.index);
     const batch = action.batches[planned.index];
-    if (signal.aborted || action.state === "paused" || action.state === "stale") break;
+    if (signal.aborted || action.state === "paused" || action.state === "stale" || action.state === "complete") break;
     if (batch.receipt || batch.state === "complete") continue;
 
     await journal.markSending(batch.index);
-    action = (await journal.load()) ?? action;
+    action = await refreshBatch(action, batch.index);
     publish(onProgress, action);
     try {
       const receipt = await changeBatchTags(session, batch.request as Parameters<typeof changeBatchTags>[1]);
       await journal.recordReceipt(batch.index, receipt);
-      action = (await journal.load()) ?? action;
+      action = await refreshBatch(action, batch.index);
       publish(onProgress, action, receipt);
     } catch (error) {
       if (error instanceof APIError && error.status === 412 && error.code === "stale_revision") {
@@ -61,7 +67,7 @@ export async function runAction(
           // The durable sending marker still recovers as uncertain on the next load.
         }
       }
-      action = (await journal.load()) ?? action;
+      action = await refreshBatch(action, batch.index);
       publish(onProgress, action);
       throw error;
     }

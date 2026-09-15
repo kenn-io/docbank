@@ -1,9 +1,10 @@
+import { prepareAction } from "./actionRecovery.js";
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
 import { APIError } from "./api.js";
-import { prepareAction, type PersistedAction } from "./actionJournal.js";
+import { type PersistedAction } from "./actionJournal.js";
 import { encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { snapshotMemberHash, type SnapshotMember, type SnapshotPage } from "./snapshots.js";
@@ -44,6 +45,11 @@ class MemoryJournal implements ActionRecoveryJournal {
 
   constructor(action: PersistedAction) { this.action = action; }
   async load() { return this.action; }
+  async loadBatch(index: number) {
+    const action = this.action!;
+    return { action_id: action.action_id, state: action.state,
+      checkpoint_verified: action.checkpoint_verified, batch: action.batches[index] };
+  }
   async verifyCheckpoint(_bytes: Uint8Array) {
     this.checkpointReads++;
     this.action = { ...this.action!, checkpoint_verified: true };
