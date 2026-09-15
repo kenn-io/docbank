@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
+	"go.kenn.io/docbank/document/mediatranscript"
 	"go.kenn.io/docbank/document/providerhttp"
 )
 
@@ -46,25 +47,34 @@ type SecretResolver = providerutil.SecretResolver
 // Profile fixes one Docling origin, descriptor, credential binding, and every
 // network/result bound used by a client instance.
 type Profile struct {
-	Origin           string
-	Descriptor       document.RenditionDescriptor
-	SecretBinding    string
-	RequestTimeout   time.Duration
-	TotalTimeout     time.Duration
-	PollInterval     time.Duration
-	MaxPollAttempts  int
-	MaxResponseBytes int64
-	MaxDocumentBytes int64
+	Origin        string
+	Descriptor    document.RenditionDescriptor
+	SecretBinding string
+	// ASRDocumentSchemaVersion and ASRProviderVersion select the qualified
+	// audio transcript contract. Leave both empty for standard documents.
+	ASRDocumentSchemaVersion string
+	ASRProviderVersion       string
+	MaxTranscriptChars       int
+	RequestTimeout           time.Duration
+	TotalTimeout             time.Duration
+	PollInterval             time.Duration
+	MaxPollAttempts          int
+	MaxResponseBytes         int64
+	MaxDocumentBytes         int64
 }
 
 // Client renders exact authorized uploads through fixed Docling Serve routes.
 type Client struct {
-	executor         providerutil.Executor
-	descriptor       document.RenditionDescriptor
-	totalTimeout     time.Duration
-	pollInterval     time.Duration
-	maxPollAttempts  int
-	maxDocumentBytes int64
+	executor           providerutil.Executor
+	descriptor         document.RenditionDescriptor
+	totalTimeout       time.Duration
+	pollInterval       time.Duration
+	maxPollAttempts    int
+	maxDocumentBytes   int64
+	asr                bool
+	asrSchemaVersion   string
+	asrProviderVersion string
+	evidencePolicy     document.EvidencePolicy
 }
 
 // rendering carries the state of one Render call between its stages.
@@ -75,6 +85,7 @@ type rendering struct {
 	authorization   document.RenditionAuthorization
 	source          []byte
 	includeMarkdown bool
+	durationMS      int64
 	started         time.Time
 }
 
@@ -91,6 +102,23 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 	}
 	if descriptor.ID != providerID {
 		return nil, errors.New("docling: descriptor ID must be docling.serve-v1")
+	}
+	asr := slices.Contains(descriptor.ArtifactRoles, document.EvidenceArtifactTranscript)
+	var evidencePolicy document.EvidencePolicy
+	if asr {
+		if profile.ASRDocumentSchemaVersion != qualifiedASRSchemaVersion ||
+			profile.ASRProviderVersion != qualifiedASRProviderVersion ||
+			profile.MaxTranscriptChars <= 0 || descriptor.ReturnsMarkdown || !descriptor.ReturnsStructured ||
+			len(descriptor.ArtifactRoles) != 1 || !qualifiedASRFormats(descriptor.SupportedFormats) {
+			return nil, errors.New("docling: ASR profile does not match the qualified deployment")
+		}
+		evidencePolicy, err = document.NewEvidencePolicy(profile.MaxTranscriptChars)
+		if err != nil {
+			return nil, errors.New("docling: ASR evidence bounds are invalid")
+		}
+	} else if profile.ASRDocumentSchemaVersion != "" || profile.ASRProviderVersion != "" ||
+		profile.MaxTranscriptChars != 0 {
+		return nil, errors.New("docling: ASR fields require a transcript descriptor")
 	}
 	credential := providerutil.APIKeyCredential("X-Api-Key", profile.SecretBinding, secrets)
 	if err := credential.Validate(provider); err != nil {
@@ -115,6 +143,8 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		},
 		descriptor: descriptor, totalTimeout: profile.TotalTimeout, pollInterval: profile.PollInterval,
 		maxPollAttempts: profile.MaxPollAttempts, maxDocumentBytes: profile.MaxDocumentBytes,
+		asr: asr, asrSchemaVersion: profile.ASRDocumentSchemaVersion,
+		asrProviderVersion: profile.ASRProviderVersion, evidencePolicy: evidencePolicy,
 	}, nil
 }
 
@@ -152,6 +182,13 @@ func (client *Client) Render(
 		operation: operation, metadata: metadata, authorization: authorization, source: source,
 		includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0,
 		started:         time.Now().UTC(),
+	}
+	if client.asr {
+		run.durationMS, err = asrDurationMS(run.source, run.metadata, run.authorization)
+		if err != nil {
+			return document.RenditionResult{}, provider.Malformed(
+				"Docling ASR input duration is unavailable", err)
+		}
 	}
 	task, err := client.submit(run)
 	if err != nil {
@@ -191,7 +228,9 @@ func (client *Client) submit(run *rendering) (taskResponse, error) {
 			"Docling upload filename contains a newline", nil)
 	}
 	fields := [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}
-	if run.includeMarkdown {
+	if client.asr {
+		fields = [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}
+	} else if run.includeMarkdown {
 		fields = [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
 	}
 	response, err := client.executor.Do(run.operation, &run.usage, providerutil.Request{
@@ -294,6 +333,12 @@ func (client *Client) buildResult(
 		return document.RenditionResult{}, provider.Malformed(
 			"Docling provider Markdown attempts Docbank frontmatter injection", nil)
 	}
+	if client.asr {
+		if partialSuccess {
+			return document.RenditionResult{}, provider.Malformed("Docling ASR returned partial success", nil)
+		}
+		return client.buildASRResult(run, task, result)
+	}
 	evidence, structured, usable := mapEvidence(result.document, run.authorization.MediaFamily)
 	if !usable {
 		if len(providerMarkdown) == 0 || len(providerMarkdown) > run.authorization.MaxProviderMarkdownBytes {
@@ -341,6 +386,49 @@ func (client *Client) buildResult(
 	return document.RenditionResult{
 		Evidence: evidence, ProviderMarkdown: append([]byte(nil), providerMarkdown...), Artifacts: artifacts,
 		Receipt: receipt,
+	}, nil
+}
+
+func (client *Client) buildASRResult(
+	run *rendering, task taskResponse, result doclingResult,
+) (document.RenditionResult, error) {
+	if len(result.markdown) != 0 {
+		return document.RenditionResult{}, provider.Malformed("Docling ASR returned unexpected Markdown", nil)
+	}
+	if !providerutil.AllowsArtifact(run.authorization, document.EvidenceArtifactTranscript) {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
+			"authorization does not allow retaining the Docling transcript", nil)
+	}
+	version, err := asrDocumentVersion(result.document)
+	if err != nil || version != client.asrSchemaVersion {
+		return document.RenditionResult{}, provider.Malformed("Docling ASR response schema is not qualified", err)
+	}
+	segments, err := mapASRTracks(result.document, run.durationMS)
+	if err != nil {
+		return document.RenditionResult{}, provider.Malformed("Docling ASR track evidence is invalid", err)
+	}
+	evidence, artifact, err := mediatranscript.Build(mediatranscript.ArtifactV1{
+		ContractVersion: "media-transcript/v1", Origin: "generated",
+		Provider: providerID, ProviderVersion: client.asrProviderVersion,
+		Segments: segments,
+	}, run.authorization.MediaFamily, client.evidencePolicy)
+	if err != nil {
+		return document.RenditionResult{}, provider.Malformed("Docling ASR transcript is invalid", err)
+	}
+	if len(artifact.Payload) > run.authorization.MaxArtifactBytes {
+		return document.RenditionResult{}, provider.Malformed("Docling ASR transcript exceeds authorization", nil)
+	}
+	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
+		Descriptor: client.descriptor, Authorization: run.authorization,
+		SourceSHA256: run.metadata.SHA256, OperationID: "docling-" + task.id,
+		StartedAt: run.started, CompletedAt: time.Now().UTC(),
+		Usage: run.usage.Rendition(int64(len(run.source)), int64(len(evidence.Units))),
+	})
+	if err != nil {
+		return document.RenditionResult{}, err
+	}
+	return document.RenditionResult{
+		Evidence: evidence, Artifacts: []document.RenditionArtifact{artifact}, Receipt: receipt,
 	}, nil
 }
 

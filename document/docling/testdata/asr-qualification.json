@@ -1,0 +1,52 @@
+{
+  "qualified_at": "2026-09-15",
+  "service": {
+    "docling_serve": "1.32.0",
+    "docling_jobkit": "3.5.0",
+    "docling": "2.124.0",
+    "docling_core": "2.93.0",
+    "docling_ibm_models": "4.0.1",
+    "docling_parse": "7.16.0",
+    "python": "cpython-312 (3.12.13)"
+  },
+  "schema": {
+    "openapi_sha256": "24274f3c2e6a3981c447e64356c3efc196394961ae02523d69fd88f67c1733db",
+    "submission_path": "/v1/convert/file/async",
+    "poll_path": "/v1/status/poll/{task_id}",
+    "result_path": "/v1/result/{task_id}",
+    "document_schema_name": "DoclingDocument",
+    "document_schema_version": "1.10.0"
+  },
+  "request": {
+    "from_formats": ["audio"],
+    "to_formats": ["json"],
+    "target_type": "inbody",
+    "pipeline_selection": "service_auto_from_audio",
+    "explicit_pipeline_asr": "rejected_by_qualified_deployment",
+    "asr_model_field": "absent_from_schema"
+  },
+  "model": {
+    "requested": null,
+    "returned": null,
+    "backend": null,
+    "evidence": "The qualified HTTP schema and result did not expose a selected ASR model or backend."
+  },
+  "fixtures": [
+    {
+      "file": "asr-spoken.wav",
+      "media_type": "audio/wav",
+      "sha256": "9fbad83194fff7ea35f951a1cd8372a11f98e2fef95fc4cf847cdaa891b9a856",
+      "duration_seconds": 3.260181,
+      "provider_end_ms": 3060,
+      "expected_phrase": "Telescope delivery arrives Friday at 3."
+    },
+    {
+      "file": "asr-spoken.mp3",
+      "media_type": "audio/mpeg",
+      "sha256": "4f32dcf4132e8c06771451181702b1af19b2150d17a6b1913a9d3fdfa3e37a38",
+      "duration_seconds": 3.260181,
+      "provider_end_ms": 3080,
+      "expected_phrase": "Telescope delivery arrives Friday at 3."
+    }
+  ]
+}
