@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
+import type { SnapshotPage as QuerySnapshotPage } from "../src/snapshots.js";
 
 const execFileAsync = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -180,6 +181,111 @@ async function verifyCheckpoint(page: Page, checkpoint: string): Promise<void> {
   await (await downloadPromise).saveAs(checkpoint);
   await recovery.getByLabel("Select the saved recovery checkpoint", { exact: true }).setInputFiles(checkpoint);
   await expect(recovery.getByRole("status")).toHaveText("Recovery checkpoint verified.");
+}
+
+for (const outcome of ["success", "response loss"] as const) {
+  test(`keeps an action stale across tabs after a late ${outcome}`, async ({ page, context }) => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "docbank-snapshot-workspace-"));
+    const vault = path.join(workspace, "vault");
+    const source = path.join(workspace, "synthetic");
+    const checkpoint = path.join(workspace, "action.json");
+    const run = async (...args: string[]) => (await execFileAsync(binary, args, {
+      cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 60_000,
+    })).stdout.trim();
+    let release!: () => void;
+    const delayedResponse = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await mkdir(source);
+      for (let index = 0; index < 3; index++) {
+        await writeFile(path.join(source, `document-${index}.txt`), `Synthetic race document ${index}.\n`);
+      }
+      await run("add", source, "--dest", "/");
+      await run("tag", "create", "Review");
+      await run("tag", "create", "Revision change");
+      const rawURL = await run("web", "--no-browser");
+      const api = sessionAPI(rawURL);
+      const { items: tags } = await api.json<{ items: Tag[] }>("/api/v1/tags?limit=1000&offset=0");
+      const tag = tags.find((tag) => tag.name === "Review")!;
+      const fenceTag = tags.find((tag) => tag.name === "Revision change")!;
+      const { vault_id: vaultID } = await api.json<{ vault_id: string }>("/api/v1/audit/status");
+      const snapshot = await api.json<QuerySnapshotPage>("/api/v1/workspace/queries", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: untaggedQuery, page_size: 50, facets: [] }),
+      });
+      // Three singleton batches leave one untouched batch beyond the revision conflict.
+      const batches = snapshot.rows.map((row, index) => {
+        const member = { node_id: row.node_id, content_version_id: row.content_version_id,
+          blob_hash: row.blob_hash, size: row.size, revision: row.revision };
+        const request = { operation_id: randomUUID(), tag_id: tag.id, assign: true,
+          nodes: [{ node_id: member.node_id, revision: member.revision }] };
+        return { index, operation_id: request.operation_id, members: [member], request,
+          request_digest: createHash("sha256").update(`docbank-tag-batch-v1\n${tag.id}\n1\n${member.node_id}:${member.revision}\n`).digest("hex") };
+      });
+      const header = { version: 1, action_id: randomUUID(), vault_id: vaultID,
+        source: { snapshot_id: snapshot.snapshot_id, snapshot_fingerprint: snapshot.snapshot_fingerprint,
+          query_fingerprint: snapshot.query_fingerprint, member_hash: snapshot.member_hash },
+        total: snapshot.total, total_bytes: snapshot.total_bytes, tag_id: tag.id, assign: true,
+        created_at: new Date().toISOString() };
+      const plan_digest = createHash("sha256").update(JSON.stringify({ ...header, batches })).digest("hex");
+      await writeFile(checkpoint, JSON.stringify({ ...header, plan_digest, batches }));
+      await api.json("/api/v1/batch/tags", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...batches[1].request, operation_id: randomUUID(), tag_id: fenceTag.id }),
+      });
+
+      const sent: string[] = [];
+      let responseReady!: () => void;
+      const committed = new Promise<void>((resolve) => { responseReady = resolve; });
+      await page.route("**/api/v1/batch/tags", async (route) => {
+        sent.push((route.request().postDataJSON() as BatchRequest).operation_id);
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        responseReady();
+        await delayedResponse;
+        if (outcome === "success") await route.fulfill({ response });
+        else await route.fulfill({ status: 502, contentType: "application/problem+json", body: "{}" });
+      });
+      await page.goto(rawURL);
+      await page.getByRole("button", { name: "Snapshot actions", exact: true }).click();
+      await page.getByLabel("Import action recovery file", { exact: true }).setInputFiles(checkpoint);
+      const firstRecovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
+      await firstRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
+      await firstRecovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
+      await committed;
+
+      // Opening in another tab recovers the in-flight batch as uncertain. Its
+      // retry receives the committed receipt, then the next batch gets a real 412.
+      const other = await context.newPage();
+      other.on("request", (request) => {
+        if (new URL(request.url()).pathname === "/api/v1/batch/tags") {
+          sent.push((request.postDataJSON() as BatchRequest).operation_id);
+        }
+      });
+      await other.goto(rawURL);
+      await other.getByRole("button", { name: "Snapshot actions", exact: true }).click();
+      await other.getByRole("button", { name: "Resume retained action", exact: true }).click();
+      const otherRecovery = other.getByRole("dialog", { name: "Recoverable snapshot action" });
+      await otherRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
+      await otherRecovery.getByRole("button", { name: "Retry same operation", exact: true }).click();
+      await expect(otherRecovery.getByText(/This action is stale/)).toBeVisible();
+      expect((await retainedAction(other)).header.state).toBe("stale");
+
+      release();
+      await expect(firstRecovery.getByText("Close", { exact: true })).toBeEnabled();
+      const retained = await retainedAction(page);
+      expect(retained.header.state).toBe("stale");
+      expect(retained.batches.map((batch) => batch.state)).toEqual(["complete", "stale", "prepared"]);
+      expect(retained.batches[0].receipt?.operation_id).toBe(batches[0].operation_id);
+      expect(sent).toEqual([batches[0].operation_id, batches[0].operation_id, batches[1].operation_id]);
+      await expect(firstRecovery.getByText(/This action is stale/)).toBeVisible();
+      await expect(firstRecovery.getByRole("button", { name: /run action|same operation|resume action/ })).toHaveCount(0);
+    } finally {
+      release();
+      await run("daemon", "stop");
+      expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
 }
 
 test("snapshot workspace recovers exact real-daemon actions without changing frozen membership", async ({ page, context }) => {

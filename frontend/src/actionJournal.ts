@@ -272,14 +272,14 @@ export class ActionJournal implements ActionJournalAccess {
       if (stored.state !== "complete") header.completed_batches++;
       stored.receipt = projected;
       stored.state = "complete";
-      header.state = header.completed_batches === header.batch_count ? "complete" : (header.state === "paused" ? "paused" : "sending");
+      if (header.state !== "stale") header.state = header.completed_batches === header.batch_count ? "complete" : (header.state === "paused" ? "paused" : "sending");
     });
   }
 
   async markUncertain(index: number): Promise<void> {
     await this.#update(index, (header, batch) => {
       if (batch.state !== "complete") batch.state = "uncertain";
-      if (header.state !== "paused" && header.state !== "complete") header.state = "uncertain";
+      if (header.state !== "paused" && header.state !== "complete" && header.state !== "stale") header.state = "uncertain";
     });
   }
 
