@@ -14,8 +14,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function open() {
   const onchange = vi.fn();
   const onclose = vi.fn();
-  const view = render(QueryBar, { session: "session", query, onchange, onclose, onsave: vi.fn(), onauthfailure: vi.fn() });
-  return { ...view, onchange, onclose };
+  const onrun = vi.fn();
+  const view = render(QueryBar, { session: "session", query, profile: "", onchange, onrun, onclose, onsave: vi.fn(), onauthfailure: vi.fn() });
+  return { ...view, onchange, onrun, onclose };
 }
 
 it("preserves independent facets and sort while editing the entire expression", async () => {
@@ -23,11 +24,50 @@ it("preserves independent facets and sort while editing the entire expression", 
   const { onchange } = open();
   await screen.findByText(/Query validated/);
   expect(screen.getByLabelText("Structured facet summaries").textContent).not.toContain("paths:");
-  expect((screen.getByRole("button", { name: "Run query" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Run query" }) as HTMLButtonElement).disabled).toBe(false);
   await fireEvent.input(screen.getByLabelText("Query expression"), { target: { value: "NOT tag:missing" } });
   expect(onchange).toHaveBeenLastCalledWith({ ...query, text: "NOT tag:missing" });
   expect(screen.queryByText(/Query validated/)).toBeNull();
   expect((screen.getByRole("button", { name: "Save query draft" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("runs the complete locally valid draft with explicit snapshot options", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(response());
+  const { onrun } = open();
+  await fireEvent.input(screen.getByLabelText(/^Processing profile/), { target: { value: "archive" } });
+  await fireEvent.input(screen.getByLabelText("Query expression"), { target: { value: "report AND NOT tag:missing" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  expect(onrun).toHaveBeenCalledWith(
+    { ...query, text: "report AND NOT tag:missing" },
+    { profile: "archive", page_size: 100, facets: [
+      "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
+    ] },
+  );
+});
+
+it.each([
+  { mode: "semantic", sort: query.sort, message: /lexical mode only/ },
+  { mode: "hybrid", sort: query.sort, message: /lexical mode only/ },
+  { mode: "lexical", sort: { field: "relevance", direction: "desc" }, message: /do not support relevance sorting/ },
+])("blocks unsupported snapshot execution for $mode/$sort.field", async ({ mode, sort, message }) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) =>
+    mode === "lexical" ? response(String(init?.body)) : new Response(JSON.stringify({
+      code: "invalid_query", detail: "Unsupported query mode",
+    }), { status: 422 }));
+  const { onrun, rerender } = open();
+  await rerender({ query: parseQuery(JSON.stringify({ ...query, mode, sort })) });
+  const run = screen.getByRole("button", { name: "Run query" }) as HTMLButtonElement;
+  expect(run.disabled).toBe(true);
+  expect(screen.getByText(message)).toBeTruthy();
+  await fireEvent.click(run);
+  expect(onrun).not.toHaveBeenCalled();
+  if (mode === "lexical") await screen.findByText(/Query validated/);
+  else await screen.findByText("Unsupported query mode");
+  expect(run.disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Save query draft" }) as HTMLButtonElement).disabled).toBe(false);
+
+  await rerender({ query });
+  expect(run.disabled).toBe(false);
 });
 
 it("keeps invalid and duplicate facet JSON visible without dropping constraints", async () => {
