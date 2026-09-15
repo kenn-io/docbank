@@ -22,6 +22,8 @@ contributor guidance and is excluded from the public Zensical site.
   current.
 - [CSV to PDF conversion](csv-pdf.md) — bounded local conversion, receipts,
   and the separate upload-authorization boundary.
+- [DOCX to PDF conversion](docx-pdf.md) — trusted LibreOffice rendering,
+  generated PDF identity, and the separate upload-authorization boundary.
 - [Scan evidence assessment](scan-evidence-assessment.md) — synthetic scan
   corpus and the boundaries of the existing PDF evidence APIs.
 
