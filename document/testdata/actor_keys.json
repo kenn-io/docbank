@@ -1,10 +1,14 @@
 [
-  {"display":"Ada Lovelace <Ada.Lovelace@Example.TEST>","input":"Ada.Lovelace@Example.TEST","key":"email:ada.lovelace@example.test","kind":"email","normalization":"email_idna","normalized":"ada.lovelace@example.test"},
-  {"display":"ada.lovelace+reports@example.test","input":"ada.lovelace+reports@example.test","key":"email:ada.lovelace+reports@example.test","kind":"email","normalization":"email_idna","normalized":"ada.lovelace+reports@example.test"},
-  {"display":"grace@[EXAMPLE].test","input":"grace@[EXAMPLE].test","key":"","kind":"email","normalization":"email_idna","normalized":""},
-  {"display":"+1 (555) 0100","input":"+1 (555) 0100","key":"phone:+15550100","kind":"phone","normalization":"phone_e164","normalized":"+15550100"},
-  {"display":"555-0100","input":"555-0100","key":"phone:5550100","kind":"phone","normalization":"phone_digits","normalized":"5550100"},
-  {"display":"Chat/u-0F31","input":"Chat/u-0F31","key":"handle:chat/u-0F31","kind":"handle","normalization":"handle_service_lowercase","normalized":"chat/u-0F31"},
-  {"display":"Ada  Lovelace","input":"Ada  Lovelace","key":"name_alias:ada lovelace","kind":"name_alias","normalization":"casefold","normalized":"ada lovelace"},
-  {"display":"ﬁle Clerk","input":"ﬁle Clerk","key":"name_alias:file clerk","kind":"name_alias","normalization":"casefold","normalized":"file clerk"}
+  {"name":"email display preserves local case","input":"Ada <Ada@EXAMPLE.TEST>","kind":"email","normalization":"email_v1","normalized":"Ada@example.test","key":"email:Ada@example.test","auto_link":true},
+  {"name":"email local case stays distinct","input":"ada@example.test","kind":"email","normalization":"email_v1","normalized":"ada@example.test","key":"email:ada@example.test","auto_link":true},
+  {"name":"email plus suffix stays distinct","input":"ada+reports@example.test","kind":"email","normalization":"email_v1","normalized":"ada+reports@example.test","key":"email:ada+reports@example.test","auto_link":true},
+  {"name":"email IDNA domain","input":"User@BÜCHER.example","kind":"email","normalization":"email_v1","normalized":"User@xn--bcher-kva.example","key":"email:User@xn--bcher-kva.example","auto_link":true},
+  {"name":"email header injection","input":"a@example.test\r\nBcc:b@example.test","kind":"email","error":true},
+  {"name":"email literal domain","input":"grace@[127.0.0.1]","kind":"email","error":true},
+  {"name":"international phone","input":"+1 (555) 0100","kind":"phone","normalization":"phone_e164","normalized":"+15550100","key":"phone:+15550100","auto_link":true},
+  {"name":"national phone","input":"555-0100","kind":"phone","normalization":"phone_digits","normalized":"5550100","key":"phone:5550100"},
+  {"name":"scoped handle","input":"Chat/u-0F31","kind":"handle","scope_kind":"workspace","scope_value":"org/a","normalization":"none","normalized":"3fdd8c43113eee31dcf29d8f204bffe6b62054e4e8ce717546c09f9f91eff855","key":"handle:3fdd8c43113eee31dcf29d8f204bffe6b62054e4e8ce717546c09f9f91eff855","auto_link":true},
+  {"name":"unscoped handle is evidence only","input":"Chat/u-0F31","kind":"handle","normalization":"none","normalized":"d93f0e99039e008e1d0aa011024ed87220371977644ca4745067935ac945bb95","key":"handle:d93f0e99039e008e1d0aa011024ed87220371977644ca4745067935ac945bb95"},
+  {"name":"name NFKC and casefold","input":"ﬁ   ADA","kind":"name_alias","normalization":"casefold","normalized":"fi ada","key":"name_alias:fi ada"},
+  {"name":"name Unicode expansion bound","input":"¼","repeat":70,"kind":"name_alias","error":true}
 ]

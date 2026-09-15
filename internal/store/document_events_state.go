@@ -24,10 +24,10 @@ const (
 	// DocumentEventsDeriverDescriptor names every adapter participating in the
 	// initial derivation recipe. Store owns this identity so rebuild receipt
 	// creation can install the recipe without importing processing.
-	DocumentEventsDeriverDescriptor = "docbank-document-events:f10-metadata+content-version+provenance-binding:v1"
+	DocumentEventsDeriverDescriptor = "docbank-document-events:f10-metadata+content-version+provenance-binding+actor-evidence:v2"
 	// DocumentEventsDeriverFingerprint is the SHA-256 of
 	// DocumentEventsDeriverDescriptor, pinned independently by tests.
-	DocumentEventsDeriverFingerprint = "d17d1d3d3e353ab171a881559bfbe9dbd2068d16de9a168d3c74b60d0eefd66c"
+	DocumentEventsDeriverFingerprint = "a52b7a303d578b028e6001f7dd84c9598776c62f325c095d6a5bdfcc3a6fcbc3"
 )
 
 // DocumentEventState is the durable recipe and publication fence for the
