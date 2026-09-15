@@ -336,7 +336,7 @@ func (service *Service) stageAndRetainMedia(
 	}
 	if reuse != nil {
 		if reuse.BlobHash != request.SHA256 || reuse.Size != request.ByteLength ||
-			!mediaTypeMatches(request.MediaType, reuse.MimeType) || reuse.MimeType != record.MediaType {
+			!mediaTypeMatches(request.MediaType, reuse.MimeType) || !mediaTypeMatches(reuse.MimeType, record.MediaType) {
 			return store.MediaPublicationReceipt{}, store.ErrMediaSourceConflict
 		}
 		publication.ContentVersion = *reuse
@@ -459,5 +459,16 @@ func validateMediaTimestamp(value MediaTimestamp) error {
 }
 
 func mediaTypeMatches(declared, retained string) bool {
-	return declared == retained || declared == "audio/x-wav" && retained == "audio/wav"
+	declaredType, _, declaredErr := mime.ParseMediaType(declared)
+	retainedType, _, retainedErr := mime.ParseMediaType(retained)
+	if declaredErr != nil || retainedErr != nil {
+		return false
+	}
+	if declaredType == "audio/x-wav" {
+		declaredType = "audio/wav"
+	}
+	if retainedType == "audio/x-wav" {
+		retainedType = "audio/wav"
+	}
+	return declaredType == retainedType
 }
