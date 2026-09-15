@@ -10,9 +10,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"golang.org/x/net/idna"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
 )
 
 // ErrDocumentEventsOutputBound reports that an otherwise valid event record
@@ -328,88 +325,9 @@ func cloneDocumentEventsV1(value DocumentEventsV1) DocumentEventsV1 {
 }
 
 func ActorKeyV1(kind, value string) (string, error) {
-	if !utf8.ValidString(value) {
-		return "", errors.New("actor key value is not valid UTF-8")
-	}
-	var normalized string
-	var err error
-	switch kind {
-	case "email":
-		normalized, err = normalizeActorEmail(value)
-	case "phone":
-		normalized = normalizeActorPhone(value)
-	case "handle":
-		normalized, err = normalizeActorHandle(value)
-	case "name_alias":
-		normalized = normalizeActorNameAlias(value)
-	default:
-		return "", errors.New("actor key kind is unknown")
-	}
+	identity, err := NormalizePersonIdentity(PersonIdentityKind(kind), value)
 	if err != nil {
 		return "", err
 	}
-	if normalized == "" {
-		return "", errors.New("actor key value is empty")
-	}
-	key := kind + ":" + normalized
-	if len(key) > MaxActorKeyBytes {
-		return "", fmt.Errorf("actor key is longer than %d bytes", MaxActorKeyBytes)
-	}
-	return key, nil
-}
-
-func asciiLower(value string) string {
-	return strings.Map(func(r rune) rune {
-		if r >= 'A' && r <= 'Z' {
-			return r + 'a' - 'A'
-		}
-		return r
-	}, value)
-}
-func normalizeActorEmail(value string) (string, error) {
-	trimmed := strings.Trim(strings.TrimSpace(value), "<>")
-	if trimmed == "" {
-		return "", nil
-	}
-	at := strings.LastIndex(trimmed, "@")
-	if at <= 0 || at == len(trimmed)-1 {
-		return "", errors.New("actor key email has no domain")
-	}
-	local, domain := trimmed[:at], trimmed[at+1:]
-	if strings.ContainsAny(domain, "[]") {
-		return "", errors.New("actor key email domain is a literal")
-	}
-	ascii, err := idna.Lookup.ToASCII(strings.ToLower(domain))
-	if err != nil {
-		return "", fmt.Errorf("actor key email domain is not resolvable: %w", err)
-	}
-	return asciiLower(local) + "@" + ascii, nil
-}
-func normalizeActorPhone(value string) string {
-	var digits strings.Builder
-	for _, r := range value {
-		if r >= '0' && r <= '9' {
-			digits.WriteRune(r)
-		}
-	}
-	bare := digits.String()
-	if bare == "" {
-		return ""
-	}
-	if strings.HasPrefix(strings.TrimSpace(value), "+") && len(bare) >= 7 && len(bare) <= 15 {
-		return "+" + bare
-	}
-	return bare
-}
-func normalizeActorHandle(value string) (string, error) {
-	trimmed := strings.TrimSpace(value)
-	slash := strings.Index(trimmed, "/")
-	if slash <= 0 || slash == len(trimmed)-1 {
-		return "", errors.New("actor key handle is not service/value")
-	}
-	return asciiLower(trimmed[:slash]) + "/" + trimmed[slash+1:], nil
-}
-func normalizeActorNameAlias(value string) string {
-	folded := cases.Fold().String(norm.NFKC.String(value))
-	return strings.Join(strings.Fields(folded), " ")
+	return ActorKey(identity)
 }

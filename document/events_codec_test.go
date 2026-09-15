@@ -14,12 +14,17 @@ import (
 )
 
 type actorKeyVector struct {
-	Display       string `json:"display"`
+	Name          string `json:"name"`
 	Input         string `json:"input"`
-	Key           string `json:"key"`
+	Repeat        int    `json:"repeat,omitempty"`
 	Kind          string `json:"kind"`
-	Normalization string `json:"normalization"`
-	Normalized    string `json:"normalized"`
+	ScopeKind     string `json:"scope_kind,omitempty"`
+	ScopeValue    string `json:"scope_value,omitempty"`
+	Normalization string `json:"normalization,omitempty"`
+	Normalized    string `json:"normalized,omitempty"`
+	Key           string `json:"key,omitempty"`
+	AutoLink      bool   `json:"auto_link,omitempty"`
+	Error         bool   `json:"error,omitempty"`
 }
 
 func validDocumentEvents() DocumentEventsV1 {
@@ -94,7 +99,7 @@ func TestDocumentEventsCodecRejectsContractViolations(t *testing.T) {
 		"bad axis key":         func(v *DocumentEventsV1) { v.Events[0].AxisKey = "2019" },
 		"bad fraction count":   func(v *DocumentEventsV1) { v.Events[0].FractionDigits = 1 },
 		"unknown role":         func(v *DocumentEventsV1) { v.Events[0].Actors[0].Role = "owner" },
-		"malformed actor key":  func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "email:Ada@example.test" },
+		"malformed actor key":  func(v *DocumentEventsV1) { v.Events[0].Actors[0].ActorKey = "email:ada@EXAMPLE.TEST" },
 		"duplicate actor slot": func(v *DocumentEventsV1) { v.Events[0].Actors = append(v.Events[0].Actors, v.Events[0].Actors[0]) },
 		"duplicate event slot": func(v *DocumentEventsV1) { v.Events = append(v.Events, v.Events[0]) },
 		"missing source":       func(v *DocumentEventsV1) { v.Sources = []DocumentEventSourceV1{} },
@@ -195,26 +200,39 @@ func TestActorKeyGoldenVector(t *testing.T) {
 	require.NoError(t, err)
 	var vectors []actorKeyVector
 	require.NoError(t, json.Unmarshal(raw, &vectors, json.RejectUnknownMembers(true)))
-	require.Len(t, vectors, 8)
+	require.Len(t, vectors, 12)
 	for _, vector := range vectors {
-		t.Run(vector.Kind+"/"+vector.Input, func(t *testing.T) {
-			key, err := ActorKeyV1(vector.Kind, vector.Input)
-			if vector.Key == "" {
+		t.Run(vector.Name, func(t *testing.T) {
+			input := vector.Input
+			if vector.Repeat > 0 {
+				input = strings.Repeat(input, vector.Repeat)
+			}
+			identity, err := NormalizeScopedPersonIdentity(PersonIdentityKind(vector.Kind), input, vector.ScopeKind, vector.ScopeValue)
+			if vector.Error {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
+			assert.Equal(t, vector.Normalized, identity.ValueNormalized)
+			assert.Equal(t, vector.Normalization, identity.Normalization)
+			assert.Equal(t, vector.AutoLink, identity.AutoLinkEligible)
+			key, err := ActorKey(identity)
+			require.NoError(t, err)
 			assert.Equal(t, vector.Key, key)
-			assert.Equal(t, vector.Kind+":"+vector.Normalized, key)
 			assert.LessOrEqual(t, len(key), MaxActorKeyBytes)
+			if vector.ScopeKind == "" {
+				wrapped, err := ActorKeyV1(vector.Kind, input)
+				require.NoError(t, err)
+				assert.Equal(t, key, wrapped)
+			}
 		})
 	}
 	_, err = ActorKeyV1("address", "x@y.test")
-	require.ErrorContains(t, err, "actor key kind is unknown")
+	require.Error(t, err)
 	_, err = ActorKeyV1("email", "")
-	require.ErrorContains(t, err, "actor key value is empty")
+	require.Error(t, err)
 	_, err = ActorKeyV1("email", "x@[127.0.0.1]")
-	require.ErrorContains(t, err, "domain is a literal")
+	require.Error(t, err)
 	_, err = ActorKeyV1("handle", string([]byte{'x', '/', 0xff}))
-	require.ErrorContains(t, err, "not valid UTF-8")
+	require.Error(t, err)
 }

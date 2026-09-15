@@ -330,6 +330,10 @@ func (layout metadataSourceLayout) hasPostV3Metadata() bool {
 	return layout.schemaVersion > 3
 }
 
+func (layout metadataSourceLayout) hasPersons() bool {
+	return layout.schemaVersion >= peopleStorageSchemaVersion
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -1052,6 +1056,26 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM derivative_pack_purge_pending)
 		    + (SELECT COUNT(*) FROM processing_consent_grants)
 		    + (SELECT COUNT(*) FROM processing_consent_revocations)
+		    + (SELECT COUNT(*) FROM persons)
+		    + (SELECT COUNT(*) FROM person_identities)
+		    + (SELECT COUNT(*) FROM person_external_identities)
+		    + (SELECT COUNT(*) FROM person_external_uid_aliases)
+		    + (SELECT COUNT(*) FROM person_aliases)
+		    + (SELECT COUNT(*) FROM person_merges)
+		    + (SELECT COUNT(*) FROM person_splits)
+		    + (SELECT COUNT(*) FROM custodian_assignments)
+		    + (SELECT COUNT(*) FROM person_document_assertions)
+		    + (SELECT COUNT(*) FROM person_match_candidates)
+		    + (SELECT COUNT(*) FROM document_people_dirty)
+		    + (SELECT COUNT(*) FROM document_people_heads)
+		    + (SELECT COUNT(*) FROM document_people)
+		    + (SELECT COUNT(*) FROM document_people_generations)
+		    + (SELECT COUNT(*) FROM document_people_builds)
+		    + (SELECT COUNT(*) FROM person_rollups)
+		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
+		    + (SELECT COUNT(*) FROM document_people_state
+		       WHERE singleton != 1 OR contract_version != ? OR resolver_fingerprint != ?
+		          OR binding_epoch != 1 OR publication_epoch != 1)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
 		         FROM current_processing_incarnation WHERE singleton=1)),
@@ -1059,7 +1083,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM blob_packs)
 		    + (SELECT COUNT(*) FROM blob_pack_entries)
 		    + (SELECT COUNT(*) FROM gc_loose_retirements)
-	`).Scan(&nodes, &other, &packs); err != nil {
+	`, document.PersonContractV1, document.PersonResolverFingerprint()).Scan(&nodes, &other, &packs); err != nil {
 		return fmt.Errorf("checking metadata import target: %w", err)
 	}
 	if nodes != 1 || other != 0 || packs != 0 {
