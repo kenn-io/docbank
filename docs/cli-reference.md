@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-14
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -1029,6 +1029,45 @@ repack response then uses `pack_retirement_deferred`: replacement catalog
 authority has already committed, so do not restore the old mapping or assume
 the rewrite rolled back. Release the external file lock and run `docbank
 storage pack`; its reconciliation pass removes the orphaned source pack.
+
+## docbank transfer
+
+### docbank transfer verify
+
+```text
+docbank transfer verify <package> [--archive-id <archive-id>] [--json]
+```
+
+Verifies a transfer package from a local directory, ZIP file, or legacy
+Msgvault JSONL file without opening a vault or starting the daemon. The command
+reads only the named path. See [Verify Transfer Packages](usage/transfers.md)
+for the integrity checks and legacy compatibility limits.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--archive-id <archive-id>` | none | Bind a legacy `msgvault-message-export/1` JSONL file to the registered archive ID that will own it. The flag is required for legacy JSONL and ignored for directory and ZIP packages. Verification checks the ID's syntax but cannot confirm vault registration. |
+| `--json` | `false` | Write the complete machine-readable verification report to stdout. |
+
+Human output is one `valid <format> package <package-id> for archive
+<archive-id> (<package-authority> authority)` line for a complete valid package.
+A valid partial package starts with `valid partial` and includes a second line,
+`next_cursor: "<continuation>"`. An invalid package starts with
+`invalid <format> package: <n> finding(s)`, followed by each retained finding as
+`<path>: <detail> (<code>)`.
+
+The JSON report contains `format`, `package_id`, `archive_id`, `next_cursor`,
+`valid`, `partial`, `findings_truncated`, `findings`, `findings_total`, `counts`,
+`bounds`, `integrity_authority`, and `package_authority`. A legacy report also
+contains `legacy_evidence`, with `format`, `sha256`, and `bytes`, plus
+`format_limitations`. Each format limitation has `capability`, `state`, and
+`reason`.
+
+Exit `0` means validation succeeded and the reader closed successfully. A bad
+invocation, including a missing or malformed `--archive-id` for legacy JSONL,
+exits `2`. Invalid-package findings produce a report and exit `6`. Operational
+failures, including cancellation, spool failures, and cleanup failures, report
+their cause and exit `1` without a validation report. Input-opening,
+legacy-normalization, and report-output errors also exit `1`.
 
 ## docbank verify
 

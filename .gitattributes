@@ -27,3 +27,5 @@ document/internal/scanfixture/testdata/* -text
 # PDF streams contain arbitrary bytes and cannot be rendered as UTF-8 diffs.
 document/testdata/scanassessment/*.pdf binary
 document/internal/scanfixture/testdata/*.pdf binary
+# Transfer canonical bytes must survive Windows checkout unchanged.
+document/transfer/testdata/msgvault-transfer-v1.golden.jsonl -text
