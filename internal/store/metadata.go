@@ -330,6 +330,10 @@ func (layout metadataSourceLayout) hasPostV3Metadata() bool {
 	return layout.schemaVersion > 3
 }
 
+func (layout metadataSourceLayout) hasPersons() bool {
+	return layout.schemaVersion >= peopleStorageSchemaVersion
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -353,6 +357,19 @@ func exportMetadataSnapshotWithVaultIdentity(
 ) error {
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
+	}
+	// ponytail: refuse partial backups until person authority has JSONL records.
+	if layout.hasPersons() {
+		for _, table := range []string{"persons", "person_identities", "person_external_identities",
+			"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits", "custodian_assignments"} {
+			var populated bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+")").Scan(&populated); err != nil {
+				return fmt.Errorf("checking person authority for export: %w", err)
+			}
+			if populated {
+				return errors.New("metadata export and backup do not yet support person authority")
+			}
+		}
 	}
 	vaultID, err := readVaultIdentity(ctx, tx, layout.legacyV090())
 	if err != nil {
@@ -1052,6 +1069,18 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM derivative_pack_purge_pending)
 		    + (SELECT COUNT(*) FROM processing_consent_grants)
 		    + (SELECT COUNT(*) FROM processing_consent_revocations)
+		    + (SELECT COUNT(*) FROM persons)
+		    + (SELECT COUNT(*) FROM person_identities)
+		    + (SELECT COUNT(*) FROM person_external_identities)
+		    + (SELECT COUNT(*) FROM person_external_uid_aliases)
+		    + (SELECT COUNT(*) FROM person_aliases)
+		    + (SELECT COUNT(*) FROM person_merges)
+		    + (SELECT COUNT(*) FROM person_splits)
+		    + (SELECT COUNT(*) FROM custodian_assignments)
+		    + (SELECT COUNT(*) FROM document_people_dirty)
+		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
+		    + (SELECT COUNT(*) FROM document_people_state
+		       WHERE singleton != 1 OR binding_epoch != 1)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
 		         FROM current_processing_incarnation WHERE singleton=1)),

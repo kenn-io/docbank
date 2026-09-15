@@ -31,7 +31,9 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 13
+const currentStorageSchemaVersion = 14
+
+const peopleStorageSchemaVersion = 14
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
@@ -117,6 +119,9 @@ func (s *Store) bootstrapTx() error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		if err := initializeDocumentPeopleState(context.Background(), tx); err != nil {
+			return fmt.Errorf("initializing document people state: %w", err)
+		}
 		if err := validateEmbeddingCatalogSchemaTx(context.Background(), tx); err != nil {
 			return err
 		}
@@ -170,6 +175,13 @@ func (s *Store) bootstrapTx() error {
 		}
 		return nil
 	})
+}
+
+func initializeDocumentPeopleState(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO document_people_state
+		(singleton,binding_epoch,updated_at)
+		VALUES(1,1,?) ON CONFLICT(singleton) DO NOTHING`, nowRFC3339())
+	return err
 }
 
 // RootID returns the id of the tree root.
