@@ -35,10 +35,10 @@ func TestPeopleIdentityCollisionBoundaries(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPersonEmailActorKeyPreservesQuotedLocalPart(t *testing.T) {
+func TestPersonEmailActorKeyMatchesV1QuotedLocalPart(t *testing.T) {
 	for _, test := range []struct{ raw, key string }{
-		{`"<Ada"@example.test`, `email:"<ada"@example.test`},
-		{`" Ada"@example.test`, `email:" ada"@example.test`},
+		{`"<Ada"@example.test`, `email:ada@example.test`},
+		{`" Ada"@example.test`, `email:ada@example.test`},
 	} {
 		t.Run(test.raw, func(t *testing.T) {
 			identity, err := NormalizePersonIdentity("email", test.raw)
@@ -46,6 +46,20 @@ func TestPersonEmailActorKeyPreservesQuotedLocalPart(t *testing.T) {
 			key, err := ActorKey(identity)
 			require.NoError(t, err)
 			require.Equal(t, test.key, key)
+			require.Equal(t, test.raw, identity.ValueDisplay)
 		})
 	}
+	_, err := NormalizePersonIdentity("email", `"< Ada"@example.test`)
+	require.Error(t, err, "reject a key that V1 decoding would normalize again")
+}
+
+func TestPersonHandleActorKeyMatchesV1(t *testing.T) {
+	const raw = "ÄPP/user-a"
+	identity, err := NormalizePersonIdentity("handle", raw)
+	require.NoError(t, err)
+	personKey, err := ActorKey(identity)
+	require.NoError(t, err)
+	eventKey, err := ActorKeyV1("handle", raw)
+	require.NoError(t, err)
+	require.Equal(t, eventKey, personKey)
 }

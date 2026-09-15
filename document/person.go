@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"golang.org/x/net/idna"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
@@ -72,18 +71,11 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 		if err != nil {
 			return bad()
 		}
-		at := strings.LastIndexByte(address.Address, '@')
-		if at <= 0 || at == len(address.Address)-1 {
+		// Source metadata event actors normalize this same parsed address.
+		out.ValueNormalized, err = normalizeActorEmail(address.Address)
+		if err != nil || strings.HasSuffix(out.ValueNormalized, "@") {
 			return bad()
 		}
-		local, domain := address.Address[:at], address.Address[at+1:]
-		ascii, err := idna.Lookup.ToASCII(domain)
-		if err != nil || ascii == "" {
-			return bad()
-		}
-		address.Name = ""
-		address.Address = strings.ToLower(local + "@" + ascii)
-		out.ValueNormalized = strings.Trim(address.String(), "<>")
 		out.Normalization = "email_v1"
 		out.AutoLinkEligible = true
 	case "phone":
@@ -116,9 +108,10 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 		if !found || service == "" || handle == "" {
 			return bad()
 		}
-		out.ValueNormalized = strings.ToLower(service) + "/" + handle
+		service = asciiLower(service)
+		out.ValueNormalized = service + "/" + handle
 		if scopeKind != "" {
-			key, err := personTupleDigest([]string{strings.ToLower(service), scopeKind, scopeValue, handle})
+			key, err := personTupleDigest([]string{service, scopeKind, scopeValue, handle})
 			if err != nil {
 				return NormalizedIdentity{}, err
 			}
@@ -132,7 +125,7 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 	default:
 		return bad()
 	}
-	if out.ValueNormalized == "" || len(out.ValueNormalized) > MaxPersonIdentityValueBytes {
+	if len(out.ValueNormalized) > MaxPersonIdentityValueBytes || ValidateActorKeyV1(string(kind)+":"+out.ValueNormalized) != nil {
 		return bad()
 	}
 	return out, nil
