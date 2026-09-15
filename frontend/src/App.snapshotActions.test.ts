@@ -113,7 +113,7 @@ afterEach(() => {
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
 
-it("captures the complete first-page population before preparing a whole-query action", async () => {
+it.each([false, true])("captures all targets and keeps recovery reachable when the tag was deleted: %s", async (deleted) => {
   history.replaceState(null, "", `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`);
   const [first, second] = await pages();
   const requests: string[] = [];
@@ -125,7 +125,8 @@ it("captures the complete first-page population before preparing a whole-query a
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0") return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/tags?limit=1000&offset=0") return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
-    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
+    if (url === `/api/v1/tags/${tag.id}`) return deleted
+      ? new Response(JSON.stringify({ code: "not_found" }), { status: 404 }) : json(tag);
     if (url === "/api/v1/queries/parse") return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
     if (url === "/api/v1/workspace/queries") return json(first);
     if (url.includes("/pages")) { journalState.pageReads++; return json(second); }
@@ -151,11 +152,17 @@ it("captures the complete first-page population before preparing a whole-query a
   expect(journalState.action?.batches.flatMap((batch) => batch.members).map((item) => item.node_id))
     .toEqual(Array.from({ length: 101 }, (_, index) => index + 1));
   expect(requests.filter((url) => url === "/api/v1/batch/tags")).toHaveLength(0);
+  if (deleted) {
+    await screen.findByText(/tag is no longer available/i);
+    await fireEvent.click(screen.getByRole("button", { name: "Abandon action…" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Abandon action without rollback" }));
+    await waitFor(() => expect(journalState.action).toBeNull());
+  }
 });
 
 it("shows validated receipt overlays without refreshing frozen membership, counts, order, or hash", async () => {
   history.replaceState(null, "", `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`);
-  const [first] = await pages();
+  const [first, second] = await pages();
   const before = {
     member_hash: first.member_hash,
     total: first.total,
@@ -173,6 +180,9 @@ it("shows validated receipt overlays without refreshing frozen membership, count
     if (url === "/api/v1/tags?limit=1000&offset=0") return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/queries/parse") return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
     if (url === "/api/v1/workspace/queries") return json(first);
+    if (url.includes("/pages")) return json(second);
+    if (url === "/api/v1/audit/status") return json({ vault_id: vaultID });
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
     if (url === "/api/v1/batch/tags/preview") return json({ tag_id: tag.id, tag_revision: changed ? 3 : 2,
       nodes: [{ node_id: 1, revision: changed ? 4 : 3, assigned: changed }] });
     if (url === "/api/v1/batch/tags") {
@@ -193,9 +203,10 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   const table = screen.getByRole("table", { name: "Snapshot documents" });
   const beforeRows = within(table).getAllByRole("row").slice(1).map((tableRow) => tableRow.textContent);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Tag visible selection" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for selected documents/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
   await fireEvent.click(screen.getByRole("option", { name: "Review" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Add tag to visible selection" }));
   await screen.findByText("0 of 1 selected documents have this tag.");
   await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
 
@@ -208,4 +219,13 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   expect(afterRows).toEqual(beforeRows);
   expect(requests.filter((url) => url === "/api/v1/workspace/queries")).toHaveLength(1);
   expect(requests.some((url) => url.startsWith("/api/v1/search"))).toBe(false);
+  await screen.findByText("1 of 1 selected documents have this tag.");
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
+  await screen.findByRole("dialog", { name: "Recoverable snapshot action" });
+  expect(journalState.action?.batches[0].request.nodes[0]).toEqual({ node_id: 1, revision: 4 });
+  expect(first.rows[0].revision).toBe(3);
 });

@@ -1,9 +1,23 @@
 import { expect, it } from "vitest";
 import type { BatchTagReceipt } from "./batch-tags.js";
-import { applySnapshotReceiptOverlay, visibleSnapshotOverlay } from "./snapshotOverlays.js";
+import { applySnapshotReceiptOverlay, snapshotTargetRevision, visibleSnapshotOverlay } from "./snapshotOverlays.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
 
 const tagID = "22222222-2222-4222-8222-222222222222";
+
+it("advances targets only through a continuous tag-receipt chain from the frozen revision", () => {
+  const row = { node_id: 7, revision: 3 };
+  const first = applySnapshotReceiptOverlay({}, receipt(4, true, "2026-09-11T12:00:00Z"), "Review");
+  const secondReceipt = receipt(5, false, "2026-09-11T12:01:00Z");
+  const second = applySnapshotReceiptOverlay(first, secondReceipt, "Review");
+  const replay = applySnapshotReceiptOverlay(second, secondReceipt, "Review");
+  expect(snapshotTargetRevision(row, first)).toBe(4);
+  expect(snapshotTargetRevision(row, replay)).toBe(5);
+  expect(snapshotTargetRevision({ ...row, revision: 4 }, replay)).toBe(5);
+  const gap = applySnapshotReceiptOverlay(second, receipt(7, true, "2026-09-11T12:02:00Z"), "Review");
+  expect(snapshotTargetRevision(row, gap)).toBe(3);
+  expect(snapshotTargetRevision(row, applySnapshotReceiptOverlay({}, secondReceipt, "Review"))).toBe(3);
+});
 
 function receipt(revision: number, assign: boolean, completedAt: string): BatchTagReceipt {
   return {

@@ -1,5 +1,6 @@
 import { requestResponse } from "./api.js";
 import { canonicalQuery, parseQuery, type Query } from "./query.js";
+import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
   profile?: string;
@@ -642,6 +643,7 @@ export async function snapshotMemberHash(
 
 export async function captureSnapshotTargets(
   session: string, first: SnapshotPage, signal: AbortSignal,
+  confirmedRevisions: Readonly<Record<number, Pick<SnapshotReceiptOverlay, "revision" | "expectedRevision">>> = {},
 ): Promise<VerifiedSnapshotTargets> {
   if (first.previous_cursor !== undefined) throw new Error("Snapshot capture requires the accepted first page.");
   if (first.total > maxSnapshotMembers) throw new Error("Snapshot capture is limited to 250,000 members.");
@@ -677,5 +679,8 @@ export async function captureSnapshotTargets(
   }
   if (bytes !== first.total_bytes) throw new Error("Snapshot capture byte total does not match its receipt.");
   if (await snapshotMemberHash(members) !== first.member_hash) throw new Error("Snapshot capture member hash does not match its receipt.");
+  for (const member of members) {
+    member.revision = snapshotTargetRevision(member, confirmedRevisions);
+  }
   return { snapshot: first, members };
 }

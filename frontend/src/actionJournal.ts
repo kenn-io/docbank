@@ -260,6 +260,23 @@ export class ActionJournal implements ActionJournalAccess {
   }
 
   static async open(vaultID: string): Promise<ActionJournal> {
+    const journal = await this.#connect(vaultID);
+    try {
+      await journal.#validateStoredAction();
+      await journal.#recoverInterruptedSend();
+      return journal;
+    } catch (cause) {
+      journal.#database.close();
+      throw cause;
+    }
+  }
+
+  static async abandon(vaultID: string): Promise<void> {
+    const journal = await this.#connect(vaultID);
+    try { await journal.abandon(); } finally { journal.#database.close(); }
+  }
+
+  static async #connect(vaultID: string): Promise<ActionJournal> {
     if (!validUUID(vaultID)) throw new Error("The action journal requires a valid vault identity.");
     if (typeof indexedDB === "undefined") throw new Error("This browser does not provide durable action storage.");
     const request = indexedDB.open(databaseName, databaseVersion);
@@ -268,10 +285,7 @@ export class ActionJournal implements ActionJournalAccess {
       if (!database.objectStoreNames.contains(headerStore)) database.createObjectStore(headerStore, { keyPath: "vault_id" });
       if (!database.objectStoreNames.contains(batchStore)) database.createObjectStore(batchStore, { keyPath: ["vault_id", "index"] });
     };
-    const journal = new ActionJournal(vaultID, await idbRequest(request));
-    await journal.#recoverInterruptedSend();
-    await journal.#validateStoredAction();
-    return journal;
+    return new ActionJournal(vaultID, await idbRequest(request));
   }
 
   async prepare(action: PreparedAction): Promise<void> {
@@ -470,7 +484,7 @@ export class ActionJournal implements ActionJournalAccess {
   async abandon(): Promise<void> {
     const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", { durability: "strict" });
     transaction.objectStore(headerStore).delete(this.vaultID);
-    transaction.objectStore(batchStore).delete(IDBKeyRange.bound([this.vaultID, 0], [this.vaultID, ACTION_MAX_BATCHES]));
+    transaction.objectStore(batchStore).delete(IDBKeyRange.bound([this.vaultID], [this.vaultID, []]));
     await transactionDone(transaction);
     this.#confirmedActionID = undefined;
   }

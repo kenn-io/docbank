@@ -20,6 +20,7 @@
     onstart: (choice: SnapshotActionChoice) => void;
     onimport: (bytes: Uint8Array) => void;
     onresume: () => void;
+    onabandon: () => void;
     onclose: () => void;
     errorMessage?: string;
   }
@@ -33,12 +34,14 @@
     onstart,
     onimport,
     onresume,
+    onabandon,
     onclose,
     errorMessage = "",
   }: Props = $props();
   let tagID = $state("");
   let reading = $state(false);
   let failure = $state("");
+  let abandonWarning = $state(false);
 
   const options = $derived<SelectDropdownOption[]>([
     { value: "", label: "Choose a tag…" },
@@ -107,6 +110,12 @@
       <h3 id="recover-action-heading">Recover an action</h3>
       <p>Selecting a recovery file only validates and stages it. It never runs a mutation by itself.</p>
       <Button disabled={disabled || reading} onclick={onresume}>Resume retained action</Button>
+      {#if abandonWarning}
+        <p role="alert">Delete the retained action for this vault, even if it cannot be opened. Completed or in-flight changes are not rolled back. Keep a recovery file if you need its receipts.</p>
+        <Button tone="danger" disabled={disabled || reading} onclick={onabandon}>Abandon retained action without rollback</Button>
+      {:else}
+        <Button disabled={disabled || reading} onclick={() => (abandonWarning = true)}>Abandon retained action…</Button>
+      {/if}
       <label class:disabled={disabled || reading}>
         <span>Import action recovery file</span>
         <input type="file" accept="application/json,.json" disabled={disabled || reading}

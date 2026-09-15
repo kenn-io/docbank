@@ -13,15 +13,15 @@
   import { untrack } from "svelte";
   import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError, type Tag } from "./api.js";
-  import { runAction } from "./actionRunner.js";
+  import { runAction, type ActionProgress } from "./actionRunner.js";
 
   interface Props {
     session: string;
     sessionVaultID: string;
     journal: ActionRecoveryJournal;
     initialAction: PersistedAction;
-    tag: Tag;
-    onprogress: (action: Readonly<PersistedAction>) => void;
+    tag: Tag | null;
+    onprogress: ActionProgress;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
@@ -43,7 +43,11 @@
   let failure = $state("");
   let notice = $state("");
   let abandonWarning = $state(false);
+  let targetBatch = $state(0);
+  let targetOffset = $state(0);
   let controller: AbortController | undefined;
+  const batch = $derived(action.batches[targetBatch]);
+  const visibleTargets = $derived(batch.members.slice(targetOffset, targetOffset + 50));
 
   const vaultMatches = $derived(sessionVaultID === action.vault_id);
   const completedBatches = $derived(action.batches.filter((batch) => batch.state === "complete").length);
@@ -51,7 +55,7 @@
   const stateLabel = $derived(action.state === "prepared" ? "Pending" :
     action.state === "sending" ? "Running" :
     action.state[0].toUpperCase() + action.state.slice(1));
-  const runnable = $derived(vaultMatches && action.checkpoint_verified &&
+  const runnable = $derived(tag !== null && vaultMatches && action.checkpoint_verified &&
     action.state !== "stale" && action.state !== "complete" && confirmed && !running && !checking);
 
   async function reload(): Promise<void> {
@@ -108,9 +112,9 @@
     controller = new AbortController();
     try {
       await journal.confirmResume(action.action_id);
-      const result = await runAction(session, journal, controller.signal, (next) => {
+      const result = await runAction(session, journal, controller.signal, (next, receipt) => {
         action = next;
-        onprogress(next);
+        onprogress(next, receipt);
       });
       action = result;
       onprogress(result);
@@ -163,10 +167,38 @@
     <dl>
       <div><dt>Vault</dt><dd><code>{action.vault_id}</code></dd></div>
       <div><dt>Action</dt><dd><code>{action.action_id}</code></dd></div>
-      <div><dt>Tag</dt><dd>{tag.name} <code>{tag.id}</code></dd></div>
-      <div><dt>Operation</dt><dd>{action.assign ? "Add" : "Remove"} “{tag.name}”</dd></div>
+      <div><dt>Tag</dt><dd>{tag?.name ?? "Unavailable tag"} <code>{action.tag_id}</code></dd></div>
+      <div><dt>Operation</dt><dd>{action.assign ? "Add" : "Remove"} “{tag?.name ?? action.tag_id}”</dd></div>
       <div><dt>Targets</dt><dd>{action.total} exact document{action.total === 1 ? "" : "s"}</dd></div>
     </dl>
+
+    {#if !tag}
+      <p role="alert">This tag is no longer available. You can save the checkpoint or abandon the action.</p>
+    {/if}
+
+    <details>
+      <summary>Review exact targets</summary>
+      <p>Recovery files contain instructions supplied by their creator. Checksums detect inconsistent files; they do not prove who created the file. Confirm only targets you intend to change.</p>
+      <label for="action-target-batch">Target batch</label>
+        <select id="action-target-batch" value={targetBatch} onchange={(event) => { targetBatch = Number(event.currentTarget.value); targetOffset = 0; }}>
+          {#each action.batches as item (item.index)}
+            <option value={item.index}>Batch {item.index + 1} · {item.members.length} documents</option>
+          {/each}
+        </select>
+      <div class="target-list">
+        <table aria-label="Exact action targets">
+          <thead><tr><th>Node ID</th><th>Content version</th><th>SHA-256</th><th>Bytes</th><th>Expected revision</th></tr></thead>
+          <tbody>{#each visibleTargets as member (member.node_id)}
+            <tr><td>{member.node_id}</td><td><code>{member.content_version_id}</code></td><td><code>{member.blob_hash}</code></td><td>{member.size}</td><td>{member.revision}</td></tr>
+          {/each}</tbody>
+        </table>
+      </div>
+      <nav class="actions" aria-label="Action target pages">
+        <span>{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members.length} in this batch</span>
+        <Button disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}>Previous targets</Button>
+        <Button disabled={targetOffset + 50 >= batch.members.length} onclick={() => (targetOffset += 50)}>Next targets</Button>
+      </nav>
+    </details>
 
     {#if !vaultMatches}
       <p role="alert">This fresh browser session is connected to a different vault. This action cannot run here.</p>
@@ -205,8 +237,8 @@
     {#if vaultMatches && action.state !== "stale" && action.state !== "complete"}
       <div class="confirmation">
         <Checkbox checked={confirmed} disabled={!action.checkpoint_verified || running || checking}
-          ariaLabel="I confirm this vault, action, tag, operation, and exact target count"
-          label="I confirm this vault, action, tag, operation, and exact target count." onchange={(value) => (confirmed = value)} />
+          ariaLabel="I confirm this vault, action, tag, operation, and exact targets"
+          label="I confirm this vault, action, tag, operation, and exact targets." onchange={(value) => (confirmed = value)} />
         <Button tone="info" disabled={!runnable} onclick={() => void run()}>
           {action.state === "uncertain" ? "Retry same operation" : action.state === "paused" ? "Confirm and resume action" : "Confirm and run action"}
         </Button>
@@ -227,7 +259,7 @@
 </Modal>
 
 <style>
-  .recovery { display: grid; gap: var(--space-4); }
+  .recovery { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
   .recovery p, .recovery h3 { margin: 0; }
   .heading, .actions, .confirmation { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
   .heading span { color: var(--text-muted); font-size: var(--font-size-sm); }
@@ -242,5 +274,10 @@
   label.disabled { opacity: 0.6; }
   .state-copy { display: flex; align-items: center; gap: var(--space-2); }
   code { font-size: var(--font-size-xs); }
+  details > * { margin-block-start: var(--space-3); }
+  summary { cursor: pointer; }
+  .target-list { overflow-x: auto; max-height: 300px; }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--font-size-xs); }
+  th, td { padding: var(--space-2); text-align: left; overflow-wrap: anywhere; border-bottom: 1px solid var(--border-default); }
   @media (max-width: 640px) { dl div { grid-template-columns: 1fr; gap: var(--space-1); } }
 </style>

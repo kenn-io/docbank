@@ -40,6 +40,7 @@ it("makes the visible selection and whole frozen query distinct actions", async 
     onstart,
     onimport: vi.fn(),
     onresume: vi.fn(),
+    onabandon: vi.fn(),
     onclose: vi.fn(),
   });
 
@@ -75,6 +76,7 @@ it("reads an imported recovery file without starting an action", async () => {
     onstart,
     onimport,
     onresume,
+    onabandon: vi.fn(),
     onclose: vi.fn(),
   });
 

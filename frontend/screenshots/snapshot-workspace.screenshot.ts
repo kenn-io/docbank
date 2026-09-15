@@ -363,7 +363,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       await route.fulfill({ status: 502, contentType: "application/problem+json", body: "{}" });
     });
     await recovery.getByRole("checkbox", {
-      name: "I confirm this vault, action, tag, operation, and exact target count",
+      name: "I confirm this vault, action, tag, operation, and exact targets",
     }).check();
     await recovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
     await expect(recovery.getByText(/The result is uncertain/)).toBeVisible();
@@ -404,7 +404,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     const replayRecovery = replayPage.getByRole("dialog", { name: "Recoverable snapshot action" });
     await expect(replayRecovery.getByText(/The result is uncertain/)).toBeVisible();
     await replayRecovery.getByRole("checkbox", {
-      name: "I confirm this vault, action, tag, operation, and exact target count",
+      name: "I confirm this vault, action, tag, operation, and exact targets",
     }).check();
     await replayRecovery.getByRole("button", { name: "Retry same operation", exact: true }).click();
     await expect(replayRecovery.getByText("Action complete. All batches have validated receipts.", { exact: true })).toBeVisible();
@@ -453,7 +453,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     const restartedRun = restartedRecovery.getByRole("button", { name: "Confirm and run action", exact: true });
     await expect(restartedRun).toBeDisabled();
     await restartedRecovery.getByRole("checkbox", {
-      name: "I confirm this vault, action, tag, operation, and exact target count",
+      name: "I confirm this vault, action, tag, operation, and exact targets",
     }).check();
     await expect(restartedRun).toBeEnabled();
     await restartedRun.click();
@@ -498,7 +498,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       }),
     });
     await staleRecovery.getByRole("checkbox", {
-      name: "I confirm this vault, action, tag, operation, and exact target count",
+      name: "I confirm this vault, action, tag, operation, and exact targets",
     }).check();
     await staleRecovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
     await expect(staleRecovery.getByText(/This action is stale/)).toBeVisible();
@@ -509,6 +509,90 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     const changed = taggedAfterFence.rows.find((row) => row.node_id === staleMember.node_id);
     expect(changed?.revision).toBe(staleMember.revision + 1);
     console.log("snapshot acceptance: stale revision fenced without partial removal");
+
+    // A selection receipt advances the next whole-query plan, without
+    // changing frozen rows or requiring a rerun between the two actions.
+    await staleRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
+    await staleRecovery.getByRole("button", { name: "Abandon action without rollback", exact: true }).click();
+    await staleEditor.getByLabel("Query expression", { exact: true }).fill("");
+    await staleEditor.getByRole("button", { name: "Run query", exact: true }).click();
+    await expect(restartedPage.getByRole("status").filter({ hasText: "1–100 of 1,001" })).toBeVisible();
+    await restartedPage.getByRole("button", { name: "Close query editor", exact: true }).click();
+    await restartedPage.getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true }).check();
+    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
+    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
+    await restartedPage.getByRole("option", { name: "Review checkpoint", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Remove tag from visible selection", exact: true }).click();
+    const selection = restartedPage.getByRole("dialog", { name: "Tag selected documents" });
+    await expect(selection.getByText("1 of 1 selected documents have this tag.", { exact: true })).toBeVisible();
+    await selection.getByRole("button", { name: "Remove from all", exact: true }).click();
+    await expect(selection.getByText("0 of 1 selected documents have this tag.", { exact: true })).toBeVisible();
+    await selection.getByRole("button", { name: "Done", exact: true }).click();
+    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
+    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
+    await restartedPage.getByRole("option", { name: "Review checkpoint", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Remove tag from whole query", exact: true }).click();
+    await verifyCheckpoint(restartedPage, staleCheckpoint);
+    await staleRecovery.getByText("Review exact targets", { exact: true }).click();
+    await expect(staleRecovery.getByRole("table", { name: "Exact action targets" }).getByRole("row")).toHaveCount(51);
+    await staleRecovery.getByRole("button", { name: "Next targets", exact: true }).click();
+    await expect(staleRecovery.getByText("51–100 of 1000 in this batch", { exact: true })).toBeVisible();
+    await staleRecovery.getByLabel("Target batch", { exact: true }).selectOption("1");
+    await expect(staleRecovery.getByRole("table", { name: "Exact action targets" }).getByRole("row")).toHaveCount(2);
+    await restartedPage.screenshot({ path: path.join(screenshots!, "web-snapshot-exact-targets.png"), animations: "disabled" });
+    await staleRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
+    await staleRecovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
+    await expect(staleRecovery.getByText("Action complete. All batches have validated receipts.", { exact: true })).toBeVisible();
+    expect((await collectRows(restartedRawURL, reviewQuery)).total).toBe(0);
+    console.log("snapshot acceptance: selection revision reused across a two-batch whole-query action");
+
+    // A deleted tag still permits recovery export and explicit abandonment.
+    await staleRecovery.getByText("Close", { exact: true }).click();
+    const currentTag = await restartedAPI.json<{ revision: number }>(`/api/v1/tags/${reviewTag.id}`);
+    const deletion = await restartedAPI.request(`/api/v1/tags/${reviewTag.id}`, {
+      method: "DELETE", headers: { "If-Match": String(currentTag.revision) },
+    });
+    expect(deletion.ok).toBe(true);
+    await restartedPage.getByRole("button", { name: "Snapshot actions", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Resume retained action", exact: true }).click();
+    await expect(staleRecovery.getByText(/tag is no longer available/)).toBeVisible();
+    await expect(staleRecovery.getByRole("button", { name: "Save recovery checkpoint", exact: true })).toBeEnabled();
+    await staleRecovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
+    await staleRecovery.getByRole("button", { name: "Abandon action without rollback", exact: true }).click();
+
+    // Clear an unreadable journal without parsing it, preserving another vault.
+    await restartedPage.evaluate(async (vaultID) => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("docbank-action-journal-v1", 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const transaction = database.transaction(["actions", "batches"], "readwrite");
+      transaction.objectStore("actions").put({ vault_id: vaultID, version: 99 });
+      transaction.objectStore("batches").put({ vault_id: vaultID, index: 999 });
+      transaction.objectStore("actions").put({ vault_id: "99999999-9999-4999-8999-999999999999", version: 99 });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onabort = () => reject(transaction.error);
+      });
+      database.close();
+    }, saved.vault_id);
+    await restartedPage.getByRole("button", { name: "Snapshot actions", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Resume retained action", exact: true }).click();
+    await expect(staleActions.getByRole("alert")).toContainText("journal is inconsistent");
+    await staleActions.getByRole("button", { name: "Abandon retained action…", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Abandon retained action without rollback", exact: true }).click();
+    await expect(staleActions).toHaveCount(0);
+    const remaining = await retainedAction(restartedPage);
+    expect(remaining.header.vault_id).toBe("99999999-9999-4999-8999-999999999999");
+    expect(remaining.batches).toHaveLength(0);
+    await restartedPage.getByRole("button", { name: "Tag or recover", exact: true }).click();
+    await staleActions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
+    await restartedPage.getByRole("option", { name: "Fence marker", exact: true }).click();
+    await staleActions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
+    await expect(staleRecovery.getByText("1001 exact documents", { exact: true })).toBeVisible();
+    console.log("snapshot acceptance: deleted tag and corrupt journal can be abandoned; new action prepared");
+
   } finally {
     const cleanupFailures: string[] = [];
     for (const [label, runner] of [["wrong-vault", runWrong], ["main", run]] as const) {
