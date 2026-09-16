@@ -17,7 +17,6 @@ limitations under the License.
 {{- template "header" $ }}
 
 {{range .Operations}}{{$op := .}}
-{{ $skipValidation := $.Config.Generate.Validation.Skip }}
 
 {{ if $op.HasRequestOptions }}
 // {{$op.ID | ucFirst}}RequestOptions is the options needed to make a request to {{$op.ID}}.
@@ -38,60 +37,6 @@ type {{$op.ID | ucFirst}}RequestOptions struct {
     Header *{{$op.Header.Name}}
     {{ end -}}
 }
-
-{{ if not $skipValidation }}
-// Validate validates all the fields in the options.
-// Use it if fields validation was not run.
-func (o *{{$op.ID | ucFirst}}RequestOptions) Validate() error {
-    var errors runtime.ValidationErrors
-
-    {{ if $op.PathParams }}
-    if o.PathParams != nil {
-        if v, ok := any(o.PathParams).(runtime.Validator); ok {
-            if err := v.Validate(); err != nil {
-                errors = errors.Append("PathParams", err)
-            }
-        }
-    }
-    {{ end -}}
-
-    {{ if $op.Query }}
-    if o.Query != nil {
-        if v, ok := any(o.Query).(runtime.Validator); ok {
-            if err := v.Validate(); err != nil {
-                errors = errors.Append("Query", err)
-            }
-        }
-    }
-    {{end -}}
-
-    {{ if $op.Body }}
-    if o.Body != nil {
-        if v, ok := any(o.Body).(runtime.Validator); ok {
-            if err := v.Validate(); err != nil {
-                errors = errors.Append("Body", err)
-            }
-        }
-    }
-    {{end -}}
-
-    {{ if $op.Header }}
-    if o.Header != nil {
-        if v, ok := any(o.Header).(runtime.Validator); ok {
-            if err := v.Validate(); err != nil {
-                errors = errors.Append("Header", err)
-            }
-        }
-    }
-    {{end -}}
-
-    if len(errors) == 0 {
-        return nil
-    }
-
-    return errors
-}
-{{ end }}
 
 // GetPathParams returns the path params as a map.
 func (o *{{$op.ID | ucFirst}}RequestOptions) GetPathParams() (map[string]any, error) {

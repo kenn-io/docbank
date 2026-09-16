@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -28,30 +27,18 @@ func (c *Connection) EmailMetadata(ctx context.Context, versionID string) (api.E
 	if !validUUIDv4(versionID) {
 		return metadata, errors.New("email metadata requires a canonical UUIDv4 version ID")
 	}
-	var responseHTTP *http.Response
-	_, err := c.apiWithResponse(&responseHTTP).GetEmailMetadata(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailMetadataRequestOptions{PathParams: &apiclient.GetEmailMetadataPath{VersionID: uuid.MustParse(versionID)}})
+	result, err := c.API().GetEmailMetadata(ctx, &apiclient.GetEmailMetadataRequestOptions{PathParams: &apiclient.GetEmailMetadataPath{VersionID: uuid.MustParse(versionID)}})
 	if err != nil {
 		return metadata, err
 	}
-	resp := responseHTTP
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusAccepted {
-		var pending api.EmailPending
-		if err := json.UnmarshalRead(resp.Body, &pending); err != nil {
-			return metadata, &responseDecodeError{err: fmt.Errorf("decoding pending email metadata: %w", err)}
-		}
+	if pending := result.Status202; pending != nil {
 		if pending.State != "pending" || pending.Version.ID != versionID || validateEmailVersion(pending.Version) != nil {
 			return metadata, integrityErrorf("pending email metadata response has inconsistent version identity")
 		}
 		metadata.Version = pending.Version
 		return metadata, store.ErrEmailPending
 	}
-	if resp.StatusCode != http.StatusOK {
-		return metadata, decodeError(resp)
-	}
-	if err := json.UnmarshalRead(resp.Body, &metadata); err != nil {
-		return api.EmailMetadata{}, &responseDecodeError{err: fmt.Errorf("decoding email metadata: %w", err)}
-	}
+	metadata = *result.Status200
 	if err := validateEmailMetadata(metadata, versionID, ""); err != nil {
 		return api.EmailMetadata{}, err
 	}

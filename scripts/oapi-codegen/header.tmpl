@@ -31,42 +31,15 @@ package {{.Config.PackageName}}
 
 {{- define "imports" -}}
 import (
-    "bytes"
-    "compress/gzip"
     "context"
-    "encoding/base64"
     "encoding/json/v2"
-    "encoding/json/jsontext"
-    "encoding/xml"
-    "errors"
     "fmt"
-    "io"
-    "os"
-    "mime"
-    "mime/multipart"
-    "net/http"
-    "net/url"
-    "path"
-    "strings"
     "time"
-    "log/slog"
+    "uuid"
 
     "github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
-    "github.com/google/go-querystring/query"
-    "uuid"
-    "github.com/go-playground/validator/v10"
     {{- range .Imports }}
         {{ . }}
     {{- end }}
-    {{- if and .Config.Generate .Config.Generate.Handler }}
-    {{template "router-import" .}}
-    {{- end }}
-    {{- if and .Config.Generate .Config.Generate.MCPServer }}
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-    {{- end }}
-    {{- range .Config.AdditionalImports}}
-    {{.Alias -}} "{{.Package}}"
-    {{- end}}
 )
 {{- end -}}

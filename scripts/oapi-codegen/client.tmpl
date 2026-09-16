@@ -23,7 +23,7 @@ limitations under the License.
 
 {{ $clientName := $config.Client.Name }}
 
-// {{$clientName}} is the client for the API implementing the {{$clientName}} interface.
+// {{$clientName}} calls the generated API operations.
 type {{$clientName}} struct {
     apiClient runtime.APIClient
 }
@@ -33,13 +33,20 @@ func New{{$clientName}}(apiClient runtime.APIClient) *{{$clientName}} {
     return &{{$clientName}}{apiClient: apiClient}
 }
 
-// NewDefault{{$clientName}} creates a new instance of the {{$clientName}} client with default api client.
-func NewDefault{{$clientName}}(baseURL string, opts ...runtime.APIClientOption) (*{{$clientName}}, error) {
-    apiClient, err := runtime.NewAPIClient(baseURL, opts...)
-    if err != nil {
-        return nil, fmt.Errorf("error creating API client: %w", err)
+func decodeAPIError[T any](resp *runtime.Response, targetType string) error {
+    target := new(T)
+    if len(resp.Content) > 0 {
+        if err := json.Unmarshal(resp.Content, target); err != nil {
+            return &runtime.ResponseDecodeError{
+                StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+                ContentLength: len(resp.Content), TargetType: targetType, Body: resp.Content, Err: err,
+            }
+        }
     }
-    return &{{$clientName}}{apiClient: apiClient}, nil
+    if errTarget, ok := any(*target).(error); ok {
+        return runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+    }
+    return runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target), runtime.WithStatusCode(resp.StatusCode))
 }
 
 // acceptStream checks the operation's status contract without consuming its body.
@@ -54,23 +61,6 @@ func (c *{{$clientName}}) acceptStream(resp *runtime.Response, statuses ...int) 
     }
     _ = resp.Raw.Body.Close()
     return runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-}
-
-// ClientInterface is the interface for the API client.
-type {{$clientName}}Interface interface {
-    {{- range $operations }}{{$op := .}}
-        {{if not $config.Generate.OmitDescription}}{{ toGoComment $op.Summary $op.ID}}{{end}}
-        {{$op.ID}}(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{template "resultType" $op}}, error)
-        {{- if $config.Generate.ClientWithResponse }}
-        {{$op.ID}}WithResponse(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{$op.WithResponseTypeName}}, error)
-        {{- end }}
-        {{- if and $config.Generate.ClientStreaming $op.Response.HasStream }}
-        {{$op.StreamMethodName}}(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*runtime.Stream[{{$op.Response.PrimaryStream.ItemName}}], error)
-        {{- if $config.Generate.ClientWithResponse }}
-        {{$op.StreamMethodName}}WithResponse(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{$op.WithResponseTypeName}}, error)
-        {{- end }}
-        {{- end }}
-    {{ end }}
 }
 
 {{range $operations}}{{$op := .}}
@@ -98,7 +88,6 @@ func (c *{{$clientName}}) {{$op.ID}}(ctx context.Context{{ if $op.HasRequestOpti
 
 {{end -}}
 
-var _ {{$clientName}}Interface = (*{{$clientName}})(nil)
 {{ end -}}
 
 {{ template "client" dict "config" .Config "operations" .Operations }}
@@ -141,38 +130,13 @@ responseParser := func(_ context.Context, resp *runtime.Response) (*{{template "
         {{end}}
     {{end}}
     default:
-        bodyBytes := resp.Content
-        _ = bodyBytes
-        {{- with $op.Response.Error }}
-            {{- if .ResponseName }}
-                target := new({{ .ResponseName }})
-                // Handle empty error response body gracefully - skip unmarshal if no content
-                if len(bodyBytes) > 0 {
-                    if err = json.Unmarshal(bodyBytes, target); err != nil {
-                        return nil, &runtime.ResponseDecodeError{
-                            StatusCode:    resp.StatusCode,
-                            ContentType:   resp.Headers.Get("Content-Type"),
-                            ContentLength: len(bodyBytes),
-                            TargetType:    "{{ .ResponseName }}",
-                            Body:          bodyBytes,
-                            Err:           err,
-                        }
-                    }
-                }
-                // Return error with (possibly empty) target
-                if errTarget, ok := any(*target).(error); ok {
-                    return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-                }
-                return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-                    runtime.WithStatusCode(resp.StatusCode))
-            {{- else }}
-                return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-                        runtime.WithStatusCode(resp.StatusCode))
-            {{- end }}
-        {{- else }}
-            return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-                runtime.WithStatusCode(resp.StatusCode))
-        {{- end }}
+        {{with $op.Response.Error}}{{if .ResponseName}}
+        return nil, decodeAPIError[{{.ResponseName}}](resp, "{{.ResponseName}}")
+        {{else}}
+        return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+        {{end}}{{else}}
+        return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+        {{end}}
     }
 }
 {{end}}

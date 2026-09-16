@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"time"
-
 	"uuid"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -16,7 +15,7 @@ import (
 	store "go.kenn.io/docbank/internal/store"
 )
 
-// Client is the client for the API implementing the Client interface.
+// Client calls the generated API operations.
 type Client struct {
 	apiClient runtime.APIClient
 }
@@ -26,13 +25,20 @@ func NewClient(apiClient runtime.APIClient) *Client {
 	return &Client{apiClient: apiClient}
 }
 
-// NewDefaultClient creates a new instance of the Client client with default api client.
-func NewDefaultClient(baseURL string, opts ...runtime.APIClientOption) (*Client, error) {
-	apiClient, err := runtime.NewAPIClient(baseURL, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating API client: %w", err)
+func decodeAPIError[T any](resp *runtime.Response, targetType string) error {
+	target := new(T)
+	if len(resp.Content) > 0 {
+		if err := json.Unmarshal(resp.Content, target); err != nil {
+			return &runtime.ResponseDecodeError{
+				StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+				ContentLength: len(resp.Content), TargetType: targetType, Body: resp.Content, Err: err,
+			}
+		}
 	}
-	return &Client{apiClient: apiClient}, nil
+	if errTarget, ok := any(*target).(error); ok {
+		return runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+	}
+	return runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target), runtime.WithStatusCode(resp.StatusCode))
 }
 
 // acceptStream checks the operation's status contract without consuming its body.
@@ -49,444 +55,6 @@ func (c *Client) acceptStream(resp *runtime.Response, statuses ...int) error {
 	}
 	_ = resp.Raw.Body.Close()
 	return runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-}
-
-// ClientInterface is the interface for the API client.
-type ClientInterface interface {
-	ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResponse, error)
-
-	ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-
-	// PrepareWebDownload Verify a document and prepare a browser download
-	PrepareWebDownload(ctx context.Context, options *PrepareWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareWebDownloadResponse, error)
-
-	// RevokeWebSession Revoke the current browser session
-	RevokeWebSession(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-
-	// CreateWebSession Issue a scoped browser session
-	CreateWebSession(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*CreateWebSessionResponse, error)
-
-	// EnableAudit Permanently enable the exact reviewed audit scope
-	EnableAudit(ctx context.Context, options *EnableAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableAuditResponse, error)
-
-	// AuditNodeHistory Read one audited node's canonical event timeline
-	AuditNodeHistory(ctx context.Context, options *AuditNodeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditNodeHistoryResponse, error)
-
-	// PreviewAuditEnrollment Preview one permanent audit scope without changing the vault
-	PreviewAuditEnrollment(ctx context.Context, options *PreviewAuditEnrollmentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewAuditEnrollmentResponse, error)
-
-	// AuditScopeHistory Read canonical events across one permanent audit scope
-	AuditScopeHistory(ctx context.Context, options *AuditScopeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditScopeHistoryResponse, error)
-
-	// AuditStatus Inspect audit authority and optional node protection
-	AuditStatus(ctx context.Context, options *AuditStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditStatusResponse, error)
-
-	// VerifyAudit Replay audit authority and verify every protected blob
-	VerifyAudit(ctx context.Context, options *VerifyAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyAuditResponse, error)
-
-	// InitBackupRepository Initialize an immutable backup repository
-	InitBackupRepository(ctx context.Context, options *InitBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InitBackupRepositoryResponse, error)
-
-	// RestoreBackupSnapshot Restore and prove a snapshot in a separate vault directory
-	RestoreBackupSnapshot(ctx context.Context, options *RestoreBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreBackupSnapshotResponse, error)
-
-	// StreamBackupSnapshotRestore Restore and prove a snapshot while streaming structured progress
-	StreamBackupSnapshotRestore(ctx context.Context, options *StreamBackupSnapshotRestoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotRestoreResponse, error)
-
-	// ListBackupSnapshots List snapshots in a backup repository
-	ListBackupSnapshots(ctx context.Context, options *ListBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBackupSnapshotsResponse, error)
-
-	// CreateBackupSnapshot Capture a verified logical snapshot of the live vault
-	CreateBackupSnapshot(ctx context.Context, options *CreateBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateBackupSnapshotResponse, error)
-
-	// StreamBackupSnapshotCreation Capture a snapshot and stream structured progress
-	StreamBackupSnapshotCreation(ctx context.Context, options *StreamBackupSnapshotCreationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotCreationResponse, error)
-
-	// VerifyBackupRepository Verify backup repository integrity
-	VerifyBackupRepository(ctx context.Context, options *VerifyBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyBackupRepositoryResponse, error)
-
-	// StreamBackupRepositoryVerification Verify a backup repository and stream structured progress
-	StreamBackupRepositoryVerification(ctx context.Context, options *StreamBackupRepositoryVerificationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupRepositoryVerificationResponse, error)
-
-	// BatchMove Apply an all-or-nothing document reorganization
-	BatchMove(ctx context.Context, options *BatchMoveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BatchMoveResponse, error)
-
-	// ChangeBatchTags Assign or remove one tag across an atomic selected set
-	ChangeBatchTags(ctx context.Context, options *ChangeBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChangeBatchTagsResponse, error)
-
-	// PreviewBatchTags Observe exact tag membership for a revision-fenced selected set
-	PreviewBatchTags(ctx context.Context, options *PreviewBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBatchTagsResponse, error)
-
-	// ListCollections List document-bearing ingest runs, newest first
-	ListCollections(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResponse, error)
-
-	// GetCollection Inspect one ingest run and its current live summary
-	GetCollection(ctx context.Context, options *GetCollectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionResponse, error)
-
-	// GetCollectionLabel Read a collection's independently revisioned label
-	GetCollectionLabel(ctx context.Context, options *GetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionLabelResponse, error)
-
-	// SetCollectionLabel Set or clear a collection label under its label revision
-	SetCollectionLabel(ctx context.Context, options *SetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCollectionLabelResponse, error)
-
-	// ListCollectionMembers List a collection's current live file members
-	ListCollectionMembers(ctx context.Context, options *ListCollectionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionMembersResponse, error)
-
-	// GetCollectionQuality Inspect bounded current collection quality and text coverage
-	GetCollectionQuality(ctx context.Context, options *GetCollectionQualityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionQualityResponse, error)
-
-	// LookupContentReferences Find stable document versions that retain a SHA-256 identity
-	LookupContentReferences(ctx context.Context, options *LookupContentReferencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupContentReferencesResponse, error)
-
-	// GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
-	GetDocumentProcessingCoverage(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResponse, error)
-
-	// RunDerivativePurge Run one exact reviewed live derivative purge
-	RunDerivativePurge(ctx context.Context, options *RunDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunDerivativePurgeResponse, error)
-
-	// PlanDerivativePurge Preview one exact live derivative purge
-	PlanDerivativePurge(ctx context.Context, options *PlanDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDerivativePurgeResponse, error)
-
-	// ListDocuments List current live documents with authenticated keyset pagination
-	ListDocuments(ctx context.Context, options *ListDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentsResponse, error)
-
-	// ResolveDocumentSummaries Resolve bounded exact current live document summaries
-	ResolveDocumentSummaries(ctx context.Context, options *ResolveDocumentSummariesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSummariesResponse, error)
-
-	// ListDuplicateContent Find live documents that share current content
-	ListDuplicateContent(ctx context.Context, options *ListDuplicateContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDuplicateContentResponse, error)
-
-	// RequestEmailDocumentProcessing Request ordinary consent-aware attachment processing
-	RequestEmailDocumentProcessing(ctx context.Context, options *RequestEmailDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RequestEmailDocumentProcessingResponse, error)
-
-	// PublishEmailDocuments Publish exact email attachments as ordinary documents
-	PublishEmailDocuments(ctx context.Context, options *PublishEmailDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishEmailDocumentsResponse, error)
-
-	// RemoveEmailDocumentPublication Release one receipt without deleting children
-	RemoveEmailDocumentPublication(ctx context.Context, options *RemoveEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-
-	// GetEmailDocumentPublication Read an immutable publication receipt
-	GetEmailDocumentPublication(ctx context.Context, options *GetEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailDocumentPublicationResponse, error)
-
-	// ListEmailDocumentRelations Read a bounded page of exact parent or child occurrences
-	ListEmailDocumentRelations(ctx context.Context, options *ListEmailDocumentRelationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailDocumentRelationsResponse, error)
-
-	// ReadFormatCapabilities Read per-format capability coverage
-	ReadFormatCapabilities(ctx context.Context, options *ReadFormatCapabilitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadFormatCapabilitiesResponse, error)
-
-	// Gc Report (run=false) or reclaim (run=true) unreachable blobs
-	Gc(ctx context.Context, options *GcRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GcResponse, error)
-
-	// VaultInfo Identify the selected vault and summarize its contents
-	VaultInfo(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VaultInfoResponse, error)
-
-	// Ingest Import server-side files or directory trees (loopback callers only)
-	Ingest(ctx context.Context, options *IngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*IngestResponse, error)
-
-	// PreflightIngest Inventory server-side files without opening content or mutating the vault
-	PreflightIngest(ctx context.Context, options *PreflightIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightIngestResponse, error)
-
-	// StreamIngest Import server-side paths while streaming structured progress
-	StreamIngest(ctx context.Context, options *StreamIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamIngestResponse, error)
-
-	// ListJobs List daemon background jobs and their current status
-	ListJobs(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListJobsResponse, error)
-
-	// GetStorageOperation Inspect one durable storage operation and its latest receipt
-	GetStorageOperation(ctx context.Context, options *GetStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetStorageOperationResponse, error)
-
-	// CancelStorageOperation Request cancellation at the next durable object boundary
-	CancelStorageOperation(ctx context.Context, options *CancelStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelStorageOperationResponse, error)
-
-	// PlanMediaAcquisition Recognize a private reference without network access
-	PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcquisitionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanMediaAcquisitionResponse, error)
-
-	// GrantMediaAcquisitionConsent Grant one exact current media acquisition plan
-	GrantMediaAcquisitionConsent(ctx context.Context, options *GrantMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantMediaAcquisitionConsentResponse, error)
-
-	// RevokeMediaAcquisitionConsent Revoke acquisition consent for one registered origin
-	RevokeMediaAcquisitionConsent(ctx context.Context, options *RevokeMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaAcquisitionConsentResponse, error)
-
-	// ListMediaOccurrences List caller-visible media occurrences
-	ListMediaOccurrences(ctx context.Context, options *ListMediaOccurrencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaOccurrencesResponse, error)
-
-	// DeclareMediaOccurrence Declare one immutable caller occurrence revision
-	DeclareMediaOccurrence(ctx context.Context, options *DeclareMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeclareMediaOccurrenceResponse, error)
-
-	// RevokeMediaOccurrence Revoke one caller-owned occurrence
-	RevokeMediaOccurrence(ctx context.Context, options *RevokeMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaOccurrenceResponse, error)
-
-	// ListMediaOrigins List registered media origin capabilities
-	ListMediaOrigins(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListMediaOriginsResponse, error)
-
-	// ListMediaSources List caller-visible media sources
-	ListMediaSources(ctx context.Context, options *ListMediaSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaSourcesResponse, error)
-
-	// SubmitMediaSource Retain one bounded supplied recording or private reference
-	SubmitMediaSource(ctx context.Context, options *SubmitMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SubmitMediaSourceResponse, error)
-
-	// GetMediaSource Read caller-visible media status
-	GetMediaSource(ctx context.Context, options *GetMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMediaSourceResponse, error)
-
-	// ImportMediaArtifact Retain one bounded original media or transcript input
-	ImportMediaArtifact(ctx context.Context, options *ImportMediaArtifactRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMediaArtifactResponse, error)
-
-	// RetryMediaSource Retry explicit processing for one source
-	RetryMediaSource(ctx context.Context, options *RetryMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryMediaSourceResponse, error)
-
-	// CreateNode Create a directory
-	CreateNode(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResponse, error)
-
-	// GetNode Stat a node by id (live or trashed)
-	GetNode(ctx context.Context, options *GetNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeResponse, error)
-
-	// MoveNode Move and/or rename a node (metadata only; bytes never move)
-	MoveNode(ctx context.Context, options *MoveNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveNodeResponse, error)
-
-	// ListChildren List a directory's live children (dirs first, name-sorted), paginated
-	ListChildren(ctx context.Context, options *ListChildrenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListChildrenResponse, error)
-
-	// GetNodeContent Stream a file's bytes
-	GetNodeContent(ctx context.Context, options *GetNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeContentResponse, error)
-
-	// ReplaceNodeContent Replace a file's content with a new immutable head
-	ReplaceNodeContent(ctx context.Context, options *ReplaceNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReplaceNodeContentResponse, error)
-
-	// ListNodeProvenance List immutable origin facts for one file node
-	ListNodeProvenance(ctx context.Context, options *ListNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeProvenanceResponse, error)
-
-	// AppendNodeProvenance Append an immutable origin fact to a file node
-	AppendNodeProvenance(ctx context.Context, options *AppendNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendNodeProvenanceResponse, error)
-
-	// RestoreNode Restore a trash root to its original location (root fallback, suffix on collision)
-	RestoreNode(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResponse, error)
-
-	// RevertNodeContent Create a new head from one of the file's prior immutable versions
-	RevertNodeContent(ctx context.Context, options *RevertNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevertNodeContentResponse, error)
-
-	// ListNodeTags List tags assigned to a node
-	ListNodeTags(ctx context.Context, options *ListNodeTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeTagsResponse, error)
-
-	// UnassignTag Remove a tag assignment from a node
-	UnassignTag(ctx context.Context, options *UnassignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagResponse, error)
-
-	// AssignTag Assign a tag to a node
-	AssignTag(ctx context.Context, options *AssignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagResponse, error)
-
-	// TrashNode Move a node and its subtree to the trash
-	TrashNode(ctx context.Context, options *TrashNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashNodeResponse, error)
-
-	// VerifyNodeContent Re-hash one file and bind the evidence to its node revision
-	VerifyNodeContent(ctx context.Context, options *VerifyNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyNodeContentResponse, error)
-
-	// ListContentVersions List a file's immutable content versions, newest first
-	ListContentVersions(ctx context.Context, options *ListContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContentVersionsResponse, error)
-
-	// PruneNodeContentVersions Preview or prune selected non-current content versions
-	PruneNodeContentVersions(ctx context.Context, options *PruneNodeContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PruneNodeContentVersionsResponse, error)
-
-	// ResolvePath Resolve an absolute virtual path to its node
-	ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error)
-
-	// MkdirPath Create one directory at an exact virtual path
-	MkdirPath(ctx context.Context, options *MkdirPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MkdirPathResponse, error)
-
-	// MovePath Move a node by virtual path in one transaction
-	MovePath(ctx context.Context, options *MovePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePathResponse, error)
-
-	// UnassignTagPath Remove a tag from a transactionally resolved path
-	UnassignTagPath(ctx context.Context, options *UnassignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagPathResponse, error)
-
-	// AssignTagPath Assign a tag to a transactionally resolved path
-	AssignTagPath(ctx context.Context, options *AssignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagPathResponse, error)
-
-	// TrashPath Move a virtual path and its subtree to the trash in one transaction
-	TrashPath(ctx context.Context, options *TrashPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPathResponse, error)
-
-	// GrantDocumentProcessingConsent Grant consent for one exact reviewed processing plan
-	GrantDocumentProcessingConsent(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResponse, error)
-
-	// RevokeDocumentProcessingConsent Revoke current operator processing consent
-	RevokeDocumentProcessingConsent(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RevokeDocumentProcessingConsentResponse, error)
-
-	// GrantProcessingConsent Explicitly grant existing processing consent
-	GrantProcessingConsent(ctx context.Context, options *GrantProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantProcessingConsentResponse, error)
-
-	// RevokeProcessingConsent Revoke a principal and scope before further provider access
-	RevokeProcessingConsent(ctx context.Context, options *RevokeProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeProcessingConsentResponse, error)
-
-	// StartDocumentProcessing Start the exact reviewed document-processing plan
-	StartDocumentProcessing(ctx context.Context, options *StartDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartDocumentProcessingResponse, error)
-
-	// GetDocumentProcessingJob Read aggregate document-processing status
-	GetDocumentProcessingJob(ctx context.Context, options *GetDocumentProcessingJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingJobResponse, error)
-
-	// PlanDocumentProcessing Preview provider disclosure for one document version
-	PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error)
-
-	// ListDocumentProcessingProfiles List locally executable document-processing profiles
-	ListDocumentProcessingProfiles(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error)
-
-	// ResolveDocumentSourceFence Resolve exact current live document search authority
-	ResolveDocumentSourceFence(ctx context.Context, options *ResolveDocumentSourceFenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSourceFenceResponse, error)
-
-	// ParseQuery Validate a search expression and resolve its saved references
-	ParseQuery(ctx context.Context, options *ParseQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ParseQueryResponse, error)
-
-	// ReadDocumentRenditionBySelector Stream the active rendition for one exact source selector
-	ReadDocumentRenditionBySelector(ctx context.Context, options *ReadDocumentRenditionBySelectorRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionBySelectorResponse, error)
-
-	// ReadDocumentRenditionWindow Read one bounded Unicode rendition window
-	ReadDocumentRenditionWindow(ctx context.Context, options *ReadDocumentRenditionWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionWindowResponse, error)
-
-	// GetDocumentRendition Stream one exact active sanitized-Markdown rendition
-	GetDocumentRendition(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResult, error)
-
-	// ListSavedQueries List saved query and highlight definitions by name
-	ListSavedQueries(ctx context.Context, options *ListSavedQueriesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSavedQueriesResponse, error)
-
-	// CreateSavedQuery Save one complete query or literal highlight set
-	CreateSavedQuery(ctx context.Context, options *CreateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateSavedQueryResponse, error)
-
-	// DeleteSavedQuery Delete a saved definition under its current revision
-	DeleteSavedQuery(ctx context.Context, options *DeleteSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteSavedQueryResponse, error)
-
-	// GetSavedQuery Inspect one saved definition by stable ID
-	GetSavedQuery(ctx context.Context, options *GetSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSavedQueryResponse, error)
-
-	// UpdateSavedQuery Edit a saved definition under its current revision
-	UpdateSavedQuery(ctx context.Context, options *UpdateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateSavedQueryResponse, error)
-
-	// RunSavedQuery Run one revision-fenced saved query and retain its receipt
-	RunSavedQuery(ctx context.Context, options *RunSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedQueryResponse, error)
-
-	// Search Search live document names and extracted text
-	Search(ctx context.Context, options *SearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchResponse, error)
-
-	// SearchDocuments Search exact source-fenced document versions
-	SearchDocuments(ctx context.Context, options *SearchDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchDocumentsResponse, error)
-
-	// ValidateDocumentSearch Validate document-search semantics without executing a search
-	ValidateDocumentSearch(ctx context.Context, options *ValidateDocumentSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateDocumentSearchResponse, error)
-
-	// StorageStatus Report loose and packed physical storage usage
-	StorageStatus(ctx context.Context, options *StorageStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageStatusResponse, error)
-
-	// StartStorageEvacuation Start the exact store evacuation reviewed by a preview
-	StartStorageEvacuation(ctx context.Context, options *StartStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageEvacuationResponse, error)
-
-	// PreviewStorageEvacuation Preview complete evacuation of one secondary store to primary
-	PreviewStorageEvacuation(ctx context.Context, options *PreviewStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageEvacuationResponse, error)
-
-	// StoragePack Pack authorized loose blobs into immutable pack files
-	StoragePack(ctx context.Context, options *StoragePackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StoragePackResponse, error)
-
-	// StartStoragePlacement Start the exact verified placement reviewed by a preview
-	StartStoragePlacement(ctx context.Context, options *StartStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStoragePlacementResponse, error)
-
-	// PreviewStoragePlacement Preview verified placement for retained content beneath one node
-	PreviewStoragePlacement(ctx context.Context, options *PreviewStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStoragePlacementResponse, error)
-
-	// StorageRepack Rewrite eligible sparse packs and retire dead pack files
-	StorageRepack(ctx context.Context, options *StorageRepackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageRepackResponse, error)
-
-	// StartStorageRepair Start the exact storage repair reviewed by a preview
-	StartStorageRepair(ctx context.Context, options *StartStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageRepairResponse, error)
-
-	// PreviewStorageRepair Preview one explicit verified storage repair
-	PreviewStorageRepair(ctx context.Context, options *PreviewStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageRepairResponse, error)
-
-	// StartStorageSalvage Start the exact storage salvage reviewed by a preview
-	StartStorageSalvage(ctx context.Context, options *StartStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageSalvageResponse, error)
-
-	// PreviewStorageSalvage Preview one explicit verified storage salvage
-	PreviewStorageSalvage(ctx context.Context, options *PreviewStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageSalvageResponse, error)
-
-	// ListBlobStores List cataloged blob stores and their deployment state
-	ListBlobStores(ctx context.Context, options *ListBlobStoresRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBlobStoresResponse, error)
-
-	// RegisterBlobStore Attach the exact secondary store reviewed by a preview
-	RegisterBlobStore(ctx context.Context, options *RegisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterBlobStoreResponse, error)
-
-	// PreviewBlobStoreRegistration Preview attaching one configured secondary blob store
-	PreviewBlobStoreRegistration(ctx context.Context, options *PreviewBlobStoreRegistrationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBlobStoreRegistrationResponse, error)
-
-	// UnregisterBlobStore Forget one detached and empty secondary store identity
-	UnregisterBlobStore(ctx context.Context, options *UnregisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-
-	// DetachBlobStore Detach one empty secondary store from runtime use
-	DetachBlobStore(ctx context.Context, options *DetachBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachBlobStoreResponse, error)
-
-	// ListTags List tag definitions by name
-	ListTags(ctx context.Context, options *ListTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagsResponse, error)
-
-	// CreateTag Define a tag with a new stable ID
-	CreateTag(ctx context.Context, options *CreateTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTagResponse, error)
-
-	// ResolveTagByName Resolve an exact tag name to its stable ID
-	ResolveTagByName(ctx context.Context, options *ResolveTagByNameRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTagByNameResponse, error)
-
-	// DeleteTag Delete a tag definition and all assignments
-	DeleteTag(ctx context.Context, options *DeleteTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteTagResponse, error)
-
-	// GetTag Inspect one tag definition by stable ID
-	GetTag(ctx context.Context, options *GetTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTagResponse, error)
-
-	// RenameTag Rename a tag without changing its stable ID
-	RenameTag(ctx context.Context, options *RenameTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameTagResponse, error)
-
-	// ListTagNodes List live and trashed nodes carrying a tag
-	ListTagNodes(ctx context.Context, options *ListTagNodesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagNodesResponse, error)
-
-	// ReadTimelineCoverage Read current-file timeline coverage
-	ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineCoverageResponse, error)
-
-	// CreateTimelineRebuild Start or replay a timeline rebuild
-	CreateTimelineRebuild(ctx context.Context, options *CreateTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTimelineRebuildResponse, error)
-
-	// ReadTimelineRebuild Read timeline rebuild progress
-	ReadTimelineRebuild(ctx context.Context, options *ReadTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineRebuildResponse, error)
-
-	// ListTrash List restorable trash roots, newest first, optionally paginated
-	ListTrash(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResponse, error)
-
-	// EmptyTrash Report (run=false) or hard-delete (run=true) trash roots
-	EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EmptyTrashResponse, error)
-
-	// UploadFile Upload one digest-checked file
-	UploadFile(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResult, error)
-
-	// Verify Validate metadata and re-hash every stored blob
-	Verify(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResponse, error)
-
-	// GetContentVersion Inspect one immutable content version by stable ID
-	GetContentVersion(ctx context.Context, options *GetContentVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionResponse, error)
-
-	// GetContentVersionBytes Stream one immutable content version by stable ID
-	GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResponse, error)
-
-	// GetEmailMetadata Read selected email metadata for one immutable version
-	GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResult, error)
-
-	// EnsureEmailMetadata Ensure email metadata for one immutable version
-	EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnsureEmailMetadataResponse, error)
-
-	// GetEmailMetadataGeneration Read an immutable email generation attached to one version
-	GetEmailMetadataGeneration(ctx context.Context, options *GetEmailMetadataGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataGenerationResponse, error)
-
-	// GetEmailPart Stream one verified immutable email part artifact
-	GetEmailPart(ctx context.Context, options *GetEmailPartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailPartResponse, error)
-
-	// ListWatchedInboxes List effective watched-inbox configuration and runner status
-	ListWatchedInboxes(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListWatchedInboxesResponse, error)
-
-	// CreateWorkspaceQuery Create an exact bounded query snapshot
-	CreateWorkspaceQuery(ctx context.Context, options *CreateWorkspaceQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateWorkspaceQueryResponse, error)
-
-	// ReadWorkspaceQueryPage Read one exact snapshot page
-	ReadWorkspaceQueryPage(ctx context.Context, options *ReadWorkspaceQueryPageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadWorkspaceQueryPageResponse, error)
-
-	Health(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HealthResponse, error)
 }
 
 func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResponse, error) {
@@ -518,10 +86,9 @@ func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -558,10 +125,9 @@ func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequ
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -600,10 +166,9 @@ func (c *Client) PrepareWebDownload(ctx context.Context, options *PrepareWebDown
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -640,10 +205,9 @@ func (c *Client) RevokeWebSession(ctx context.Context, reqEditors ...runtime.Req
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -686,10 +250,9 @@ func (c *Client) CreateWebSession(ctx context.Context, reqEditors ...runtime.Req
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -734,28 +297,9 @@ func (c *Client) EnableAudit(ctx context.Context, options *EnableAuditRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(EnableAuditErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "EnableAuditErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[EnableAuditErrorResponse](resp, "EnableAuditErrorResponse")
+
 		}
 	}
 
@@ -807,28 +351,9 @@ func (c *Client) AuditNodeHistory(ctx context.Context, options *AuditNodeHistory
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(AuditNodeHistoryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "AuditNodeHistoryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[AuditNodeHistoryErrorResponse](resp, "AuditNodeHistoryErrorResponse")
+
 		}
 	}
 
@@ -873,28 +398,9 @@ func (c *Client) PreviewAuditEnrollment(ctx context.Context, options *PreviewAud
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewAuditEnrollmentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewAuditEnrollmentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewAuditEnrollmentErrorResponse](resp, "PreviewAuditEnrollmentErrorResponse")
+
 		}
 	}
 
@@ -944,28 +450,9 @@ func (c *Client) AuditScopeHistory(ctx context.Context, options *AuditScopeHisto
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(AuditScopeHistoryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "AuditScopeHistoryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[AuditScopeHistoryErrorResponse](resp, "AuditScopeHistoryErrorResponse")
+
 		}
 	}
 
@@ -1015,28 +502,9 @@ func (c *Client) AuditStatus(ctx context.Context, options *AuditStatusRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(AuditStatusErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "AuditStatusErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[AuditStatusErrorResponse](resp, "AuditStatusErrorResponse")
+
 		}
 	}
 
@@ -1081,28 +549,9 @@ func (c *Client) VerifyAudit(ctx context.Context, options *VerifyAuditRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(VerifyAuditErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "VerifyAuditErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[VerifyAuditErrorResponse](resp, "VerifyAuditErrorResponse")
+
 		}
 	}
 
@@ -1147,28 +596,9 @@ func (c *Client) InitBackupRepository(ctx context.Context, options *InitBackupRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(InitBackupRepositoryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "InitBackupRepositoryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[InitBackupRepositoryErrorResponse](resp, "InitBackupRepositoryErrorResponse")
+
 		}
 	}
 
@@ -1213,28 +643,9 @@ func (c *Client) RestoreBackupSnapshot(ctx context.Context, options *RestoreBack
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RestoreBackupSnapshotErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RestoreBackupSnapshotErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RestoreBackupSnapshotErrorResponse](resp, "RestoreBackupSnapshotErrorResponse")
+
 		}
 	}
 
@@ -1273,28 +684,9 @@ func (c *Client) StreamBackupSnapshotRestore(ctx context.Context, options *Strea
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StreamBackupSnapshotRestoreErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StreamBackupSnapshotRestoreErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StreamBackupSnapshotRestoreErrorResponse](resp, "StreamBackupSnapshotRestoreErrorResponse")
+
 		}
 	}
 
@@ -1343,28 +735,9 @@ func (c *Client) ListBackupSnapshots(ctx context.Context, options *ListBackupSna
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListBackupSnapshotsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListBackupSnapshotsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListBackupSnapshotsErrorResponse](resp, "ListBackupSnapshotsErrorResponse")
+
 		}
 	}
 
@@ -1409,28 +782,9 @@ func (c *Client) CreateBackupSnapshot(ctx context.Context, options *CreateBackup
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CreateBackupSnapshotErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreateBackupSnapshotErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CreateBackupSnapshotErrorResponse](resp, "CreateBackupSnapshotErrorResponse")
+
 		}
 	}
 
@@ -1469,28 +823,9 @@ func (c *Client) StreamBackupSnapshotCreation(ctx context.Context, options *Stre
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StreamBackupSnapshotCreationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StreamBackupSnapshotCreationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StreamBackupSnapshotCreationErrorResponse](resp, "StreamBackupSnapshotCreationErrorResponse")
+
 		}
 	}
 
@@ -1535,28 +870,9 @@ func (c *Client) VerifyBackupRepository(ctx context.Context, options *VerifyBack
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(VerifyBackupRepositoryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "VerifyBackupRepositoryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[VerifyBackupRepositoryErrorResponse](resp, "VerifyBackupRepositoryErrorResponse")
+
 		}
 	}
 
@@ -1595,28 +911,9 @@ func (c *Client) StreamBackupRepositoryVerification(ctx context.Context, options
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StreamBackupRepositoryVerificationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StreamBackupRepositoryVerificationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StreamBackupRepositoryVerificationErrorResponse](resp, "StreamBackupRepositoryVerificationErrorResponse")
+
 		}
 	}
 
@@ -1661,28 +958,9 @@ func (c *Client) BatchMove(ctx context.Context, options *BatchMoveRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(BatchMoveErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "BatchMoveErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[BatchMoveErrorResponse](resp, "BatchMoveErrorResponse")
+
 		}
 	}
 
@@ -1727,28 +1005,9 @@ func (c *Client) ChangeBatchTags(ctx context.Context, options *ChangeBatchTagsRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ChangeBatchTagsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ChangeBatchTagsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ChangeBatchTagsErrorResponse](resp, "ChangeBatchTagsErrorResponse")
+
 		}
 	}
 
@@ -1793,28 +1052,9 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewBatchTagsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewBatchTagsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewBatchTagsErrorResponse](resp, "PreviewBatchTagsErrorResponse")
+
 		}
 	}
 
@@ -1864,28 +1104,9 @@ func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListCollectionsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListCollectionsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListCollectionsErrorResponse](resp, "ListCollectionsErrorResponse")
+
 		}
 	}
 
@@ -1929,28 +1150,9 @@ func (c *Client) GetCollection(ctx context.Context, options *GetCollectionReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetCollectionErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetCollectionErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetCollectionErrorResponse](resp, "GetCollectionErrorResponse")
+
 		}
 	}
 
@@ -1994,28 +1196,9 @@ func (c *Client) GetCollectionLabel(ctx context.Context, options *GetCollectionL
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetCollectionLabelErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetCollectionLabelErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetCollectionLabelErrorResponse](resp, "GetCollectionLabelErrorResponse")
+
 		}
 	}
 
@@ -2060,28 +1243,9 @@ func (c *Client) SetCollectionLabel(ctx context.Context, options *SetCollectionL
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(SetCollectionLabelErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "SetCollectionLabelErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[SetCollectionLabelErrorResponse](resp, "SetCollectionLabelErrorResponse")
+
 		}
 	}
 
@@ -2131,28 +1295,9 @@ func (c *Client) ListCollectionMembers(ctx context.Context, options *ListCollect
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListCollectionMembersErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListCollectionMembersErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListCollectionMembersErrorResponse](resp, "ListCollectionMembersErrorResponse")
+
 		}
 	}
 
@@ -2202,28 +1347,9 @@ func (c *Client) GetCollectionQuality(ctx context.Context, options *GetCollectio
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetCollectionQualityErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetCollectionQualityErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetCollectionQualityErrorResponse](resp, "GetCollectionQualityErrorResponse")
+
 		}
 	}
 
@@ -2274,28 +1400,9 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(LookupContentReferencesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "LookupContentReferencesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[LookupContentReferencesErrorResponse](resp, "LookupContentReferencesErrorResponse")
+
 		}
 	}
 
@@ -2345,28 +1452,9 @@ func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *Get
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetDocumentProcessingCoverageErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetDocumentProcessingCoverageErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetDocumentProcessingCoverageErrorResponse](resp, "GetDocumentProcessingCoverageErrorResponse")
+
 		}
 	}
 
@@ -2405,28 +1493,9 @@ func (c *Client) RunDerivativePurge(ctx context.Context, options *RunDerivativeP
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RunDerivativePurgeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RunDerivativePurgeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RunDerivativePurgeErrorResponse](resp, "RunDerivativePurgeErrorResponse")
+
 		}
 	}
 
@@ -2471,28 +1540,9 @@ func (c *Client) PlanDerivativePurge(ctx context.Context, options *PlanDerivativ
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PlanDerivativePurgeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PlanDerivativePurgeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PlanDerivativePurgeErrorResponse](resp, "PlanDerivativePurgeErrorResponse")
+
 		}
 	}
 
@@ -2545,28 +1595,9 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListDocumentsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListDocumentsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListDocumentsErrorResponse](resp, "ListDocumentsErrorResponse")
+
 		}
 	}
 
@@ -2611,28 +1642,9 @@ func (c *Client) ResolveDocumentSummaries(ctx context.Context, options *ResolveD
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ResolveDocumentSummariesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ResolveDocumentSummariesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ResolveDocumentSummariesErrorResponse](resp, "ResolveDocumentSummariesErrorResponse")
+
 		}
 	}
 
@@ -2682,28 +1694,9 @@ func (c *Client) ListDuplicateContent(ctx context.Context, options *ListDuplicat
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListDuplicateContentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListDuplicateContentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListDuplicateContentErrorResponse](resp, "ListDuplicateContentErrorResponse")
+
 		}
 	}
 
@@ -2748,28 +1741,9 @@ func (c *Client) RequestEmailDocumentProcessing(ctx context.Context, options *Re
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RequestEmailDocumentProcessingErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RequestEmailDocumentProcessingErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RequestEmailDocumentProcessingErrorResponse](resp, "RequestEmailDocumentProcessingErrorResponse")
+
 		}
 	}
 
@@ -2814,28 +1788,9 @@ func (c *Client) PublishEmailDocuments(ctx context.Context, options *PublishEmai
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PublishEmailDocumentsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PublishEmailDocumentsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PublishEmailDocumentsErrorResponse](resp, "PublishEmailDocumentsErrorResponse")
+
 		}
 	}
 
@@ -2874,28 +1829,9 @@ func (c *Client) RemoveEmailDocumentPublication(ctx context.Context, options *Re
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RemoveEmailDocumentPublicationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RemoveEmailDocumentPublicationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RemoveEmailDocumentPublicationErrorResponse](resp, "RemoveEmailDocumentPublicationErrorResponse")
+
 		}
 	}
 
@@ -2939,28 +1875,9 @@ func (c *Client) GetEmailDocumentPublication(ctx context.Context, options *GetEm
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetEmailDocumentPublicationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetEmailDocumentPublicationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetEmailDocumentPublicationErrorResponse](resp, "GetEmailDocumentPublicationErrorResponse")
+
 		}
 	}
 
@@ -3004,28 +1921,9 @@ func (c *Client) ListEmailDocumentRelations(ctx context.Context, options *ListEm
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListEmailDocumentRelationsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListEmailDocumentRelationsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListEmailDocumentRelationsErrorResponse](resp, "ListEmailDocumentRelationsErrorResponse")
+
 		}
 	}
 
@@ -3076,28 +1974,9 @@ func (c *Client) ReadFormatCapabilities(ctx context.Context, options *ReadFormat
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReadFormatCapabilitiesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReadFormatCapabilitiesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReadFormatCapabilitiesErrorResponse](resp, "ReadFormatCapabilitiesErrorResponse")
+
 		}
 	}
 
@@ -3142,28 +2021,9 @@ func (c *Client) Gc(ctx context.Context, options *GcRequestOptions, reqEditors .
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GcErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GcErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GcErrorResponse](resp, "GcErrorResponse")
+
 		}
 	}
 
@@ -3206,28 +2066,9 @@ func (c *Client) VaultInfo(ctx context.Context, reqEditors ...runtime.RequestEdi
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(VaultInfoErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "VaultInfoErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[VaultInfoErrorResponse](resp, "VaultInfoErrorResponse")
+
 		}
 	}
 
@@ -3272,28 +2113,9 @@ func (c *Client) Ingest(ctx context.Context, options *IngestRequestOptions, reqE
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(IngestErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "IngestErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[IngestErrorResponse](resp, "IngestErrorResponse")
+
 		}
 	}
 
@@ -3338,28 +2160,9 @@ func (c *Client) PreflightIngest(ctx context.Context, options *PreflightIngestRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreflightIngestErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreflightIngestErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreflightIngestErrorResponse](resp, "PreflightIngestErrorResponse")
+
 		}
 	}
 
@@ -3398,28 +2201,9 @@ func (c *Client) StreamIngest(ctx context.Context, options *StreamIngestRequestO
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StreamIngestErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StreamIngestErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StreamIngestErrorResponse](resp, "StreamIngestErrorResponse")
+
 		}
 	}
 
@@ -3462,28 +2246,9 @@ func (c *Client) ListJobs(ctx context.Context, reqEditors ...runtime.RequestEdit
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListJobsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListJobsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListJobsErrorResponse](resp, "ListJobsErrorResponse")
+
 		}
 	}
 
@@ -3527,28 +2292,9 @@ func (c *Client) GetStorageOperation(ctx context.Context, options *GetStorageOpe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetStorageOperationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetStorageOperationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetStorageOperationErrorResponse](resp, "GetStorageOperationErrorResponse")
+
 		}
 	}
 
@@ -3592,28 +2338,9 @@ func (c *Client) CancelStorageOperation(ctx context.Context, options *CancelStor
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CancelStorageOperationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CancelStorageOperationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CancelStorageOperationErrorResponse](resp, "CancelStorageOperationErrorResponse")
+
 		}
 	}
 
@@ -3658,28 +2385,9 @@ func (c *Client) PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcq
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PlanMediaAcquisitionErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PlanMediaAcquisitionErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PlanMediaAcquisitionErrorResponse](resp, "PlanMediaAcquisitionErrorResponse")
+
 		}
 	}
 
@@ -3724,28 +2432,9 @@ func (c *Client) GrantMediaAcquisitionConsent(ctx context.Context, options *Gran
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GrantMediaAcquisitionConsentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GrantMediaAcquisitionConsentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GrantMediaAcquisitionConsentErrorResponse](resp, "GrantMediaAcquisitionConsentErrorResponse")
+
 		}
 	}
 
@@ -3790,28 +2479,9 @@ func (c *Client) RevokeMediaAcquisitionConsent(ctx context.Context, options *Rev
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RevokeMediaAcquisitionConsentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RevokeMediaAcquisitionConsentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RevokeMediaAcquisitionConsentErrorResponse](resp, "RevokeMediaAcquisitionConsentErrorResponse")
+
 		}
 	}
 
@@ -3862,28 +2532,9 @@ func (c *Client) ListMediaOccurrences(ctx context.Context, options *ListMediaOcc
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListMediaOccurrencesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListMediaOccurrencesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListMediaOccurrencesErrorResponse](resp, "ListMediaOccurrencesErrorResponse")
+
 		}
 	}
 
@@ -3928,28 +2579,9 @@ func (c *Client) DeclareMediaOccurrence(ctx context.Context, options *DeclareMed
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(DeclareMediaOccurrenceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "DeclareMediaOccurrenceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[DeclareMediaOccurrenceErrorResponse](resp, "DeclareMediaOccurrenceErrorResponse")
+
 		}
 	}
 
@@ -3994,28 +2626,9 @@ func (c *Client) RevokeMediaOccurrence(ctx context.Context, options *RevokeMedia
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RevokeMediaOccurrenceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RevokeMediaOccurrenceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RevokeMediaOccurrenceErrorResponse](resp, "RevokeMediaOccurrenceErrorResponse")
+
 		}
 	}
 
@@ -4058,28 +2671,9 @@ func (c *Client) ListMediaOrigins(ctx context.Context, reqEditors ...runtime.Req
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListMediaOriginsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListMediaOriginsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListMediaOriginsErrorResponse](resp, "ListMediaOriginsErrorResponse")
+
 		}
 	}
 
@@ -4129,28 +2723,9 @@ func (c *Client) ListMediaSources(ctx context.Context, options *ListMediaSources
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListMediaSourcesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListMediaSourcesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListMediaSourcesErrorResponse](resp, "ListMediaSourcesErrorResponse")
+
 		}
 	}
 
@@ -4195,10 +2770,9 @@ func (c *Client) SubmitMediaSource(ctx context.Context, options *SubmitMediaSour
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -4242,28 +2816,9 @@ func (c *Client) GetMediaSource(ctx context.Context, options *GetMediaSourceRequ
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetMediaSourceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetMediaSourceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetMediaSourceErrorResponse](resp, "GetMediaSourceErrorResponse")
+
 		}
 	}
 
@@ -4318,10 +2873,9 @@ func (c *Client) ImportMediaArtifact(ctx context.Context, options *ImportMediaAr
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -4366,28 +2920,9 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RetryMediaSourceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RetryMediaSourceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RetryMediaSourceErrorResponse](resp, "RetryMediaSourceErrorResponse")
+
 		}
 	}
 
@@ -4432,28 +2967,9 @@ func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptio
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CreateNodeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreateNodeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CreateNodeErrorResponse](resp, "CreateNodeErrorResponse")
+
 		}
 	}
 
@@ -4497,28 +3013,9 @@ func (c *Client) GetNode(ctx context.Context, options *GetNodeRequestOptions, re
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetNodeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetNodeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetNodeErrorResponse](resp, "GetNodeErrorResponse")
+
 		}
 	}
 
@@ -4563,28 +3060,9 @@ func (c *Client) MoveNode(ctx context.Context, options *MoveNodeRequestOptions, 
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(MoveNodeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "MoveNodeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[MoveNodeErrorResponse](resp, "MoveNodeErrorResponse")
+
 		}
 	}
 
@@ -4634,28 +3112,9 @@ func (c *Client) ListChildren(ctx context.Context, options *ListChildrenRequestO
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListChildrenErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListChildrenErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListChildrenErrorResponse](resp, "ListChildrenErrorResponse")
+
 		}
 	}
 
@@ -4699,28 +3158,9 @@ func (c *Client) GetNodeContent(ctx context.Context, options *GetNodeContentRequ
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetNodeContentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetNodeContentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetNodeContentErrorResponse](resp, "GetNodeContentErrorResponse")
+
 		}
 	}
 
@@ -4765,28 +3205,9 @@ func (c *Client) ReplaceNodeContent(ctx context.Context, options *ReplaceNodeCon
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReplaceNodeContentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReplaceNodeContentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReplaceNodeContentErrorResponse](resp, "ReplaceNodeContentErrorResponse")
+
 		}
 	}
 
@@ -4836,28 +3257,9 @@ func (c *Client) ListNodeProvenance(ctx context.Context, options *ListNodeProven
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListNodeProvenanceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListNodeProvenanceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListNodeProvenanceErrorResponse](resp, "ListNodeProvenanceErrorResponse")
+
 		}
 	}
 
@@ -4902,28 +3304,9 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(AppendNodeProvenanceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "AppendNodeProvenanceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[AppendNodeProvenanceErrorResponse](resp, "AppendNodeProvenanceErrorResponse")
+
 		}
 	}
 
@@ -4967,28 +3350,9 @@ func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RestoreNodeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RestoreNodeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RestoreNodeErrorResponse](resp, "RestoreNodeErrorResponse")
+
 		}
 	}
 
@@ -5033,28 +3397,9 @@ func (c *Client) RevertNodeContent(ctx context.Context, options *RevertNodeConte
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RevertNodeContentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RevertNodeContentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RevertNodeContentErrorResponse](resp, "RevertNodeContentErrorResponse")
+
 		}
 	}
 
@@ -5104,28 +3449,9 @@ func (c *Client) ListNodeTags(ctx context.Context, options *ListNodeTagsRequestO
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListNodeTagsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListNodeTagsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListNodeTagsErrorResponse](resp, "ListNodeTagsErrorResponse")
+
 		}
 	}
 
@@ -5169,28 +3495,9 @@ func (c *Client) UnassignTag(ctx context.Context, options *UnassignTagRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(UnassignTagErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "UnassignTagErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[UnassignTagErrorResponse](resp, "UnassignTagErrorResponse")
+
 		}
 	}
 
@@ -5234,28 +3541,9 @@ func (c *Client) AssignTag(ctx context.Context, options *AssignTagRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(AssignTagErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "AssignTagErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[AssignTagErrorResponse](resp, "AssignTagErrorResponse")
+
 		}
 	}
 
@@ -5299,28 +3587,9 @@ func (c *Client) TrashNode(ctx context.Context, options *TrashNodeRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(TrashNodeErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "TrashNodeErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[TrashNodeErrorResponse](resp, "TrashNodeErrorResponse")
+
 		}
 	}
 
@@ -5364,28 +3633,9 @@ func (c *Client) VerifyNodeContent(ctx context.Context, options *VerifyNodeConte
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(VerifyNodeContentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "VerifyNodeContentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[VerifyNodeContentErrorResponse](resp, "VerifyNodeContentErrorResponse")
+
 		}
 	}
 
@@ -5435,28 +3685,9 @@ func (c *Client) ListContentVersions(ctx context.Context, options *ListContentVe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListContentVersionsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListContentVersionsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListContentVersionsErrorResponse](resp, "ListContentVersionsErrorResponse")
+
 		}
 	}
 
@@ -5501,28 +3732,9 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PruneNodeContentVersionsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PruneNodeContentVersionsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PruneNodeContentVersionsErrorResponse](resp, "PruneNodeContentVersionsErrorResponse")
+
 		}
 	}
 
@@ -5571,28 +3783,9 @@ func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ResolvePathErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ResolvePathErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ResolvePathErrorResponse](resp, "ResolvePathErrorResponse")
+
 		}
 	}
 
@@ -5637,28 +3830,9 @@ func (c *Client) MkdirPath(ctx context.Context, options *MkdirPathRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(MkdirPathErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "MkdirPathErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[MkdirPathErrorResponse](resp, "MkdirPathErrorResponse")
+
 		}
 	}
 
@@ -5703,28 +3877,9 @@ func (c *Client) MovePath(ctx context.Context, options *MovePathRequestOptions, 
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(MovePathErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "MovePathErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[MovePathErrorResponse](resp, "MovePathErrorResponse")
+
 		}
 	}
 
@@ -5769,28 +3924,9 @@ func (c *Client) UnassignTagPath(ctx context.Context, options *UnassignTagPathRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(UnassignTagPathErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "UnassignTagPathErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[UnassignTagPathErrorResponse](resp, "UnassignTagPathErrorResponse")
+
 		}
 	}
 
@@ -5835,28 +3971,9 @@ func (c *Client) AssignTagPath(ctx context.Context, options *AssignTagPathReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(AssignTagPathErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "AssignTagPathErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[AssignTagPathErrorResponse](resp, "AssignTagPathErrorResponse")
+
 		}
 	}
 
@@ -5901,28 +4018,9 @@ func (c *Client) TrashPath(ctx context.Context, options *TrashPathRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(TrashPathErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "TrashPathErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[TrashPathErrorResponse](resp, "TrashPathErrorResponse")
+
 		}
 	}
 
@@ -5967,28 +4065,9 @@ func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *Gr
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GrantDocumentProcessingConsentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GrantDocumentProcessingConsentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GrantDocumentProcessingConsentErrorResponse](resp, "GrantDocumentProcessingConsentErrorResponse")
+
 		}
 	}
 
@@ -6031,28 +4110,9 @@ func (c *Client) RevokeDocumentProcessingConsent(ctx context.Context, reqEditors
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RevokeDocumentProcessingConsentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RevokeDocumentProcessingConsentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RevokeDocumentProcessingConsentErrorResponse](resp, "RevokeDocumentProcessingConsentErrorResponse")
+
 		}
 	}
 
@@ -6097,28 +4157,9 @@ func (c *Client) GrantProcessingConsent(ctx context.Context, options *GrantProce
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GrantProcessingConsentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GrantProcessingConsentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GrantProcessingConsentErrorResponse](resp, "GrantProcessingConsentErrorResponse")
+
 		}
 	}
 
@@ -6163,28 +4204,9 @@ func (c *Client) RevokeProcessingConsent(ctx context.Context, options *RevokePro
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RevokeProcessingConsentErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RevokeProcessingConsentErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RevokeProcessingConsentErrorResponse](resp, "RevokeProcessingConsentErrorResponse")
+
 		}
 	}
 
@@ -6223,28 +4245,9 @@ func (c *Client) StartDocumentProcessing(ctx context.Context, options *StartDocu
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StartDocumentProcessingErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StartDocumentProcessingErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StartDocumentProcessingErrorResponse](resp, "StartDocumentProcessingErrorResponse")
+
 		}
 	}
 
@@ -6288,28 +4291,9 @@ func (c *Client) GetDocumentProcessingJob(ctx context.Context, options *GetDocum
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetDocumentProcessingJobErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetDocumentProcessingJobErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetDocumentProcessingJobErrorResponse](resp, "GetDocumentProcessingJobErrorResponse")
+
 		}
 	}
 
@@ -6354,28 +4338,9 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PlanDocumentProcessingErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PlanDocumentProcessingErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PlanDocumentProcessingErrorResponse](resp, "PlanDocumentProcessingErrorResponse")
+
 		}
 	}
 
@@ -6418,28 +4383,9 @@ func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors 
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListDocumentProcessingProfilesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListDocumentProcessingProfilesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListDocumentProcessingProfilesErrorResponse](resp, "ListDocumentProcessingProfilesErrorResponse")
+
 		}
 	}
 
@@ -6484,28 +4430,9 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ResolveDocumentSourceFenceErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ResolveDocumentSourceFenceErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ResolveDocumentSourceFenceErrorResponse](resp, "ResolveDocumentSourceFenceErrorResponse")
+
 		}
 	}
 
@@ -6550,28 +4477,9 @@ func (c *Client) ParseQuery(ctx context.Context, options *ParseQueryRequestOptio
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ParseQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ParseQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ParseQueryErrorResponse](resp, "ParseQueryErrorResponse")
+
 		}
 	}
 
@@ -6610,28 +4518,9 @@ func (c *Client) ReadDocumentRenditionBySelector(ctx context.Context, options *R
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReadDocumentRenditionBySelectorErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReadDocumentRenditionBySelectorErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReadDocumentRenditionBySelectorErrorResponse](resp, "ReadDocumentRenditionBySelectorErrorResponse")
+
 		}
 	}
 
@@ -6676,28 +4565,9 @@ func (c *Client) ReadDocumentRenditionWindow(ctx context.Context, options *ReadD
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReadDocumentRenditionWindowErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReadDocumentRenditionWindowErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReadDocumentRenditionWindowErrorResponse](resp, "ReadDocumentRenditionWindowErrorResponse")
+
 		}
 	}
 
@@ -6746,10 +4616,9 @@ func (c *Client) GetDocumentRendition(ctx context.Context, options *GetDocumentR
 			return &GetDocumentRenditionResult{Status206: target}, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -6800,28 +4669,9 @@ func (c *Client) ListSavedQueries(ctx context.Context, options *ListSavedQueries
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListSavedQueriesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListSavedQueriesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListSavedQueriesErrorResponse](resp, "ListSavedQueriesErrorResponse")
+
 		}
 	}
 
@@ -6866,28 +4716,9 @@ func (c *Client) CreateSavedQuery(ctx context.Context, options *CreateSavedQuery
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CreateSavedQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreateSavedQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CreateSavedQueryErrorResponse](resp, "CreateSavedQueryErrorResponse")
+
 		}
 	}
 
@@ -6931,28 +4762,9 @@ func (c *Client) DeleteSavedQuery(ctx context.Context, options *DeleteSavedQuery
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(DeleteSavedQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "DeleteSavedQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[DeleteSavedQueryErrorResponse](resp, "DeleteSavedQueryErrorResponse")
+
 		}
 	}
 
@@ -6996,28 +4808,9 @@ func (c *Client) GetSavedQuery(ctx context.Context, options *GetSavedQueryReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetSavedQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetSavedQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetSavedQueryErrorResponse](resp, "GetSavedQueryErrorResponse")
+
 		}
 	}
 
@@ -7062,28 +4855,9 @@ func (c *Client) UpdateSavedQuery(ctx context.Context, options *UpdateSavedQuery
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(UpdateSavedQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "UpdateSavedQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[UpdateSavedQueryErrorResponse](resp, "UpdateSavedQueryErrorResponse")
+
 		}
 	}
 
@@ -7128,28 +4902,9 @@ func (c *Client) RunSavedQuery(ctx context.Context, options *RunSavedQueryReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RunSavedQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RunSavedQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RunSavedQueryErrorResponse](resp, "RunSavedQueryErrorResponse")
+
 		}
 	}
 
@@ -7204,28 +4959,9 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(SearchErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "SearchErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[SearchErrorResponse](resp, "SearchErrorResponse")
+
 		}
 	}
 
@@ -7270,28 +5006,9 @@ func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(SearchDocumentsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "SearchDocumentsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[SearchDocumentsErrorResponse](resp, "SearchDocumentsErrorResponse")
+
 		}
 	}
 
@@ -7336,28 +5053,9 @@ func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDo
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ValidateDocumentSearchErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ValidateDocumentSearchErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ValidateDocumentSearchErrorResponse](resp, "ValidateDocumentSearchErrorResponse")
+
 		}
 	}
 
@@ -7406,28 +5104,9 @@ func (c *Client) StorageStatus(ctx context.Context, options *StorageStatusReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StorageStatusErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StorageStatusErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StorageStatusErrorResponse](resp, "StorageStatusErrorResponse")
+
 		}
 	}
 
@@ -7472,28 +5151,9 @@ func (c *Client) StartStorageEvacuation(ctx context.Context, options *StartStora
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StartStorageEvacuationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StartStorageEvacuationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StartStorageEvacuationErrorResponse](resp, "StartStorageEvacuationErrorResponse")
+
 		}
 	}
 
@@ -7538,28 +5198,9 @@ func (c *Client) PreviewStorageEvacuation(ctx context.Context, options *PreviewS
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewStorageEvacuationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewStorageEvacuationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewStorageEvacuationErrorResponse](resp, "PreviewStorageEvacuationErrorResponse")
+
 		}
 	}
 
@@ -7604,28 +5245,9 @@ func (c *Client) StoragePack(ctx context.Context, options *StoragePackRequestOpt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StoragePackErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StoragePackErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StoragePackErrorResponse](resp, "StoragePackErrorResponse")
+
 		}
 	}
 
@@ -7670,28 +5292,9 @@ func (c *Client) StartStoragePlacement(ctx context.Context, options *StartStorag
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StartStoragePlacementErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StartStoragePlacementErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StartStoragePlacementErrorResponse](resp, "StartStoragePlacementErrorResponse")
+
 		}
 	}
 
@@ -7736,28 +5339,9 @@ func (c *Client) PreviewStoragePlacement(ctx context.Context, options *PreviewSt
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewStoragePlacementErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewStoragePlacementErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewStoragePlacementErrorResponse](resp, "PreviewStoragePlacementErrorResponse")
+
 		}
 	}
 
@@ -7802,28 +5386,9 @@ func (c *Client) StorageRepack(ctx context.Context, options *StorageRepackReques
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StorageRepackErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StorageRepackErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StorageRepackErrorResponse](resp, "StorageRepackErrorResponse")
+
 		}
 	}
 
@@ -7868,28 +5433,9 @@ func (c *Client) StartStorageRepair(ctx context.Context, options *StartStorageRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StartStorageRepairErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StartStorageRepairErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StartStorageRepairErrorResponse](resp, "StartStorageRepairErrorResponse")
+
 		}
 	}
 
@@ -7934,28 +5480,9 @@ func (c *Client) PreviewStorageRepair(ctx context.Context, options *PreviewStora
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewStorageRepairErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewStorageRepairErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewStorageRepairErrorResponse](resp, "PreviewStorageRepairErrorResponse")
+
 		}
 	}
 
@@ -8000,28 +5527,9 @@ func (c *Client) StartStorageSalvage(ctx context.Context, options *StartStorageS
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(StartStorageSalvageErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "StartStorageSalvageErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[StartStorageSalvageErrorResponse](resp, "StartStorageSalvageErrorResponse")
+
 		}
 	}
 
@@ -8066,28 +5574,9 @@ func (c *Client) PreviewStorageSalvage(ctx context.Context, options *PreviewStor
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewStorageSalvageErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewStorageSalvageErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewStorageSalvageErrorResponse](resp, "PreviewStorageSalvageErrorResponse")
+
 		}
 	}
 
@@ -8136,28 +5625,9 @@ func (c *Client) ListBlobStores(ctx context.Context, options *ListBlobStoresRequ
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListBlobStoresErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListBlobStoresErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListBlobStoresErrorResponse](resp, "ListBlobStoresErrorResponse")
+
 		}
 	}
 
@@ -8202,28 +5672,9 @@ func (c *Client) RegisterBlobStore(ctx context.Context, options *RegisterBlobSto
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RegisterBlobStoreErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RegisterBlobStoreErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RegisterBlobStoreErrorResponse](resp, "RegisterBlobStoreErrorResponse")
+
 		}
 	}
 
@@ -8268,28 +5719,9 @@ func (c *Client) PreviewBlobStoreRegistration(ctx context.Context, options *Prev
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(PreviewBlobStoreRegistrationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "PreviewBlobStoreRegistrationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[PreviewBlobStoreRegistrationErrorResponse](resp, "PreviewBlobStoreRegistrationErrorResponse")
+
 		}
 	}
 
@@ -8327,28 +5759,9 @@ func (c *Client) UnregisterBlobStore(ctx context.Context, options *UnregisterBlo
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(UnregisterBlobStoreErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "UnregisterBlobStoreErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[UnregisterBlobStoreErrorResponse](resp, "UnregisterBlobStoreErrorResponse")
+
 		}
 	}
 
@@ -8392,28 +5805,9 @@ func (c *Client) DetachBlobStore(ctx context.Context, options *DetachBlobStoreRe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(DetachBlobStoreErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "DetachBlobStoreErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[DetachBlobStoreErrorResponse](resp, "DetachBlobStoreErrorResponse")
+
 		}
 	}
 
@@ -8463,28 +5857,9 @@ func (c *Client) ListTags(ctx context.Context, options *ListTagsRequestOptions, 
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListTagsErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListTagsErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListTagsErrorResponse](resp, "ListTagsErrorResponse")
+
 		}
 	}
 
@@ -8529,28 +5904,9 @@ func (c *Client) CreateTag(ctx context.Context, options *CreateTagRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CreateTagErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreateTagErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CreateTagErrorResponse](resp, "CreateTagErrorResponse")
+
 		}
 	}
 
@@ -8599,28 +5955,9 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ResolveTagByNameErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ResolveTagByNameErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ResolveTagByNameErrorResponse](resp, "ResolveTagByNameErrorResponse")
+
 		}
 	}
 
@@ -8664,28 +6001,9 @@ func (c *Client) DeleteTag(ctx context.Context, options *DeleteTagRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(DeleteTagErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "DeleteTagErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[DeleteTagErrorResponse](resp, "DeleteTagErrorResponse")
+
 		}
 	}
 
@@ -8729,28 +6047,9 @@ func (c *Client) GetTag(ctx context.Context, options *GetTagRequestOptions, reqE
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetTagErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetTagErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetTagErrorResponse](resp, "GetTagErrorResponse")
+
 		}
 	}
 
@@ -8795,28 +6094,9 @@ func (c *Client) RenameTag(ctx context.Context, options *RenameTagRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(RenameTagErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "RenameTagErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[RenameTagErrorResponse](resp, "RenameTagErrorResponse")
+
 		}
 	}
 
@@ -8867,28 +6147,9 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListTagNodesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListTagNodesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListTagNodesErrorResponse](resp, "ListTagNodesErrorResponse")
+
 		}
 	}
 
@@ -8931,28 +6192,9 @@ func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReadTimelineCoverageErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReadTimelineCoverageErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReadTimelineCoverageErrorResponse](resp, "ReadTimelineCoverageErrorResponse")
+
 		}
 	}
 
@@ -8997,28 +6239,9 @@ func (c *Client) CreateTimelineRebuild(ctx context.Context, options *CreateTimel
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CreateTimelineRebuildErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreateTimelineRebuildErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CreateTimelineRebuildErrorResponse](resp, "CreateTimelineRebuildErrorResponse")
+
 		}
 	}
 
@@ -9062,28 +6285,9 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReadTimelineRebuildErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReadTimelineRebuildErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReadTimelineRebuildErrorResponse](resp, "ReadTimelineRebuildErrorResponse")
+
 		}
 	}
 
@@ -9133,28 +6337,9 @@ func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListTrashErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListTrashErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListTrashErrorResponse](resp, "ListTrashErrorResponse")
+
 		}
 	}
 
@@ -9199,28 +6384,9 @@ func (c *Client) EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptio
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(EmptyTrashErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "EmptyTrashErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[EmptyTrashErrorResponse](resp, "EmptyTrashErrorResponse")
+
 		}
 	}
 
@@ -9283,28 +6449,9 @@ func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptio
 			return &UploadFileResult{Status201: target}, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(UploadFileErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "UploadFileErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[UploadFileErrorResponse](resp, "UploadFileErrorResponse")
+
 		}
 	}
 
@@ -9347,28 +6494,9 @@ func (c *Client) Verify(ctx context.Context, reqEditors ...runtime.RequestEditor
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(VerifyErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "VerifyErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[VerifyErrorResponse](resp, "VerifyErrorResponse")
+
 		}
 	}
 
@@ -9412,28 +6540,9 @@ func (c *Client) GetContentVersion(ctx context.Context, options *GetContentVersi
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetContentVersionErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetContentVersionErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetContentVersionErrorResponse](resp, "GetContentVersionErrorResponse")
+
 		}
 	}
 
@@ -9477,28 +6586,9 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetContentVersionBytesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetContentVersionBytesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetContentVersionBytesErrorResponse](resp, "GetContentVersionBytesErrorResponse")
+
 		}
 	}
 
@@ -9554,28 +6644,9 @@ func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadata
 			return &GetEmailMetadataResult{Status202: target}, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetEmailMetadataErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetEmailMetadataErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetEmailMetadataErrorResponse](resp, "GetEmailMetadataErrorResponse")
+
 		}
 	}
 
@@ -9620,28 +6691,9 @@ func (c *Client) EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMe
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(EnsureEmailMetadataErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "EnsureEmailMetadataErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[EnsureEmailMetadataErrorResponse](resp, "EnsureEmailMetadataErrorResponse")
+
 		}
 	}
 
@@ -9685,28 +6737,9 @@ func (c *Client) GetEmailMetadataGeneration(ctx context.Context, options *GetEma
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetEmailMetadataGenerationErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetEmailMetadataGenerationErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetEmailMetadataGenerationErrorResponse](resp, "GetEmailMetadataGenerationErrorResponse")
+
 		}
 	}
 
@@ -9750,28 +6783,9 @@ func (c *Client) GetEmailPart(ctx context.Context, options *GetEmailPartRequestO
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(GetEmailPartErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "GetEmailPartErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[GetEmailPartErrorResponse](resp, "GetEmailPartErrorResponse")
+
 		}
 	}
 
@@ -9814,28 +6828,9 @@ func (c *Client) ListWatchedInboxes(ctx context.Context, reqEditors ...runtime.R
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ListWatchedInboxesErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ListWatchedInboxesErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ListWatchedInboxesErrorResponse](resp, "ListWatchedInboxesErrorResponse")
+
 		}
 	}
 
@@ -9880,28 +6875,9 @@ func (c *Client) CreateWorkspaceQuery(ctx context.Context, options *CreateWorksp
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(CreateWorkspaceQueryErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "CreateWorkspaceQueryErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[CreateWorkspaceQueryErrorResponse](resp, "CreateWorkspaceQueryErrorResponse")
+
 		}
 	}
 
@@ -9946,28 +6922,9 @@ func (c *Client) ReadWorkspaceQueryPage(ctx context.Context, options *ReadWorksp
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			target := new(ReadWorkspaceQueryPageErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "ReadWorkspaceQueryPageErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, decodeAPIError[ReadWorkspaceQueryPageErrorResponse](resp, "ReadWorkspaceQueryPageErrorResponse")
+
 		}
 	}
 
@@ -10009,10 +6966,9 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 			return target, nil
 
 		default:
-			bodyBytes := resp.Content
-			_ = bodyBytes
-			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
-				runtime.WithStatusCode(resp.StatusCode))
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
 		}
 	}
 
@@ -10025,8 +6981,6 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 	}
 	return responseParser(ctx, resp)
 }
-
-var _ ClientInterface = (*Client)(nil)
 
 // GetDocumentRenditionResult contains the decoded body for the returned success status.
 type GetDocumentRenditionResult struct {
