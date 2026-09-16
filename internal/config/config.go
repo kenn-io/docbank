@@ -19,6 +19,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/storenamespace"
 )
@@ -628,6 +629,14 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 	}
 	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
 		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))
+	}
+	if profile.AdapterContract == DoclingASRAdapterContract {
+		if profile.MaxDocumentBytes > docling.MaxDocumentBytes {
+			return fmt.Errorf("%s max document bytes must be at most %d for Docling ASR", prefix, docling.MaxDocumentBytes)
+		}
+		if profile.MaxResponseBytes > docling.MaxResponseBytes {
+			return fmt.Errorf("%s max response bytes must be at most %d for Docling ASR", prefix, docling.MaxResponseBytes)
+		}
 	}
 	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
 		return fmt.Errorf("%s max units must be between 1 and 1000000", prefix)

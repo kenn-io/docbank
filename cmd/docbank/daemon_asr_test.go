@@ -634,7 +634,7 @@ func restoreDaemonASRMetadata(
 	var imported bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &imported))
 	for _, testCase := range cases {
-		for _, line := range bytes.Split(bytes.TrimSpace(imported.Bytes()), []byte{'\n'}) {
+		for line := range bytes.SplitSeq(bytes.TrimSpace(imported.Bytes()), []byte{'\n'}) {
 			var identity struct {
 				Type  string `json:"type"`
 				JobID string `json:"job_id"`
@@ -960,6 +960,7 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 }
 
 func daemonASRSourceAndPlan(t *testing.T, daemon *client.Client, filename string, content []byte) (api.MediaReceipt, api.ProcessingSelector, api.ProcessingPlan) {
+	t.Helper()
 	return daemonASRSourceAndPlanWith(t, daemon,
 		"00000000-0000-4000-8000-000000000671", filename, "audio/wav", content)
 }

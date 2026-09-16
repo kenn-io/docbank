@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -506,6 +507,42 @@ unknown_runtime_key = "synthetic"
 			cfg := validRenditionRuntimeConfig(t)
 			test.mutate(&cfg)
 			require.ErrorContains(t, cfg.Validate(), test.want)
+		})
+	}
+}
+
+func TestRenditionRuntimeRejectsDoclingProviderBounds(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		limit int64
+		set   func(*RenditionProfileConfig, int64)
+		field string
+	}{
+		{
+			name:  "max response bytes",
+			limit: docling.MaxResponseBytes,
+			set:   func(profile *RenditionProfileConfig, value int64) { profile.MaxResponseBytes = value },
+			field: "max response bytes",
+		},
+		{
+			name:  "max document bytes",
+			limit: docling.MaxDocumentBytes,
+			set:   func(profile *RenditionProfileConfig, value int64) { profile.MaxDocumentBytes = value },
+			field: "max document bytes",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validRenditionRuntimeConfig(t)
+			profile := cfg.RenditionProfiles["primary"]
+			test.set(&profile, test.limit)
+			cfg.RenditionProfiles["primary"] = profile
+			require.NoError(t, cfg.Validate())
+
+			test.set(&profile, test.limit+1)
+			cfg.RenditionProfiles["primary"] = profile
+			require.EqualError(t, cfg.Validate(), fmt.Sprintf(
+				"[rendition_profiles.primary] %s must be at most %d for Docling ASR",
+				test.field, test.limit))
 		})
 	}
 }

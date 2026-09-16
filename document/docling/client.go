@@ -34,8 +34,10 @@ const (
 	defaultMaxDocumentBytes = int64(64 << 20)
 	maxTimeout              = 24 * time.Hour
 	maxPollAttempts         = 10_000
-	maxResponseBytes        = int64(512 << 20)
-	maxDocumentBytes        = int64(1 << 30)
+	// MaxResponseBytes is the largest response body accepted by Docling clients.
+	MaxResponseBytes = int64(512 << 20)
+	// MaxDocumentBytes is the largest document upload accepted by Docling clients.
+	MaxDocumentBytes = int64(1 << 30)
 )
 
 var _ document.RenditionProvider = (*Client)(nil)
@@ -110,8 +112,8 @@ func newTransportClient(profile Profile, secrets SecretResolver, httpClient *htt
 		!providerutil.Bounded(&profile.TotalTimeout, defaultTotalTimeout, maxTimeout) ||
 		!providerutil.Bounded(&profile.PollInterval, defaultPollInterval, profile.TotalTimeout) ||
 		!providerutil.Bounded(&profile.MaxPollAttempts, defaultMaxPollAttempts, maxPollAttempts) ||
-		!providerutil.Bounded(&profile.MaxResponseBytes, defaultMaxResponseBytes, maxResponseBytes) ||
-		!providerutil.Bounded(&profile.MaxDocumentBytes, defaultMaxDocumentBytes, maxDocumentBytes) {
+		!providerutil.Bounded(&profile.MaxResponseBytes, defaultMaxResponseBytes, MaxResponseBytes) ||
+		!providerutil.Bounded(&profile.MaxDocumentBytes, defaultMaxDocumentBytes, MaxDocumentBytes) {
 		return nil, errors.New("docling: execution bounds are invalid")
 	}
 	return &Client{

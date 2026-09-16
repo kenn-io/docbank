@@ -34,6 +34,7 @@ type registeredRenditionProvider struct {
 
 type configuredRenditionProvider struct {
 	document.RenditionProvider
+
 	allowedRenditionRequests map[string]struct{}
 }
 
