@@ -81,6 +81,13 @@ type rendering struct {
 // New validates a fixed profile and isolates the supplied HTTP client from
 // ambient cookies and redirect behavior.
 func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Client, error) {
+	if slices.Contains(profile.Descriptor.ArtifactRoles, document.EvidenceArtifactTranscript) {
+		return nil, errors.New("docling: transcript descriptors require NewASR")
+	}
+	return newTransportClient(profile, secrets, httpClient)
+}
+
+func newTransportClient(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Client, error) {
 	origin, err := provider.ValidateOrigin(profile.Origin, profile.Descriptor.TrustBoundary)
 	if err != nil {
 		return nil, err
@@ -131,41 +138,70 @@ func (client *Client) Descriptor() document.RenditionDescriptor {
 func (client *Client) Render(
 	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
-	if client == nil {
-		return document.RenditionResult{}, errors.New("docling: client is required")
-	}
-	metadata := upload.Metadata()
-	if metadata.ByteLength > client.maxDocumentBytes {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
-			"input exceeds the Docling byte limit", nil)
-	}
-	operation, err := providerutil.NewOperation(ctx, provider, authorization.ExpiresAt, client.totalTimeout)
+	run, err := client.startRender(ctx, upload, authorization)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	defer operation.Cancel()
-	source, err := operation.ReadUpload(upload)
-	if err != nil {
-		return document.RenditionResult{}, err
+	defer run.operation.Cancel()
+	fields := [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}
+	if run.includeMarkdown {
+		fields = [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
 	}
-	run := &rendering{
-		operation: operation, metadata: metadata, authorization: authorization, source: source,
-		includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0,
-		started:         time.Now().UTC(),
-	}
-	task, err := client.submit(run)
-	if err != nil {
-		return document.RenditionResult{}, err
-	}
-	task, err = client.awaitTask(run, task)
-	if err != nil {
-		return document.RenditionResult{}, err
-	}
-	result, err := client.awaitResult(run, task.id)
+	task, result, err := client.convert(run, fields)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
 	return client.buildResult(run, task, result)
+}
+
+func (client *Client) startRender(
+	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
+) (*rendering, error) {
+	if client == nil {
+		return nil, errors.New("docling: client is required")
+	}
+	metadata := upload.Metadata()
+	if metadata.ByteLength > client.maxDocumentBytes {
+		return nil, provider.Classified(document.RenditionErrorPolicyRejected,
+			"input exceeds the Docling byte limit", nil)
+	}
+	operation, err := providerutil.NewOperation(ctx, provider, authorization.ExpiresAt, client.totalTimeout)
+	if err != nil {
+		return nil, err
+	}
+	source, err := operation.ReadUpload(upload)
+	if err != nil {
+		operation.Cancel()
+		return nil, err
+	}
+	return &rendering{
+		operation: operation, metadata: metadata, authorization: authorization, source: source,
+		includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0,
+		started:         time.Now().UTC(),
+	}, nil
+}
+
+func (client *Client) convert(run *rendering, fields [][2]string) (taskResponse, doclingResult, error) {
+	task, err := client.submit(run, fields)
+	if err != nil {
+		return taskResponse{}, doclingResult{}, err
+	}
+	task, err = client.awaitTask(run, task)
+	if err != nil {
+		return taskResponse{}, doclingResult{}, err
+	}
+	result, err := client.awaitResult(run, task.id)
+	if err != nil {
+		return taskResponse{}, doclingResult{}, err
+	}
+	if task.status == "success" && result.status == "success" && len(result.errors) != 0 {
+		return taskResponse{}, doclingResult{}, provider.Malformed("Docling successful result contains errors", nil)
+	}
+	if run.authorization.DiscloseFilename && result.filename != run.metadata.Filename {
+		return taskResponse{}, doclingResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
+			"Docling result source identity does not match upload", nil)
+	}
+	return task, result, nil
 }
 
 type taskResponse struct{ id, status string }
@@ -178,7 +214,7 @@ type doclingResult struct {
 	errors   []json.RawMessage
 }
 
-func (client *Client) submit(run *rendering) (taskResponse, error) {
+func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, error) {
 	filename := run.metadata.Filename
 	if filename == "" {
 		filename = "document"
@@ -189,10 +225,6 @@ func (client *Client) submit(run *rendering) (taskResponse, error) {
 	if strings.ContainsAny(filename, "\r\n") {
 		return taskResponse{}, provider.Classified(document.RenditionErrorPolicyRejected,
 			"Docling upload filename contains a newline", nil)
-	}
-	fields := [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}
-	if run.includeMarkdown {
-		fields = [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
 	}
 	response, err := client.executor.Do(run.operation, &run.usage, providerutil.Request{
 		Stage: providerutil.StageSubmission, Method: http.MethodPost, Path: convertPath,
@@ -279,13 +311,6 @@ func (client *Client) buildResult(
 	run *rendering, task taskResponse, result doclingResult,
 ) (document.RenditionResult, error) {
 	partialSuccess := task.status == "partial_success" || result.status == "partial_success"
-	if !partialSuccess && len(result.errors) != 0 {
-		return document.RenditionResult{}, provider.Malformed("Docling successful result contains errors", nil)
-	}
-	if run.authorization.DiscloseFilename && result.filename != run.metadata.Filename {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
-			"Docling result source identity does not match upload", nil)
-	}
 	providerMarkdown := result.markdown
 	if !run.includeMarkdown {
 		providerMarkdown = nil
