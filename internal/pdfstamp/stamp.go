@@ -69,6 +69,8 @@ func (w *limitedStampWriter) Write(value []byte) (int, error) {
 // callers must run it in their bounded, supervised worker process.
 // Pages with annotations must be flattened before stamping: viewers draw their
 // appearances above page content, where they can cover the label.
+// Tagged PDFs are rejected because moving source content into a form would
+// disconnect its accessibility structure from the page.
 func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe Recipe, output io.Writer) (Result, error) {
 	var zero Result
 	if ctx == nil {
@@ -298,7 +300,8 @@ func sourcePageContent(ctx *model.Context, page types.Dict, pageNumber int) ([]b
 			return nil, fmt.Errorf("decode page %d stream: %w", pageNumber, err)
 		}
 		content.Write(decoded)
-		// Preserve lexical boundaries and terminate trailing PDF comments.
+		// PDF stream arrays may split only between lexical tokens (ISO 32000-1,
+		// Table 30). Preserve those boundaries and terminate trailing comments.
 		content.WriteByte('\n')
 	}
 	return content.Bytes(), nil
@@ -380,6 +383,17 @@ func inspectSource(source io.ReadSeeker, allowRestamp bool) (*model.Context, []t
 	pdfContext, err := api.ReadValidateAndOptimize(source, stampConfiguration())
 	if err != nil {
 		return nil, nil, stampFailure("read source PDF", err)
+	}
+	catalog, err := pdfContext.Catalog()
+	if err != nil {
+		return nil, nil, stampFailure("inspect source structure", err)
+	}
+	structure, err := pdfContext.DereferenceDict(catalog["StructTreeRoot"])
+	if err != nil {
+		return nil, nil, stampFailure("inspect source structure", err)
+	}
+	if structure != nil {
+		return nil, nil, stampFailure("inspect source structure", errors.New("tagged PDFs are not supported: stamping cannot preserve their accessibility structure"))
 	}
 	count := pdfContext.PageCount
 	if count < 1 {

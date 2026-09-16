@@ -379,3 +379,44 @@ func TestStampRejectsAnnotationsBeforePublishing(t *testing.T) {
 		})
 	}
 }
+
+func TestStampRejectsTaggedSourcesBeforePublishing(t *testing.T) {
+	for _, marked := range []bool{false, true} {
+		source := rewritePDF(t, syntheticPDF(t, 1, "Letter"), func(ctx *model.Context, page types.Dict) {
+			_, pageRef, _, err := ctx.PageDict(1, false)
+			require.NoError(t, err)
+			tree := types.Dict{"Type": types.Name("StructTreeRoot")}
+			treeRef, err := ctx.IndRefForNewObject(tree)
+			require.NoError(t, err)
+			element, err := ctx.IndRefForNewObject(types.Dict{
+				"Type": types.Name("StructElem"), "S": types.Name("P"),
+				"P": *treeRef, "Pg": *pageRef, "K": types.Integer(0),
+			})
+			require.NoError(t, err)
+			tree.Update("K", *element)
+			tree.Update("ParentTree", types.Dict{"Nums": types.Array{types.Integer(0), types.Array{*element}}})
+			tree.Update("ParentTreeNextKey", types.Integer(1))
+			catalog, err := ctx.Catalog()
+			require.NoError(t, err)
+			catalog.Update("Version", types.Name("1.4"))
+			catalog.Update("StructTreeRoot", *treeRef)
+			if marked {
+				catalog.Update("MarkInfo", types.Dict{"Marked": types.Boolean(true)})
+			}
+			page.Update("StructParents", types.Integer(0))
+			require.NoError(t, setPageContent(ctx, page, []byte("/P <</MCID 0>> BDC 0 0 1 rg 150 400 70 35 re f EMC")))
+		})
+		for _, restamp := range []bool{false, true} {
+			t.Run(fmt.Sprintf("marked=%t/restamp=%t", marked, restamp), func(t *testing.T) {
+				recipe := validRecipe(t)
+				recipe.Restamp = restamp
+				var output bytes.Buffer
+				_, err := Stamp(t.Context(), bytes.NewReader(source),
+					[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, recipe, &output)
+				require.ErrorIs(t, err, ErrStampEngineFailure)
+				require.ErrorContains(t, err, "tagged PDFs are not supported")
+				require.Zero(t, output.Len())
+			})
+		}
+	}
+}
