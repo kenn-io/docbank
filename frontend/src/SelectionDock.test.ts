@@ -124,3 +124,11 @@ it("names snapshot-page tagging separately from the whole frozen query", async (
   await fireEvent.click(screen.getByRole("button", { name: "Tag whole query" }));
   expect(onwholequerytags).toHaveBeenCalledOnce();
 });
+
+it("disables both snapshot tagging actions together", () => {
+  render(SelectionDock, { props: { selectedCount: 1, visibleDocumentCount: 2, truncated: true,
+    context: "snapshot", wholeQueryCount: 101, tagsDisabled: true,
+    onclear: vi.fn(), onselectvisible: vi.fn(), ontags: vi.fn(), onwholequerytags: vi.fn() } });
+  expect((screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled).toBe(true);
+});

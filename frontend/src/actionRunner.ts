@@ -52,6 +52,7 @@ export async function runAction(
     await journal.markSending(batch.index);
     action = await refreshBatch(action, batch.index);
     publish(onProgress, action);
+    if (signal.aborted) break;
     try {
       const receipt = await changeBatchTags(session, batch.request as Parameters<typeof changeBatchTags>[1]);
       await journal.recordReceipt(batch.index, receipt);

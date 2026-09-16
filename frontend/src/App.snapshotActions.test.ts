@@ -285,3 +285,62 @@ it.each([
   expect(screen.queryByRole("dialog", { name: "Recoverable snapshot action" })).toBeNull();
   if (pending !== "tag") expect(journalState.action).toBeNull();
 });
+
+it("disables tagging during reruns and ignores the old selection's late receipt", async () => {
+  history.replaceState(null, "", `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`);
+  const [first] = await pages();
+  const replacement = { ...first, snapshot_id: "1123456789abcdef0123456789abcdef" };
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0, created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  let finishRun!: (response: Response) => void;
+  const rerun = new Promise<Response>((resolve) => { finishRun = resolve; });
+  let finishMutation!: (response: Response) => void;
+  const mutation = new Promise<Response>((resolve) => { finishMutation = resolve; });
+  let creates = 0;
+  let confirmedReceipt: unknown;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?")) return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0") return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse") return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/workspace/queries") return ++creates === 1 ? json(first) : rerun;
+    if (url === "/api/v1/audit/status") return json({ vault_id: vaultID });
+    if (url === "/api/v1/batch/tags/preview") return json({ tag_id: tag.id, tag_revision: 2,
+      nodes: [{ node_id: 1, revision: 3, assigned: false }] });
+    if (url === "/api/v1/batch/tags") {
+      const request = JSON.parse(String(init?.body));
+      confirmedReceipt = { version: 1, operation_id: request.operation_id,
+        request_digest: await batchTagRequestDigest(request), tag_id: tag.id, assign: true,
+        tag_revision: 3, assignment_count: 1, completed_at: "2026-09-11T13:00:00.000000000Z",
+        nodes: [{ node_id: 1, expected_revision: 3, revision: 4, changed: true }] };
+      return mutation;
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await screen.findByRole("region", { name: "Query editor" });
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag visible selection" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for selected documents/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Review" }));
+  await screen.findByText("0 of 1 selected documents have this tag.");
+  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  await waitFor(() => expect(confirmedReceipt).toBeDefined());
+  await fireEvent.click(screen.getByRole("button", { name: "Run query", hidden: true }));
+  await waitFor(() => expect(creates).toBe(2));
+  try {
+    expect((screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
+  } finally {
+    finishRun(json(replacement));
+    await screen.findByText(replacement.snapshot_id);
+    finishMutation(json(confirmedReceipt));
+  }
+  await mutation;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByText("Added: Review")).toBeNull();
+});

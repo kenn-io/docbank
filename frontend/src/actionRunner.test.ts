@@ -174,3 +174,24 @@ describe("recoverable action runner", () => {
     expect(result.batches[1].receipt).toBeUndefined();
   });
 });
+
+it("does not send a batch cancelled while its durable sending marker is being written", async () => {
+  const journal = new MemoryJournal(await persisted());
+  const markSending = journal.markSending.bind(journal);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const sending = vi.spyOn(journal, "markSending").mockImplementation(async (index) => {
+    await pending;
+    await markSending(index);
+  });
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => input === "/api/v1/audit/status"
+    ? audit() : new Response(JSON.stringify(receipt(journal.action))));
+  const controller = new AbortController();
+  const run = runAction("session", journal, controller.signal, () => {});
+  await vi.waitFor(() => expect(sending).toHaveBeenCalledOnce());
+  controller.abort();
+  release();
+  await run;
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(["/api/v1/audit/status"]);
+  expect(journal.action.batches[0].receipt).toBeUndefined();
+});

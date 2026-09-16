@@ -390,6 +390,32 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await page.getByRole("button", { name: "Close query editor", exact: true }).click();
     await page.screenshot({ path: path.join(screenshots!, "web-snapshot-workspace.png"), animations: "disabled" });
 
+    await page.getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true }).check();
+    await page.getByRole("button", { name: "Edit query", exact: true }).click();
+    let releaseRerun!: () => void;
+    const rerunGate = new Promise<void>((resolve) => { releaseRerun = resolve; });
+    let rerunReady!: () => void;
+    const rerunWaiting = new Promise<void>((resolve) => { rerunReady = resolve; });
+    await page.route("**/api/v1/workspace/queries", async (route) => {
+      const response = await route.fetch();
+      rerunReady();
+      await rerunGate;
+      await route.fulfill({ response });
+    }, { times: 1 });
+    await runSnapshot(page);
+    await rerunWaiting;
+    try {
+      for (const name of ["Tag visible selection", "Tag whole query", "Tag or recover", "Snapshot actions"]) {
+        await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+      }
+    } finally {
+      releaseRerun();
+    }
+    await expect(page.getByRole("button", { name: "Tag or recover", exact: true })).toBeEnabled();
+    await expect(page.getByRole("region", { name: "Selected documents", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Close query editor", exact: true }).click();
+    console.log("snapshot acceptance: all tagging controls stay disabled during a rerun");
+
     await page.getByRole("button", { name: "txt, 501 documents", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "1–100 of 501" })).toBeVisible();
     await page.getByRole("button", { name: "txt, 501 documents, selected", exact: true }).click();

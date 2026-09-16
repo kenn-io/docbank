@@ -4,7 +4,8 @@ import type { SnapshotRow } from "./snapshots.js";
 export type SnapshotReceiptOverlay = {
   expectedRevision: number;
   revision: number;
-  assignments: Record<string, { assign: boolean; label: string; completedAt: string }>;
+  ranges: { from: number; to: number }[];
+  assignments: Record<string, { revision: number; assign: boolean; label: string; completedAt: string }>;
 };
 
 export type SnapshotReceiptOverlays = Record<number, SnapshotReceiptOverlay>;
@@ -17,22 +18,33 @@ export function applySnapshotReceiptOverlay(
   const next = { ...overlays };
   for (const node of receipt.nodes) {
     const current = next[node.node_id];
-    if (current && node.revision < current.revision) continue;
     const priorAssignment = current?.assignments[receipt.tag_id];
-    if (current && node.revision === current.revision && priorAssignment &&
-        priorAssignment.completedAt > receipt.completed_at) continue;
+    const newerAssignment = !priorAssignment || node.revision > priorAssignment.revision ||
+      (node.revision === priorAssignment.revision && receipt.completed_at >= priorAssignment.completedAt);
+
+    // Keep disconnected evidence until later receipts bridge the gap. Ordering
+    // a tag observation must not discard evidence from another tag or replay.
+    const ranges: SnapshotReceiptOverlay["ranges"] = [];
+    for (const range of [...(current?.ranges ?? []), { from: node.expected_revision, to: node.revision }]
+      .sort((left, right) => left.from - right.from)) {
+      const previous = ranges.at(-1);
+      if (previous && range.from <= previous.to) previous.to = Math.max(previous.to, range.to);
+      else ranges.push({ ...range });
+    }
+    const latest = ranges[ranges.length - 1];
     next[node.node_id] = {
-      expectedRevision: current && (node.expected_revision === current.revision || node.revision === current.revision)
-        ? current.expectedRevision : node.expected_revision,
-      revision: Math.max(current?.revision ?? 0, node.revision),
-      assignments: {
+      expectedRevision: latest.from,
+      revision: latest.to,
+      ranges,
+      assignments: newerAssignment ? {
         ...(current?.assignments ?? {}),
         [receipt.tag_id]: {
+          revision: node.revision,
           assign: receipt.assign,
           label: tagLabel,
           completedAt: receipt.completed_at,
         },
-      },
+      } : current!.assignments,
     };
   }
   return next;

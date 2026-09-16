@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError, type Tag } from "./api.js";
   import { encodeRecovery } from "./actionRecovery.js";
@@ -22,6 +22,7 @@
     journal: ActionRecoveryJournal;
     initialAction: PersistedAction;
     tag: Tag | null;
+    disabled?: boolean;
     onprogress: ActionProgress;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
@@ -33,6 +34,7 @@
     journal,
     initialAction,
     tag,
+    disabled = false,
     onprogress,
     onclose,
     onauthfailure,
@@ -47,6 +49,8 @@
   let targetBatch = $state(0);
   let targetOffset = $state(0);
   let controller: AbortController | undefined;
+  let alive = true;
+  onDestroy(() => { alive = false; controller?.abort(); });
   const batch = $derived(action.batches[targetBatch]);
   const visibleTargets = $derived(batch.members.slice(targetOffset, targetOffset + 50));
 
@@ -56,11 +60,12 @@
   const stateLabel = $derived(action.state === "prepared" ? "Pending" :
     action.state === "sending" ? "Running" :
     action.state[0].toUpperCase() + action.state.slice(1));
-  const runnable = $derived(tag !== null && vaultMatches && action.checkpoint_verified &&
+  const runnable = $derived(!disabled && tag !== null && vaultMatches && action.checkpoint_verified &&
     action.state !== "stale" && action.state !== "complete" && confirmed && !running && !checking);
 
   async function reload(): Promise<void> {
     const stored = await journal.load();
+    if (!alive) return;
     if (!stored) throw new Error("The recoverable action is no longer available.");
     action = stored;
     onprogress(stored);
@@ -113,13 +118,17 @@
     try {
       await journal.confirmResume(action.action_id);
       const result = await runAction(session, journal, controller.signal, (next, receipt) => {
+        if (!alive) return;
         action = next;
         onprogress(next, receipt);
       });
+      if (!alive) return;
       action = result;
       onprogress(result);
     } catch (cause) {
+      if (!alive) return;
       try { await reload(); } catch { /* Preserve the mutation error. */ }
+      if (!alive) return;
       failure = cause instanceof Error ? cause.message : String(cause);
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
     } finally {
@@ -236,7 +245,7 @@
 
     {#if vaultMatches && action.state !== "stale" && action.state !== "complete"}
       <div class="confirmation">
-        <Checkbox checked={confirmed} disabled={!action.checkpoint_verified || running || checking}
+        <Checkbox checked={confirmed} disabled={disabled || !action.checkpoint_verified || running || checking}
           ariaLabel="I confirm this vault, action, tag, operation, and exact targets"
           label="I confirm this vault, action, tag, operation, and exact targets." onchange={(value) => (confirmed = value)} />
         <Button tone="info" disabled={!runnable} onclick={() => void run()}>

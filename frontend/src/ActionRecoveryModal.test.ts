@@ -266,3 +266,52 @@ it("shows exact file-supplied identities before target confirmation", async () =
   expect(screen.getByText(/Checksums detect inconsistent files/)).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: /exact targets$/ })).toBeTruthy();
 });
+
+it("retains an in-flight receipt without publishing to a replaced recovery view", async () => {
+  const action = { ...await prepared(), checkpoint_verified: true };
+  const journal = new MemoryJournal(action);
+  const onprogress = vi.fn();
+  let finish!: (response: Response) => void;
+  const response = new Promise<Response>((resolve) => { finish = resolve; });
+  let sent = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/v1/audit/status") return new Response(JSON.stringify({ vault_id: vaultID }));
+    sent = true;
+    return response;
+  });
+  const view = render(ActionRecoveryModal, { session: "session", sessionVaultID: vaultID,
+    journal, initialAction: action, tag, onprogress, onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Confirm and run action" }));
+  await waitFor(() => expect(sent).toBe(true));
+  await view.unmount();
+  onprogress.mockClear();
+  finish(new Response(JSON.stringify({ version: 1, operation_id: action.batches[0].operation_id,
+    request_digest: action.batches[0].request_digest, tag_id: tag.id, assign: true,
+    tag_revision: 2, assignment_count: 1, completed_at: "2026-09-11T00:00:00.000000000Z",
+    nodes: [{ node_id: 7, expected_revision: 3, revision: 4, changed: true }] })));
+  await waitFor(() => expect(journal.action?.batches[0].receipt).toBeDefined());
+  expect(onprogress).not.toHaveBeenCalled();
+});
+
+it("does not expire the session from a replaced view's pending error reload", async () => {
+  const action = { ...await prepared(), checkpoint_verified: true };
+  const journal = new MemoryJournal(action);
+  let release!: (action: PersistedAction) => void;
+  const reloading = new Promise<PersistedAction>((resolve) => { release = resolve; });
+  const load = vi.spyOn(journal, "load").mockResolvedValueOnce(action).mockReturnValue(reloading);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/v1/audit/status"
+    ? new Response(JSON.stringify({ vault_id: vaultID }))
+    : new Response(JSON.stringify({ code: "unauthorized", detail: "Session expired" }), { status: 401 }));
+  const onauthfailure = vi.fn();
+  const view = render(ActionRecoveryModal, { session: "session", sessionVaultID: vaultID,
+    journal, initialAction: action, tag, onprogress: vi.fn(), onclose: vi.fn(), onauthfailure });
+  await fireEvent.click(screen.getByRole("checkbox", { name: /I confirm this vault/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Confirm and run action" }));
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  await view.unmount();
+  release(journal.action!);
+  await reloading;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(onauthfailure).not.toHaveBeenCalled();
+});

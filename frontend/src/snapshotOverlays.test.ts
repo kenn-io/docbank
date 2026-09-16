@@ -57,3 +57,25 @@ it("never replaces a newer receipt observation with an older one", () => {
   expect(earlierAtSameRevision[7].assignments[tagID].assign).toBe(true);
   expect(earlierAtSameRevision[7].assignments[tagID].completedAt).toBe("2026-09-11T12:02:00.000000000Z");
 });
+
+it("keeps out-of-order cross-tag observations and joins their revision evidence", () => {
+  const otherTag = "33333333-3333-4333-8333-333333333333";
+  const row = { node_id: 7, revision: 3 };
+  const earlier = receipt(4, true, "2026-09-11T12:00:00Z");
+  const later = { ...receipt(5, true, "2026-09-11T12:01:00Z"), tag_id: otherTag };
+  let overlays = applySnapshotReceiptOverlay({}, later, "Archive");
+  expect(snapshotTargetRevision(row, overlays)).toBe(3);
+  overlays = applySnapshotReceiptOverlay(overlays, earlier, "Review");
+  expect(overlays[7].assignments[tagID]).toMatchObject({ assign: true, label: "Review" });
+  expect(overlays[7].assignments[otherTag]).toMatchObject({ assign: true, label: "Archive" });
+  expect(snapshotTargetRevision(row, overlays)).toBe(5);
+
+  // Keep separated evidence until a later receipt actually fills the gap.
+  overlays = applySnapshotReceiptOverlay(overlays, receipt(7, false, "2026-09-11T12:03:00Z"), "Review");
+  expect(snapshotTargetRevision(row, overlays)).toBe(3);
+  overlays = applySnapshotReceiptOverlay(overlays, { ...receipt(6, false, "2026-09-11T12:02:00Z"), tag_id: otherTag }, "Archive");
+  overlays = applySnapshotReceiptOverlay(overlays, earlier, "Review");
+  expect(snapshotTargetRevision(row, overlays)).toBe(7);
+  expect(overlays[7].assignments[tagID].assign).toBe(false);
+  expect(overlays[7].assignments[otherTag].assign).toBe(false);
+});

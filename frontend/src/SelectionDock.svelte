@@ -61,7 +61,7 @@
       <Button size="sm" disabled={tagsDisabled} onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button>
     {/if}
     {#if context === "snapshot" && onwholequerytags}
-      <Button size="sm" tone="info" onclick={onwholequerytags}>Tag whole query</Button>
+      <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}>Tag whole query</Button>
     {/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
   </div>

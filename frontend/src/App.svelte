@@ -192,6 +192,7 @@
   let queryURLError = $state("");
   let snapshotState = $state<Readonly<SnapshotState>>({ status: "idle", offset: 0 });
   let snapshotController: SnapshotSession | undefined;
+  let snapshotEpoch = 0;
   let selectedSnapshotID = $state<number | undefined>();
   let snapshotSelection = $state<Set<number>>(new Set());
   let snapshotOverlays = $state<SnapshotReceiptOverlays>({});
@@ -204,12 +205,16 @@
   let recoveryAction = $state<PersistedAction | null>(null);
   let recoveryTag = $state<Tag | null>(null);
   let recoveryVaultID = $state("");
+  let recoverySnapshotEpoch = 0;
+  let recoverySnapshotID: string | undefined;
   let collectionsOpen = $state(false);
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
   let batchTagsTargets = $state<SelectionTarget[] | null>(null);
   let batchTagsContext = $state<"live" | "snapshot">("live");
   let batchTagsChoice = $state<SnapshotActionChoice>();
+  let batchTagsSnapshotID: string | undefined;
+  let batchTagsSnapshotEpoch = 0;
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
@@ -333,7 +338,7 @@
         channel.close();
         detachShortcuts();
         snapshotController?.dispose();
-        cancelSnapshotAction();
+        invalidateSnapshotActions();
       };
     }
     return detachShortcuts;
@@ -1024,6 +1029,7 @@
 
   function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
     if (batchTagsContext === "snapshot") {
+      if (batchTagsSnapshotEpoch !== snapshotEpoch || batchTagsSnapshotID !== snapshotState.firstPage?.snapshot_id) return;
       applySnapshotReceipt(_receipt);
       return;
     }
@@ -1034,7 +1040,7 @@
   }
 
   function leaveSnapshotMode(): void {
-    cancelSnapshotAction();
+    invalidateSnapshotActions();
     if (snapshotState.status === "idle" && snapshotController === undefined) return;
     snapshotController?.dispose();
     snapshotController = undefined;
@@ -1062,7 +1068,7 @@
   }
 
   function runSnapshot(query: Query, options: SnapshotOptions): void {
-    cancelSnapshotAction();
+    invalidateSnapshotActions();
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -1116,6 +1122,37 @@
     snapshotOverlays = applySnapshotReceiptOverlay(snapshotOverlays, receipt, tagLabel);
   }
 
+  function closeRecovery(): void {
+    recoveryJournal = null;
+    recoveryAction = null;
+    recoveryTag = null;
+    recoveryVaultID = "";
+  }
+
+  function invalidateSnapshotActions(): void {
+    snapshotEpoch++;
+    cancelSnapshotAction();
+    if (batchTagsContext === "snapshot") batchTagsTargets = null;
+    closeRecovery();
+  }
+
+  function openSnapshotBatchTags(choice?: SnapshotActionChoice): void {
+    if (snapshotState.status !== "ready" || snapshotTargets.length === 0 || snapshotTargets.length > 1000) return;
+    batchTagsChoice = choice;
+    batchTagsContext = "snapshot";
+    batchTagsSnapshotID = snapshotState.firstPage?.snapshot_id;
+    batchTagsSnapshotEpoch = snapshotEpoch;
+    batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
+    snapshotActionsOpen = false;
+  }
+
+  function handleRecoveryProgress(action: Readonly<PersistedAction>, receipt?: BatchTagReceipt): void {
+    if (recoverySnapshotEpoch !== snapshotEpoch || recoverySnapshotID !== snapshotState.firstPage?.snapshot_id ||
+        recoveryAction?.action_id !== action.action_id) return;
+    recoveryAction = action;
+    if (receipt && recoverySnapshotID) applySnapshotReceipt(receipt);
+  }
+
   function cancelSnapshotAction(): void {
     snapshotActionGeneration++;
     snapshotActionController?.abort();
@@ -1128,12 +1165,15 @@
   function beginSnapshotAction() {
     const session = webSession;
     const request = ++snapshotActionGeneration;
+    const epoch = snapshotEpoch;
+    const snapshotID = snapshotState.firstPage?.snapshot_id;
     const controller = new AbortController();
     snapshotActionController = controller;
     snapshotActionBusy = true;
     snapshotActionError = "";
     return { session, signal: controller.signal,
-      current: () => request === snapshotActionGeneration && session === webSession && !controller.signal.aborted };
+      current: () => request === snapshotActionGeneration && session === webSession && !controller.signal.aborted &&
+        epoch === snapshotEpoch && snapshotID === snapshotState.firstPage?.snapshot_id };
   }
 
   async function showRecovery(
@@ -1148,6 +1188,8 @@
       throw cause;
     });
     if (!operation.current()) return;
+    recoverySnapshotEpoch = snapshotEpoch;
+    recoverySnapshotID = snapshotState.firstPage?.snapshot_id;
     recoveryJournal = journal;
     recoveryAction = action;
     recoveryTag = currentTag;
@@ -1156,14 +1198,10 @@
   }
 
   async function startSnapshotAction(choice: SnapshotActionChoice): Promise<void> {
-    if (snapshotActionBusy) return;
+    if (snapshotActionBusy || snapshotState.status !== "ready") return;
     snapshotActionError = "";
     if (choice.scope === "selection") {
-      if (snapshotTargets.length === 0 || snapshotTargets.length > 1000) return;
-      batchTagsChoice = choice;
-      batchTagsContext = "snapshot";
-      batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
-      snapshotActionsOpen = false;
+      openSnapshotBatchTags(choice);
       return;
     }
     const firstPage = snapshotState.firstPage;
@@ -1641,7 +1679,8 @@
       {/snippet}
       {#snippet right()}
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
-        <Button size="sm" onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
+        <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
+          onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
         <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
           <BookmarkIcon size="14" aria-hidden="true" />
         </IconButton>
@@ -2424,11 +2463,8 @@
         wholeQueryCount={snapshotPage?.total ?? 0}
         onclear={() => selectVisibleSnapshotRows(false)}
         onselectvisible={() => selectVisibleSnapshotRows()}
-        ontags={() => {
-          batchTagsChoice = undefined;
-          batchTagsContext = "snapshot";
-          batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
-        }}
+        tagsDisabled={snapshotState.status !== "ready"}
+        ontags={() => openSnapshotBatchTags()}
         onwholequerytags={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}
       />
     {/if}
@@ -2583,7 +2619,7 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}
-        disabled={loading}
+        disabled={loading || (batchTagsContext === "snapshot" && snapshotState.status !== "ready")}
         context={batchTagsContext}
         initialChoice={batchTagsChoice}
         onclose={() => (batchTagsTargets = null)}
@@ -2597,7 +2633,7 @@
         total={snapshotState.firstPage?.total ?? 0}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}
-        disabled={snapshotActionBusy}
+        disabled={snapshotActionBusy || (snapshotActive && snapshotState.status !== "ready")}
         errorMessage={snapshotActionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onimport={(bytes) => void importSnapshotAction(bytes)}
@@ -2613,8 +2649,9 @@
         journal={recoveryJournal}
         initialAction={recoveryAction}
         tag={recoveryTag}
-        onprogress={(action, receipt) => { recoveryAction = action; if (receipt) applySnapshotReceipt(receipt); }}
-        onclose={() => { recoveryJournal = null; recoveryAction = null; recoveryTag = null; recoveryVaultID = ""; }}
+        disabled={snapshotActive && snapshotState.status !== "ready"}
+        onprogress={handleRecoveryProgress}
+        onclose={closeRecovery}
         onauthfailure={handleFailure}
       />
     {/if}
