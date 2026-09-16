@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -376,21 +377,23 @@ func TestClientRechecksExpiryAndCancellationWhileReadingResponse(t *testing.T) {
 	const complete = `{"format":"markdown","output":"{0}------------------------------------------------\n\nComplete","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"pdftext","block_counts":[],"block_metadata":{}}]},"success":true}`
 
 	t.Run("expiry after complete body", func(t *testing.T) {
-		fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
-		expiresAt := time.Now().UTC().Add(30 * time.Millisecond)
-		fixture.authorization.ExpiresAt = expiresAt.Format(providerutil.TimestampForm)
-		body := &callbackReadCloser{reader: strings.NewReader(complete), before: func() {
-			time.Sleep(time.Until(expiresAt) + 10*time.Millisecond)
-		}}
-		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			_, _ = io.Copy(io.Discard, request.Body)
-			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request}, nil
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
+			expiresAt := time.Now().UTC().Add(30 * time.Millisecond)
+			fixture.authorization.ExpiresAt = expiresAt.Format(providerutil.TimestampForm)
+			body := &callbackReadCloser{reader: strings.NewReader(complete), before: func() {
+				time.Sleep(time.Until(expiresAt) + 10*time.Millisecond)
+			}}
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				_, _ = io.Copy(io.Discard, request.Body)
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request}, nil
+			})
+			client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, transport)
+
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+
+			require.ErrorContains(t, err, "authorization is not current")
 		})
-		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, transport)
-
-		_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-
-		require.ErrorContains(t, err, "authorization is not current")
 	})
 
 	t.Run("cancellation after complete body", func(t *testing.T) {
@@ -425,33 +428,30 @@ func TestClientRechecksExpiryAndCancellationWhileReadingResponse(t *testing.T) {
 }
 
 func TestClientRequestTimeoutInterruptsBlockedUpload(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "blocked.pdf", testPDF(1))
-	fixture.profile.RequestTimeout = 10 * time.Millisecond
-	fixture.profile.Descriptor = descriptorFor(t, fixture.profile)
-	fixture = fixture.withDescriptor(fixture.profile.Descriptor)
-	reader, writer := io.Pipe()
-	t.Cleanup(func() { _ = writer.Close() })
-	entered := make(chan struct{})
-	upload := &testUpload{
-		Reader:   &callbackReadCloser{reader: reader, before: func() { close(entered) }},
-		metadata: fixture.metadata,
-		close:    reader.Close,
-	}
-	client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK, `{}`))
-	done := make(chan error, 1)
-	go func() {
-		_, err := client.Render(t.Context(), upload, fixture.authorization)
-		done <- err
-	}()
-	<-entered
-	select {
-	case err := <-done:
-		assertProviderCode(t, err, document.RenditionErrorCapacity)
-	case <-time.After(250 * time.Millisecond):
-		require.NoError(t, upload.Close())
-		<-done
-		t.Fatal("Client.Render did not interrupt the blocked upload")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "blocked.pdf", testPDF(1))
+		fixture.profile.RequestTimeout = 10 * time.Millisecond
+		fixture.profile.Descriptor = descriptorFor(t, fixture.profile)
+		fixture = fixture.withDescriptor(fixture.profile.Descriptor)
+		reader, writer := io.Pipe()
+		t.Cleanup(func() { _ = writer.Close() })
+		entered := make(chan struct{})
+		upload := &testUpload{
+			Reader:   &callbackReadCloser{reader: reader, before: func() { close(entered) }},
+			metadata: fixture.metadata,
+			close:    reader.Close,
+		}
+		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK, `{}`))
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.Render(t.Context(), upload, fixture.authorization)
+			done <- err
+		}()
+		<-entered
+		time.Sleep(fixture.profile.RequestTimeout)
+		synctest.Wait()
+		assertProviderCode(t, <-done, document.RenditionErrorCapacity)
+	})
 }
 
 func TestClientDistinguishesRequestTimeoutFromCallerCancellationAfterSubmission(t *testing.T) {

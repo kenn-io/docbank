@@ -807,24 +807,26 @@ func TestClientTreatsExpiryAfterDurableCheckpointAsResumableTimeout(t *testing.T
 }
 
 func TestClientTreatsExpiryAfterCompletedResultAsResumableTimeout(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("completed expiry"))
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(100 * time.Millisecond).Format(timeForm)
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		switch request.URL.Path {
-		case uploadPath:
-			return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":null}`), nil
-		case parsePath:
-			return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
-		case jobPath(testJobID):
-			time.Sleep(150 * time.Millisecond)
-			return response(request, http.StatusOK, completedBody()), nil
-		default:
-			return nil, errors.New("unexpected route")
-		}
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("completed expiry"))
+		fixture.authorization.ExpiresAt = time.Now().UTC().Add(100 * time.Millisecond).Format(timeForm)
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case uploadPath:
+				return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":null}`), nil
+			case parsePath:
+				return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
+			case jobPath(testJobID):
+				time.Sleep(150 * time.Millisecond)
+				return response(request, http.StatusOK, completedBody()), nil
+			default:
+				return nil, errors.New("unexpected route")
+			}
+		})
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+		require.ErrorContains(t, err, "authorization is not current")
 	})
-	_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-		fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
-	require.ErrorContains(t, err, "authorization is not current")
 }
 
 func TestClientClosesBlockedUploadOnWallTimeout(t *testing.T) {
