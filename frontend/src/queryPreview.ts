@@ -1,4 +1,4 @@
-import { requestJSON } from "./api.js";
+import * as generated from "./generated/docbank.js";
 import {
   canonicalQuery,
   parseQuery,
@@ -45,12 +45,7 @@ export async function previewQuery(
 ): Promise<QueryPreview> {
   const canonical = canonicalQuery(query);
   const expected = await queryFingerprint(query);
-  const raw = await requestJSON<unknown>("/api/v1/queries/parse", session, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: canonical,
-    signal,
-  });
+  const raw = await generated.parseQuery(JSON.parse(canonical), { session, signal });
 
   const receipt = object(raw, "receipt");
   const receiptKeys = Object.hasOwn(receipt, "$schema")

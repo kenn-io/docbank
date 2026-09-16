@@ -1,4 +1,4 @@
-import type { Node } from "./api.js";
+import type { Node } from "./generated/docbank.js";
 
 export type SelectableRow = { node: Node; path: string };
 

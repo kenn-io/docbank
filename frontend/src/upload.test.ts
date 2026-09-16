@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
-import type { UploadReceipt } from "./api.js";
+import type { UploadFile200 as UploadReceipt } from "./generated/docbank.js";
 import {
   hashFile,
   validateUploadReceipt,

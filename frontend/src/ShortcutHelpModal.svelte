@@ -7,7 +7,7 @@
     formatShortcutKeys,
     type SelectDropdownOption,
   } from "@kenn-io/kit-ui";
-  import type { Tag } from "./api.js";
+  import type { Tag } from "./generated/docbank.js";
   import {
     TAG_HOTKEYS,
     type TagHotkey,

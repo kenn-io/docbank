@@ -1,9 +1,9 @@
-import type { Node } from "./api.js";
+import type { Node, SearchHitMatch } from "./generated/docbank.js";
 
 export type VisibleCSVRow = {
   node: Node;
   path: string;
-  match?: "name" | "content";
+  match?: SearchHitMatch;
 };
 
 const columns = [

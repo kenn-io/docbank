@@ -5,7 +5,7 @@ import {
   tagColor,
   type PresentedTag,
 } from "./tagPresentation.js";
-import type { Tag } from "./api.js";
+import type { Tag } from "./generated/docbank.js";
 
 const tag = (id: string, name: string): Tag => ({
   id,

@@ -1,40 +1,16 @@
-import { requestJSON, requestResponse, type Node } from "./api.js";
+import type { Collection, CollectionPage, CollectionMemberPage, CollectionLabel } from "./generated/docbank.js";
+export type { Collection, CollectionPage, CollectionMemberPage, CollectionLabel } from "./generated/docbank.js";
+import * as generated from "./generated/docbank.js";
+import { type Node } from "./generated/docbank.js";
 
-export interface Collection {
-  id: string;
-  source_kind: string;
-  source_description: string;
-  started_at: string;
-  file_count: number;
-  total_bytes: number;
-  label: string | null;
-  label_revision: number;
-  label_updated_at: string;
-}
 
-export interface CollectionPage {
-  items: Collection[];
-  total: number;
-  limit: number;
-  offset: number;
-}
 
-export interface CollectionMemberPage {
-  collection: Collection;
-  items: Node[];
-  total: number;
-  limit: number;
-  offset: number;
-}
 
-export interface CollectionLabel {
-  ingest_id: string;
-  label: string | null;
-  revision: number;
-  updated_at: string;
-}
 
-const route = "/api/v1/collections";
+
+
+
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 
@@ -65,14 +41,12 @@ function normalizeLabel(value: unknown): string | null {
   return normalized;
 }
 
-function path(id: string): string {
+function validateID(id: string): void {
   if (!uuid.test(id)) throw new Error("Invalid collection ID.");
-  return `${route}/${id}`;
 }
 
-function pageParams(offset: number, limit: number): string {
+function validatePage(offset: number, limit: number): void {
   if (!integer(offset) || !integer(limit, 1) || limit > 1000) throw new Error("Invalid collection page.");
-  return new URLSearchParams({ limit: String(limit), offset: String(offset) }).toString();
 }
 
 export function readCollection(value: unknown): Collection {
@@ -94,7 +68,8 @@ function readPage(value: unknown, offset: number, limit: number) {
 }
 
 export async function collections(session: string, offset = 0, limit = 100): Promise<CollectionPage> {
-  const raw = await requestJSON<unknown>(`${route}?${pageParams(offset, limit)}`, session);
+  validatePage(offset, limit);
+  const raw = await generated.listCollections({ limit, offset }, { session });
   const page = readPage(raw, offset, limit);
   const items = page.items.map(readCollection);
   check(new Set(items.map((item) => item.id)).size === items.length && items.every((item) => item.file_count > 0));
@@ -102,13 +77,16 @@ export async function collections(session: string, offset = 0, limit = 100): Pro
 }
 
 export async function collectionByID(session: string, id: string): Promise<Collection> {
-  const result = readCollection(await requestJSON<unknown>(path(id), session));
+  validateID(id);
+  const result = readCollection(await generated.getCollection(id, { session }));
   check(result.id === id);
   return result;
 }
 
 export async function collectionMembers(session: string, id: string, offset = 0, limit = 100): Promise<CollectionMemberPage> {
-  const raw = object(await requestJSON<unknown>(`${path(id)}/members?${pageParams(offset, limit)}`, session));
+  validateID(id);
+  validatePage(offset, limit);
+  const raw = object(await generated.listCollectionMembers(id, { limit, offset }, { session }));
   const collection = readCollection(raw.collection);
   const page = readPage(raw, offset, limit);
   check(collection.id === id && page.total === collection.file_count);
@@ -136,18 +114,17 @@ async function readLabel(response: Response, id: string): Promise<CollectionLabe
 }
 
 export async function collectionLabel(session: string, id: string): Promise<CollectionLabel> {
-  return readLabel(await requestResponse(`${path(id)}/label`, session), id);
+  validateID(id);
+  return readLabel(await generated.getCollectionLabel(id, { session }), id);
 }
 
 export async function setCollectionLabel(session: string, observed: CollectionLabel, value: string | null): Promise<CollectionLabel> {
+  validateID(observed.ingest_id);
   if (!integer(observed.revision, 1)) throw new Error("A positive label revision is required.");
   const label = normalizeLabel(value);
   const expectedRevision = observed.revision + (label === observed.label ? 0 : 1);
   check(Number.isSafeInteger(expectedRevision));
-  const response = await requestResponse(`${path(observed.ingest_id)}/label`, session, {
-    method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${observed.revision}"` },
-    body: JSON.stringify({ label }),
-  });
+  const response = await generated.setCollectionLabel(observed.ingest_id, { label }, { session, headers: { "If-Match": `"${observed.revision}"` } });
   const result = await readLabel(response, observed.ingest_id);
   check(result.label === label && result.revision === expectedRevision && Date.parse(result.updated_at) >= Date.parse(observed.updated_at));
   return result;

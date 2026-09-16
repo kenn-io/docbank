@@ -6,7 +6,7 @@ import {
   screen,
 } from "@testing-library/svelte";
 import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
-import type { Node, ProvenanceFact } from "./api.js";
+import type { Node, ProvenanceFact } from "./generated/docbank.js";
 
 const olderIdentity = "a".repeat(64);
 const activeIdentity = "b".repeat(64);

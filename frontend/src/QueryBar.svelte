@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { Button, Chip, SelectDropdown, Spinner, type SelectDropdownOption } from "@kenn-io/kit-ui";
-  import { APIError } from "./api.js";
+  import { APIError } from "./api-transport.js";
   import { canonicalQuery, parseQuery, type Query } from "./query.js";
   import { previewQuery, querySelection, type QueryPreview } from "./queryPreview.js";
   import type { SnapshotOptions } from "./snapshots.js";

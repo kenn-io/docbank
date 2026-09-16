@@ -4,7 +4,7 @@ import {
   auditEventSummary,
   auditPathLabel,
 } from "./audit.js";
-import type { AuditEvent } from "./api.js";
+import type { AuditEvent } from "./generated/docbank.js";
 
 function event(overrides: Partial<AuditEvent> = {}): AuditEvent {
   return {

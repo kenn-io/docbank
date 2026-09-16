@@ -4,6 +4,8 @@
  * docbank
  * OpenAPI spec version: dev
  */
+import { sessionResponse } from '../api-transport';
+import { sessionJSON } from '../api-transport';
 
 // https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
 type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
@@ -199,8 +201,7 @@ export interface SourceMetadataValueV1 {
   number?: number | null;
   /** @nullable */
   string?: string | null;
-  /** @nullable */
-  strings?: string[] | null;
+  strings?: string[];
   timestamp?: SourceMetadataTimestampV1;
 }
 
@@ -226,10 +227,8 @@ export interface SourceMetadata {
   contract_version: string;
   /** @pattern ^[0-9a-f]{64}$ */
   extractor_fingerprint: string;
-  /** @nullable */
-  fields: SourceMetadataFieldV1[] | null;
-  /** @nullable */
-  warnings: SourceMetadataWarningV1[] | null;
+  fields: SourceMetadataFieldV1[];
+  warnings: SourceMetadataWarningV1[];
 }
 
 export interface Node {
@@ -258,8 +257,7 @@ export interface AuditEventPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   cursor?: string;
-  /** @nullable */
-  items: AuditEvent[] | null;
+  items: AuditEvent[];
   /**
      * @minimum 1
      * @maximum 500
@@ -291,9 +289,8 @@ export interface AuditEvidence {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  scopes: AuditScopeEvidence[] | null;
+  scopes: AuditScopeEvidence[];
   vault_id: string;
 }
 
@@ -319,22 +316,17 @@ export interface AuditEvidenceProblem {
 
 export interface AuditEvidenceCheck {
   extends: boolean;
-  /** @nullable */
-  problems?: AuditEvidenceProblem[] | null;
+  problems?: AuditEvidenceProblem[];
 }
 
 export interface AuditMembershipStatus {
-  /**
-     * @nullable
-     * @items.pattern ^[0-9a-f]{64}$
-     */
-  baseline_digests: string[] | null;
+  /** @items.pattern ^[0-9a-f]{64}$ */
+  baseline_digests: string[];
   /** @minimum 1 */
   node_id: number;
   path?: string;
   protected: boolean;
-  /** @nullable */
-  scope_ids: string[] | null;
+  scope_ids: string[];
   trashed: boolean;
 }
 
@@ -359,8 +351,7 @@ export interface AuditScopeEventPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   cursor?: string;
-  /** @nullable */
-  items: AuditEvent[] | null;
+  items: AuditEvent[];
   /**
      * @minimum 1
      * @maximum 500
@@ -385,8 +376,7 @@ export interface AuditStatus {
   membership?: AuditMembershipStatus;
   /** @minimum 0 */
   operation_sequence_high_water: number;
-  /** @nullable */
-  scopes: AuditScopeStatus[] | null;
+  scopes: AuditScopeStatus[];
   vault_id: string;
 }
 
@@ -411,10 +401,8 @@ export interface AuditVerifyReport {
   enabled: boolean;
   evidence?: AuditEvidence;
   evidence_check?: AuditEvidenceCheck;
-  /** @nullable */
-  metadata_problems?: string[] | null;
-  /** @nullable */
-  problems?: VerifyProblem[] | null;
+  metadata_problems?: string[];
+  problems?: VerifyProblem[];
   /** @minimum 0 */
   protected_blobs: number;
   /** @minimum 0 */
@@ -460,8 +448,7 @@ export interface Error {
   readonly $schema?: string;
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -584,8 +571,7 @@ export interface StorageStatus {
   packed_raw_bytes: number;
   packed_stored_bytes: number;
   packs: number;
-  /** @nullable */
-  stores: StorageStoreStatus[] | null;
+  stores: StorageStoreStatus[];
 }
 
 export interface BackupRestoreReport {
@@ -597,8 +583,7 @@ export interface BackupRestoreReport {
   document_bytes: number;
   duration_seconds: number;
   extras_files: number;
-  /** @nullable */
-  fallbacks: BackupRestoreFallback[] | null;
+  fallbacks: BackupRestoreFallback[];
   loose_blobs: number;
   packed_blobs: number;
   packs: number;
@@ -634,8 +619,7 @@ export interface BackupRestoreRequest {
 export interface BackupSnapshotList {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: BackupSnapshot[] | null;
+  items: BackupSnapshot[];
   repository?: BackupRepository;
 }
 
@@ -658,10 +642,8 @@ export interface BackupVerifyReport {
   readonly $schema?: string;
   blobs_checked: number;
   bytes_read: number;
-  /** @nullable */
-  problems: BackupVerifyProblem[] | null;
-  /** @nullable */
-  snapshots: string[] | null;
+  problems: BackupVerifyProblem[];
+  snapshots: string[];
 }
 
 export interface BackupVerifyEvent {
@@ -703,8 +685,7 @@ export interface BatchMoveReceipt {
 export interface BatchMoveReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: BatchMoveReceipt[] | null;
+  items: BatchMoveReceipt[];
 }
 
 export interface BatchMoveRequest {
@@ -713,9 +694,8 @@ export interface BatchMoveRequest {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  moves: BatchMoveItem[] | null;
+  moves: BatchMoveItem[];
 }
 
 export interface BatchTagNodeResult {
@@ -742,9 +722,8 @@ export interface BatchTagPreview {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  nodes: BatchTagPreviewNode[] | null;
+  nodes: BatchTagPreviewNode[];
   tag_id: string;
   /** @minimum 1 */
   tag_revision: number;
@@ -760,9 +739,8 @@ export interface BatchTagReceipt {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  nodes: BatchTagNodeResult[] | null;
+  nodes: BatchTagNodeResult[];
   operation_id: string;
   /** @pattern ^[0-9a-f]{64}$ */
   request_digest: string;
@@ -786,9 +764,8 @@ export interface BatchTagRequest {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  nodes: BatchTagTarget[] | null;
+  nodes: BatchTagTarget[];
   operation_id: string;
   tag_id: string;
 }
@@ -871,8 +848,7 @@ export interface CollectionMemberPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   collection: Collection;
-  /** @nullable */
-  items: Node[] | null;
+  items: Node[];
   /**
      * @minimum 1
      * @maximum 1000
@@ -887,8 +863,7 @@ export interface CollectionMemberPage {
 export interface CollectionPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: Collection[] | null;
+  items: Collection[];
   /**
      * @minimum 1
      * @maximum 1000
@@ -928,11 +903,8 @@ export type CollectionQualitySummaryCoverage = {
   generation_id: string;
   profile: string;
   profile_fingerprint: string;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  profiles: string[] | null;
+  /** @maxItems 64 */
+  profiles: string[];
 };
 
 export interface CollectionQualitySummary {
@@ -966,11 +938,8 @@ export interface QualityDimension {
   missing: number;
   /** @minimum 0 */
   other: number;
-  /**
-     * @maxItems 50
-     * @nullable
-     */
-  values: QualityBucket[] | null;
+  /** @maxItems 50 */
+  values: QualityBucket[];
 }
 
 export interface QualitySpike {
@@ -984,21 +953,15 @@ export interface CollectionQuality {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   collection: CollectionQualitySummary;
-  /**
-     * @maxItems 7
-     * @nullable
-     */
-  dimensions: QualityDimension[] | null;
+  /** @maxItems 7 */
+  dimensions: QualityDimension[];
   /** @minimum 0 */
   duplicate_documents: number;
   /** @minimum 0 */
   mismatches: number;
   source_fingerprint: string;
-  /**
-     * @maxItems 7
-     * @nullable
-     */
-  spikes: QualitySpike[] | null;
+  /** @maxItems 7 */
+  spikes: QualitySpike[];
   /** @minimum 0 */
   zero_bytes: number;
 }
@@ -1043,8 +1006,7 @@ export interface ContentReference {
 export interface ContentReferencePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: ContentReference[] | null;
+  items: ContentReference[];
   limit: number;
   offset: number;
   total: number;
@@ -1086,8 +1048,7 @@ export interface ContentVerification {
 export interface ContentVersionPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: ContentVersion[] | null;
+  items: ContentVersion[];
   limit: number;
   offset: number;
   total: number;
@@ -1116,8 +1077,7 @@ export interface CoverageClass {
 export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  embeddings: CoverageClass[] | null;
+  embeddings: CoverageClass[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
   renditions: CoverageClass;
@@ -1126,8 +1086,7 @@ export interface CoverageReport {
 }
 
 export interface CoverageSourcesV1 {
-  /** @nullable */
-  bound_providers: string[] | null;
+  bound_providers: string[];
   catalog_rows: number;
   extractor_id: string;
 }
@@ -1217,22 +1176,15 @@ export interface DerivativePurgeJobRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   all?: boolean;
+  /** @maxItems 1000 */
+  attachment_ids?: string[];
+  /** @maxItems 1000 */
+  build_ids?: string[];
   /**
      * @maxItems 1000
-     * @nullable
-     */
-  attachment_ids?: string[] | null;
-  /**
-     * @maxItems 1000
-     * @nullable
-     */
-  build_ids?: string[] | null;
-  /**
-     * @maxItems 1000
-     * @nullable
      * @items.pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
      */
-  content_version_ids?: string[] | null;
+  content_version_ids?: string[];
   /** @pattern ^[0-9a-f]{64}$ */
   plan_fingerprint: string;
 }
@@ -1241,12 +1193,9 @@ export interface DerivativePurgePlan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   all: boolean;
-  /** @nullable */
-  attachment_ids: string[] | null;
-  /** @nullable */
-  build_ids: string[] | null;
-  /** @nullable */
-  content_version_ids: string[] | null;
+  attachment_ids: string[];
+  build_ids: string[];
+  content_version_ids: string[];
   /** @pattern ^[0-9a-f]{64}$ */
   fingerprint: string;
   immutable_backup_copies_untouched: boolean;
@@ -1257,22 +1206,15 @@ export interface DerivativePurgePlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   all?: boolean;
+  /** @maxItems 1000 */
+  attachment_ids?: string[];
+  /** @maxItems 1000 */
+  build_ids?: string[];
   /**
      * @maxItems 1000
-     * @nullable
-     */
-  attachment_ids?: string[] | null;
-  /**
-     * @maxItems 1000
-     * @nullable
-     */
-  build_ids?: string[] | null;
-  /**
-     * @maxItems 1000
-     * @nullable
      * @items.pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
      */
-  content_version_ids?: string[] | null;
+  content_version_ids?: string[];
 }
 
 export interface DocumentEventCoverage {
@@ -1350,8 +1292,7 @@ export interface DocumentRenditionIdentity {
 }
 
 export interface DocumentSummary {
-  /** @nullable */
-  active_renditions: DocumentRenditionIdentity[] | null;
+  active_renditions: DocumentRenditionIdentity[];
   content_version_id: string;
   latest_processing_state?: string;
   media_type: string;
@@ -1368,11 +1309,8 @@ export interface DocumentPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   direction: DocumentPageDirection;
-  /**
-     * @maxItems 250
-     * @nullable
-     */
-  items: DocumentSummary[] | null;
+  /** @maxItems 250 */
+  items: DocumentSummary[];
   next_cursor?: string;
   /**
      * @minimum 1
@@ -1395,8 +1333,7 @@ export interface DocumentSearchCoverage {
 
 export interface DocumentSearchResult {
   content_version_id: string;
-  /** @nullable */
-  evidence: DocumentEvidenceReference[] | null;
+  evidence: DocumentEvidenceReference[];
   /** @maxLength 512 */
   excerpt?: string;
   lexical_rank?: number;
@@ -1426,13 +1363,10 @@ export interface DocumentSearchReport {
   readonly $schema?: string;
   actual_mode: string;
   coverage: DocumentSearchCoverage;
-  /** @nullable */
-  degradations: string[] | null;
+  degradations: string[];
   requested_mode: string;
-  /** @nullable */
-  results: DocumentSearchResult[] | null;
-  /** @nullable */
-  trace: DocumentSearchTrace[] | null;
+  results: DocumentSearchResult[];
+  trace: DocumentSearchTrace[];
   truncated: boolean;
 }
 
@@ -1450,9 +1384,8 @@ export interface DocumentSourceFence {
   /**
      * @minItems 1
      * @maxItems 4096
-     * @nullable
      */
-  content_version_ids: string[] | null;
+  content_version_ids: string[];
   vault_uid: string;
 }
 
@@ -1534,11 +1467,8 @@ export interface DocumentSourceFenceFilters {
 }
 
 export interface ResolvedDocumentSourceFence {
-  /**
-     * @maxItems 4096
-     * @nullable
-     */
-  content_version_ids: string[] | null;
+  /** @maxItems 4096 */
+  content_version_ids: string[];
   vault_uid: string;
 }
 
@@ -1555,8 +1485,7 @@ export interface DocumentSourceFenceResolution {
 export interface DocumentSourceFenceResolveRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  content_version_ids?: string[] | null;
+  content_version_ids?: string[];
   filters?: DocumentSourceFenceFilters;
 }
 
@@ -1566,19 +1495,15 @@ export interface DocumentSummaryResolveRequest {
   /**
      * @minItems 1
      * @maxItems 100
-     * @nullable
      */
-  identities: DocumentIdentity[] | null;
+  identities: DocumentIdentity[];
 }
 
 export interface DocumentSummaryResolveResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /**
-     * @maxItems 100
-     * @nullable
-     */
-  items: DocumentSummary[] | null;
+  /** @maxItems 100 */
+  items: DocumentSummary[];
 }
 
 export interface DuplicateCollection {
@@ -1590,11 +1515,8 @@ export interface DuplicateCollection {
 export interface DuplicateReference {
   /** @minimum 0 */
   collection_count: number;
-  /**
-     * @maxItems 16
-     * @nullable
-     */
-  collections: DuplicateCollection[] | null;
+  /** @maxItems 16 */
+  collections: DuplicateCollection[];
   collections_truncated: boolean;
   reference: ContentReference;
 }
@@ -1602,11 +1524,8 @@ export interface DuplicateReference {
 export interface DuplicateGroup {
   /** @minimum 2 */
   reference_count: number;
-  /**
-     * @maxItems 16
-     * @nullable
-     */
-  references: DuplicateReference[] | null;
+  /** @maxItems 16 */
+  references: DuplicateReference[];
   references_truncated: boolean;
   /** @minimum 1 */
   representative_node_id: number;
@@ -1619,11 +1538,8 @@ export interface DuplicateGroup {
 export interface DuplicatePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /**
-     * @maxItems 100
-     * @nullable
-     */
-  items: DuplicateGroup[] | null;
+  /** @maxItems 100 */
+  items: DuplicateGroup[];
   /**
      * @minimum 1
      * @maximum 100
@@ -1659,8 +1575,7 @@ export interface EmailArtifactRefV1 {
 }
 
 export interface EmailAlternativeV1 {
-  /** @nullable */
-  diagnostics: EmailDiagnosticV1[] | null;
+  diagnostics: EmailDiagnosticV1[];
   display: EmailArtifactRefV1;
   display_state: string;
   kind: string;
@@ -1678,8 +1593,7 @@ export interface EmailBodySearch {
 }
 
 export interface EmailContentIDV1 {
-  /** @nullable */
-  fields: number[] | null;
+  fields: number[];
   state: string;
   /** @nullable */
   value: string | null;
@@ -1688,10 +1602,8 @@ export interface EmailContentIDV1 {
 export interface EmailDateV1 {
   /** @nullable */
   civil: string | null;
-  /** @nullable */
-  diagnostics: EmailDiagnosticV1[] | null;
-  /** @nullable */
-  fields: number[] | null;
+  diagnostics: EmailDiagnosticV1[];
+  fields: number[];
   state: string;
   timezone_state: string;
   /** @nullable */
@@ -1701,8 +1613,7 @@ export interface EmailDateV1 {
 }
 
 export interface EmailDecodedFieldV1 {
-  /** @nullable */
-  addresses: EmailAddressV1[] | null;
+  addresses: EmailAddressV1[];
   header_index: number;
   state: string;
   /** @nullable */
@@ -1754,31 +1665,21 @@ export interface EmailFailureV1 {
 }
 
 export interface EmailFieldsV1 {
-  /** @nullable */
-  bcc: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  cc: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  from: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  in_reply_to: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  message_id: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  references: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  reply_to: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  subject: EmailDecodedFieldV1[] | null;
-  /** @nullable */
-  to: EmailDecodedFieldV1[] | null;
+  bcc: EmailDecodedFieldV1[];
+  cc: EmailDecodedFieldV1[];
+  from: EmailDecodedFieldV1[];
+  in_reply_to: EmailDecodedFieldV1[];
+  message_id: EmailDecodedFieldV1[];
+  references: EmailDecodedFieldV1[];
+  reply_to: EmailDecodedFieldV1[];
+  subject: EmailDecodedFieldV1[];
+  to: EmailDecodedFieldV1[];
 }
 
 export interface EmailFilenameV1 {
   /** @nullable */
   decoded: string | null;
-  /** @nullable */
-  fields: number[] | null;
+  fields: number[];
   safe_name: string;
   state: string;
 }
@@ -1793,8 +1694,7 @@ export interface EmailHeaderV1 {
 }
 
 export interface EmailResourceV1 {
-  /** @nullable */
-  candidates: string[] | null;
+  candidates: string[];
   /** @nullable */
   cid: string | null;
   state: string;
@@ -1803,21 +1703,17 @@ export interface EmailResourceV1 {
 export interface EmailRelatedGroupV1 {
   /** @nullable */
   body_path: string | null;
-  /** @nullable */
-  resources: EmailResourceV1[] | null;
+  resources: EmailResourceV1[];
   root_path: string;
 }
 
 export interface EmailMessageV1 {
-  /** @nullable */
-  alternatives: EmailAlternativeV1[] | null;
+  alternatives: EmailAlternativeV1[];
   date: EmailDateV1;
-  /** @nullable */
-  diagnostics: EmailDiagnosticV1[] | null;
+  diagnostics: EmailDiagnosticV1[];
   fields: EmailFieldsV1;
   path: string;
-  /** @nullable */
-  related_groups: EmailRelatedGroupV1[] | null;
+  related_groups: EmailRelatedGroupV1[];
   /** @nullable */
   selected_body_path: string | null;
 }
@@ -1827,8 +1723,7 @@ export interface EmailMediaV1 {
   declared: string | null;
   /** @nullable */
   detected: string | null;
-  /** @nullable */
-  diagnostics: EmailDiagnosticV1[] | null;
+  diagnostics: EmailDiagnosticV1[];
 }
 
 export interface EmailPartV1 {
@@ -1836,14 +1731,12 @@ export interface EmailPartV1 {
   content_id: EmailContentIDV1;
   decode_state: string;
   depth: number;
-  /** @nullable */
-  diagnostics: EmailDiagnosticV1[] | null;
+  diagnostics: EmailDiagnosticV1[];
   /** @nullable */
   disposition: string | null;
   filename: EmailFilenameV1;
   header_block: EmailArtifactRefV1;
-  /** @nullable */
-  headers: EmailHeaderV1[] | null;
+  headers: EmailHeaderV1[];
   media: EmailMediaV1;
   message_path: string;
   /** @nullable */
@@ -1868,12 +1761,9 @@ export interface EmailTerminationV1 {
 }
 
 export interface EmailInventoryV1 {
-  /** @nullable */
-  diagnostics: EmailDiagnosticV1[] | null;
-  /** @nullable */
-  messages: EmailMessageV1[] | null;
-  /** @nullable */
-  parts: EmailPartV1[] | null;
+  diagnostics: EmailDiagnosticV1[];
+  messages: EmailMessageV1[];
+  parts: EmailPartV1[];
   /** @nullable */
   root_path: string | null;
   state: string;
@@ -2031,19 +1921,16 @@ export interface FormatVariantCapabilityV1 {
 
 export interface FormatCapabilityV1 {
   capabilities: FormatCapabilityV1Capabilities;
-  /** @nullable */
-  extensions: string[] | null;
+  extensions: string[];
   id: string;
   media_type: string;
   query_family: string;
   unit_kind: string;
-  /** @nullable */
-  variants: FormatVariantCapabilityV1[] | null;
+  variants: FormatVariantCapabilityV1[];
 }
 
 export interface PendingFormatV1 {
-  /** @nullable */
-  extensions: string[] | null;
+  extensions: string[];
   label: string;
   note: string;
   owner_slice: string;
@@ -2060,12 +1947,10 @@ export interface FormatCoverageResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   contract_version: string;
-  /** @nullable */
-  formats: FormatCapabilityV1[] | null;
+  formats: FormatCapabilityV1[];
   generated_by: CoverageSourcesV1;
   lookup?: FormatLookupV1;
-  /** @nullable */
-  pending: PendingFormatV1[] | null;
+  pending: PendingFormatV1[];
 }
 
 export interface GCReport {
@@ -2109,9 +1994,8 @@ export interface HighlightSetV1Schema {
   /**
      * @minItems 1
      * @maxItems 64
-     * @nullable
      */
-  terms: HighlightSetTermV1Schema[] | null;
+  terms: HighlightSetTermV1Schema[];
   v?: HighlightSetV1SchemaV;
 }
 
@@ -2155,8 +2039,7 @@ export interface IngestReport {
   readonly $schema?: string;
   added: number;
   excluded: number;
-  /** @nullable */
-  failed?: IngestFailure[] | null;
+  failed?: IngestFailure[];
   ingest_id?: string;
   skipped: number;
 }
@@ -2203,12 +2086,10 @@ export interface IngestPreflightReport {
   directories: number;
   errors: number;
   excluded: number;
-  /** @nullable */
-  file_types: IngestFileType[] | null;
+  file_types: IngestFileType[];
   file_types_truncated: boolean;
   files: number;
-  /** @nullable */
-  findings: IngestPreflightFinding[] | null;
+  findings: IngestPreflightFinding[];
   findings_truncated: boolean;
   logical_bytes: number;
   loose_only: IngestSizeClass;
@@ -2221,15 +2102,10 @@ export interface IngestPreflightReport {
 export interface IngestPreflightRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  exclude?: string[] | null;
-  /** @nullable */
-  include?: string[] | null;
-  /**
-     * @minItems 1
-     * @nullable
-     */
-  paths: string[] | null;
+  exclude?: string[];
+  include?: string[];
+  /** @minItems 1 */
+  paths: string[];
 }
 
 export interface IngestRequest {
@@ -2237,15 +2113,10 @@ export interface IngestRequest {
   readonly $schema?: string;
   collection_label?: string;
   dest: string;
-  /** @nullable */
-  exclude?: string[] | null;
-  /** @nullable */
-  include?: string[] | null;
-  /**
-     * @minItems 1
-     * @nullable
-     */
-  paths: string[] | null;
+  exclude?: string[];
+  include?: string[];
+  /** @minItems 1 */
+  paths: string[];
   replace?: boolean;
 }
 
@@ -2281,8 +2152,7 @@ export interface Job {
 export interface JobList {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: Job[] | null;
+  items: Job[];
 }
 
 export interface MediaAcquisitionGrantBody {
@@ -2298,14 +2168,12 @@ export interface MediaAcquisitionPlan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   grant_state: string;
-  /** @nullable */
-  input_classes: string[] | null;
+  input_classes: string[];
   origin_id: string;
   plan_fingerprint: string;
   plan_token: string;
   provider?: string;
-  /** @nullable */
-  retained_classes: string[] | null;
+  retained_classes: string[];
 }
 
 export interface MediaAcquisitionRevokeBody {
@@ -2380,8 +2248,7 @@ export interface MediaOccurrenceRow {
 export interface MediaOccurrencePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: MediaOccurrenceRow[] | null;
+  items: MediaOccurrenceRow[];
   next_cursor?: string;
   total: number;
 }
@@ -2402,8 +2269,7 @@ export interface MediaOrigin {
 export interface MediaOriginPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: MediaOrigin[] | null;
+  items: MediaOrigin[];
 }
 
 export interface MediaProcessingBody {
@@ -2461,8 +2327,7 @@ export interface MediaSourceRow {
 export interface MediaSourcePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: MediaSourceRow[] | null;
+  items: MediaSourceRow[];
   next_cursor?: string;
   total: number;
 }
@@ -2506,8 +2371,7 @@ export interface NodePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   directory: Node;
-  /** @nullable */
-  items: Node[] | null;
+  items: Node[];
   limit: number;
   offset: number;
   total: number;
@@ -2529,9 +2393,8 @@ export interface PreviewBatchTagsRequest {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  nodes: BatchTagTarget[] | null;
+  nodes: BatchTagTarget[];
   tag_id: string;
 }
 
@@ -2656,20 +2519,14 @@ export interface ProcessingRuntimeDisclosure {
      * @maxLength 1024
      */
   immediate_processor: string;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  metadata_classes: string[] | null;
+  /** @maxItems 64 */
+  metadata_classes: string[];
   /** @maxLength 1024 */
   model?: string;
   /** @maxLength 1024 */
   model_revision?: string;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  retained_artifact_roles: string[] | null;
+  /** @maxItems 64 */
+  retained_artifact_roles: string[];
   /**
      * @minLength 1
      * @maxLength 1024
@@ -2683,8 +2540,7 @@ export interface ProcessingFlowHop {
   capability: string;
   disclose_filename: boolean;
   filename?: string;
-  /** @nullable */
-  input_classes: string[] | null;
+  input_classes: string[];
   provider_id: string;
   runtime_disclosure: ProcessingRuntimeDisclosure;
   trust_boundary: string;
@@ -2694,8 +2550,7 @@ export interface ProcessingJob {
   /** @pattern ^[0-9a-f]{64}$ */
   attachment_id?: string;
   content_version_id: string;
-  /** @nullable */
-  embedding_job_ids: string[] | null;
+  embedding_job_ids: string[];
   /** @pattern ^[0-9a-f]{64}$ */
   id: string;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -2718,8 +2573,7 @@ export interface ProcessingStatus {
   readonly $schema?: string;
   /** @minimum 0 */
   completed_bindings: number;
-  /** @nullable */
-  embedding_job_ids: string[] | null;
+  embedding_job_ids: string[];
   failure_code?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   job_id: string;
@@ -2758,17 +2612,14 @@ export interface ProcessingPlan {
   backup_consequence: string;
   consent_required: boolean;
   consent_state: ProcessingPlanConsentState;
-  /** @nullable */
-  disclosed_classes: string[] | null;
+  disclosed_classes: string[];
   estimate: ProcessingEstimate;
   /** @pattern ^[0-9a-f]{64}$ */
   fingerprint: string;
-  /** @nullable */
-  flow: ProcessingFlowHop[] | null;
+  flow: ProcessingFlowHop[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
-  /** @nullable */
-  retained_classes: string[] | null;
+  retained_classes: string[];
   selector: ProcessingSelector;
   vault_uid: string;
 }
@@ -2780,8 +2631,7 @@ export interface ProcessingPlanRequest {
 }
 
 export interface ProcessingProfileSummary {
-  /** @nullable */
-  embedding_bindings: string[] | null;
+  embedding_bindings: string[];
   /** @pattern ^[0-9a-f]{64}$ */
   fingerprint: string;
   name: string;
@@ -2800,8 +2650,7 @@ export interface RenditionBindingV1 {
   max_response_bytes: number;
   max_units: number;
   name: string;
-  /** @nullable */
-  requested_artifacts: string[] | null;
+  requested_artifacts: string[];
   trust_boundary: string;
   upload_options_fingerprint: string;
 }
@@ -2822,8 +2671,7 @@ export interface RetrievalPolicyV1 {
 
 export interface ProcessingProfileV1 {
   contract_version: string;
-  /** @nullable */
-  embeddings: EmbeddingBindingV1[] | null;
+  embeddings: EmbeddingBindingV1[];
   evidence_lexical: EvidenceLexicalPolicyV1;
   rendition: RenditionBindingV1;
   retention_disclosure: RetentionDisclosurePolicyV1;
@@ -2874,8 +2722,7 @@ export interface ProvenanceAppendRequest {
 export interface ProvenancePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: ProvenanceFact[] | null;
+  items: ProvenanceFact[];
   /**
      * @minimum 1
      * @maximum 1000
@@ -2928,55 +2775,33 @@ export const SavedQueryFiltersSchemaTextCoverageItem = {
 export interface SavedQueryFiltersSchema {
   /** @nullable */
   collapse_duplicates?: boolean | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  collection_ids?: string[] | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  exclude_collection_ids?: string[] | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  exclude_paths?: string[] | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  exclude_tag_ids?: string[] | null;
+  /** @maxItems 64 */
+  collection_ids?: string[];
+  /** @maxItems 64 */
+  exclude_collection_ids?: string[];
+  /** @maxItems 64 */
+  exclude_paths?: string[];
+  /** @maxItems 64 */
+  exclude_tag_ids?: string[];
   /**
      * @maxItems 32
-     * @nullable
      * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
      */
-  extensions?: string[] | null;
+  extensions?: string[];
   /** @nullable */
   has_duplicates?: boolean | null;
-  /**
-     * @maxItems 13
-     * @nullable
-     */
-  media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[] | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  mime_types?: string[] | null;
+  /** @maxItems 13 */
+  media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
+  /** @maxItems 64 */
+  mime_types?: string[];
   /** @nullable */
   modified_after?: string | null;
   /** @nullable */
   modified_before?: string | null;
   /** @nullable */
   no_tags?: boolean | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  paths?: string[] | null;
+  /** @maxItems 64 */
+  paths?: string[];
   /**
      * @minimum 0
      * @maximum 9007199254740991
@@ -2989,16 +2814,10 @@ export interface SavedQueryFiltersSchema {
      * @nullable
      */
   size_min?: number | null;
-  /**
-     * @maxItems 64
-     * @nullable
-     */
-  tag_ids?: string[] | null;
-  /**
-     * @maxItems 6
-     * @nullable
-     */
-  text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[] | null;
+  /** @maxItems 64 */
+  tag_ids?: string[];
+  /** @maxItems 6 */
+  text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[];
 }
 
 export type SavedQueryV1SchemaMode = typeof SavedQueryV1SchemaMode[keyof typeof SavedQueryV1SchemaMode];
@@ -3065,8 +2884,7 @@ export interface SavedQueryV1Schema {
 export interface QueryPreview {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  dependencies: QueryDependency[] | null;
+  dependencies: QueryDependency[];
   query: SavedQueryV1Schema;
   query_fingerprint: string;
 }
@@ -3089,8 +2907,7 @@ export interface RenameTagRequest {
 }
 
 export interface RenditionAuthorizationIdentityV1 {
-  /** @nullable */
-  allowed_artifact_roles: string[] | null;
+  allowed_artifact_roles: string[];
   capability_record_checksum: string;
   descriptor_fingerprint: string;
   disclose_filename: boolean;
@@ -3274,8 +3091,7 @@ export interface SavedQueryCreateRequest {
 export interface SavedQueryPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: SavedQuery[] | null;
+  items: SavedQuery[];
   /**
      * @minimum 1
      * @maximum 1000
@@ -3349,11 +3165,8 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /**
-     * @maxItems 8
-     * @nullable
-     */
-  facets?: SavedQueryRunRequestFacetsItem[] | null;
+  /** @maxItems 8 */
+  facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   /** @maxLength 128 */
   profile?: string;
@@ -3421,8 +3234,7 @@ export interface WorkspaceQueryTag {
 export interface WorkspaceQueryRow {
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
-  /** @nullable */
-  collection_ids: string[] | null;
+  collection_ids: string[];
   content_version_id: string;
   coverage_attachment_id?: string;
   coverage_build_id?: string;
@@ -3443,8 +3255,7 @@ export interface WorkspaceQueryRow {
   /** @minimum 0 */
   size: number;
   sort_key: string;
-  /** @nullable */
-  tags: WorkspaceQueryTag[] | null;
+  tags: WorkspaceQueryTag[];
 }
 
 export type WorkspaceQueryResponseFacetsItem = {
@@ -3454,11 +3265,8 @@ export type WorkspaceQueryResponseFacetsItem = {
   other?: number | null;
   reason?: string;
   total?: number | null;
-  /**
-     * @maxItems 114
-     * @nullable
-     */
-  values: WorkspaceFacetValue[] | null;
+  /** @maxItems 114 */
+  values: WorkspaceFacetValue[];
 };
 
 export interface WorkspaceQueryResponse {
@@ -3466,14 +3274,10 @@ export interface WorkspaceQueryResponse {
   readonly $schema?: string;
   coverage: WorkspaceQueryCoverage;
   created_at: string;
-  /** @nullable */
-  dependencies: WorkspaceQueryDependency[] | null;
+  dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /**
-     * @maxItems 8
-     * @nullable
-     */
-  facets: WorkspaceQueryResponseFacetsItem[] | null;
+  /** @maxItems 8 */
+  facets: WorkspaceQueryResponseFacetsItem[];
   generation: WorkspaceQueryGeneration;
   /** @pattern ^[0-9a-f]{64}$ */
   member_hash: string;
@@ -3486,11 +3290,8 @@ export interface WorkspaceQueryResponse {
   query: SavedQueryV1Schema;
   /** @pattern ^sha256:[0-9a-f]{64}$ */
   query_fingerprint: string;
-  /**
-     * @maxItems 250
-     * @nullable
-     */
-  rows: WorkspaceQueryRow[] | null;
+  /** @maxItems 250 */
+  rows: WorkspaceQueryRow[];
   snapshot: boolean;
   /** @pattern ^sha256:[0-9a-f]{64}$ */
   snapshot_fingerprint: string;
@@ -3527,8 +3328,7 @@ export interface SearchHit {
 export interface SearchReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  hits: SearchHit[] | null;
+  hits: SearchHit[];
   limit: number;
   mime_type?: string;
   modified_before?: string;
@@ -3676,8 +3476,7 @@ export interface StorageRecoveryPreview {
   kind: string;
   plan_digest: string;
   preview_token: string;
-  /** @nullable */
-  source_store_ids: string[] | null;
+  source_store_ids: string[];
 }
 
 export interface StorageRepackReport {
@@ -3734,8 +3533,7 @@ export interface TagDeletionReceipt {
 export interface TagPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: Tag[] | null;
+  items: Tag[];
   limit: number;
   offset: number;
   total: number;
@@ -3749,8 +3547,7 @@ export interface TaggedNode {
 export interface TaggedNodePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: TaggedNode[] | null;
+  items: TaggedNode[];
   limit: number;
   offset: number;
   /** @minimum 0 */
@@ -3802,8 +3599,7 @@ export interface TrashEmptyReport {
 export interface TrashPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: Node[] | null;
+  items: Node[];
   limit: number;
   offset: number;
   total: number;
@@ -3850,26 +3646,22 @@ export interface VaultInfo {
 export interface VerifyReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  metadata_problems?: string[] | null;
+  metadata_problems?: string[];
   ok: number;
-  /** @nullable */
-  problems?: VerifyProblem[] | null;
+  problems?: VerifyProblem[];
 }
 
 export interface VersionPruneReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  candidates: ContentVersion[] | null;
+  candidates: ContentVersion[];
   changed: boolean;
   checkpoint?: ContentVersion;
   checkpoint_required: boolean;
   cutoff?: string;
   /** @minimum 0 */
   deleted_versions: number;
-  /** @nullable */
-  dependency_retained: ContentVersion[] | null;
+  dependency_retained: ContentVersion[];
   /** @minimum 0 */
   logical_bytes: number;
   /** @minimum 0 */
@@ -3905,15 +3697,13 @@ export interface VersionPruneRequest {
   /**
      * @minItems 1
      * @maxItems 1000
-     * @nullable
      */
-  version_ids?: string[] | null;
+  version_ids?: string[];
 }
 
 export interface WatchedInbox {
   destination: string;
-  /** @nullable */
-  exclude: string[] | null;
+  exclude: string[];
   job?: Job;
   minimum_age: string;
   name: string;
@@ -3925,8 +3715,7 @@ export interface WatchedInbox {
 export interface WatchedInboxList {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  items: WatchedInbox[] | null;
+  items: WatchedInbox[];
 }
 
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
@@ -3955,11 +3744,8 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /**
-     * @maxItems 8
-     * @nullable
-     */
-  facets?: WorkspaceQueryCreateRequestFacetsItem[] | null;
+  /** @maxItems 8 */
+  facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
   /** @maxLength 128 */
   profile?: string;
@@ -3975,6 +3761,31 @@ export interface WorkspaceQueryPageRequest {
      */
   cursor: string;
 }
+
+export type PrepareWebDownloadBody = {
+  blob_hash: string;
+  node_id: number;
+  revision: number;
+  size: number;
+  version_id: string;
+};
+
+export type PrepareWebDownload200 = {
+  blob_hash?: string;
+  detail?: string;
+  name?: string;
+  phase: string;
+  received: number;
+  total: number;
+  url?: string;
+  version_id?: string;
+};
+
+export type CreateWebSession201 = {
+  token: string;
+  upload_secret: string;
+  url: string;
+};
 
 export type AuditNodeHistoryParams = {
 path?: string;
@@ -4079,9 +3890,8 @@ vault_uid: string;
 /**
  * @minItems 1
  * @maxItems 4096
- * @nullable
  */
-content_version_id: string[] | null;
+content_version_id: string[];
 };
 
 export type ListDocumentsParams = {
@@ -4130,15 +3940,13 @@ offset?: number;
 export type RequestEmailDocumentProcessingBody = {
   captured_artifact_policy: unknown;
   execution_identity: RenditionExecutionIdentityV1;
-  /** @nullable */
-  input_classes: string[] | null;
+  input_classes: string[];
   operation_id: string;
   order: number;
   principal: string;
   profile: ProcessingProfileV1;
   request_digest: string;
-  /** @nullable */
-  retained_artifact_classes: string[] | null;
+  retained_artifact_classes: string[];
   scope: string;
 };
 
@@ -4152,8 +3960,7 @@ export type RequestEmailDocumentProcessing200 = {
 export type RequestEmailDocumentProcessingDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4167,24 +3974,21 @@ export type PublishEmailDocumentsBody = {
   generation_id: string;
   operation_id: string;
   parent: EmailDocumentIdentity;
-  /** @nullable */
-  reuse: EmailDocumentReuse[] | null;
+  reuse: EmailDocumentReuse[];
 };
 
 export type PublishEmailDocuments200 = {
   created_at: string;
   inventory_state: string;
   operation_id: string;
-  /** @nullable */
-  relations: EmailDocumentRelation[] | null;
+  relations: EmailDocumentRelation[];
   request_digest: string;
 };
 
 export type PublishEmailDocumentsDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4198,8 +4002,7 @@ export type RemoveEmailDocumentPublicationBody = {
 export type RemoveEmailDocumentPublicationDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4210,16 +4013,14 @@ export type GetEmailDocumentPublication200 = {
   created_at: string;
   inventory_state: string;
   operation_id: string;
-  /** @nullable */
-  relations: EmailDocumentRelation[] | null;
+  relations: EmailDocumentRelation[];
   request_digest: string;
 };
 
 export type GetEmailDocumentPublicationDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4235,8 +4036,7 @@ limit?: number;
 };
 
 export type ListEmailDocumentRelations200 = {
-  /** @nullable */
-  items: EmailDocumentRelationStatus[] | null;
+  items: EmailDocumentRelationStatus[];
   next_operation_id: string;
   next_order: number;
   total: number;
@@ -4245,8 +4045,7 @@ export type ListEmailDocumentRelations200 = {
 export type ListEmailDocumentRelationsDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4358,8 +4157,7 @@ export type ReplaceNodeContent200 = {
 export type ReplaceNodeContentDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4410,12 +4208,10 @@ export type GrantProcessingConsentBody = {
   disclosure_fingerprint: string;
   /** @nullable */
   expires_at: string | null;
-  /** @nullable */
-  input_classes: string[] | null;
+  input_classes: string[];
   principal: string;
   profile_fingerprint: string;
-  /** @nullable */
-  retained_artifact_classes: string[] | null;
+  retained_artifact_classes: string[];
   scope: string;
 };
 
@@ -4430,8 +4226,7 @@ export type GrantProcessingConsent200 = {
 export type GrantProcessingConsentDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4453,8 +4248,7 @@ export type RevokeProcessingConsent200 = {
 export type RevokeProcessingConsentDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4619,8 +4413,7 @@ export type UploadFile201 = {
 export type UploadFileDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4647,8 +4440,7 @@ export type GetEmailMetadata202 = {
 export type GetEmailMetadataDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4672,8 +4464,7 @@ export type EnsureEmailMetadata200 = {
 export type EnsureEmailMetadataDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4695,8 +4486,7 @@ export type GetEmailMetadataGeneration200 = {
 export type GetEmailMetadataGenerationDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -4706,27 +4496,25 @@ export type GetEmailMetadataGenerationDefault = {
 export type GetEmailPartDefault = {
   code?: string;
   detail?: string;
-  /** @nullable */
-  errors?: string[] | null;
+  errors?: string[];
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
   title: string;
 };
 
-export const getEnableAuditUrl = () => {
+export const getPrepareWebDownloadUrl = () => {
 
 
 
 
-  return `/api/v1/audit/enable`
+  return `/api/daemon/web-download`
 }
 
 /**
- * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
- * @summary Permanently enable the exact reviewed audit scope
+ * @summary Verify a document and prepare a browser download
  */
-export const enableAudit = async (enableAuditRequest: NonReadonly<EnableAuditRequest>, options?: RequestInit): Promise<AuditStatus> => {
+export const prepareWebDownload = (prepareWebDownloadBody: PrepareWebDownloadBody, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -4742,21 +4530,101 @@ export const enableAudit = async (enableAuditRequest: NonReadonly<EnableAuditReq
     }
     return headers;
   };
-const res = await fetch(getEnableAuditUrl(),
+return sessionResponse<Response>(getPrepareWebDownloadUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',Accept: 'application/x-ndjson', ...getHeaders(options?.headers) },
+    body: JSON.stringify(prepareWebDownloadBody)
+  }
+);}
+
+
+
+export const getRevokeWebSessionUrl = () => {
+
+
+
+
+  return `/api/daemon/web-session`
+}
+
+/**
+ * @summary Revoke the current browser session
+ */
+export const revokeWebSession = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getRevokeWebSessionUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getCreateWebSessionUrl = () => {
+
+
+
+
+  return `/api/daemon/web-session`
+}
+
+/**
+ * @summary Issue a scoped browser session
+ */
+export const createWebSession = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<CreateWebSession201> => {
+
+  return sessionJSON<CreateWebSession201>(getCreateWebSessionUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getEnableAuditUrl = () => {
+
+
+
+
+  return `/api/v1/audit/enable`
+}
+
+/**
+ * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+ * @summary Permanently enable the exact reviewed audit scope
+ */
+export const enableAudit = async (enableAuditRequest: NonReadonly<EnableAuditRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<AuditStatus>(getEnableAuditUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(enableAuditRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: AuditStatus = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -4779,23 +4647,16 @@ export const getAuditNodeHistoryUrl = (params?: AuditNodeHistoryParams,) => {
  * Returns newest-first canonical events for one stable node. Use next_cursor to continue without shifting when newer events arrive.
  * @summary Read one audited node's canonical event timeline
  */
-export const auditNodeHistory = async (params?: AuditNodeHistoryParams, options?: RequestInit): Promise<AuditEventPage> => {
+export const auditNodeHistory = async (params?: AuditNodeHistoryParams, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditEventPage> => {
 
-  const res = await fetch(getAuditNodeHistoryUrl(params),
+  return sessionJSON<AuditEventPage>(getAuditNodeHistoryUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: AuditEventPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -4810,7 +4671,7 @@ export const getPreviewAuditEnrollmentUrl = () => {
 /**
  * @summary Preview one permanent audit scope without changing the vault
  */
-export const previewAuditEnrollment = async (previewAuditEnrollmentRequest: NonReadonly<PreviewAuditEnrollmentRequest>, options?: RequestInit): Promise<AuditEnrollmentPreview> => {
+export const previewAuditEnrollment = async (previewAuditEnrollmentRequest: NonReadonly<PreviewAuditEnrollmentRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditEnrollmentPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -4826,21 +4687,14 @@ export const previewAuditEnrollment = async (previewAuditEnrollmentRequest: NonR
     }
     return headers;
   };
-const res = await fetch(getPreviewAuditEnrollmentUrl(),
+return sessionJSON<AuditEnrollmentPreview>(getPreviewAuditEnrollmentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewAuditEnrollmentRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: AuditEnrollmentPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -4857,7 +4711,7 @@ export const getAuditScopeHistoryUrl = (scopeId: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/audit/scopes/${scopeId}/history?${stringifiedParams}` : `/api/v1/audit/scopes/${scopeId}/history`
+  return stringifiedParams.length > 0 ? `/api/v1/audit/scopes/${encodeURIComponent(String(scopeId))}/history?${stringifiedParams}` : `/api/v1/audit/scopes/${encodeURIComponent(String(scopeId))}/history`
 }
 
 /**
@@ -4865,23 +4719,16 @@ export const getAuditScopeHistoryUrl = (scopeId: string,
  * @summary Read canonical events across one permanent audit scope
  */
 export const auditScopeHistory = async (scopeId: string,
-    params?: AuditScopeHistoryParams, options?: RequestInit): Promise<AuditScopeEventPage> => {
+    params?: AuditScopeHistoryParams, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditScopeEventPage> => {
 
-  const res = await fetch(getAuditScopeHistoryUrl(scopeId,params),
+  return sessionJSON<AuditScopeEventPage>(getAuditScopeHistoryUrl(scopeId,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: AuditScopeEventPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -4903,23 +4750,16 @@ export const getAuditStatusUrl = (params?: AuditStatusParams,) => {
 /**
  * @summary Inspect audit authority and optional node protection
  */
-export const auditStatus = async (params?: AuditStatusParams, options?: RequestInit): Promise<AuditStatus> => {
+export const auditStatus = async (params?: AuditStatusParams, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditStatus> => {
 
-  const res = await fetch(getAuditStatusUrl(params),
+  return sessionJSON<AuditStatus>(getAuditStatusUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: AuditStatus = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -4935,7 +4775,7 @@ export const getVerifyAuditUrl = () => {
  * Returns stable vault, allocation-lineage, and scope-chain evidence after independently replaying canonical history against current metadata and re-hashing every unique blob retained by protected history. Optional expected evidence is proved as an exact prefix of current authority.
  * @summary Replay audit authority and verify every protected blob
  */
-export const verifyAudit = async (auditVerifyRequest?: NonReadonly<AuditVerifyRequest>, options?: RequestInit): Promise<AuditVerifyReport> => {
+export const verifyAudit = async (auditVerifyRequest?: NonReadonly<AuditVerifyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditVerifyReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -4951,21 +4791,14 @@ export const verifyAudit = async (auditVerifyRequest?: NonReadonly<AuditVerifyRe
     }
     return headers;
   };
-const res = await fetch(getVerifyAuditUrl(),
+return sessionJSON<AuditVerifyReport>(getVerifyAuditUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(auditVerifyRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: AuditVerifyReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -4980,7 +4813,7 @@ export const getInitBackupRepositoryUrl = () => {
 /**
  * @summary Initialize an immutable backup repository
  */
-export const initBackupRepository = async (initBackupRepositoryRequest: NonReadonly<InitBackupRepositoryRequest>, options?: RequestInit): Promise<BackupRepository> => {
+export const initBackupRepository = async (initBackupRepositoryRequest: NonReadonly<InitBackupRepositoryRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupRepository> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -4996,21 +4829,14 @@ export const initBackupRepository = async (initBackupRepositoryRequest: NonReado
     }
     return headers;
   };
-const res = await fetch(getInitBackupRepositoryUrl(),
+return sessionJSON<BackupRepository>(getInitBackupRepositoryUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(initBackupRepositoryRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BackupRepository = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5025,7 +4851,7 @@ export const getRestoreBackupSnapshotUrl = () => {
 /**
  * @summary Restore and prove a snapshot in a separate vault directory
  */
-export const restoreBackupSnapshot = async (backupRestoreRequest: NonReadonly<BackupRestoreRequest>, options?: RequestInit): Promise<BackupRestoreReport> => {
+export const restoreBackupSnapshot = async (backupRestoreRequest: NonReadonly<BackupRestoreRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupRestoreReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5041,21 +4867,14 @@ export const restoreBackupSnapshot = async (backupRestoreRequest: NonReadonly<Ba
     }
     return headers;
   };
-const res = await fetch(getRestoreBackupSnapshotUrl(),
+return sessionJSON<BackupRestoreReport>(getRestoreBackupSnapshotUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupRestoreRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BackupRestoreReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5071,7 +4890,7 @@ export const getStreamBackupSnapshotRestoreUrl = () => {
  * Returns newline-delimited JSON. Progress events precede exactly one terminal result or error event; an HTTP 200 only means the stream started.
  * @summary Restore and prove a snapshot while streaming structured progress
  */
-export const streamBackupSnapshotRestore = async (backupRestoreRequest: NonReadonly<BackupRestoreRequest>, options?: RequestInit): Promise<Response> => {
+export const streamBackupSnapshotRestore = (backupRestoreRequest: NonReadonly<BackupRestoreRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5087,17 +4906,14 @@ export const streamBackupSnapshotRestore = async (backupRestoreRequest: NonReado
     }
     return headers;
   };
-  const stream = await fetch(getStreamBackupSnapshotRestoreUrl(),
+return sessionResponse<Response>(getStreamBackupSnapshotRestoreUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupRestoreRequest)
   }
-);
-
-  return stream
-  }
+);}
 
 
 
@@ -5119,23 +4935,16 @@ export const getListBackupSnapshotsUrl = (params?: ListBackupSnapshotsParams,) =
 /**
  * @summary List snapshots in a backup repository
  */
-export const listBackupSnapshots = async (params?: ListBackupSnapshotsParams, options?: RequestInit): Promise<BackupSnapshotList> => {
+export const listBackupSnapshots = async (params?: ListBackupSnapshotsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupSnapshotList> => {
 
-  const res = await fetch(getListBackupSnapshotsUrl(params),
+  return sessionJSON<BackupSnapshotList>(getListBackupSnapshotsUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BackupSnapshotList = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5150,7 +4959,7 @@ export const getCreateBackupSnapshotUrl = () => {
 /**
  * @summary Capture a verified logical snapshot of the live vault
  */
-export const createBackupSnapshot = async (backupCreateRequest: NonReadonly<BackupCreateRequest>, options?: RequestInit): Promise<BackupSnapshot> => {
+export const createBackupSnapshot = async (backupCreateRequest: NonReadonly<BackupCreateRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupSnapshot> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5166,21 +4975,14 @@ export const createBackupSnapshot = async (backupCreateRequest: NonReadonly<Back
     }
     return headers;
   };
-const res = await fetch(getCreateBackupSnapshotUrl(),
+return sessionJSON<BackupSnapshot>(getCreateBackupSnapshotUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupCreateRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BackupSnapshot = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5196,7 +4998,7 @@ export const getStreamBackupSnapshotCreationUrl = () => {
  * Returns newline-delimited JSON. Progress events precede exactly one terminal result or error event; an HTTP 200 only means the stream started.
  * @summary Capture a snapshot and stream structured progress
  */
-export const streamBackupSnapshotCreation = async (backupCreateRequest: NonReadonly<BackupCreateRequest>, options?: RequestInit): Promise<Response> => {
+export const streamBackupSnapshotCreation = (backupCreateRequest: NonReadonly<BackupCreateRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5212,17 +5014,14 @@ export const streamBackupSnapshotCreation = async (backupCreateRequest: NonReado
     }
     return headers;
   };
-  const stream = await fetch(getStreamBackupSnapshotCreationUrl(),
+return sessionResponse<Response>(getStreamBackupSnapshotCreationUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupCreateRequest)
   }
-);
-
-  return stream
-  }
+);}
 
 
 
@@ -5237,7 +5036,7 @@ export const getVerifyBackupRepositoryUrl = () => {
 /**
  * @summary Verify backup repository integrity
  */
-export const verifyBackupRepository = async (backupVerifyRequest: NonReadonly<BackupVerifyRequest>, options?: RequestInit): Promise<BackupVerifyReport> => {
+export const verifyBackupRepository = async (backupVerifyRequest: NonReadonly<BackupVerifyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BackupVerifyReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5253,21 +5052,14 @@ export const verifyBackupRepository = async (backupVerifyRequest: NonReadonly<Ba
     }
     return headers;
   };
-const res = await fetch(getVerifyBackupRepositoryUrl(),
+return sessionJSON<BackupVerifyReport>(getVerifyBackupRepositoryUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupVerifyRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BackupVerifyReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5283,7 +5075,7 @@ export const getStreamBackupRepositoryVerificationUrl = () => {
  * Returns newline-delimited JSON. Progress events precede exactly one terminal result or error event; an HTTP 200 only means the stream started.
  * @summary Verify a backup repository and stream structured progress
  */
-export const streamBackupRepositoryVerification = async (backupVerifyRequest: NonReadonly<BackupVerifyRequest>, options?: RequestInit): Promise<Response> => {
+export const streamBackupRepositoryVerification = (backupVerifyRequest: NonReadonly<BackupVerifyRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5299,17 +5091,14 @@ export const streamBackupRepositoryVerification = async (backupVerifyRequest: No
     }
     return headers;
   };
-  const stream = await fetch(getStreamBackupRepositoryVerificationUrl(),
+return sessionResponse<Response>(getStreamBackupRepositoryVerificationUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(backupVerifyRequest)
   }
-);
-
-  return stream
-  }
+);}
 
 
 
@@ -5325,7 +5114,7 @@ export const getBatchMoveUrl = () => {
  * Every source is resolved against one initial tree. Each destination is an exact final coordinate, and its parent is resolved in the planned final tree. The daemon validates the complete final tree before changing anything, so plans may perform swaps and nested reorganizations without exposing intermediate names. A source uses either source_path or node_id plus revision, never both.
  * @summary Apply an all-or-nothing document reorganization
  */
-export const batchMove = async (batchMoveRequest: NonReadonly<BatchMoveRequest>, options?: RequestInit): Promise<BatchMoveReport> => {
+export const batchMove = async (batchMoveRequest: NonReadonly<BatchMoveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatchMoveReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5341,21 +5130,14 @@ export const batchMove = async (batchMoveRequest: NonReadonly<BatchMoveRequest>,
     }
     return headers;
   };
-const res = await fetch(getBatchMoveUrl(),
+return sessionJSON<BatchMoveReport>(getBatchMoveUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(batchMoveRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BatchMoveReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5370,7 +5152,7 @@ export const getChangeBatchTagsUrl = () => {
 /**
  * @summary Assign or remove one tag across an atomic selected set
  */
-export const changeBatchTags = async (batchTagRequest: NonReadonly<BatchTagRequest>, options?: RequestInit): Promise<BatchTagReceipt> => {
+export const changeBatchTags = async (batchTagRequest: NonReadonly<BatchTagRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatchTagReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5386,21 +5168,14 @@ export const changeBatchTags = async (batchTagRequest: NonReadonly<BatchTagReque
     }
     return headers;
   };
-const res = await fetch(getChangeBatchTagsUrl(),
+return sessionJSON<BatchTagReceipt>(getChangeBatchTagsUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(batchTagRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BatchTagReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5415,7 +5190,7 @@ export const getPreviewBatchTagsUrl = () => {
 /**
  * @summary Observe exact tag membership for a revision-fenced selected set
  */
-export const previewBatchTags = async (previewBatchTagsRequest: NonReadonly<PreviewBatchTagsRequest>, options?: RequestInit): Promise<BatchTagPreview> => {
+export const previewBatchTags = async (previewBatchTagsRequest: NonReadonly<PreviewBatchTagsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatchTagPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5431,21 +5206,14 @@ export const previewBatchTags = async (previewBatchTagsRequest: NonReadonly<Prev
     }
     return headers;
   };
-const res = await fetch(getPreviewBatchTagsUrl(),
+return sessionJSON<BatchTagPreview>(getPreviewBatchTagsUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewBatchTagsRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BatchTagPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5468,23 +5236,16 @@ export const getListCollectionsUrl = (params?: ListCollectionsParams,) => {
  * Counts and bytes describe current live members. Empty runs remain directly accessible only when they retain label authority.
  * @summary List document-bearing ingest runs, newest first
  */
-export const listCollections = async (params?: ListCollectionsParams, options?: RequestInit): Promise<CollectionPage> => {
+export const listCollections = async (params?: ListCollectionsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CollectionPage> => {
 
-  const res = await fetch(getListCollectionsUrl(params),
+  return sessionJSON<CollectionPage>(getListCollectionsUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: CollectionPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5493,29 +5254,22 @@ export const getGetCollectionUrl = (id: string,) => {
 
 
 
-  return `/api/v1/collections/${id}`
+  return `/api/v1/collections/${encodeURIComponent(String(id))}`
 }
 
 /**
  * @summary Inspect one ingest run and its current live summary
  */
-export const getCollection = async (id: string, options?: RequestInit): Promise<Collection> => {
+export const getCollection = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Collection> => {
 
-  const res = await fetch(getGetCollectionUrl(id),
+  return sessionJSON<Collection>(getGetCollectionUrl(id),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Collection = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5524,29 +5278,22 @@ export const getGetCollectionLabelUrl = (id: string,) => {
 
 
 
-  return `/api/v1/collections/${id}/label`
+  return `/api/v1/collections/${encodeURIComponent(String(id))}/label`
 }
 
 /**
  * @summary Read a collection's independently revisioned label
  */
-export const getCollectionLabel = async (id: string, options?: RequestInit): Promise<CollectionLabel> => {
+export const getCollectionLabel = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getGetCollectionLabelUrl(id),
+  return sessionResponse<CollectionLabel>(getGetCollectionLabelUrl(id),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: CollectionLabel = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5555,15 +5302,15 @@ export const getSetCollectionLabelUrl = (id: string,) => {
 
 
 
-  return `/api/v1/collections/${id}/label`
+  return `/api/v1/collections/${encodeURIComponent(String(id))}/label`
 }
 
 /**
  * Requires If-Match from the dedicated label resource. Label changes are unavailable after permanent audit authority is enabled.
  * @summary Set or clear a collection label under its label revision
  */
-export const setCollectionLabel = async (id: string,
-    setCollectionLabelRequest: NonReadonly<SetCollectionLabelRequest>, options?: RequestInit): Promise<CollectionLabel> => {
+export const setCollectionLabel = (id: string,
+    setCollectionLabelRequest: NonReadonly<SetCollectionLabelRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5579,21 +5326,14 @@ export const setCollectionLabel = async (id: string,
     }
     return headers;
   };
-const res = await fetch(getSetCollectionLabelUrl(id),
+return sessionResponse<CollectionLabel>(getSetCollectionLabelUrl(id),
   {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(setCollectionLabelRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: CollectionLabel = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5610,30 +5350,23 @@ export const getListCollectionMembersUrl = (id: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/collections/${id}/members?${stringifiedParams}` : `/api/v1/collections/${id}/members`
+  return stringifiedParams.length > 0 ? `/api/v1/collections/${encodeURIComponent(String(id))}/members?${stringifiedParams}` : `/api/v1/collections/${encodeURIComponent(String(id))}/members`
 }
 
 /**
  * @summary List a collection's current live file members
  */
 export const listCollectionMembers = async (id: string,
-    params?: ListCollectionMembersParams, options?: RequestInit): Promise<CollectionMemberPage> => {
+    params?: ListCollectionMembersParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CollectionMemberPage> => {
 
-  const res = await fetch(getListCollectionMembersUrl(id,params),
+  return sessionJSON<CollectionMemberPage>(getListCollectionMembersUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: CollectionMemberPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5650,30 +5383,23 @@ export const getGetCollectionQualityUrl = (id: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/collections/${id}/quality?${stringifiedParams}` : `/api/v1/collections/${id}/quality`
+  return stringifiedParams.length > 0 ? `/api/v1/collections/${encodeURIComponent(String(id))}/quality?${stringifiedParams}` : `/api/v1/collections/${encodeURIComponent(String(id))}/quality`
 }
 
 /**
  * @summary Inspect bounded current collection quality and text coverage
  */
 export const getCollectionQuality = async (id: string,
-    params?: GetCollectionQualityParams, options?: RequestInit): Promise<CollectionQuality> => {
+    params?: GetCollectionQualityParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CollectionQuality> => {
 
-  const res = await fetch(getGetCollectionQualityUrl(id,params),
+  return sessionJSON<CollectionQuality>(getGetCollectionQualityUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: CollectionQuality = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5696,23 +5422,16 @@ export const getLookupContentReferencesUrl = (params: LookupContentReferencesPar
  * Results are logical content-version references, not physical loose or pack entries. Live current references sort first, followed by live history and trashed references.
  * @summary Find stable document versions that retain a SHA-256 identity
  */
-export const lookupContentReferences = async (params: LookupContentReferencesParams, options?: RequestInit): Promise<ContentReferencePage> => {
+export const lookupContentReferences = async (params: LookupContentReferencesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentReferencePage> => {
 
-  const res = await fetch(getLookupContentReferencesUrl(params),
+  return sessionJSON<ContentReferencePage>(getLookupContentReferencesUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ContentReferencePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5720,6 +5439,14 @@ export const getGetDocumentProcessingCoverageUrl = (params: GetDocumentProcessin
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = ["content_version_id"];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? 'null' : String(v));
+      });
+      return;
+    }
 
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : String(value))
@@ -5734,23 +5461,16 @@ export const getGetDocumentProcessingCoverageUrl = (params: GetDocumentProcessin
 /**
  * @summary Report rendition and embedding coverage for exact document versions
  */
-export const getDocumentProcessingCoverage = async (params: GetDocumentProcessingCoverageParams, options?: RequestInit): Promise<CoverageReport> => {
+export const getDocumentProcessingCoverage = async (params: GetDocumentProcessingCoverageParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CoverageReport> => {
 
-  const res = await fetch(getGetDocumentProcessingCoverageUrl(params),
+  return sessionJSON<CoverageReport>(getGetDocumentProcessingCoverageUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: CoverageReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5766,7 +5486,7 @@ export const getRunDerivativePurgeUrl = () => {
  * Returns exactly one terminal receipt as newline-delimited JSON after the catalog purge commits. Partial or deferred cleanup includes an error alongside the receipt.
  * @summary Run one exact reviewed live derivative purge
  */
-export const runDerivativePurge = async (derivativePurgeJobRequest: NonReadonly<DerivativePurgeJobRequest>, options?: RequestInit): Promise<Response> => {
+export const runDerivativePurge = (derivativePurgeJobRequest: NonReadonly<DerivativePurgeJobRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5782,17 +5502,14 @@ export const runDerivativePurge = async (derivativePurgeJobRequest: NonReadonly<
     }
     return headers;
   };
-  const stream = await fetch(getRunDerivativePurgeUrl(),
+return sessionResponse<Response>(getRunDerivativePurgeUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(derivativePurgeJobRequest)
   }
-);
-
-  return stream
-  }
+);}
 
 
 
@@ -5807,7 +5524,7 @@ export const getPlanDerivativePurgeUrl = () => {
 /**
  * @summary Preview one exact live derivative purge
  */
-export const planDerivativePurge = async (derivativePurgePlanRequest: NonReadonly<DerivativePurgePlanRequest>, options?: RequestInit): Promise<DerivativePurgePlan> => {
+export const planDerivativePurge = async (derivativePurgePlanRequest: NonReadonly<DerivativePurgePlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DerivativePurgePlan> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5823,21 +5540,14 @@ export const planDerivativePurge = async (derivativePurgePlanRequest: NonReadonl
     }
     return headers;
   };
-const res = await fetch(getPlanDerivativePurgeUrl(),
+return sessionJSON<DerivativePurgePlan>(getPlanDerivativePurgeUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(derivativePurgePlanRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DerivativePurgePlan = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5859,23 +5569,16 @@ export const getListDocumentsUrl = (params?: ListDocumentsParams,) => {
 /**
  * @summary List current live documents with authenticated keyset pagination
  */
-export const listDocuments = async (params?: ListDocumentsParams, options?: RequestInit): Promise<DocumentPage> => {
+export const listDocuments = async (params?: ListDocumentsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentPage> => {
 
-  const res = await fetch(getListDocumentsUrl(params),
+  return sessionJSON<DocumentPage>(getListDocumentsUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DocumentPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5890,7 +5593,7 @@ export const getResolveDocumentSummariesUrl = () => {
 /**
  * @summary Resolve bounded exact current live document summaries
  */
-export const resolveDocumentSummaries = async (documentSummaryResolveRequest: NonReadonly<DocumentSummaryResolveRequest>, options?: RequestInit): Promise<DocumentSummaryResolveResponse> => {
+export const resolveDocumentSummaries = async (documentSummaryResolveRequest: NonReadonly<DocumentSummaryResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSummaryResolveResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5906,21 +5609,14 @@ export const resolveDocumentSummaries = async (documentSummaryResolveRequest: No
     }
     return headers;
   };
-const res = await fetch(getResolveDocumentSummariesUrl(),
+return sessionJSON<DocumentSummaryResolveResponse>(getResolveDocumentSummariesUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSummaryResolveRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DocumentSummaryResolveResponse = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5943,23 +5639,16 @@ export const getListDuplicateContentUrl = (params?: ListDuplicateContentParams,)
  * Groups are ordered by SHA-256. Counts exclude historical versions and trash; each group displays at most 16 current references. No content is deleted or merged.
  * @summary Find live documents that share current content
  */
-export const listDuplicateContent = async (params?: ListDuplicateContentParams, options?: RequestInit): Promise<DuplicatePage> => {
+export const listDuplicateContent = async (params?: ListDuplicateContentParams, options?: Parameters<typeof sessionJSON>[1]): Promise<DuplicatePage> => {
 
-  const res = await fetch(getListDuplicateContentUrl(params),
+  return sessionJSON<DuplicatePage>(getListDuplicateContentUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DuplicatePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -5974,7 +5663,7 @@ export const getRequestEmailDocumentProcessingUrl = () => {
 /**
  * @summary Request ordinary consent-aware attachment processing
  */
-export const requestEmailDocumentProcessing = async (requestEmailDocumentProcessingBody: RequestEmailDocumentProcessingBody, options?: RequestInit): Promise<RequestEmailDocumentProcessing200> => {
+export const requestEmailDocumentProcessing = async (requestEmailDocumentProcessingBody: RequestEmailDocumentProcessingBody, options?: Parameters<typeof sessionJSON>[1]): Promise<RequestEmailDocumentProcessing200> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5990,21 +5679,14 @@ export const requestEmailDocumentProcessing = async (requestEmailDocumentProcess
     }
     return headers;
   };
-const res = await fetch(getRequestEmailDocumentProcessingUrl(),
+return sessionJSON<RequestEmailDocumentProcessing200>(getRequestEmailDocumentProcessingUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(requestEmailDocumentProcessingBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: RequestEmailDocumentProcessing200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6019,7 +5701,7 @@ export const getPublishEmailDocumentsUrl = () => {
 /**
  * @summary Publish exact email attachments as ordinary documents
  */
-export const publishEmailDocuments = async (publishEmailDocumentsBody: PublishEmailDocumentsBody, options?: RequestInit): Promise<PublishEmailDocuments200> => {
+export const publishEmailDocuments = async (publishEmailDocumentsBody: PublishEmailDocumentsBody, options?: Parameters<typeof sessionJSON>[1]): Promise<PublishEmailDocuments200> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6035,21 +5717,14 @@ export const publishEmailDocuments = async (publishEmailDocumentsBody: PublishEm
     }
     return headers;
   };
-const res = await fetch(getPublishEmailDocumentsUrl(),
+return sessionJSON<PublishEmailDocuments200>(getPublishEmailDocumentsUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(publishEmailDocumentsBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: PublishEmailDocuments200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6058,14 +5733,14 @@ export const getRemoveEmailDocumentPublicationUrl = (operationId: string,) => {
 
 
 
-  return `/api/v1/email-document-publications/${operationId}`
+  return `/api/v1/email-document-publications/${encodeURIComponent(String(operationId))}`
 }
 
 /**
  * @summary Release one receipt without deleting children
  */
 export const removeEmailDocumentPublication = async (operationId: string,
-    removeEmailDocumentPublicationBody: RemoveEmailDocumentPublicationBody, options?: RequestInit): Promise<void> => {
+    removeEmailDocumentPublicationBody: RemoveEmailDocumentPublicationBody, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6081,21 +5756,14 @@ export const removeEmailDocumentPublication = async (operationId: string,
     }
     return headers;
   };
-const res = await fetch(getRemoveEmailDocumentPublicationUrl(operationId),
+return sessionJSON<void>(getRemoveEmailDocumentPublicationUrl(operationId),
   {
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(removeEmailDocumentPublicationBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: void = body ? JSON.parse(body) : undefined
-  return data
-}
+);}
 
 
 
@@ -6104,29 +5772,22 @@ export const getGetEmailDocumentPublicationUrl = (operationId: string,) => {
 
 
 
-  return `/api/v1/email-document-publications/${operationId}`
+  return `/api/v1/email-document-publications/${encodeURIComponent(String(operationId))}`
 }
 
 /**
  * @summary Read an immutable publication receipt
  */
-export const getEmailDocumentPublication = async (operationId: string, options?: RequestInit): Promise<GetEmailDocumentPublication200> => {
+export const getEmailDocumentPublication = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<GetEmailDocumentPublication200> => {
 
-  const res = await fetch(getGetEmailDocumentPublicationUrl(operationId),
+  return sessionJSON<GetEmailDocumentPublication200>(getGetEmailDocumentPublicationUrl(operationId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: GetEmailDocumentPublication200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6148,23 +5809,16 @@ export const getListEmailDocumentRelationsUrl = (params?: ListEmailDocumentRelat
 /**
  * @summary Read a bounded page of exact parent or child occurrences
  */
-export const listEmailDocumentRelations = async (params?: ListEmailDocumentRelationsParams, options?: RequestInit): Promise<ListEmailDocumentRelations200> => {
+export const listEmailDocumentRelations = async (params?: ListEmailDocumentRelationsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ListEmailDocumentRelations200> => {
 
-  const res = await fetch(getListEmailDocumentRelationsUrl(params),
+  return sessionJSON<ListEmailDocumentRelations200>(getListEmailDocumentRelationsUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ListEmailDocumentRelations200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6186,23 +5840,16 @@ export const getReadFormatCapabilitiesUrl = (params?: ReadFormatCapabilitiesPara
 /**
  * @summary Read per-format capability coverage
  */
-export const readFormatCapabilities = async (params?: ReadFormatCapabilitiesParams, options?: RequestInit): Promise<FormatCoverageResponse> => {
+export const readFormatCapabilities = async (params?: ReadFormatCapabilitiesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<FormatCoverageResponse> => {
 
-  const res = await fetch(getReadFormatCapabilitiesUrl(params),
+  return sessionJSON<FormatCoverageResponse>(getReadFormatCapabilitiesUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: FormatCoverageResponse = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6217,7 +5864,7 @@ export const getGcUrl = () => {
 /**
  * @summary Report (run=false) or reclaim (run=true) unreachable blobs
  */
-export const gc = async (gcRequest: NonReadonly<GcRequest>, options?: RequestInit): Promise<GCReport> => {
+export const gc = async (gcRequest: NonReadonly<GcRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<GCReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6233,21 +5880,14 @@ export const gc = async (gcRequest: NonReadonly<GcRequest>, options?: RequestIni
     }
     return headers;
   };
-const res = await fetch(getGcUrl(),
+return sessionJSON<GCReport>(getGcUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(gcRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: GCReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6262,23 +5902,16 @@ export const getVaultInfoUrl = () => {
 /**
  * @summary Identify the selected vault and summarize its contents
  */
-export const vaultInfo = async ( options?: RequestInit): Promise<VaultInfo> => {
+export const vaultInfo = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<VaultInfo> => {
 
-  const res = await fetch(getVaultInfoUrl(),
+  return sessionJSON<VaultInfo>(getVaultInfoUrl(),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: VaultInfo = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6293,7 +5926,7 @@ export const getIngestUrl = () => {
 /**
  * @summary Import server-side files or directory trees (loopback callers only)
  */
-export const ingest = async (ingestRequest: NonReadonly<IngestRequest>, options?: RequestInit): Promise<IngestReport> => {
+export const ingest = async (ingestRequest: NonReadonly<IngestRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IngestReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6309,21 +5942,14 @@ export const ingest = async (ingestRequest: NonReadonly<IngestRequest>, options?
     }
     return headers;
   };
-const res = await fetch(getIngestUrl(),
+return sessionJSON<IngestReport>(getIngestUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(ingestRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: IngestReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6338,7 +5964,7 @@ export const getPreflightIngestUrl = () => {
 /**
  * @summary Inventory server-side files without opening content or mutating the vault
  */
-export const preflightIngest = async (ingestPreflightRequest: NonReadonly<IngestPreflightRequest>, options?: RequestInit): Promise<IngestPreflightReport> => {
+export const preflightIngest = async (ingestPreflightRequest: NonReadonly<IngestPreflightRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IngestPreflightReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6354,21 +5980,14 @@ export const preflightIngest = async (ingestPreflightRequest: NonReadonly<Ingest
     }
     return headers;
   };
-const res = await fetch(getPreflightIngestUrl(),
+return sessionJSON<IngestPreflightReport>(getPreflightIngestUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(ingestPreflightRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: IngestPreflightReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6384,7 +6003,7 @@ export const getStreamIngestUrl = () => {
  * Returns newline-delimited JSON. Scan and ingest progress precede exactly one terminal result or error event; an HTTP 200 only means the stream started.
  * @summary Import server-side paths while streaming structured progress
  */
-export const streamIngest = async (ingestRequest: NonReadonly<IngestRequest>, options?: RequestInit): Promise<Response> => {
+export const streamIngest = (ingestRequest: NonReadonly<IngestRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6400,17 +6019,14 @@ export const streamIngest = async (ingestRequest: NonReadonly<IngestRequest>, op
     }
     return headers;
   };
-  const stream = await fetch(getStreamIngestUrl(),
+return sessionResponse<Response>(getStreamIngestUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(ingestRequest)
   }
-);
-
-  return stream
-  }
+);}
 
 
 
@@ -6425,23 +6041,16 @@ export const getListJobsUrl = () => {
 /**
  * @summary List daemon background jobs and their current status
  */
-export const listJobs = async ( options?: RequestInit): Promise<JobList> => {
+export const listJobs = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<JobList> => {
 
-  const res = await fetch(getListJobsUrl(),
+  return sessionJSON<JobList>(getListJobsUrl(),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: JobList = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6450,29 +6059,22 @@ export const getGetStorageOperationUrl = (operationId: string,) => {
 
 
 
-  return `/api/v1/jobs/${operationId}`
+  return `/api/v1/jobs/${encodeURIComponent(String(operationId))}`
 }
 
 /**
  * @summary Inspect one durable storage operation and its latest receipt
  */
-export const getStorageOperation = async (operationId: string, options?: RequestInit): Promise<StorageOperation> => {
+export const getStorageOperation = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
-  const res = await fetch(getGetStorageOperationUrl(operationId),
+  return sessionJSON<StorageOperation>(getGetStorageOperationUrl(operationId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageOperation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6481,29 +6083,22 @@ export const getCancelStorageOperationUrl = (operationId: string,) => {
 
 
 
-  return `/api/v1/jobs/${operationId}/cancel`
+  return `/api/v1/jobs/${encodeURIComponent(String(operationId))}/cancel`
 }
 
 /**
  * @summary Request cancellation at the next durable object boundary
  */
-export const cancelStorageOperation = async (operationId: string, options?: RequestInit): Promise<StorageOperation> => {
+export const cancelStorageOperation = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
-  const res = await fetch(getCancelStorageOperationUrl(operationId),
+  return sessionJSON<StorageOperation>(getCancelStorageOperationUrl(operationId),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageOperation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6518,7 +6113,7 @@ export const getPlanMediaAcquisitionUrl = () => {
 /**
  * @summary Recognize a private reference without network access
  */
-export const planMediaAcquisition = async (mediaReferenceBody: NonReadonly<MediaReferenceBody>, options?: RequestInit): Promise<MediaAcquisitionPlan> => {
+export const planMediaAcquisition = async (mediaReferenceBody: NonReadonly<MediaReferenceBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaAcquisitionPlan> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6534,21 +6129,14 @@ export const planMediaAcquisition = async (mediaReferenceBody: NonReadonly<Media
     }
     return headers;
   };
-const res = await fetch(getPlanMediaAcquisitionUrl(),
+return sessionJSON<MediaAcquisitionPlan>(getPlanMediaAcquisitionUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaReferenceBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaAcquisitionPlan = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6563,7 +6151,7 @@ export const getGrantMediaAcquisitionConsentUrl = () => {
 /**
  * @summary Grant one exact current media acquisition plan
  */
-export const grantMediaAcquisitionConsent = async (mediaAcquisitionGrantBody: NonReadonly<MediaAcquisitionGrantBody>, options?: RequestInit): Promise<MediaConsentReceipt> => {
+export const grantMediaAcquisitionConsent = async (mediaAcquisitionGrantBody: NonReadonly<MediaAcquisitionGrantBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaConsentReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6579,21 +6167,14 @@ export const grantMediaAcquisitionConsent = async (mediaAcquisitionGrantBody: No
     }
     return headers;
   };
-const res = await fetch(getGrantMediaAcquisitionConsentUrl(),
+return sessionJSON<MediaConsentReceipt>(getGrantMediaAcquisitionConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaAcquisitionGrantBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaConsentReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6608,7 +6189,7 @@ export const getRevokeMediaAcquisitionConsentUrl = () => {
 /**
  * @summary Revoke acquisition consent for one registered origin
  */
-export const revokeMediaAcquisitionConsent = async (mediaAcquisitionRevokeBody: NonReadonly<MediaAcquisitionRevokeBody>, options?: RequestInit): Promise<MediaConsentReceipt> => {
+export const revokeMediaAcquisitionConsent = async (mediaAcquisitionRevokeBody: NonReadonly<MediaAcquisitionRevokeBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaConsentReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6624,21 +6205,14 @@ export const revokeMediaAcquisitionConsent = async (mediaAcquisitionRevokeBody: 
     }
     return headers;
   };
-const res = await fetch(getRevokeMediaAcquisitionConsentUrl(),
+return sessionJSON<MediaConsentReceipt>(getRevokeMediaAcquisitionConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaAcquisitionRevokeBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaConsentReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6660,23 +6234,16 @@ export const getListMediaOccurrencesUrl = (params?: ListMediaOccurrencesParams,)
 /**
  * @summary List caller-visible media occurrences
  */
-export const listMediaOccurrences = async (params?: ListMediaOccurrencesParams, options?: RequestInit): Promise<MediaOccurrencePage> => {
+export const listMediaOccurrences = async (params?: ListMediaOccurrencesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaOccurrencePage> => {
 
-  const res = await fetch(getListMediaOccurrencesUrl(params),
+  return sessionJSON<MediaOccurrencePage>(getListMediaOccurrencesUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaOccurrencePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6691,7 +6258,7 @@ export const getDeclareMediaOccurrenceUrl = () => {
 /**
  * @summary Declare one immutable caller occurrence revision
  */
-export const declareMediaOccurrence = async (mediaOccurrenceMutationBody: NonReadonly<MediaOccurrenceMutationBody>, options?: RequestInit): Promise<MediaReceipt> => {
+export const declareMediaOccurrence = async (mediaOccurrenceMutationBody: NonReadonly<MediaOccurrenceMutationBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6707,21 +6274,14 @@ export const declareMediaOccurrence = async (mediaOccurrenceMutationBody: NonRea
     }
     return headers;
   };
-const res = await fetch(getDeclareMediaOccurrenceUrl(),
+return sessionJSON<MediaReceipt>(getDeclareMediaOccurrenceUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaOccurrenceMutationBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6730,14 +6290,14 @@ export const getRevokeMediaOccurrenceUrl = (occurrenceId: string,) => {
 
 
 
-  return `/api/v1/media/occurrences/${occurrenceId}`
+  return `/api/v1/media/occurrences/${encodeURIComponent(String(occurrenceId))}`
 }
 
 /**
  * @summary Revoke one caller-owned occurrence
  */
 export const revokeMediaOccurrence = async (occurrenceId: string,
-    mediaOccurrenceRevokeBody: NonReadonly<MediaOccurrenceRevokeBody>, options?: RequestInit): Promise<MediaReceipt> => {
+    mediaOccurrenceRevokeBody: NonReadonly<MediaOccurrenceRevokeBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6753,21 +6313,14 @@ export const revokeMediaOccurrence = async (occurrenceId: string,
     }
     return headers;
   };
-const res = await fetch(getRevokeMediaOccurrenceUrl(occurrenceId),
+return sessionJSON<MediaReceipt>(getRevokeMediaOccurrenceUrl(occurrenceId),
   {
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaOccurrenceRevokeBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6782,23 +6335,16 @@ export const getListMediaOriginsUrl = () => {
 /**
  * @summary List registered media origin capabilities
  */
-export const listMediaOrigins = async ( options?: RequestInit): Promise<MediaOriginPage> => {
+export const listMediaOrigins = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<MediaOriginPage> => {
 
-  const res = await fetch(getListMediaOriginsUrl(),
+  return sessionJSON<MediaOriginPage>(getListMediaOriginsUrl(),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaOriginPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6820,23 +6366,16 @@ export const getListMediaSourcesUrl = (params?: ListMediaSourcesParams,) => {
 /**
  * @summary List caller-visible media sources
  */
-export const listMediaSources = async (params?: ListMediaSourcesParams, options?: RequestInit): Promise<MediaSourcePage> => {
+export const listMediaSources = async (params?: ListMediaSourcesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaSourcePage> => {
 
-  const res = await fetch(getListMediaSourcesUrl(params),
+  return sessionJSON<MediaSourcePage>(getListMediaSourcesUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaSourcePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6851,23 +6390,16 @@ export const getSubmitMediaSourceUrl = () => {
 /**
  * @summary Retain one bounded supplied recording or private reference
  */
-export const submitMediaSource = async (submitMediaSourceBody: NonReadonly<MediaReferenceBody | SubmitMediaSourceBodyTwo>, options?: RequestInit): Promise<SubmitMediaSource200> => {
+export const submitMediaSource = async (submitMediaSourceBody: NonReadonly<MediaReferenceBody | SubmitMediaSourceBodyTwo>, options?: Parameters<typeof sessionJSON>[1]): Promise<SubmitMediaSource200> => {
 
-  const res = await fetch(getSubmitMediaSourceUrl(),
+  return sessionJSON<SubmitMediaSource200>(getSubmitMediaSourceUrl(),
   {
     ...options,
     method: 'POST'
     ,
     body: JSON.stringify(submitMediaSourceBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SubmitMediaSource200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6876,29 +6408,22 @@ export const getGetMediaSourceUrl = (sourceId: string,) => {
 
 
 
-  return `/api/v1/media/sources/${sourceId}`
+  return `/api/v1/media/sources/${encodeURIComponent(String(sourceId))}`
 }
 
 /**
  * @summary Read caller-visible media status
  */
-export const getMediaSource = async (sourceId: string, options?: RequestInit): Promise<MediaReceipt> => {
+export const getMediaSource = async (sourceId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
 
-  const res = await fetch(getGetMediaSourceUrl(sourceId),
+  return sessionJSON<MediaReceipt>(getGetMediaSourceUrl(sourceId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6907,33 +6432,26 @@ export const getImportMediaArtifactUrl = (sourceId: string,) => {
 
 
 
-  return `/api/v1/media/sources/${sourceId}/artifacts`
+  return `/api/v1/media/sources/${encodeURIComponent(String(sourceId))}/artifacts`
 }
 
 /**
  * @summary Retain one bounded original media or transcript input
  */
 export const importMediaArtifact = async (sourceId: string,
-    importMediaArtifactBody: ImportMediaArtifactBody, options?: RequestInit): Promise<ImportMediaArtifact200> => {
+    importMediaArtifactBody: ImportMediaArtifactBody, options?: Parameters<typeof sessionJSON>[1]): Promise<ImportMediaArtifact200> => {
     const formData = new FormData();
 formData.append(`file`, importMediaArtifactBody.file);
 formData.append(`metadata`, JSON.stringify(importMediaArtifactBody.metadata));
 
-  const res = await fetch(getImportMediaArtifactUrl(sourceId),
+  return sessionJSON<ImportMediaArtifact200>(getImportMediaArtifactUrl(sourceId),
   {
     ...options,
     method: 'POST'
     ,
     body: formData
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ImportMediaArtifact200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6942,14 +6460,14 @@ export const getRetryMediaSourceUrl = (sourceId: string,) => {
 
 
 
-  return `/api/v1/media/sources/${sourceId}/retry`
+  return `/api/v1/media/sources/${encodeURIComponent(String(sourceId))}/retry`
 }
 
 /**
  * @summary Retry explicit processing for one source
  */
 export const retryMediaSource = async (sourceId: string,
-    mediaRetryBody: NonReadonly<MediaRetryBody>, options?: RequestInit): Promise<MediaReceipt> => {
+    mediaRetryBody: NonReadonly<MediaRetryBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6965,21 +6483,14 @@ export const retryMediaSource = async (sourceId: string,
     }
     return headers;
   };
-const res = await fetch(getRetryMediaSourceUrl(sourceId),
+return sessionJSON<MediaReceipt>(getRetryMediaSourceUrl(sourceId),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaRetryBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: MediaReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -6995,7 +6506,7 @@ export const getCreateNodeUrl = () => {
  * kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.
  * @summary Create a directory
  */
-export const createNode = async (createNodeRequest: NonReadonly<CreateNodeRequest>, options?: RequestInit): Promise<Node> => {
+export const createNode = async (createNodeRequest: NonReadonly<CreateNodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7011,21 +6522,14 @@ export const createNode = async (createNodeRequest: NonReadonly<CreateNodeReques
     }
     return headers;
   };
-const res = await fetch(getCreateNodeUrl(),
+return sessionJSON<Node>(getCreateNodeUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(createNodeRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7034,29 +6538,22 @@ export const getGetNodeUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}`
 }
 
 /**
  * @summary Stat a node by id (live or trashed)
  */
-export const getNode = async (id: number, options?: RequestInit): Promise<Node> => {
+export const getNode = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
-  const res = await fetch(getGetNodeUrl(id),
+  return sessionJSON<Node>(getGetNodeUrl(id),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7065,14 +6562,14 @@ export const getMoveNodeUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}`
 }
 
 /**
  * @summary Move and/or rename a node (metadata only; bytes never move)
  */
 export const moveNode = async (id: number,
-    moveNodeRequest: NonReadonly<MoveNodeRequest>, options?: RequestInit): Promise<Node> => {
+    moveNodeRequest: NonReadonly<MoveNodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7088,21 +6585,14 @@ export const moveNode = async (id: number,
     }
     return headers;
   };
-const res = await fetch(getMoveNodeUrl(id),
+return sessionJSON<Node>(getMoveNodeUrl(id),
   {
     ...options,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(moveNodeRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7119,30 +6609,23 @@ export const getListChildrenUrl = (id: number,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/nodes/${id}/children?${stringifiedParams}` : `/api/v1/nodes/${id}/children`
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(id))}/children?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(id))}/children`
 }
 
 /**
  * @summary List a directory's live children (dirs first, name-sorted), paginated
  */
 export const listChildren = async (id: number,
-    params?: ListChildrenParams, options?: RequestInit): Promise<NodePage> => {
+    params?: ListChildrenParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NodePage> => {
 
-  const res = await fetch(getListChildrenUrl(id,params),
+  return sessionJSON<NodePage>(getListChildrenUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: NodePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7151,29 +6634,23 @@ export const getGetNodeContentUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/content`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/content`
 }
 
 /**
  * X-Docbank-Content-Version, X-Docbank-Blob-Hash, and X-Docbank-Blob-Size carry catalog identity before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed; the standard Content-Length header is omitted so HTTP/1.1 can transmit that trailer without a second physical read.
  * @summary Stream a file's bytes
  */
-export const getNodeContent = async (id: number, options?: RequestInit): Promise<Blob> => {
+export const getNodeContent = (id: number, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getGetNodeContentUrl(id),
+  return sessionResponse<Blob>(getGetNodeContentUrl(id),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
-  const data: Blob = body as Blob
-  return data
-}
+);}
 
 
 
@@ -7182,7 +6659,7 @@ export const getReplaceNodeContentUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/content`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/content`
 }
 
 /**
@@ -7190,7 +6667,7 @@ export const getReplaceNodeContentUrl = (id: number,) => {
  * @summary Replace a file's content with a new immutable head
  */
 export const replaceNodeContent = async (id: number,
-    replaceNodeContentBody: Blob, options?: RequestInit): Promise<ReplaceNodeContent200> => {
+    replaceNodeContentBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<ReplaceNodeContent200> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7206,21 +6683,14 @@ export const replaceNodeContent = async (id: number,
     }
     return headers;
   };
-const res = await fetch(getReplaceNodeContentUrl(id),
+return sessionJSON<ReplaceNodeContent200>(getReplaceNodeContentUrl(id),
   {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': '*/*', ...getHeaders(options?.headers) },
     body: replaceNodeContentBody
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ReplaceNodeContent200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7237,7 +6707,7 @@ export const getListNodeProvenanceUrl = (id: number,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/nodes/${id}/provenance?${stringifiedParams}` : `/api/v1/nodes/${id}/provenance`
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(id))}/provenance?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(id))}/provenance`
 }
 
 /**
@@ -7245,23 +6715,16 @@ export const getListNodeProvenanceUrl = (id: number,
  * @summary List immutable origin facts for one file node
  */
 export const listNodeProvenance = async (id: number,
-    params?: ListNodeProvenanceParams, options?: RequestInit): Promise<ProvenancePage> => {
+    params?: ListNodeProvenanceParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ProvenancePage> => {
 
-  const res = await fetch(getListNodeProvenanceUrl(id,params),
+  return sessionJSON<ProvenancePage>(getListNodeProvenanceUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProvenancePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7270,7 +6733,7 @@ export const getAppendNodeProvenanceUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/provenance`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/provenance`
 }
 
 /**
@@ -7278,7 +6741,7 @@ export const getAppendNodeProvenanceUrl = (id: number,) => {
  * @summary Append an immutable origin fact to a file node
  */
 export const appendNodeProvenance = async (id: number,
-    provenanceAppendRequest: NonReadonly<ProvenanceAppendRequest>, options?: RequestInit): Promise<ProvenanceAppendReceipt> => {
+    provenanceAppendRequest: NonReadonly<ProvenanceAppendRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ProvenanceAppendReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7294,21 +6757,14 @@ export const appendNodeProvenance = async (id: number,
     }
     return headers;
   };
-const res = await fetch(getAppendNodeProvenanceUrl(id),
+return sessionJSON<ProvenanceAppendReceipt>(getAppendNodeProvenanceUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(provenanceAppendRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProvenanceAppendReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7317,29 +6773,22 @@ export const getRestoreNodeUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/restore`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/restore`
 }
 
 /**
  * @summary Restore a trash root to its original location (root fallback, suffix on collision)
  */
-export const restoreNode = async (id: number, options?: RequestInit): Promise<Node> => {
+export const restoreNode = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
-  const res = await fetch(getRestoreNodeUrl(id),
+  return sessionJSON<Node>(getRestoreNodeUrl(id),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7348,7 +6797,7 @@ export const getRevertNodeContentUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/revert`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/revert`
 }
 
 /**
@@ -7356,7 +6805,7 @@ export const getRevertNodeContentUrl = (id: number,) => {
  * @summary Create a new head from one of the file's prior immutable versions
  */
 export const revertNodeContent = async (id: number,
-    revertNodeContentRequest: NonReadonly<RevertNodeContentRequest>, options?: RequestInit): Promise<ContentReversionReceipt> => {
+    revertNodeContentRequest: NonReadonly<RevertNodeContentRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentReversionReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7372,21 +6821,14 @@ export const revertNodeContent = async (id: number,
     }
     return headers;
   };
-const res = await fetch(getRevertNodeContentUrl(id),
+return sessionJSON<ContentReversionReceipt>(getRevertNodeContentUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(revertNodeContentRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ContentReversionReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7403,30 +6845,23 @@ export const getListNodeTagsUrl = (id: number,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/nodes/${id}/tags?${stringifiedParams}` : `/api/v1/nodes/${id}/tags`
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(id))}/tags?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(id))}/tags`
 }
 
 /**
  * @summary List tags assigned to a node
  */
 export const listNodeTags = async (id: number,
-    params?: ListNodeTagsParams, options?: RequestInit): Promise<TagPage> => {
+    params?: ListNodeTagsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TagPage> => {
 
-  const res = await fetch(getListNodeTagsUrl(id,params),
+  return sessionJSON<TagPage>(getListNodeTagsUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7436,30 +6871,23 @@ export const getUnassignTagUrl = (id: number,
 
 
 
-  return `/api/v1/nodes/${id}/tags/${tagId}`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Remove a tag assignment from a node
  */
 export const unassignTag = async (id: number,
-    tagId: string, options?: RequestInit): Promise<TagAssignmentReceipt> => {
+    tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
 
-  const res = await fetch(getUnassignTagUrl(id,tagId),
+  return sessionJSON<TagAssignmentReceipt>(getUnassignTagUrl(id,tagId),
   {
     ...options,
     method: 'DELETE'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagAssignmentReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7469,30 +6897,23 @@ export const getAssignTagUrl = (id: number,
 
 
 
-  return `/api/v1/nodes/${id}/tags/${tagId}`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Assign a tag to a node
  */
 export const assignTag = async (id: number,
-    tagId: string, options?: RequestInit): Promise<TagAssignmentReceipt> => {
+    tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
 
-  const res = await fetch(getAssignTagUrl(id,tagId),
+  return sessionJSON<TagAssignmentReceipt>(getAssignTagUrl(id,tagId),
   {
     ...options,
     method: 'PUT'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagAssignmentReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7501,30 +6922,23 @@ export const getTrashNodeUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/trash`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/trash`
 }
 
 /**
  * The response's `path` is the node's pre-trash location (where a restore would return it), not a resolvable live path.
  * @summary Move a node and its subtree to the trash
  */
-export const trashNode = async (id: number, options?: RequestInit): Promise<Node> => {
+export const trashNode = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
-  const res = await fetch(getTrashNodeUrl(id),
+  return sessionJSON<Node>(getTrashNodeUrl(id),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7533,30 +6947,23 @@ export const getVerifyNodeContentUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/verify`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/verify`
 }
 
 /**
  * Requires If-Match from a prior node response. Returns catalog identity and a fresh read through the mixed loose/packed store; a concurrent node change returns 412.
  * @summary Re-hash one file and bind the evidence to its node revision
  */
-export const verifyNodeContent = async (id: number, options?: RequestInit): Promise<ContentVerification> => {
+export const verifyNodeContent = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentVerification> => {
 
-  const res = await fetch(getVerifyNodeContentUrl(id),
+  return sessionJSON<ContentVerification>(getVerifyNodeContentUrl(id),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ContentVerification = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7573,30 +6980,23 @@ export const getListContentVersionsUrl = (id: number,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/nodes/${id}/versions?${stringifiedParams}` : `/api/v1/nodes/${id}/versions`
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(id))}/versions?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(id))}/versions`
 }
 
 /**
  * @summary List a file's immutable content versions, newest first
  */
 export const listContentVersions = async (id: number,
-    params?: ListContentVersionsParams, options?: RequestInit): Promise<ContentVersionPage> => {
+    params?: ListContentVersionsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentVersionPage> => {
 
-  const res = await fetch(getListContentVersionsUrl(id,params),
+  return sessionJSON<ContentVersionPage>(getListContentVersionsUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ContentVersionPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7605,7 +7005,7 @@ export const getPruneNodeContentVersionsUrl = (id: number,) => {
 
 
 
-  return `/api/v1/nodes/${id}/versions/prune`
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/versions/prune`
 }
 
 /**
@@ -7613,7 +7013,7 @@ export const getPruneNodeContentVersionsUrl = (id: number,) => {
  * @summary Preview or prune selected non-current content versions
  */
 export const pruneNodeContentVersions = async (id: number,
-    versionPruneRequest: NonReadonly<VersionPruneRequest>, options?: RequestInit): Promise<VersionPruneReport> => {
+    versionPruneRequest: NonReadonly<VersionPruneRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionPruneReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7629,21 +7029,14 @@ export const pruneNodeContentVersions = async (id: number,
     }
     return headers;
   };
-const res = await fetch(getPruneNodeContentVersionsUrl(id),
+return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(versionPruneRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: VersionPruneReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7666,23 +7059,16 @@ export const getResolvePathUrl = (params: ResolvePathParams,) => {
  * path is a query parameter (one well-defined encoding; catch-all URL segments are ambiguous for encoded slashes). Must start with '/'; '/' resolves the root.
  * @summary Resolve an absolute virtual path to its node
  */
-export const resolvePath = async (params: ResolvePathParams, options?: RequestInit): Promise<Node> => {
+export const resolvePath = async (params: ResolvePathParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
-  const res = await fetch(getResolvePathUrl(params),
+  return sessionJSON<Node>(getResolvePathUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7698,7 +7084,7 @@ export const getMkdirPathUrl = () => {
  * The parent path is resolved and the directory is created in one transaction, so a concurrent ancestor move cannot redirect the new directory. The parent must exist.
  * @summary Create one directory at an exact virtual path
  */
-export const mkdirPath = async (mkdirPathRequest: NonReadonly<MkdirPathRequest>, options?: RequestInit): Promise<Node> => {
+export const mkdirPath = async (mkdirPathRequest: NonReadonly<MkdirPathRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7714,21 +7100,14 @@ export const mkdirPath = async (mkdirPathRequest: NonReadonly<MkdirPathRequest>,
     }
     return headers;
   };
-const res = await fetch(getMkdirPathUrl(),
+return sessionJSON<Node>(getMkdirPathUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mkdirPathRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7744,7 +7123,7 @@ export const getMovePathUrl = () => {
  * CLI-oriented path mutation: source and destination paths are resolved inside the daemon/store transaction so ancestor moves cannot redirect the operation between separate client requests.
  * @summary Move a node by virtual path in one transaction
  */
-export const movePath = async (movePathRequest: NonReadonly<MovePathRequest>, options?: RequestInit): Promise<Node> => {
+export const movePath = async (movePathRequest: NonReadonly<MovePathRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7760,21 +7139,14 @@ export const movePath = async (movePathRequest: NonReadonly<MovePathRequest>, op
     }
     return headers;
   };
-const res = await fetch(getMovePathUrl(),
+return sessionJSON<Node>(getMovePathUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(movePathRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7783,14 +7155,14 @@ export const getUnassignTagPathUrl = (tagId: string,) => {
 
 
 
-  return `/api/v1/path/tags/${tagId}`
+  return `/api/v1/path/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Remove a tag from a transactionally resolved path
  */
 export const unassignTagPath = async (tagId: string,
-    unassignTagPathRequest: NonReadonly<UnassignTagPathRequest>, options?: RequestInit): Promise<TagAssignmentReceipt> => {
+    unassignTagPathRequest: NonReadonly<UnassignTagPathRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7806,21 +7178,14 @@ export const unassignTagPath = async (tagId: string,
     }
     return headers;
   };
-const res = await fetch(getUnassignTagPathUrl(tagId),
+return sessionJSON<TagAssignmentReceipt>(getUnassignTagPathUrl(tagId),
   {
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(unassignTagPathRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagAssignmentReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7829,14 +7194,14 @@ export const getAssignTagPathUrl = (tagId: string,) => {
 
 
 
-  return `/api/v1/path/tags/${tagId}`
+  return `/api/v1/path/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Assign a tag to a transactionally resolved path
  */
 export const assignTagPath = async (tagId: string,
-    assignTagPathRequest: NonReadonly<AssignTagPathRequest>, options?: RequestInit): Promise<TagAssignmentReceipt> => {
+    assignTagPathRequest: NonReadonly<AssignTagPathRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7852,21 +7217,14 @@ export const assignTagPath = async (tagId: string,
     }
     return headers;
   };
-const res = await fetch(getAssignTagPathUrl(tagId),
+return sessionJSON<TagAssignmentReceipt>(getAssignTagPathUrl(tagId),
   {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(assignTagPathRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagAssignmentReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7882,7 +7240,7 @@ export const getTrashPathUrl = () => {
  * CLI-oriented path mutation: the path is resolved inside the daemon/store transaction so ancestor moves cannot redirect a separately resolved node id. The response's `path` is the node's pre-trash location (where a restore would return it), not a resolvable live path.
  * @summary Move a virtual path and its subtree to the trash in one transaction
  */
-export const trashPath = async (trashPathRequest: NonReadonly<TrashPathRequest>, options?: RequestInit): Promise<Node> => {
+export const trashPath = async (trashPathRequest: NonReadonly<TrashPathRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7898,21 +7256,14 @@ export const trashPath = async (trashPathRequest: NonReadonly<TrashPathRequest>,
     }
     return headers;
   };
-const res = await fetch(getTrashPathUrl(),
+return sessionJSON<Node>(getTrashPathUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(trashPathRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Node = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7927,7 +7278,7 @@ export const getGrantDocumentProcessingConsentUrl = () => {
 /**
  * @summary Grant consent for one exact reviewed processing plan
  */
-export const grantDocumentProcessingConsent = async (processingConsentGrantRequest: NonReadonly<ProcessingConsentGrantRequest>, options?: RequestInit): Promise<ProcessingConsentGrant> => {
+export const grantDocumentProcessingConsent = async (processingConsentGrantRequest: NonReadonly<ProcessingConsentGrantRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingConsentGrant> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7943,21 +7294,14 @@ export const grantDocumentProcessingConsent = async (processingConsentGrantReque
     }
     return headers;
   };
-const res = await fetch(getGrantDocumentProcessingConsentUrl(),
+return sessionJSON<ProcessingConsentGrant>(getGrantDocumentProcessingConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(processingConsentGrantRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProcessingConsentGrant = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -7972,23 +7316,16 @@ export const getRevokeDocumentProcessingConsentUrl = () => {
 /**
  * @summary Revoke current operator processing consent
  */
-export const revokeDocumentProcessingConsent = async ( options?: RequestInit): Promise<ProcessingConsentRevocation> => {
+export const revokeDocumentProcessingConsent = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingConsentRevocation> => {
 
-  const res = await fetch(getRevokeDocumentProcessingConsentUrl(),
+  return sessionJSON<ProcessingConsentRevocation>(getRevokeDocumentProcessingConsentUrl(),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProcessingConsentRevocation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8003,7 +7340,7 @@ export const getGrantProcessingConsentUrl = () => {
 /**
  * @summary Explicitly grant existing processing consent
  */
-export const grantProcessingConsent = async (grantProcessingConsentBody: GrantProcessingConsentBody, options?: RequestInit): Promise<GrantProcessingConsent200> => {
+export const grantProcessingConsent = async (grantProcessingConsentBody: GrantProcessingConsentBody, options?: Parameters<typeof sessionJSON>[1]): Promise<GrantProcessingConsent200> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8019,21 +7356,14 @@ export const grantProcessingConsent = async (grantProcessingConsentBody: GrantPr
     }
     return headers;
   };
-const res = await fetch(getGrantProcessingConsentUrl(),
+return sessionJSON<GrantProcessingConsent200>(getGrantProcessingConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(grantProcessingConsentBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: GrantProcessingConsent200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8048,7 +7378,7 @@ export const getRevokeProcessingConsentUrl = () => {
 /**
  * @summary Revoke a principal and scope before further provider access
  */
-export const revokeProcessingConsent = async (revokeProcessingConsentBody: RevokeProcessingConsentBody, options?: RequestInit): Promise<RevokeProcessingConsent200> => {
+export const revokeProcessingConsent = async (revokeProcessingConsentBody: RevokeProcessingConsentBody, options?: Parameters<typeof sessionJSON>[1]): Promise<RevokeProcessingConsent200> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8064,21 +7394,14 @@ export const revokeProcessingConsent = async (revokeProcessingConsentBody: Revok
     }
     return headers;
   };
-const res = await fetch(getRevokeProcessingConsentUrl(),
+return sessionJSON<RevokeProcessingConsent200>(getRevokeProcessingConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(revokeProcessingConsentBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: RevokeProcessingConsent200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8094,7 +7417,7 @@ export const getStartDocumentProcessingUrl = () => {
  * Returns exactly one job event followed by one terminal status or status-read error event as newline-delimited JSON.
  * @summary Start the exact reviewed document-processing plan
  */
-export const startDocumentProcessing = async (startProcessingRequest: NonReadonly<StartProcessingRequest>, options?: RequestInit): Promise<Response> => {
+export const startDocumentProcessing = (startProcessingRequest: NonReadonly<StartProcessingRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8110,17 +7433,14 @@ export const startDocumentProcessing = async (startProcessingRequest: NonReadonl
     }
     return headers;
   };
-  const stream = await fetch(getStartDocumentProcessingUrl(),
+return sessionResponse<Response>(getStartDocumentProcessingUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(startProcessingRequest)
   }
-);
-
-  return stream
-  }
+);}
 
 
 
@@ -8129,29 +7449,22 @@ export const getGetDocumentProcessingJobUrl = (id: string,) => {
 
 
 
-  return `/api/v1/processing/jobs/${id}`
+  return `/api/v1/processing/jobs/${encodeURIComponent(String(id))}`
 }
 
 /**
  * @summary Read aggregate document-processing status
  */
-export const getDocumentProcessingJob = async (id: string, options?: RequestInit): Promise<ProcessingStatus> => {
+export const getDocumentProcessingJob = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingStatus> => {
 
-  const res = await fetch(getGetDocumentProcessingJobUrl(id),
+  return sessionJSON<ProcessingStatus>(getGetDocumentProcessingJobUrl(id),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProcessingStatus = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8166,7 +7479,7 @@ export const getPlanDocumentProcessingUrl = () => {
 /**
  * @summary Preview provider disclosure for one document version
  */
-export const planDocumentProcessing = async (processingPlanRequest: NonReadonly<ProcessingPlanRequest>, options?: RequestInit): Promise<ProcessingPlan> => {
+export const planDocumentProcessing = async (processingPlanRequest: NonReadonly<ProcessingPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingPlan> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8182,21 +7495,14 @@ export const planDocumentProcessing = async (processingPlanRequest: NonReadonly<
     }
     return headers;
   };
-const res = await fetch(getPlanDocumentProcessingUrl(),
+return sessionJSON<ProcessingPlan>(getPlanDocumentProcessingUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(processingPlanRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProcessingPlan = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8211,23 +7517,16 @@ export const getListDocumentProcessingProfilesUrl = () => {
 /**
  * @summary List locally executable document-processing profiles
  */
-export const listDocumentProcessingProfiles = async ( options?: RequestInit): Promise<ProcessingProfileSummary[] | null> => {
+export const listDocumentProcessingProfiles = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
 
-  const res = await fetch(getListDocumentProcessingProfilesUrl(),
+  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ProcessingProfileSummary[] | null = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8242,7 +7541,7 @@ export const getResolveDocumentSourceFenceUrl = () => {
 /**
  * @summary Resolve exact current live document search authority
  */
-export const resolveDocumentSourceFence = async (documentSourceFenceResolveRequest: NonReadonly<DocumentSourceFenceResolveRequest>, options?: RequestInit): Promise<DocumentSourceFenceResolution> => {
+export const resolveDocumentSourceFence = async (documentSourceFenceResolveRequest: NonReadonly<DocumentSourceFenceResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSourceFenceResolution> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8258,21 +7557,14 @@ export const resolveDocumentSourceFence = async (documentSourceFenceResolveReque
     }
     return headers;
   };
-const res = await fetch(getResolveDocumentSourceFenceUrl(),
+return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSourceFenceResolveRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DocumentSourceFenceResolution = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8288,7 +7580,7 @@ export const getParseQueryUrl = () => {
  * Returns canonical query intent and observed dependency revisions, without executing a search.
  * @summary Validate a search expression and resolve its saved references
  */
-export const parseQuery = async (savedQueryV1Schema: NonReadonly<SavedQueryV1Schema>, options?: RequestInit): Promise<QueryPreview> => {
+export const parseQuery = async (savedQueryV1Schema: NonReadonly<SavedQueryV1Schema>, options?: Parameters<typeof sessionJSON>[1]): Promise<QueryPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8304,21 +7596,14 @@ export const parseQuery = async (savedQueryV1Schema: NonReadonly<SavedQueryV1Sch
     }
     return headers;
   };
-const res = await fetch(getParseQueryUrl(),
+return sessionJSON<QueryPreview>(getParseQueryUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(savedQueryV1Schema)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: QueryPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8333,7 +7618,7 @@ export const getReadDocumentRenditionBySelectorUrl = () => {
 /**
  * @summary Stream the active rendition for one exact source selector
  */
-export const readDocumentRenditionBySelector = async (renditionSelectorRequest: NonReadonly<RenditionSelectorRequest>, options?: RequestInit): Promise<void> => {
+export const readDocumentRenditionBySelector = (renditionSelectorRequest: NonReadonly<RenditionSelectorRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8349,21 +7634,14 @@ export const readDocumentRenditionBySelector = async (renditionSelectorRequest: 
     }
     return headers;
   };
-const res = await fetch(getReadDocumentRenditionBySelectorUrl(),
+return sessionResponse<void>(getReadDocumentRenditionBySelectorUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(renditionSelectorRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: void = body ? JSON.parse(body) : undefined
-  return data
-}
+);}
 
 
 
@@ -8378,7 +7656,7 @@ export const getReadDocumentRenditionWindowUrl = () => {
 /**
  * @summary Read one bounded Unicode rendition window
  */
-export const readDocumentRenditionWindow = async (renditionWindowRequest: NonReadonly<RenditionWindowRequest>, options?: RequestInit): Promise<RenditionTextWindow> => {
+export const readDocumentRenditionWindow = async (renditionWindowRequest: NonReadonly<RenditionWindowRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RenditionTextWindow> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8394,21 +7672,14 @@ export const readDocumentRenditionWindow = async (renditionWindowRequest: NonRea
     }
     return headers;
   };
-const res = await fetch(getReadDocumentRenditionWindowUrl(),
+return sessionJSON<RenditionTextWindow>(getReadDocumentRenditionWindowUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(renditionWindowRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: RenditionTextWindow = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8425,30 +7696,23 @@ export const getGetDocumentRenditionUrl = (attachmentId: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/renditions/${attachmentId}?${stringifiedParams}` : `/api/v1/renditions/${attachmentId}`
+  return stringifiedParams.length > 0 ? `/api/v1/renditions/${encodeURIComponent(String(attachmentId))}?${stringifiedParams}` : `/api/v1/renditions/${encodeURIComponent(String(attachmentId))}`
 }
 
 /**
  * @summary Stream one exact active sanitized-Markdown rendition
  */
-export const getDocumentRendition = async (attachmentId: string,
-    params?: GetDocumentRenditionParams, options?: RequestInit): Promise<void> => {
+export const getDocumentRendition = (attachmentId: string,
+    params?: GetDocumentRenditionParams, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getGetDocumentRenditionUrl(attachmentId,params),
+  return sessionResponse<void>(getGetDocumentRenditionUrl(attachmentId,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: void = body ? JSON.parse(body) : undefined
-  return data
-}
+);}
 
 
 
@@ -8470,23 +7734,16 @@ export const getListSavedQueriesUrl = (params?: ListSavedQueriesParams,) => {
 /**
  * @summary List saved query and highlight definitions by name
  */
-export const listSavedQueries = async (params?: ListSavedQueriesParams, options?: RequestInit): Promise<SavedQueryPage> => {
+export const listSavedQueries = async (params?: ListSavedQueriesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SavedQueryPage> => {
 
-  const res = await fetch(getListSavedQueriesUrl(params),
+  return sessionJSON<SavedQueryPage>(getListSavedQueriesUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SavedQueryPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8502,7 +7759,7 @@ export const getCreateSavedQueryUrl = () => {
  * Stores intent only. This endpoint does not execute searches or highlight documents.
  * @summary Save one complete query or literal highlight set
  */
-export const createSavedQuery = async (savedQueryCreateRequest: NonReadonly<SavedQueryCreateRequest>, options?: RequestInit): Promise<SavedQuery> => {
+export const createSavedQuery = (savedQueryCreateRequest: NonReadonly<SavedQueryCreateRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8518,21 +7775,14 @@ export const createSavedQuery = async (savedQueryCreateRequest: NonReadonly<Save
     }
     return headers;
   };
-const res = await fetch(getCreateSavedQueryUrl(),
+return sessionResponse<SavedQuery>(getCreateSavedQueryUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(savedQueryCreateRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SavedQuery = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8541,29 +7791,22 @@ export const getDeleteSavedQueryUrl = (savedQueryId: string,) => {
 
 
 
-  return `/api/v1/saved-queries/${savedQueryId}`
+  return `/api/v1/saved-queries/${encodeURIComponent(String(savedQueryId))}`
 }
 
 /**
  * @summary Delete a saved definition under its current revision
  */
-export const deleteSavedQuery = async (savedQueryId: string, options?: RequestInit): Promise<SavedQuery> => {
+export const deleteSavedQuery = (savedQueryId: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getDeleteSavedQueryUrl(savedQueryId),
+  return sessionResponse<SavedQuery>(getDeleteSavedQueryUrl(savedQueryId),
   {
     ...options,
     method: 'DELETE'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SavedQuery = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8572,29 +7815,22 @@ export const getGetSavedQueryUrl = (savedQueryId: string,) => {
 
 
 
-  return `/api/v1/saved-queries/${savedQueryId}`
+  return `/api/v1/saved-queries/${encodeURIComponent(String(savedQueryId))}`
 }
 
 /**
  * @summary Inspect one saved definition by stable ID
  */
-export const getSavedQuery = async (savedQueryId: string, options?: RequestInit): Promise<SavedQuery> => {
+export const getSavedQuery = (savedQueryId: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getGetSavedQueryUrl(savedQueryId),
+  return sessionResponse<SavedQuery>(getGetSavedQueryUrl(savedQueryId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SavedQuery = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8603,14 +7839,14 @@ export const getUpdateSavedQueryUrl = (savedQueryId: string,) => {
 
 
 
-  return `/api/v1/saved-queries/${savedQueryId}`
+  return `/api/v1/saved-queries/${encodeURIComponent(String(savedQueryId))}`
 }
 
 /**
  * @summary Edit a saved definition under its current revision
  */
-export const updateSavedQuery = async (savedQueryId: string,
-    updateSavedQueryRequest: NonReadonly<UpdateSavedQueryRequest>, options?: RequestInit): Promise<SavedQuery> => {
+export const updateSavedQuery = (savedQueryId: string,
+    updateSavedQueryRequest: NonReadonly<UpdateSavedQueryRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8626,21 +7862,14 @@ export const updateSavedQuery = async (savedQueryId: string,
     }
     return headers;
   };
-const res = await fetch(getUpdateSavedQueryUrl(savedQueryId),
+return sessionResponse<SavedQuery>(getUpdateSavedQueryUrl(savedQueryId),
   {
     ...options,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(updateSavedQueryRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SavedQuery = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8649,14 +7878,14 @@ export const getRunSavedQueryUrl = (savedQueryId: string,) => {
 
 
 
-  return `/api/v1/saved-queries/${savedQueryId}/runs`
+  return `/api/v1/saved-queries/${encodeURIComponent(String(savedQueryId))}/runs`
 }
 
 /**
  * @summary Run one revision-fenced saved query and retain its receipt
  */
 export const runSavedQuery = async (savedQueryId: string,
-    savedQueryRunRequest: NonReadonly<SavedQueryRunRequest>, options?: RequestInit): Promise<SavedQueryRunResult> => {
+    savedQueryRunRequest: NonReadonly<SavedQueryRunRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<SavedQueryRunResult> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8672,21 +7901,14 @@ export const runSavedQuery = async (savedQueryId: string,
     }
     return headers;
   };
-const res = await fetch(getRunSavedQueryUrl(savedQueryId),
+return sessionJSON<SavedQueryRunResult>(getRunSavedQueryUrl(savedQueryId),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(savedQueryRunRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SavedQueryRunResult = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8709,23 +7931,16 @@ export const getSearchUrl = (params?: SearchParams,) => {
  * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval.
  * @summary Search live document names and extracted text
  */
-export const search = async (params?: SearchParams, options?: RequestInit): Promise<SearchReport> => {
+export const search = async (params?: SearchParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchReport> => {
 
-  const res = await fetch(getSearchUrl(params),
+  return sessionJSON<SearchReport>(getSearchUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: SearchReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8740,7 +7955,7 @@ export const getSearchDocumentsUrl = () => {
 /**
  * @summary Search exact source-fenced document versions
  */
-export const searchDocuments = async (documentSearchRequest: NonReadonly<DocumentSearchRequest>, options?: RequestInit): Promise<DocumentSearchReport> => {
+export const searchDocuments = async (documentSearchRequest: NonReadonly<DocumentSearchRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSearchReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8756,21 +7971,14 @@ export const searchDocuments = async (documentSearchRequest: NonReadonly<Documen
     }
     return headers;
   };
-const res = await fetch(getSearchDocumentsUrl(),
+return sessionJSON<DocumentSearchReport>(getSearchDocumentsUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSearchRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DocumentSearchReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8785,7 +7993,7 @@ export const getValidateDocumentSearchUrl = () => {
 /**
  * @summary Validate document-search semantics without executing a search
  */
-export const validateDocumentSearch = async (documentSearchValidationRequest: NonReadonly<DocumentSearchValidationRequest>, options?: RequestInit): Promise<DocumentSearchValidation> => {
+export const validateDocumentSearch = async (documentSearchValidationRequest: NonReadonly<DocumentSearchValidationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSearchValidation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8801,21 +8009,14 @@ export const validateDocumentSearch = async (documentSearchValidationRequest: No
     }
     return headers;
   };
-const res = await fetch(getValidateDocumentSearchUrl(),
+return sessionJSON<DocumentSearchValidation>(getValidateDocumentSearchUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSearchValidationRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DocumentSearchValidation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8837,23 +8038,16 @@ export const getStorageStatusUrl = (params?: StorageStatusParams,) => {
 /**
  * @summary Report loose and packed physical storage usage
  */
-export const storageStatus = async (params?: StorageStatusParams, options?: RequestInit): Promise<StorageStatus> => {
+export const storageStatus = async (params?: StorageStatusParams, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageStatus> => {
 
-  const res = await fetch(getStorageStatusUrl(params),
+  return sessionJSON<StorageStatus>(getStorageStatusUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageStatus = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8868,7 +8062,7 @@ export const getStartStorageEvacuationUrl = () => {
 /**
  * @summary Start the exact store evacuation reviewed by a preview
  */
-export const startStorageEvacuation = async (startStorageEvacuationRequest: NonReadonly<StartStorageEvacuationRequest>, options?: RequestInit): Promise<StorageOperation> => {
+export const startStorageEvacuation = async (startStorageEvacuationRequest: NonReadonly<StartStorageEvacuationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8884,21 +8078,14 @@ export const startStorageEvacuation = async (startStorageEvacuationRequest: NonR
     }
     return headers;
   };
-const res = await fetch(getStartStorageEvacuationUrl(),
+return sessionJSON<StorageOperation>(getStartStorageEvacuationUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(startStorageEvacuationRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageOperation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8913,7 +8100,7 @@ export const getPreviewStorageEvacuationUrl = () => {
 /**
  * @summary Preview complete evacuation of one secondary store to primary
  */
-export const previewStorageEvacuation = async (previewStorageEvacuationRequest: NonReadonly<PreviewStorageEvacuationRequest>, options?: RequestInit): Promise<StoragePlacementPreview> => {
+export const previewStorageEvacuation = async (previewStorageEvacuationRequest: NonReadonly<PreviewStorageEvacuationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StoragePlacementPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8929,21 +8116,14 @@ export const previewStorageEvacuation = async (previewStorageEvacuationRequest: 
     }
     return headers;
   };
-const res = await fetch(getPreviewStorageEvacuationUrl(),
+return sessionJSON<StoragePlacementPreview>(getPreviewStorageEvacuationUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewStorageEvacuationRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StoragePlacementPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -8958,7 +8138,7 @@ export const getStoragePackUrl = () => {
 /**
  * @summary Pack authorized loose blobs into immutable pack files
  */
-export const storagePack = async (storagePackRequest: NonReadonly<StoragePackRequest>, options?: RequestInit): Promise<StoragePackReport> => {
+export const storagePack = async (storagePackRequest: NonReadonly<StoragePackRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StoragePackReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8974,21 +8154,14 @@ export const storagePack = async (storagePackRequest: NonReadonly<StoragePackReq
     }
     return headers;
   };
-const res = await fetch(getStoragePackUrl(),
+return sessionJSON<StoragePackReport>(getStoragePackUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(storagePackRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StoragePackReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9003,7 +8176,7 @@ export const getStartStoragePlacementUrl = () => {
 /**
  * @summary Start the exact verified placement reviewed by a preview
  */
-export const startStoragePlacement = async (startStoragePlacementRequest: NonReadonly<StartStoragePlacementRequest>, options?: RequestInit): Promise<StorageOperation> => {
+export const startStoragePlacement = async (startStoragePlacementRequest: NonReadonly<StartStoragePlacementRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9019,21 +8192,14 @@ export const startStoragePlacement = async (startStoragePlacementRequest: NonRea
     }
     return headers;
   };
-const res = await fetch(getStartStoragePlacementUrl(),
+return sessionJSON<StorageOperation>(getStartStoragePlacementUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(startStoragePlacementRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageOperation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9048,7 +8214,7 @@ export const getPreviewStoragePlacementUrl = () => {
 /**
  * @summary Preview verified placement for retained content beneath one node
  */
-export const previewStoragePlacement = async (previewStoragePlacementRequest: NonReadonly<PreviewStoragePlacementRequest>, options?: RequestInit): Promise<StoragePlacementPreview> => {
+export const previewStoragePlacement = async (previewStoragePlacementRequest: NonReadonly<PreviewStoragePlacementRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StoragePlacementPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9064,21 +8230,14 @@ export const previewStoragePlacement = async (previewStoragePlacementRequest: No
     }
     return headers;
   };
-const res = await fetch(getPreviewStoragePlacementUrl(),
+return sessionJSON<StoragePlacementPreview>(getPreviewStoragePlacementUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewStoragePlacementRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StoragePlacementPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9093,7 +8252,7 @@ export const getStorageRepackUrl = () => {
 /**
  * @summary Rewrite eligible sparse packs and retire dead pack files
  */
-export const storageRepack = async (storageRepackRequest: NonReadonly<StorageRepackRequest>, options?: RequestInit): Promise<StorageRepackReport> => {
+export const storageRepack = async (storageRepackRequest: NonReadonly<StorageRepackRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageRepackReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9109,21 +8268,14 @@ export const storageRepack = async (storageRepackRequest: NonReadonly<StorageRep
     }
     return headers;
   };
-const res = await fetch(getStorageRepackUrl(),
+return sessionJSON<StorageRepackReport>(getStorageRepackUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(storageRepackRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageRepackReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9138,7 +8290,7 @@ export const getStartStorageRepairUrl = () => {
 /**
  * @summary Start the exact storage repair reviewed by a preview
  */
-export const startStorageRepair = async (startStorageRepairRequest: NonReadonly<StartStorageRepairRequest>, options?: RequestInit): Promise<StorageOperation> => {
+export const startStorageRepair = async (startStorageRepairRequest: NonReadonly<StartStorageRepairRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9154,21 +8306,14 @@ export const startStorageRepair = async (startStorageRepairRequest: NonReadonly<
     }
     return headers;
   };
-const res = await fetch(getStartStorageRepairUrl(),
+return sessionJSON<StorageOperation>(getStartStorageRepairUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(startStorageRepairRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageOperation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9183,7 +8328,7 @@ export const getPreviewStorageRepairUrl = () => {
 /**
  * @summary Preview one explicit verified storage repair
  */
-export const previewStorageRepair = async (previewStorageRepairRequest: NonReadonly<PreviewStorageRepairRequest>, options?: RequestInit): Promise<StorageRecoveryPreview> => {
+export const previewStorageRepair = async (previewStorageRepairRequest: NonReadonly<PreviewStorageRepairRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageRecoveryPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9199,21 +8344,14 @@ export const previewStorageRepair = async (previewStorageRepairRequest: NonReado
     }
     return headers;
   };
-const res = await fetch(getPreviewStorageRepairUrl(),
+return sessionJSON<StorageRecoveryPreview>(getPreviewStorageRepairUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewStorageRepairRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageRecoveryPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9228,7 +8366,7 @@ export const getStartStorageSalvageUrl = () => {
 /**
  * @summary Start the exact storage salvage reviewed by a preview
  */
-export const startStorageSalvage = async (startStorageSalvageRequest: NonReadonly<StartStorageSalvageRequest>, options?: RequestInit): Promise<StorageOperation> => {
+export const startStorageSalvage = async (startStorageSalvageRequest: NonReadonly<StartStorageSalvageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageOperation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9244,21 +8382,14 @@ export const startStorageSalvage = async (startStorageSalvageRequest: NonReadonl
     }
     return headers;
   };
-const res = await fetch(getStartStorageSalvageUrl(),
+return sessionJSON<StorageOperation>(getStartStorageSalvageUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(startStorageSalvageRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageOperation = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9273,7 +8404,7 @@ export const getPreviewStorageSalvageUrl = () => {
 /**
  * @summary Preview one explicit verified storage salvage
  */
-export const previewStorageSalvage = async (previewStorageSalvageRequest: NonReadonly<PreviewStorageSalvageRequest>, options?: RequestInit): Promise<StorageRecoveryPreview> => {
+export const previewStorageSalvage = async (previewStorageSalvageRequest: NonReadonly<PreviewStorageSalvageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<StorageRecoveryPreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9289,21 +8420,14 @@ export const previewStorageSalvage = async (previewStorageSalvageRequest: NonRea
     }
     return headers;
   };
-const res = await fetch(getPreviewStorageSalvageUrl(),
+return sessionJSON<StorageRecoveryPreview>(getPreviewStorageSalvageUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewStorageSalvageRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: StorageRecoveryPreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9325,23 +8449,16 @@ export const getListBlobStoresUrl = (params?: ListBlobStoresParams,) => {
 /**
  * @summary List cataloged blob stores and their deployment state
  */
-export const listBlobStores = async (params?: ListBlobStoresParams, options?: RequestInit): Promise<BlobStore[] | null> => {
+export const listBlobStores = async (params?: ListBlobStoresParams, options?: Parameters<typeof sessionJSON>[1]): Promise<BlobStore[]> => {
 
-  const res = await fetch(getListBlobStoresUrl(params),
+  return sessionJSON<BlobStore[]>(getListBlobStoresUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BlobStore[] | null = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9356,7 +8473,7 @@ export const getRegisterBlobStoreUrl = () => {
 /**
  * @summary Attach the exact secondary store reviewed by a preview
  */
-export const registerBlobStore = async (registerBlobStoreRequest: NonReadonly<RegisterBlobStoreRequest>, options?: RequestInit): Promise<BlobStore> => {
+export const registerBlobStore = async (registerBlobStoreRequest: NonReadonly<RegisterBlobStoreRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BlobStore> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9372,21 +8489,14 @@ export const registerBlobStore = async (registerBlobStoreRequest: NonReadonly<Re
     }
     return headers;
   };
-const res = await fetch(getRegisterBlobStoreUrl(),
+return sessionJSON<BlobStore>(getRegisterBlobStoreUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(registerBlobStoreRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BlobStore = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9401,7 +8511,7 @@ export const getPreviewBlobStoreRegistrationUrl = () => {
 /**
  * @summary Preview attaching one configured secondary blob store
  */
-export const previewBlobStoreRegistration = async (previewBlobStoreRegistrationRequest: NonReadonly<PreviewBlobStoreRegistrationRequest>, options?: RequestInit): Promise<BlobStorePreview> => {
+export const previewBlobStoreRegistration = async (previewBlobStoreRegistrationRequest: NonReadonly<PreviewBlobStoreRegistrationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BlobStorePreview> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9417,21 +8527,14 @@ export const previewBlobStoreRegistration = async (previewBlobStoreRegistrationR
     }
     return headers;
   };
-const res = await fetch(getPreviewBlobStoreRegistrationUrl(),
+return sessionJSON<BlobStorePreview>(getPreviewBlobStoreRegistrationUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewBlobStoreRegistrationRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BlobStorePreview = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9440,29 +8543,22 @@ export const getUnregisterBlobStoreUrl = (storeId: string,) => {
 
 
 
-  return `/api/v1/storage/stores/${storeId}`
+  return `/api/v1/storage/stores/${encodeURIComponent(String(storeId))}`
 }
 
 /**
  * @summary Forget one detached and empty secondary store identity
  */
-export const unregisterBlobStore = async (storeId: string, options?: RequestInit): Promise<void> => {
+export const unregisterBlobStore = async (storeId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
-  const res = await fetch(getUnregisterBlobStoreUrl(storeId),
+  return sessionJSON<void>(getUnregisterBlobStoreUrl(storeId),
   {
     ...options,
     method: 'DELETE'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: void = body ? JSON.parse(body) : undefined
-  return data
-}
+);}
 
 
 
@@ -9471,29 +8567,22 @@ export const getDetachBlobStoreUrl = (storeId: string,) => {
 
 
 
-  return `/api/v1/storage/stores/${storeId}/detach`
+  return `/api/v1/storage/stores/${encodeURIComponent(String(storeId))}/detach`
 }
 
 /**
  * @summary Detach one empty secondary store from runtime use
  */
-export const detachBlobStore = async (storeId: string, options?: RequestInit): Promise<BlobStore> => {
+export const detachBlobStore = async (storeId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<BlobStore> => {
 
-  const res = await fetch(getDetachBlobStoreUrl(storeId),
+  return sessionJSON<BlobStore>(getDetachBlobStoreUrl(storeId),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: BlobStore = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9515,23 +8604,16 @@ export const getListTagsUrl = (params?: ListTagsParams,) => {
 /**
  * @summary List tag definitions by name
  */
-export const listTags = async (params?: ListTagsParams, options?: RequestInit): Promise<TagPage> => {
+export const listTags = async (params?: ListTagsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TagPage> => {
 
-  const res = await fetch(getListTagsUrl(params),
+  return sessionJSON<TagPage>(getListTagsUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9546,7 +8628,7 @@ export const getCreateTagUrl = () => {
 /**
  * @summary Define a tag with a new stable ID
  */
-export const createTag = async (createTagRequest: NonReadonly<CreateTagRequest>, options?: RequestInit): Promise<Tag> => {
+export const createTag = async (createTagRequest: NonReadonly<CreateTagRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9562,21 +8644,14 @@ export const createTag = async (createTagRequest: NonReadonly<CreateTagRequest>,
     }
     return headers;
   };
-const res = await fetch(getCreateTagUrl(),
+return sessionJSON<Tag>(getCreateTagUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(createTagRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Tag = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9598,23 +8673,16 @@ export const getResolveTagByNameUrl = (params: ResolveTagByNameParams,) => {
 /**
  * @summary Resolve an exact tag name to its stable ID
  */
-export const resolveTagByName = async (params: ResolveTagByNameParams, options?: RequestInit): Promise<Tag> => {
+export const resolveTagByName = async (params: ResolveTagByNameParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
 
-  const res = await fetch(getResolveTagByNameUrl(params),
+  return sessionJSON<Tag>(getResolveTagByNameUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Tag = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9623,29 +8691,22 @@ export const getDeleteTagUrl = (tagId: string,) => {
 
 
 
-  return `/api/v1/tags/${tagId}`
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Delete a tag definition and all assignments
  */
-export const deleteTag = async (tagId: string, options?: RequestInit): Promise<TagDeletionReceipt> => {
+export const deleteTag = async (tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagDeletionReceipt> => {
 
-  const res = await fetch(getDeleteTagUrl(tagId),
+  return sessionJSON<TagDeletionReceipt>(getDeleteTagUrl(tagId),
   {
     ...options,
     method: 'DELETE'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TagDeletionReceipt = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9654,29 +8715,22 @@ export const getGetTagUrl = (tagId: string,) => {
 
 
 
-  return `/api/v1/tags/${tagId}`
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Inspect one tag definition by stable ID
  */
-export const getTag = async (tagId: string, options?: RequestInit): Promise<Tag> => {
+export const getTag = async (tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
 
-  const res = await fetch(getGetTagUrl(tagId),
+  return sessionJSON<Tag>(getGetTagUrl(tagId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Tag = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9685,14 +8739,14 @@ export const getRenameTagUrl = (tagId: string,) => {
 
 
 
-  return `/api/v1/tags/${tagId}`
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}`
 }
 
 /**
  * @summary Rename a tag without changing its stable ID
  */
 export const renameTag = async (tagId: string,
-    renameTagRequest: NonReadonly<RenameTagRequest>, options?: RequestInit): Promise<Tag> => {
+    renameTagRequest: NonReadonly<RenameTagRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9708,21 +8762,14 @@ export const renameTag = async (tagId: string,
     }
     return headers;
   };
-const res = await fetch(getRenameTagUrl(tagId),
+return sessionJSON<Tag>(getRenameTagUrl(tagId),
   {
     ...options,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(renameTagRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: Tag = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9739,30 +8786,23 @@ export const getListTagNodesUrl = (tagId: string,
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/tags/${tagId}/nodes?${stringifiedParams}` : `/api/v1/tags/${tagId}/nodes`
+  return stringifiedParams.length > 0 ? `/api/v1/tags/${encodeURIComponent(String(tagId))}/nodes?${stringifiedParams}` : `/api/v1/tags/${encodeURIComponent(String(tagId))}/nodes`
 }
 
 /**
  * @summary List live and trashed nodes carrying a tag
  */
 export const listTagNodes = async (tagId: string,
-    params?: ListTagNodesParams, options?: RequestInit): Promise<TaggedNodePage> => {
+    params?: ListTagNodesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TaggedNodePage> => {
 
-  const res = await fetch(getListTagNodesUrl(tagId,params),
+  return sessionJSON<TaggedNodePage>(getListTagNodesUrl(tagId,params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TaggedNodePage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9777,23 +8817,16 @@ export const getReadTimelineCoverageUrl = () => {
 /**
  * @summary Read current-file timeline coverage
  */
-export const readTimelineCoverage = async ( options?: RequestInit): Promise<DocumentEventCoverage> => {
+export const readTimelineCoverage = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentEventCoverage> => {
 
-  const res = await fetch(getReadTimelineCoverageUrl(),
+  return sessionJSON<DocumentEventCoverage>(getReadTimelineCoverageUrl(),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: DocumentEventCoverage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9808,7 +8841,7 @@ export const getCreateTimelineRebuildUrl = () => {
 /**
  * @summary Start or replay a timeline rebuild
  */
-export const createTimelineRebuild = async (timelineRebuildRequest: NonReadonly<TimelineRebuildRequest>, options?: RequestInit): Promise<TimelineBuild> => {
+export const createTimelineRebuild = async (timelineRebuildRequest: NonReadonly<TimelineRebuildRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TimelineBuild> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9824,21 +8857,14 @@ export const createTimelineRebuild = async (timelineRebuildRequest: NonReadonly<
     }
     return headers;
   };
-const res = await fetch(getCreateTimelineRebuildUrl(),
+return sessionJSON<TimelineBuild>(getCreateTimelineRebuildUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(timelineRebuildRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TimelineBuild = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9847,29 +8873,22 @@ export const getReadTimelineRebuildUrl = (operationId: string,) => {
 
 
 
-  return `/api/v1/timeline/rebuilds/${operationId}`
+  return `/api/v1/timeline/rebuilds/${encodeURIComponent(String(operationId))}`
 }
 
 /**
  * @summary Read timeline rebuild progress
  */
-export const readTimelineRebuild = async (operationId: string, options?: RequestInit): Promise<TimelineBuild> => {
+export const readTimelineRebuild = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TimelineBuild> => {
 
-  const res = await fetch(getReadTimelineRebuildUrl(operationId),
+  return sessionJSON<TimelineBuild>(getReadTimelineRebuildUrl(operationId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TimelineBuild = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9891,23 +8910,16 @@ export const getListTrashUrl = (params?: ListTrashParams,) => {
 /**
  * @summary List restorable trash roots, newest first, optionally paginated
  */
-export const listTrash = async (params?: ListTrashParams, options?: RequestInit): Promise<TrashPage> => {
+export const listTrash = async (params?: ListTrashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TrashPage> => {
 
-  const res = await fetch(getListTrashUrl(params),
+  return sessionJSON<TrashPage>(getListTrashUrl(params),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TrashPage = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9922,7 +8934,7 @@ export const getEmptyTrashUrl = () => {
 /**
  * @summary Report (run=false) or hard-delete (run=true) trash roots
  */
-export const emptyTrash = async (emptyTrashRequest: NonReadonly<EmptyTrashRequest>, options?: RequestInit): Promise<TrashEmptyReport> => {
+export const emptyTrash = async (emptyTrashRequest: NonReadonly<EmptyTrashRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TrashEmptyReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9938,21 +8950,14 @@ export const emptyTrash = async (emptyTrashRequest: NonReadonly<EmptyTrashReques
     }
     return headers;
   };
-const res = await fetch(getEmptyTrashUrl(),
+return sessionJSON<TrashEmptyReport>(getEmptyTrashUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(emptyTrashRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: TrashEmptyReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -9976,25 +8981,18 @@ export const getUploadFileUrl = (params: UploadFileParams,) => {
  * @summary Upload one digest-checked file
  */
 export const uploadFile = async (uploadFileBody: UploadFileBody,
-    params: UploadFileParams, options?: RequestInit): Promise<UploadFile200 | UploadFile201> => {
+    params: UploadFileParams, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadFile200 | UploadFile201> => {
     const formData = new FormData();
 formData.append(`file`, uploadFileBody.file);
 
-  const res = await fetch(getUploadFileUrl(params),
+  return sessionJSON<UploadFile200 | UploadFile201>(getUploadFileUrl(params),
   {
     ...options,
     method: 'POST'
     ,
     body: formData
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: UploadFile200 | UploadFile201 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10009,23 +9007,16 @@ export const getVerifyUrl = () => {
 /**
  * @summary Validate metadata and re-hash every stored blob
  */
-export const verify = async ( options?: RequestInit): Promise<VerifyReport> => {
+export const verify = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<VerifyReport> => {
 
-  const res = await fetch(getVerifyUrl(),
+  return sessionJSON<VerifyReport>(getVerifyUrl(),
   {
     ...options,
     method: 'POST'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: VerifyReport = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10034,29 +9025,22 @@ export const getGetContentVersionUrl = (versionId: string,) => {
 
 
 
-  return `/api/v1/versions/${versionId}`
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}`
 }
 
 /**
  * @summary Inspect one immutable content version by stable ID
  */
-export const getContentVersion = async (versionId: string, options?: RequestInit): Promise<ContentVersion> => {
+export const getContentVersion = async (versionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentVersion> => {
 
-  const res = await fetch(getGetContentVersionUrl(versionId),
+  return sessionJSON<ContentVersion>(getGetContentVersionUrl(versionId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: ContentVersion = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10065,29 +9049,23 @@ export const getGetContentVersionBytesUrl = (versionId: string,) => {
 
 
 
-  return `/api/v1/versions/${versionId}/content`
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/content`
 }
 
 /**
  * Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed.
  * @summary Stream one immutable content version by stable ID
  */
-export const getContentVersionBytes = async (versionId: string, options?: RequestInit): Promise<Blob> => {
+export const getContentVersionBytes = (versionId: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getGetContentVersionBytesUrl(versionId),
+  return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
-  const data: Blob = body as Blob
-  return data
-}
+);}
 
 
 
@@ -10096,29 +9074,22 @@ export const getGetEmailMetadataUrl = (versionId: string,) => {
 
 
 
-  return `/api/v1/versions/${versionId}/email`
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/email`
 }
 
 /**
  * @summary Read selected email metadata for one immutable version
  */
-export const getEmailMetadata = async (versionId: string, options?: RequestInit): Promise<GetEmailMetadata200 | GetEmailMetadata202> => {
+export const getEmailMetadata = async (versionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<GetEmailMetadata200 | GetEmailMetadata202> => {
 
-  const res = await fetch(getGetEmailMetadataUrl(versionId),
+  return sessionJSON<GetEmailMetadata200 | GetEmailMetadata202>(getGetEmailMetadataUrl(versionId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: GetEmailMetadata200 | GetEmailMetadata202 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10127,14 +9098,14 @@ export const getEnsureEmailMetadataUrl = (versionId: string,) => {
 
 
 
-  return `/api/v1/versions/${versionId}/email`
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/email`
 }
 
 /**
  * @summary Ensure email metadata for one immutable version
  */
 export const ensureEmailMetadata = async (versionId: string,
-    ensureEmailMetadataBody: EnsureEmailMetadataBody, options?: RequestInit): Promise<EnsureEmailMetadata200> => {
+    ensureEmailMetadataBody: EnsureEmailMetadataBody, options?: Parameters<typeof sessionJSON>[1]): Promise<EnsureEmailMetadata200> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -10150,21 +9121,14 @@ export const ensureEmailMetadata = async (versionId: string,
     }
     return headers;
   };
-const res = await fetch(getEnsureEmailMetadataUrl(versionId),
+return sessionJSON<EnsureEmailMetadata200>(getEnsureEmailMetadataUrl(versionId),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(ensureEmailMetadataBody)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: EnsureEmailMetadata200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10174,30 +9138,23 @@ export const getGetEmailMetadataGenerationUrl = (versionId: string,
 
 
 
-  return `/api/v1/versions/${versionId}/email/generations/${generationId}`
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/email/generations/${encodeURIComponent(String(generationId))}`
 }
 
 /**
  * @summary Read an immutable email generation attached to one version
  */
 export const getEmailMetadataGeneration = async (versionId: string,
-    generationId: string, options?: RequestInit): Promise<GetEmailMetadataGeneration200> => {
+    generationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<GetEmailMetadataGeneration200> => {
 
-  const res = await fetch(getGetEmailMetadataGenerationUrl(versionId,generationId),
+  return sessionJSON<GetEmailMetadataGeneration200>(getGetEmailMetadataGenerationUrl(versionId,generationId),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: GetEmailMetadataGeneration200 = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10209,31 +9166,25 @@ export const getGetEmailPartUrl = (versionId: string,
 
 
 
-  return `/api/v1/versions/${versionId}/email/generations/${generationId}/parts/${partPath}/${role}`
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/email/generations/${encodeURIComponent(String(generationId))}/parts/${encodeURIComponent(String(partPath))}/${encodeURIComponent(String(role))}`
 }
 
 /**
  * @summary Stream one verified immutable email part artifact
  */
-export const getEmailPart = async (versionId: string,
+export const getEmailPart = (versionId: string,
     generationId: string,
     partPath: string,
-    role: 'raw_headers' | 'decoded_payload' | 'body_utf8', options?: RequestInit): Promise<Blob> => {
+    role: 'raw_headers' | 'decoded_payload' | 'body_utf8', options?: Parameters<typeof sessionResponse>[1]) => {
 
-  const res = await fetch(getGetEmailPartUrl(versionId,generationId,partPath,role),
+  return sessionResponse<Blob>(getGetEmailPartUrl(versionId,generationId,partPath,role),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.blob();
-  const data: Blob = body as Blob
-  return data
-}
+);}
 
 
 
@@ -10248,23 +9199,16 @@ export const getListWatchedInboxesUrl = () => {
 /**
  * @summary List effective watched-inbox configuration and runner status
  */
-export const listWatchedInboxes = async ( options?: RequestInit): Promise<WatchedInboxList> => {
+export const listWatchedInboxes = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<WatchedInboxList> => {
 
-  const res = await fetch(getListWatchedInboxesUrl(),
+  return sessionJSON<WatchedInboxList>(getListWatchedInboxesUrl(),
   {
     ...options,
     method: 'GET'
 
 
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: WatchedInboxList = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10279,7 +9223,7 @@ export const getCreateWorkspaceQueryUrl = () => {
 /**
  * @summary Create an exact bounded query snapshot
  */
-export const createWorkspaceQuery = async (workspaceQueryCreateRequest: NonReadonly<WorkspaceQueryCreateRequest>, options?: RequestInit): Promise<WorkspaceQueryResponse> => {
+export const createWorkspaceQuery = async (workspaceQueryCreateRequest: NonReadonly<WorkspaceQueryCreateRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<WorkspaceQueryResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -10295,21 +9239,14 @@ export const createWorkspaceQuery = async (workspaceQueryCreateRequest: NonReado
     }
     return headers;
   };
-const res = await fetch(getCreateWorkspaceQueryUrl(),
+return sessionJSON<WorkspaceQueryResponse>(getCreateWorkspaceQueryUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(workspaceQueryCreateRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: WorkspaceQueryResponse = body ? JSON.parse(body) : {}
-  return data
-}
+);}
 
 
 
@@ -10318,14 +9255,14 @@ export const getReadWorkspaceQueryPageUrl = (id: string,) => {
 
 
 
-  return `/api/v1/workspace/queries/${id}/pages`
+  return `/api/v1/workspace/queries/${encodeURIComponent(String(id))}/pages`
 }
 
 /**
  * @summary Read one exact snapshot page
  */
 export const readWorkspaceQueryPage = async (id: string,
-    workspaceQueryPageRequest: NonReadonly<WorkspaceQueryPageRequest>, options?: RequestInit): Promise<WorkspaceQueryResponse> => {
+    workspaceQueryPageRequest: NonReadonly<WorkspaceQueryPageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<WorkspaceQueryResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -10341,18 +9278,11 @@ export const readWorkspaceQueryPage = async (id: string,
     }
     return headers;
   };
-const res = await fetch(getReadWorkspaceQueryPageUrl(id),
+return sessionJSON<WorkspaceQueryResponse>(getReadWorkspaceQueryPageUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(workspaceQueryPageRequest)
   }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: WorkspaceQueryResponse = body ? JSON.parse(body) : {}
-  return data
-}
+);}

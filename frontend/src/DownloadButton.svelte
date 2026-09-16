@@ -3,7 +3,8 @@
   import DownloadIcon from "@lucide/svelte/icons/download";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Chip, Spinner } from "@kenn-io/kit-ui";
-  import { APIError, type ContentVersion, type Node } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type ContentVersion, type Node } from "./generated/docbank.js";
   import {
     offerPreparedDownload,
     prepareCurrentDownload,

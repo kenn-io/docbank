@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APIError } from "./api.js";
+import { APIError } from "./api-transport.js";
 import { createSavedQuery, deleteSavedQuery, getSavedQuery, listSavedQueries, updateSavedQuery } from "./savedQueries.js";
 
 const id = "00000000-0000-4000-8000-000000000001";
@@ -107,7 +107,7 @@ describe("saved definition receipts", () => {
   });
 
   it("saves bounded literal highlights separately from executable queries", async () => {
-    const highlight = { v: 1, terms: [{ text: "alpha", color: "#ffcc00" }] };
+    const highlight = { v: 1 as const, terms: [{ text: "alpha", color: "#ffcc00" }] };
     const fingerprint = `sha256:${createHash("sha256").update('{"terms":[{"color":"#ffcc00","text":"alpha"}],"v":1}').digest("hex")}`;
     const fetch = respond({ ...record, kind: "highlight_set", payload: highlight, fingerprint, revision: 1 }, '"1"');
     expect((await createSavedQuery("session", { name: record.name, description: record.description, kind: "highlight_set", payload: highlight })).kind).toBe("highlight_set");

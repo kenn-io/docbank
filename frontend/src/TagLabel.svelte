@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ColorLabel, type ColorLabelSize } from "@kenn-io/kit-ui";
-  import type { Tag } from "./api.js";
+  import type { Tag } from "./generated/docbank.js";
   import { presentTag } from "./tagPresentation.js";
 
   let {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, Checkbox, Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
-  import { APIError } from "./api.js";
+  import { APIError } from "./api-transport.js";
   import { collectionQuality, qualitySuggestion, qualitySuggestionFields, type CollectionQuality } from "./collectionQuality.js";
   import type { Query } from "./query.js";
   interface Props {session:string;collectionID:string;profile:string;onprofile:(name:string)=>void;onnewquery?:(query:Query)=>void;onauthfailure:(cause:unknown)=>void}

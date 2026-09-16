@@ -12,7 +12,9 @@
     IconButton,
     Spinner,
   } from "@kenn-io/kit-ui";
-  import { APIError, type Node, type UploadReceipt } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type Node } from "./generated/docbank.js";
+  import type { UploadFile200 as UploadReceipt } from "./generated/docbank.js";
   import {
     hashFile,
     type TransferProgress,

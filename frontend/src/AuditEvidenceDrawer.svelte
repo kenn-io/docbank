@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
@@ -14,11 +15,8 @@
     IconButton,
     Spinner,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    verifyAudit,
-    type AuditVerifyReport,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type AuditVerifyReport } from "./generated/docbank.js";
   import { formatBytes } from "./format.js";
 
   interface Props {
@@ -66,7 +64,7 @@
     report = null;
     error = "";
     try {
-      const next = await verifyAudit(session, active.signal);
+      const next = await generated.verifyAudit({}, { session: session, signal: active.signal });
       if (request !== generation) return;
       report = next;
     } catch (cause) {

@@ -2,7 +2,7 @@ import type {
   AuditAttachmentState,
   AuditEvent,
   AuditPathState,
-} from "./api.js";
+} from "./generated/docbank.js";
 
 const eventLabels: Record<string, string> = {
   audit_enroll: "Audit protection enabled",

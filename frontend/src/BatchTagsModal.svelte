@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
   import { Button, Checkbox, Modal, SelectDropdown, Spinner, type SelectDropdownOption } from "@kenn-io/kit-ui";
-  import { APIError, type Tag } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type Tag } from "./generated/docbank.js";
   import type { SelectionTarget } from "./selection.js";
   import { changeBatchTags, previewBatchTags, type BatchTagRequest, type BatchTagReceipt, type BatchTagPreview } from "./batch-tags.js";
 

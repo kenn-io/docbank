@@ -3,8 +3,13 @@ package api
 import (
 	"fmt"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/docbank/internal/config"
 )
+
+// JSON v2 writes nil slices as empty arrays. Keep the generated contract aligned.
+func init() { huma.DefaultArrayNullable = false }
 
 // NewOfflineServer builds a Server for offline document generation only: it
 // never binds a socket or serves a request, so its API key is a fixed

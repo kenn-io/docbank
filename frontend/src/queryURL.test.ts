@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { takeFragmentSession } from "./api.js";
+import { takeFragmentSession } from "./browser-session.js";
 import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
 import { parseQuery } from "./query.js";
 

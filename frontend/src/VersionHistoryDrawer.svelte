@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import XIcon from "@lucide/svelte/icons/x";
@@ -14,13 +15,8 @@
     TimelineItem,
     type TimelineTone,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    contentVersions,
-    type ContentVersion,
-    type ContentVersionPage,
-    type Node,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type ContentVersion, type ContentVersionPage, type Node } from "./generated/docbank.js";
   import DownloadButton from "./DownloadButton.svelte";
   import { basename, formatBytes, formatDate } from "./format.js";
 
@@ -56,7 +52,7 @@
     loading = true;
     error = "";
     try {
-      const next = await contentVersions(session, node.id);
+      const next = await generated.listContentVersions((node.id), { limit: 1000, offset: 0 }, { session });
       if (request !== generation) return;
       page = next;
       selectedVersionID = next.items[0]?.id ?? "";

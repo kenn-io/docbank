@@ -272,9 +272,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/AuditEvent"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 500
@@ -318,9 +316,7 @@ components:
             $ref: "#/components/schemas/AuditScopeEvidence"
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         vault_id:
           format: uuid
           type: string
@@ -340,9 +336,7 @@ components:
         problems:
           items:
             $ref: "#/components/schemas/AuditEvidenceProblem"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - extends
       type: object
@@ -376,9 +370,7 @@ components:
           items:
             pattern: ^[0-9a-f]{64}$
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         node_id:
           format: int64
           minimum: 1
@@ -391,9 +383,7 @@ components:
           items:
             format: uuid
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         trashed:
           type: boolean
       required:
@@ -432,9 +422,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/AuditEvent"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 500
@@ -547,9 +535,7 @@ components:
         scopes:
           items:
             $ref: "#/components/schemas/AuditScopeStatus"
-          type:
-            - array
-            - "null"
+          type: array
         vault_id:
           format: uuid
           type: string
@@ -579,15 +565,11 @@ components:
         metadata_problems:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         problems:
           items:
             $ref: "#/components/schemas/VerifyProblem"
-          type:
-            - array
-            - "null"
+          type: array
         protected_blobs:
           format: int64
           minimum: 0
@@ -832,9 +814,7 @@ components:
         fallbacks:
           items:
             $ref: "#/components/schemas/BackupRestoreFallback"
-          type:
-            - array
-            - "null"
+          type: array
         loose_blobs:
           format: int64
           type: integer
@@ -964,9 +944,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/BackupSnapshot"
-          type:
-            - array
-            - "null"
+          type: array
         repository:
           $ref: "#/components/schemas/BackupRepository"
       required:
@@ -1027,15 +1005,11 @@ components:
         problems:
           items:
             $ref: "#/components/schemas/BackupVerifyProblem"
-          type:
-            - array
-            - "null"
+          type: array
         snapshots:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - snapshots
         - blobs_checked
@@ -1110,9 +1084,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/BatchMoveReceipt"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - items
       type: object
@@ -1131,9 +1103,7 @@ components:
             $ref: "#/components/schemas/BatchMoveItem"
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - moves
       type: object
@@ -1175,9 +1145,7 @@ components:
             $ref: "#/components/schemas/BatchTagPreviewNode"
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         tag_id:
           format: uuid
           type: string
@@ -1231,9 +1199,7 @@ components:
             $ref: "#/components/schemas/BatchTagNodeResult"
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         operation_id:
           format: uuid
           type: string
@@ -1278,9 +1244,7 @@ components:
             $ref: "#/components/schemas/BatchTagTarget"
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         operation_id:
           format: uuid
           type: string
@@ -1533,9 +1497,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/Node"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 1000
@@ -1569,9 +1531,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/Collection"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 1000
@@ -1607,9 +1567,7 @@ components:
           items:
             $ref: "#/components/schemas/QualityDimension"
           maxItems: 7
-          type:
-            - array
-            - "null"
+          type: array
         duplicate_documents:
           format: int64
           minimum: 0
@@ -1624,9 +1582,7 @@ components:
           items:
             $ref: "#/components/schemas/QualitySpike"
           maxItems: 7
-          type:
-            - array
-            - "null"
+          type: array
         zero_bytes:
           format: int64
           minimum: 0
@@ -1666,9 +1622,7 @@ components:
               items:
                 type: string
               maxItems: 64
-              type:
-                - array
-                - "null"
+              type: array
           required:
             - configuration
             - profile
@@ -1749,9 +1703,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/ContentReference"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -1907,9 +1859,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/ContentVersion"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -2017,9 +1967,7 @@ components:
         embeddings:
           items:
             $ref: "#/components/schemas/CoverageClass"
-          type:
-            - array
-            - "null"
+          type: array
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -2043,9 +1991,7 @@ components:
         bound_providers:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         catalog_rows:
           format: int64
           type: integer
@@ -2145,17 +2091,13 @@ components:
           items:
             type: string
           maxItems: 1000
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         build_ids:
           items:
             type: string
           maxItems: 1000
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         content_version_ids:
           items:
@@ -2163,9 +2105,7 @@ components:
             pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
             type: string
           maxItems: 1000
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         plan_fingerprint:
           pattern: ^[0-9a-f]{64}$
@@ -2188,21 +2128,15 @@ components:
         attachment_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         build_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         content_version_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -2236,17 +2170,13 @@ components:
           items:
             type: string
           maxItems: 1000
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         build_ids:
           items:
             type: string
           maxItems: 1000
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         content_version_ids:
           items:
@@ -2254,9 +2184,7 @@ components:
             pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
             type: string
           maxItems: 1000
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
       type: object
     DerivativePurgeReceipt:
@@ -2452,9 +2380,7 @@ components:
           items:
             $ref: "#/components/schemas/DocumentSummary"
           maxItems: 250
-          type:
-            - array
-            - "null"
+          type: array
         next_cursor:
           type: string
         page_size:
@@ -2536,23 +2462,17 @@ components:
         degradations:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         requested_mode:
           type: string
         results:
           items:
             $ref: "#/components/schemas/DocumentSearchResult"
-          type:
-            - array
-            - "null"
+          type: array
         trace:
           items:
             $ref: "#/components/schemas/DocumentSearchTrace"
-          type:
-            - array
-            - "null"
+          type: array
         truncated:
           type: boolean
       required:
@@ -2617,9 +2537,7 @@ components:
         evidence:
           items:
             $ref: "#/components/schemas/DocumentEvidenceReference"
-          type:
-            - array
-            - "null"
+          type: array
         excerpt:
           maxLength: 512
           type: string
@@ -2734,9 +2652,7 @@ components:
             type: string
           maxItems: 4096
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         vault_uid:
           format: uuid
@@ -2802,9 +2718,7 @@ components:
         content_version_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         filters:
           $ref: "#/components/schemas/DocumentSourceFenceFilters"
       type: object
@@ -2814,9 +2728,7 @@ components:
         active_renditions:
           items:
             $ref: "#/components/schemas/DocumentRenditionIdentity"
-          type:
-            - array
-            - "null"
+          type: array
         content_version_id:
           format: uuid
           type: string
@@ -2864,9 +2776,7 @@ components:
             $ref: "#/components/schemas/DocumentIdentity"
           maxItems: 100
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - identities
       type: object
@@ -2884,9 +2794,7 @@ components:
           items:
             $ref: "#/components/schemas/DocumentSummary"
           maxItems: 100
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - items
       type: object
@@ -2915,9 +2823,7 @@ components:
           items:
             $ref: "#/components/schemas/DuplicateReference"
           maxItems: 16
-          type:
-            - array
-            - "null"
+          type: array
         references_truncated:
           type: boolean
         representative_node_id:
@@ -2953,9 +2859,7 @@ components:
           items:
             $ref: "#/components/schemas/DuplicateGroup"
           maxItems: 100
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 100
@@ -2991,9 +2895,7 @@ components:
           items:
             $ref: "#/components/schemas/DuplicateCollection"
           maxItems: 16
-          type:
-            - array
-            - "null"
+          type: array
         collections_truncated:
           type: boolean
         reference:
@@ -3021,9 +2923,7 @@ components:
         diagnostics:
           items:
             $ref: "#/components/schemas/EmailDiagnosticV1"
-          type:
-            - array
-            - "null"
+          type: array
         display:
           $ref: "#/components/schemas/EmailArtifactRefV1"
         display_state:
@@ -3084,9 +2984,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         state:
           type: string
         value:
@@ -3108,16 +3006,12 @@ components:
         diagnostics:
           items:
             $ref: "#/components/schemas/EmailDiagnosticV1"
-          type:
-            - array
-            - "null"
+          type: array
         fields:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         state:
           type: string
         timezone_state:
@@ -3145,9 +3039,7 @@ components:
         addresses:
           items:
             $ref: "#/components/schemas/EmailAddressV1"
-          type:
-            - array
-            - "null"
+          type: array
         header_index:
           format: int64
           type: integer
@@ -3310,57 +3202,39 @@ components:
         bcc:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         cc:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         from:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         in_reply_to:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         message_id:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         references:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         reply_to:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         subject:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         to:
           items:
             $ref: "#/components/schemas/EmailDecodedFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - subject
         - from
@@ -3383,9 +3257,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         safe_name:
           type: string
         state:
@@ -3427,21 +3299,15 @@ components:
         diagnostics:
           items:
             $ref: "#/components/schemas/EmailDiagnosticV1"
-          type:
-            - array
-            - "null"
+          type: array
         messages:
           items:
             $ref: "#/components/schemas/EmailMessageV1"
-          type:
-            - array
-            - "null"
+          type: array
         parts:
           items:
             $ref: "#/components/schemas/EmailPartV1"
-          type:
-            - array
-            - "null"
+          type: array
         root_path:
           type:
             - string
@@ -3541,9 +3407,7 @@ components:
         diagnostics:
           items:
             $ref: "#/components/schemas/EmailDiagnosticV1"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - declared
         - detected
@@ -3555,17 +3419,13 @@ components:
         alternatives:
           items:
             $ref: "#/components/schemas/EmailAlternativeV1"
-          type:
-            - array
-            - "null"
+          type: array
         date:
           $ref: "#/components/schemas/EmailDateV1"
         diagnostics:
           items:
             $ref: "#/components/schemas/EmailDiagnosticV1"
-          type:
-            - array
-            - "null"
+          type: array
         fields:
           $ref: "#/components/schemas/EmailFieldsV1"
         path:
@@ -3573,9 +3433,7 @@ components:
         related_groups:
           items:
             $ref: "#/components/schemas/EmailRelatedGroupV1"
-          type:
-            - array
-            - "null"
+          type: array
         selected_body_path:
           type:
             - string
@@ -3604,9 +3462,7 @@ components:
         diagnostics:
           items:
             $ref: "#/components/schemas/EmailDiagnosticV1"
-          type:
-            - array
-            - "null"
+          type: array
         disposition:
           type:
             - string
@@ -3618,9 +3474,7 @@ components:
         headers:
           items:
             $ref: "#/components/schemas/EmailHeaderV1"
-          type:
-            - array
-            - "null"
+          type: array
         media:
           $ref: "#/components/schemas/EmailMediaV1"
         message_path:
@@ -3701,9 +3555,7 @@ components:
         resources:
           items:
             $ref: "#/components/schemas/EmailResourceV1"
-          type:
-            - array
-            - "null"
+          type: array
         root_path:
           type: string
       required:
@@ -3717,9 +3569,7 @@ components:
         candidates:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         cid:
           type:
             - string
@@ -3956,9 +3806,7 @@ components:
         errors:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         observed_scope_count:
           format: int64
           type: integer
@@ -4067,9 +3915,7 @@ components:
         extensions:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         id:
           type: string
         media_type:
@@ -4081,9 +3927,7 @@ components:
         variants:
           items:
             $ref: "#/components/schemas/FormatVariantCapabilityV1"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - capabilities
         - extensions
@@ -4108,9 +3952,7 @@ components:
         formats:
           items:
             $ref: "#/components/schemas/FormatCapabilityV1"
-          type:
-            - array
-            - "null"
+          type: array
         generated_by:
           $ref: "#/components/schemas/CoverageSourcesV1"
         lookup:
@@ -4118,9 +3960,7 @@ components:
         pending:
           items:
             $ref: "#/components/schemas/PendingFormatV1"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - contract_version
         - formats
@@ -4236,9 +4076,7 @@ components:
             $ref: "#/components/schemas/HighlightSetTermV1Schema"
           maxItems: 64
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         v:
           default: 1
           enum:
@@ -4342,9 +4180,7 @@ components:
         file_types:
           items:
             $ref: "#/components/schemas/IngestFileType"
-          type:
-            - array
-            - "null"
+          type: array
         file_types_truncated:
           type: boolean
         files:
@@ -4353,9 +4189,7 @@ components:
         findings:
           items:
             $ref: "#/components/schemas/IngestPreflightFinding"
-          type:
-            - array
-            - "null"
+          type: array
         findings_truncated:
           type: boolean
         logical_bytes:
@@ -4402,22 +4236,16 @@ components:
         exclude:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         include:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         paths:
           items:
             type: string
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - paths
       type: object
@@ -4486,9 +4314,7 @@ components:
         failed:
           items:
             $ref: "#/components/schemas/IngestFailure"
-          type:
-            - array
-            - "null"
+          type: array
         ingest_id:
           type: string
         skipped:
@@ -4517,22 +4343,16 @@ components:
         exclude:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         include:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         paths:
           items:
             type: string
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         replace:
           type: boolean
       required:
@@ -4613,9 +4433,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/Job"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - items
       type: object
@@ -4655,9 +4473,7 @@ components:
         input_classes:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         origin_id:
           type: string
         plan_fingerprint:
@@ -4669,9 +4485,7 @@ components:
         retained_classes:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - plan_token
         - plan_fingerprint
@@ -4812,9 +4626,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/MediaOccurrenceRow"
-          type:
-            - array
-            - "null"
+          type: array
         next_cursor:
           type: string
         total:
@@ -4898,9 +4710,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/MediaOrigin"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - items
       type: object
@@ -5015,9 +4825,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/MediaSourceRow"
-          type:
-            - array
-            - "null"
+          type: array
         next_cursor:
           type: string
         total:
@@ -5293,9 +5101,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/Node"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -5318,9 +5124,7 @@ components:
         extensions:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         label:
           type: string
         note:
@@ -5368,9 +5172,7 @@ components:
             $ref: "#/components/schemas/BatchTagTarget"
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
         tag_id:
           format: uuid
           type: string
@@ -5580,9 +5382,7 @@ components:
         input_classes:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         provider_id:
           type: string
         runtime_disclosure:
@@ -5609,9 +5409,7 @@ components:
         embedding_job_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         id:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -5684,9 +5482,7 @@ components:
         disclosed_classes:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         estimate:
           $ref: "#/components/schemas/ProcessingEstimate"
         fingerprint:
@@ -5695,18 +5491,14 @@ components:
         flow:
           items:
             $ref: "#/components/schemas/ProcessingFlowHop"
-          type:
-            - array
-            - "null"
+          type: array
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
         retained_classes:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         selector:
           $ref: "#/components/schemas/ProcessingSelector"
         vault_uid:
@@ -5746,9 +5538,7 @@ components:
         embedding_bindings:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -5770,9 +5560,7 @@ components:
         embeddings:
           items:
             $ref: "#/components/schemas/EmbeddingBindingV1"
-          type:
-            - array
-            - "null"
+          type: array
         evidence_lexical:
           $ref: "#/components/schemas/EvidenceLexicalPolicyV1"
         rendition:
@@ -5808,9 +5596,7 @@ components:
           items:
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         model:
           maxLength: 1024
@@ -5822,9 +5608,7 @@ components:
           items:
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         ultimate_processor:
           maxLength: 1024
@@ -5878,9 +5662,7 @@ components:
         embedding_job_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         failure_code:
           type: string
         job_id:
@@ -6002,9 +5784,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/ProvenanceFact"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 1000
@@ -6068,9 +5848,7 @@ components:
           items:
             $ref: "#/components/schemas/QualityBucket"
           maxItems: 50
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - field
         - values
@@ -6121,9 +5899,7 @@ components:
         dependencies:
           items:
             $ref: "#/components/schemas/QueryDependency"
-          type:
-            - array
-            - "null"
+          type: array
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
         query_fingerprint:
@@ -6172,9 +5948,7 @@ components:
         allowed_artifact_roles:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         capability_record_checksum:
           type: string
         descriptor_fingerprint:
@@ -6262,9 +6036,7 @@ components:
         requested_artifacts:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         trust_boundary:
           type: string
         upload_options_fingerprint:
@@ -6481,9 +6253,7 @@ components:
           items:
             type: string
           maxItems: 4096
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         vault_uid:
           format: uuid
@@ -6642,40 +6412,30 @@ components:
             format: uuid
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         exclude_collection_ids:
           items:
             format: uuid
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         exclude_paths:
           items:
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         exclude_tag_ids:
           items:
             format: uuid
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         extensions:
           items:
             pattern: ^[a-z0-9](?:[a-z0-9_-]{0,31})$
             type: string
           maxItems: 32
-          type:
-            - array
-            - "null"
+          type: array
         has_duplicates:
           type:
             - boolean
@@ -6698,16 +6458,12 @@ components:
               - unknown
             type: string
           maxItems: 13
-          type:
-            - array
-            - "null"
+          type: array
         mime_types:
           items:
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         modified_after:
           format: date-time
           type:
@@ -6726,9 +6482,7 @@ components:
           items:
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         size_max:
           format: int64
           maximum: 9007199254740991
@@ -6748,9 +6502,7 @@ components:
             format: uuid
             type: string
           maxItems: 64
-          type:
-            - array
-            - "null"
+          type: array
         text_coverage:
           items:
             enum:
@@ -6762,9 +6514,7 @@ components:
               - unavailable
             type: string
           maxItems: 6
-          type:
-            - array
-            - "null"
+          type: array
       type: object
     SavedQueryPage:
       additionalProperties: false
@@ -6779,9 +6529,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/SavedQuery"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           maximum: 1000
@@ -6905,9 +6653,7 @@ components:
               - duplicates
             type: string
           maxItems: 8
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         page_size:
           default: 100
@@ -7027,9 +6773,7 @@ components:
         hits:
           items:
             $ref: "#/components/schemas/SearchHit"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -7084,15 +6828,11 @@ components:
         fields:
           items:
             $ref: "#/components/schemas/SourceMetadataFieldV1"
-          type:
-            - array
-            - "null"
+          type: array
         warnings:
           items:
             $ref: "#/components/schemas/SourceMetadataWarningV1"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - contract_version
         - extractor_fingerprint
@@ -7190,9 +6930,7 @@ components:
         strings:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         timestamp:
           $ref: "#/components/schemas/SourceMetadataTimestampV1"
       required:
@@ -7566,9 +7304,7 @@ components:
         source_store_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - kind
         - plan_digest
@@ -7686,9 +7422,7 @@ components:
         stores:
           items:
             $ref: "#/components/schemas/StorageStoreStatus"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - loose_blobs
         - loose_bytes
@@ -7845,9 +7579,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/Tag"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -7886,9 +7618,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/TaggedNode"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -8019,9 +7749,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/Node"
-          type:
-            - array
-            - "null"
+          type: array
         limit:
           format: int64
           type: integer
@@ -8174,18 +7902,14 @@ components:
         metadata_problems:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         ok:
           format: int64
           type: integer
         problems:
           items:
             $ref: "#/components/schemas/VerifyProblem"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - ok
       type: object
@@ -8202,9 +7926,7 @@ components:
         candidates:
           items:
             $ref: "#/components/schemas/ContentVersion"
-          type:
-            - array
-            - "null"
+          type: array
         changed:
           type: boolean
         checkpoint:
@@ -8220,9 +7942,7 @@ components:
         dependency_retained:
           items:
             $ref: "#/components/schemas/ContentVersion"
-          type:
-            - array
-            - "null"
+          type: array
         logical_bytes:
           format: int64
           minimum: 0
@@ -8315,9 +8035,7 @@ components:
             type: string
           maxItems: 1000
           minItems: 1
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
       type: object
     WatchedInbox:
@@ -8328,9 +8046,7 @@ components:
         exclude:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         job:
           $ref: "#/components/schemas/Job"
         minimum_age:
@@ -8365,9 +8081,7 @@ components:
         items:
           items:
             $ref: "#/components/schemas/WatchedInbox"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - items
       type: object
@@ -8428,9 +8142,7 @@ components:
               - duplicates
             type: string
           maxItems: 8
-          type:
-            - array
-            - "null"
+          type: array
           uniqueItems: true
         page_size:
           default: 100
@@ -8512,9 +8224,7 @@ components:
         dependencies:
           items:
             $ref: "#/components/schemas/WorkspaceQueryDependency"
-          type:
-            - array
-            - "null"
+          type: array
         expires_at:
           format: date-time
           type: string
@@ -8547,18 +8257,14 @@ components:
                 items:
                   $ref: "#/components/schemas/WorkspaceFacetValue"
                 maxItems: 114
-                type:
-                  - array
-                  - "null"
+                type: array
             required:
               - dimension
               - available
               - values
             type: object
           maxItems: 8
-          type:
-            - array
-            - "null"
+          type: array
         generation:
           $ref: "#/components/schemas/WorkspaceQueryGeneration"
         member_hash:
@@ -8589,9 +8295,7 @@ components:
           items:
             $ref: "#/components/schemas/WorkspaceQueryRow"
           maxItems: 250
-          type:
-            - array
-            - "null"
+          type: array
         snapshot:
           type: boolean
         snapshot_fingerprint:
@@ -8636,9 +8340,7 @@ components:
         collection_ids:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         content_version_id:
           format: uuid
           type: string
@@ -8683,9 +8385,7 @@ components:
         tags:
           items:
             $ref: "#/components/schemas/WorkspaceQueryTag"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - node_id
         - content_version_id
@@ -8733,6 +8433,97 @@ info:
   version: dev
 openapi: 3.1.0
 paths:
+  /api/daemon/web-download:
+    post:
+      operationId: prepareWebDownload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                blob_hash:
+                  type: string
+                node_id:
+                  format: int64
+                  type: integer
+                revision:
+                  format: int64
+                  type: integer
+                size:
+                  format: int64
+                  type: integer
+                version_id:
+                  type: string
+              required:
+                - node_id
+                - revision
+                - version_id
+                - blob_hash
+                - size
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                additionalProperties: false
+                properties:
+                  blob_hash:
+                    type: string
+                  detail:
+                    type: string
+                  name:
+                    type: string
+                  phase:
+                    type: string
+                  received:
+                    format: int64
+                    type: integer
+                  total:
+                    format: int64
+                    type: integer
+                  url:
+                    type: string
+                  version_id:
+                    type: string
+                required:
+                  - phase
+                  - received
+                  - total
+                type: object
+          description: Download progress and ticket
+      summary: Verify a document and prepare a browser download
+  /api/daemon/web-session:
+    delete:
+      operationId: revokeWebSession
+      responses:
+        "204":
+          description: Session revoked
+      summary: Revoke the current browser session
+    post:
+      operationId: createWebSession
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  token:
+                    type: string
+                  upload_secret:
+                    type: string
+                  url:
+                    type: string
+                required:
+                  - token
+                  - upload_secret
+                  - url
+                type: object
+          description: Browser session
+      summary: Issue a scoped browser session
   /api/v1/audit/enable:
     post:
       description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
@@ -9446,9 +9237,7 @@ paths:
               type: string
             maxItems: 4096
             minItems: 1
-            type:
-              - array
-              - "null"
+            type: array
       responses:
         "200":
           content:
@@ -9643,9 +9432,7 @@ paths:
                 input_classes:
                   items:
                     type: string
-                  type:
-                    - array
-                    - "null"
+                  type: array
                 operation_id:
                   type: string
                 order:
@@ -9660,9 +9447,7 @@ paths:
                 retained_artifact_classes:
                   items:
                     type: string
-                  type:
-                    - array
-                    - "null"
+                  type: array
                 scope:
                   type: string
               required:
@@ -9713,9 +9498,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -9758,9 +9541,7 @@ paths:
                 reuse:
                   items:
                     $ref: "#/components/schemas/EmailDocumentReuse"
-                  type:
-                    - array
-                    - "null"
+                  type: array
               required:
                 - operation_id
                 - parent
@@ -9787,9 +9568,7 @@ paths:
                   relations:
                     items:
                       $ref: "#/components/schemas/EmailDocumentRelation"
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   request_digest:
                     type: string
                 required:
@@ -9813,9 +9592,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -9869,9 +9646,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -9912,9 +9687,7 @@ paths:
                   relations:
                     items:
                       $ref: "#/components/schemas/EmailDocumentRelation"
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   request_digest:
                     type: string
                 required:
@@ -9938,9 +9711,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -9991,9 +9762,7 @@ paths:
                   items:
                     items:
                       $ref: "#/components/schemas/EmailDocumentRelationStatus"
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   next_operation_id:
                     type: string
                   next_order:
@@ -10022,9 +9791,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -10920,9 +10687,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -11596,9 +11361,7 @@ paths:
                 input_classes:
                   items:
                     type: string
-                  type:
-                    - array
-                    - "null"
+                  type: array
                 principal:
                   type: string
                 profile_fingerprint:
@@ -11606,9 +11369,7 @@ paths:
                 retained_artifact_classes:
                   items:
                     type: string
-                  type:
-                    - array
-                    - "null"
+                  type: array
                 scope:
                   type: string
               required:
@@ -11661,9 +11422,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -11735,9 +11494,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -11835,9 +11592,7 @@ paths:
               schema:
                 items:
                   $ref: "#/components/schemas/ProcessingProfileSummary"
-                type:
-                  - array
-                  - "null"
+                type: array
           description: OK
         default:
           content:
@@ -12545,9 +12300,7 @@ paths:
               schema:
                 items:
                   $ref: "#/components/schemas/BlobStore"
-                type:
-                  - array
-                  - "null"
+                type: array
           description: OK
         default:
           content:
@@ -13112,9 +12865,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -13302,9 +13053,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -13392,9 +13141,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -13482,9 +13229,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -13595,9 +13340,7 @@ paths:
                   errors:
                     items:
                       type: string
-                    type:
-                      - array
-                      - "null"
+                    type: array
                   observed_scope_count:
                     format: int64
                     type: integer
