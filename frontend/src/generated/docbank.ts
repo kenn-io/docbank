@@ -5,6 +5,7 @@
  * OpenAPI spec version: dev
  */
 import { sessionJSON } from '../api-transport';
+import { sessionEmpty } from '../api-transport';
 import { sessionResponse } from '../api-transport';
 import { mediaFormData } from '../media-form-data';
 
@@ -4474,7 +4475,7 @@ export const getShutdownDaemonUrl = () => {
   return `/api/daemon/shutdown`
 }
 
-export const shutdownDaemon = async (headers: ShutdownDaemonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+export const shutdownDaemon = async (headers: ShutdownDaemonHeaders, options?: Parameters<typeof sessionEmpty>[1]): Promise<void> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -4490,7 +4491,7 @@ export const shutdownDaemon = async (headers: ShutdownDaemonHeaders, options?: P
     }
     return headers;
   };
-return sessionJSON<void>(getShutdownDaemonUrl(),
+return sessionEmpty<void>(getShutdownDaemonUrl(),
   {
     ...options,
     method: 'POST',

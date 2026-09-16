@@ -367,8 +367,10 @@ func getDocument(
 			return response{}, store.ErrProcessingSourceFenceStaleVersion
 		}
 		info, callErr := c.API().VaultInfo(ctx)
-
-		return response{document: page.Items[0], vaultID: info.VaultID}, callErr
+		if callErr != nil {
+			return response{}, callErr
+		}
+		return response{document: page.Items[0], vaultID: info.VaultID}, nil
 	})
 	if err != nil {
 		return documentOutput{}, nil, err

@@ -707,3 +707,21 @@ func invokeReadTool(
 	}
 	return result, err
 }
+
+func TestGetDocumentReturnsVaultInfoFailure(t *testing.T) {
+	fixture := newReadToolDaemon(t)
+	t.Cleanup(fixture.Close)
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/info" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		fixture.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	_, _, err := getDocument(t.Context(), lease, []byte(`{"node_id":7,"content_version_id":"`+testVersionID+`"}`))
+	require.Error(t, err)
+}

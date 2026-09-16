@@ -24,6 +24,7 @@ export default defineConfig({
         fetch: { includeHttpResponseReturnType: false, arrayFormat: "repeat" },
         mutator: { path: "src/api-transport.ts", name: "sessionJSON" },
         operations: {
+          shutdownDaemon: { mutator: { path: "src/api-transport.ts", name: "sessionEmpty" } },
           submitMediaSource: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           importMediaArtifact: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           ...Object.fromEntries([

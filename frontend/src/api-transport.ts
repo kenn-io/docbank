@@ -45,3 +45,7 @@ export async function sessionJSON<T>(url: string, options: SessionOptions): Prom
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
+
+export async function sessionEmpty<_T>(url: string, options: SessionOptions): Promise<void> {
+  await sessionResponse<Response>(url, options);
+}

@@ -60,3 +60,8 @@ it("preserves a ranged Markdown response and repeats coverage IDs", async () => 
   const url = new URL(api.getGetDocumentProcessingCoverageUrl({ profile: "synthetic", vault_uid: "synthetic-vault", content_version_id: ["one", "two"] }), "http://localhost");
   expect(url.searchParams.getAll("content_version_id")).toEqual(["one", "two"]);
 });
+
+it("accepts the empty shutdown acknowledgement", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+  await expect(api.shutdownDaemon({ "X-Docbank-Daemon-Token": "synthetic" })).resolves.toBeUndefined();
+});

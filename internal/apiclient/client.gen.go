@@ -35,6 +35,22 @@ func NewDefaultClient(baseURL string, opts ...runtime.APIClientOption) (*Client,
 	return &Client{apiClient: apiClient}, nil
 }
 
+// acceptStream checks the operation's status contract without consuming its body.
+func (c *Client) acceptStream(resp *runtime.Response, statuses ...int) error {
+	owner, ok := c.apiClient.(interface{ OwnsResponseBody() bool })
+	if !ok || !owner.OwnsResponseBody() {
+		_ = resp.Raw.Body.Close()
+		return fmt.Errorf("streaming requires a transport that transfers response ownership")
+	}
+	for _, status := range statuses {
+		if resp.StatusCode == status {
+			return nil
+		}
+	}
+	_ = resp.Raw.Body.Close()
+	return runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+}
+
 // ClientInterface is the interface for the API client.
 type ClientInterface interface {
 	ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResponse, error)
@@ -324,7 +340,7 @@ type ClientInterface interface {
 	ReadDocumentRenditionWindow(ctx context.Context, options *ReadDocumentRenditionWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionWindowResponse, error)
 
 	// GetDocumentRendition Stream one exact active sanitized-Markdown rendition
-	GetDocumentRendition(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResponse206, error)
+	GetDocumentRendition(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResult, error)
 
 	// ListSavedQueries List saved query and highlight definitions by name
 	ListSavedQueries(ctx context.Context, options *ListSavedQueriesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSavedQueriesResponse, error)
@@ -438,7 +454,7 @@ type ClientInterface interface {
 	EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EmptyTrashResponse, error)
 
 	// UploadFile Upload one digest-checked file
-	UploadFile(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResponseJSON, error)
+	UploadFile(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResult, error)
 
 	// Verify Validate metadata and re-hash every stored blob
 	Verify(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResponse, error)
@@ -450,7 +466,7 @@ type ClientInterface interface {
 	GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResponse, error)
 
 	// GetEmailMetadata Read selected email metadata for one immutable version
-	GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResponseJSON, error)
+	GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResult, error)
 
 	// EnsureEmailMetadata Ensure email metadata for one immutable version
 	EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnsureEmailMetadataResponse, error)
@@ -486,37 +502,35 @@ func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ChallengeDaemonResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ChallengeDaemonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ChallengeDaemonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ChallengeDaemonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ChallengeDaemonResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ChallengeDaemonResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/challenge")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -534,37 +548,29 @@ func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequ
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 202 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(struct{})
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "struct{}",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/shutdown")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 202)
 	}
 	return responseParser(ctx, resp)
 }
@@ -584,23 +590,29 @@ func (c *Client) PrepareWebDownload(ctx context.Context, options *PrepareWebDown
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PrepareWebDownloadResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PrepareWebDownloadResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PrepareWebDownloadResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := PrepareWebDownloadResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-download")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -618,21 +630,29 @@ func (c *Client) RevokeWebSession(ctx context.Context, reqEditors ...runtime.Req
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
-		if resp.StatusCode != 204 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		return nil, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-session")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 204)
 	}
 	return responseParser(ctx, resp)
 }
@@ -650,37 +670,35 @@ func (c *Client) CreateWebSession(ctx context.Context, reqEditors ...runtime.Req
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateWebSessionResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateWebSessionResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateWebSessionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateWebSessionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateWebSessionResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateWebSessionResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-session")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -700,9 +718,24 @@ func (c *Client) EnableAudit(ctx context.Context, options *EnableAuditRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*EnableAuditResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*EnableAuditResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(EnableAuditResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "EnableAuditResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(EnableAuditErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -724,31 +757,14 @@ func (c *Client) EnableAudit(ctx context.Context, options *EnableAuditRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(EnableAuditResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "EnableAuditResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/enable")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -775,9 +791,24 @@ func (c *Client) AuditNodeHistory(ctx context.Context, options *AuditNodeHistory
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*AuditNodeHistoryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AuditNodeHistoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AuditNodeHistoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AuditNodeHistoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(AuditNodeHistoryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -799,31 +830,14 @@ func (c *Client) AuditNodeHistory(ctx context.Context, options *AuditNodeHistory
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(AuditNodeHistoryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "AuditNodeHistoryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/history")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -843,9 +857,24 @@ func (c *Client) PreviewAuditEnrollment(ctx context.Context, options *PreviewAud
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewAuditEnrollmentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewAuditEnrollmentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewAuditEnrollmentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewAuditEnrollmentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewAuditEnrollmentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -867,31 +896,14 @@ func (c *Client) PreviewAuditEnrollment(ctx context.Context, options *PreviewAud
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewAuditEnrollmentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewAuditEnrollmentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -916,9 +928,24 @@ func (c *Client) AuditScopeHistory(ctx context.Context, options *AuditScopeHisto
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*AuditScopeHistoryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AuditScopeHistoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AuditScopeHistoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AuditScopeHistoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(AuditScopeHistoryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -940,31 +967,14 @@ func (c *Client) AuditScopeHistory(ctx context.Context, options *AuditScopeHisto
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(AuditScopeHistoryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "AuditScopeHistoryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/scopes/{scope_id}/history")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -989,9 +999,24 @@ func (c *Client) AuditStatus(ctx context.Context, options *AuditStatusRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*AuditStatusResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AuditStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AuditStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AuditStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(AuditStatusErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1013,31 +1038,14 @@ func (c *Client) AuditStatus(ctx context.Context, options *AuditStatusRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(AuditStatusResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "AuditStatusResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/status")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1057,9 +1065,24 @@ func (c *Client) VerifyAudit(ctx context.Context, options *VerifyAuditRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*VerifyAuditResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VerifyAuditResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VerifyAuditResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VerifyAuditResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(VerifyAuditErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1081,31 +1104,14 @@ func (c *Client) VerifyAudit(ctx context.Context, options *VerifyAuditRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(VerifyAuditResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "VerifyAuditResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1125,9 +1131,24 @@ func (c *Client) InitBackupRepository(ctx context.Context, options *InitBackupRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*InitBackupRepositoryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*InitBackupRepositoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(InitBackupRepositoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "InitBackupRepositoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(InitBackupRepositoryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1149,31 +1170,14 @@ func (c *Client) InitBackupRepository(ctx context.Context, options *InitBackupRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(InitBackupRepositoryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "InitBackupRepositoryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/init")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1193,9 +1197,24 @@ func (c *Client) RestoreBackupSnapshot(ctx context.Context, options *RestoreBack
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RestoreBackupSnapshotResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RestoreBackupSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RestoreBackupSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RestoreBackupSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RestoreBackupSnapshotErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1217,31 +1236,14 @@ func (c *Client) RestoreBackupSnapshot(ctx context.Context, options *RestoreBack
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RestoreBackupSnapshotResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RestoreBackupSnapshotResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/restore")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1261,9 +1263,18 @@ func (c *Client) StreamBackupSnapshotRestore(ctx context.Context, options *Strea
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StreamBackupSnapshotRestoreResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StreamBackupSnapshotRestoreResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StreamBackupSnapshotRestoreResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StreamBackupSnapshotRestoreErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1285,17 +1296,14 @@ func (c *Client) StreamBackupSnapshotRestore(ctx context.Context, options *Strea
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := StreamBackupSnapshotRestoreResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/restore/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1319,9 +1327,24 @@ func (c *Client) ListBackupSnapshots(ctx context.Context, options *ListBackupSna
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListBackupSnapshotsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListBackupSnapshotsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListBackupSnapshotsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListBackupSnapshotsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListBackupSnapshotsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1343,31 +1366,14 @@ func (c *Client) ListBackupSnapshots(ctx context.Context, options *ListBackupSna
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListBackupSnapshotsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListBackupSnapshotsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1387,9 +1393,24 @@ func (c *Client) CreateBackupSnapshot(ctx context.Context, options *CreateBackup
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateBackupSnapshotResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateBackupSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateBackupSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateBackupSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CreateBackupSnapshotErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1411,31 +1432,14 @@ func (c *Client) CreateBackupSnapshot(ctx context.Context, options *CreateBackup
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateBackupSnapshotResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateBackupSnapshotResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1455,9 +1459,18 @@ func (c *Client) StreamBackupSnapshotCreation(ctx context.Context, options *Stre
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StreamBackupSnapshotCreationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StreamBackupSnapshotCreationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StreamBackupSnapshotCreationResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StreamBackupSnapshotCreationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1479,17 +1492,14 @@ func (c *Client) StreamBackupSnapshotCreation(ctx context.Context, options *Stre
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := StreamBackupSnapshotCreationResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1509,9 +1519,24 @@ func (c *Client) VerifyBackupRepository(ctx context.Context, options *VerifyBack
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*VerifyBackupRepositoryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VerifyBackupRepositoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VerifyBackupRepositoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VerifyBackupRepositoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(VerifyBackupRepositoryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1533,31 +1558,14 @@ func (c *Client) VerifyBackupRepository(ctx context.Context, options *VerifyBack
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(VerifyBackupRepositoryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "VerifyBackupRepositoryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1577,9 +1585,18 @@ func (c *Client) StreamBackupRepositoryVerification(ctx context.Context, options
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StreamBackupRepositoryVerificationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StreamBackupRepositoryVerificationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StreamBackupRepositoryVerificationResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StreamBackupRepositoryVerificationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1601,17 +1618,14 @@ func (c *Client) StreamBackupRepositoryVerification(ctx context.Context, options
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := StreamBackupRepositoryVerificationResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/verify/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1631,9 +1645,24 @@ func (c *Client) BatchMove(ctx context.Context, options *BatchMoveRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*BatchMoveResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BatchMoveResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(BatchMoveResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BatchMoveResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(BatchMoveErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1655,31 +1684,14 @@ func (c *Client) BatchMove(ctx context.Context, options *BatchMoveRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(BatchMoveResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "BatchMoveResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/move")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1699,9 +1711,24 @@ func (c *Client) ChangeBatchTags(ctx context.Context, options *ChangeBatchTagsRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ChangeBatchTagsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ChangeBatchTagsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ChangeBatchTagsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ChangeBatchTagsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ChangeBatchTagsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1723,31 +1750,14 @@ func (c *Client) ChangeBatchTags(ctx context.Context, options *ChangeBatchTagsRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ChangeBatchTagsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ChangeBatchTagsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/tags")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1767,9 +1777,24 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewBatchTagsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewBatchTagsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewBatchTagsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewBatchTagsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewBatchTagsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1791,31 +1816,14 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewBatchTagsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewBatchTagsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/tags/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1840,9 +1848,24 @@ func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCollectionsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListCollectionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListCollectionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListCollectionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListCollectionsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1864,31 +1887,14 @@ func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListCollectionsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListCollectionsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1907,9 +1913,24 @@ func (c *Client) GetCollection(ctx context.Context, options *GetCollectionReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetCollectionResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetCollectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetCollectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetCollectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetCollectionErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1931,31 +1952,14 @@ func (c *Client) GetCollection(ctx context.Context, options *GetCollectionReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetCollectionResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetCollectionResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -1974,9 +1978,24 @@ func (c *Client) GetCollectionLabel(ctx context.Context, options *GetCollectionL
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetCollectionLabelResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetCollectionLabelResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetCollectionLabelResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetCollectionLabelResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetCollectionLabelErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -1998,31 +2017,14 @@ func (c *Client) GetCollectionLabel(ctx context.Context, options *GetCollectionL
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetCollectionLabelResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetCollectionLabelResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/label")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2042,9 +2044,24 @@ func (c *Client) SetCollectionLabel(ctx context.Context, options *SetCollectionL
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetCollectionLabelResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetCollectionLabelResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetCollectionLabelResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetCollectionLabelResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(SetCollectionLabelErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2066,31 +2083,14 @@ func (c *Client) SetCollectionLabel(ctx context.Context, options *SetCollectionL
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(SetCollectionLabelResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "SetCollectionLabelResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/label")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2115,9 +2115,24 @@ func (c *Client) ListCollectionMembers(ctx context.Context, options *ListCollect
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCollectionMembersResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListCollectionMembersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListCollectionMembersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListCollectionMembersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListCollectionMembersErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2139,31 +2154,14 @@ func (c *Client) ListCollectionMembers(ctx context.Context, options *ListCollect
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListCollectionMembersResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListCollectionMembersResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/members")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2188,9 +2186,24 @@ func (c *Client) GetCollectionQuality(ctx context.Context, options *GetCollectio
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetCollectionQualityResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetCollectionQualityResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetCollectionQualityResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetCollectionQualityResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetCollectionQualityErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2212,31 +2225,14 @@ func (c *Client) GetCollectionQuality(ctx context.Context, options *GetCollectio
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetCollectionQualityResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetCollectionQualityResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/quality")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2262,9 +2258,24 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*LookupContentReferencesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LookupContentReferencesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(LookupContentReferencesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LookupContentReferencesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(LookupContentReferencesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2286,31 +2297,14 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(LookupContentReferencesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "LookupContentReferencesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/content-references")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2335,9 +2329,24 @@ func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *Get
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetDocumentProcessingCoverageResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDocumentProcessingCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDocumentProcessingCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetDocumentProcessingCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetDocumentProcessingCoverageErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2359,31 +2368,14 @@ func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *Get
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetDocumentProcessingCoverageResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetDocumentProcessingCoverageResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/coverage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2403,9 +2395,18 @@ func (c *Client) RunDerivativePurge(ctx context.Context, options *RunDerivativeP
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunDerivativePurgeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RunDerivativePurgeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RunDerivativePurgeResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RunDerivativePurgeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2427,17 +2428,14 @@ func (c *Client) RunDerivativePurge(ctx context.Context, options *RunDerivativeP
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := RunDerivativePurgeResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/derivatives/purge-jobs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2457,9 +2455,24 @@ func (c *Client) PlanDerivativePurge(ctx context.Context, options *PlanDerivativ
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PlanDerivativePurgeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanDerivativePurgeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanDerivativePurgeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanDerivativePurgeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PlanDerivativePurgeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2481,31 +2494,14 @@ func (c *Client) PlanDerivativePurge(ctx context.Context, options *PlanDerivativ
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PlanDerivativePurgeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PlanDerivativePurgeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/derivatives/purge-plans")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2533,9 +2529,24 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListDocumentsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListDocumentsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListDocumentsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListDocumentsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListDocumentsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2557,31 +2568,14 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListDocumentsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListDocumentsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2601,9 +2595,24 @@ func (c *Client) ResolveDocumentSummaries(ctx context.Context, options *ResolveD
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResolveDocumentSummariesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveDocumentSummariesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveDocumentSummariesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveDocumentSummariesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ResolveDocumentSummariesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2625,31 +2634,14 @@ func (c *Client) ResolveDocumentSummaries(ctx context.Context, options *ResolveD
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ResolveDocumentSummariesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ResolveDocumentSummariesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/resolve")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2674,9 +2666,24 @@ func (c *Client) ListDuplicateContent(ctx context.Context, options *ListDuplicat
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListDuplicateContentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListDuplicateContentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListDuplicateContentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListDuplicateContentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListDuplicateContentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2698,31 +2705,14 @@ func (c *Client) ListDuplicateContent(ctx context.Context, options *ListDuplicat
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListDuplicateContentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListDuplicateContentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/duplicates")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2742,9 +2732,24 @@ func (c *Client) RequestEmailDocumentProcessing(ctx context.Context, options *Re
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RequestEmailDocumentProcessingResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RequestEmailDocumentProcessingResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RequestEmailDocumentProcessingResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RequestEmailDocumentProcessingResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RequestEmailDocumentProcessingErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2766,31 +2771,14 @@ func (c *Client) RequestEmailDocumentProcessing(ctx context.Context, options *Re
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RequestEmailDocumentProcessingResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RequestEmailDocumentProcessingResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-processing")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2810,9 +2798,24 @@ func (c *Client) PublishEmailDocuments(ctx context.Context, options *PublishEmai
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PublishEmailDocumentsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishEmailDocumentsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PublishEmailDocumentsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishEmailDocumentsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PublishEmailDocumentsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2834,31 +2837,14 @@ func (c *Client) PublishEmailDocuments(ctx context.Context, options *PublishEmai
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PublishEmailDocumentsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PublishEmailDocumentsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2878,9 +2864,18 @@ func (c *Client) RemoveEmailDocumentPublication(ctx context.Context, options *Re
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 204 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RemoveEmailDocumentPublicationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2902,16 +2897,14 @@ func (c *Client) RemoveEmailDocumentPublication(ctx context.Context, options *Re
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		return nil, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications/{operation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 204)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2930,9 +2923,24 @@ func (c *Client) GetEmailDocumentPublication(ctx context.Context, options *GetEm
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailDocumentPublicationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetEmailDocumentPublicationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetEmailDocumentPublicationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailDocumentPublicationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetEmailDocumentPublicationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2954,31 +2962,14 @@ func (c *Client) GetEmailDocumentPublication(ctx context.Context, options *GetEm
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetEmailDocumentPublicationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetEmailDocumentPublicationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications/{operation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -2997,9 +2988,24 @@ func (c *Client) ListEmailDocumentRelations(ctx context.Context, options *ListEm
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListEmailDocumentRelationsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListEmailDocumentRelationsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListEmailDocumentRelationsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListEmailDocumentRelationsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListEmailDocumentRelationsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3021,31 +3027,14 @@ func (c *Client) ListEmailDocumentRelations(ctx context.Context, options *ListEm
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListEmailDocumentRelationsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListEmailDocumentRelationsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-relations")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3071,9 +3060,24 @@ func (c *Client) ReadFormatCapabilities(ctx context.Context, options *ReadFormat
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReadFormatCapabilitiesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadFormatCapabilitiesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadFormatCapabilitiesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadFormatCapabilitiesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReadFormatCapabilitiesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3095,31 +3099,14 @@ func (c *Client) ReadFormatCapabilities(ctx context.Context, options *ReadFormat
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ReadFormatCapabilitiesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ReadFormatCapabilitiesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/formats/capabilities")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3139,9 +3126,24 @@ func (c *Client) Gc(ctx context.Context, options *GcRequestOptions, reqEditors .
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GcResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GcResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GcResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GcResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GcErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3163,31 +3165,14 @@ func (c *Client) Gc(ctx context.Context, options *GcRequestOptions, reqEditors .
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GcResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GcResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/gc")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3205,9 +3190,24 @@ func (c *Client) VaultInfo(ctx context.Context, reqEditors ...runtime.RequestEdi
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*VaultInfoResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VaultInfoResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VaultInfoResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VaultInfoResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(VaultInfoErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3229,31 +3229,14 @@ func (c *Client) VaultInfo(ctx context.Context, reqEditors ...runtime.RequestEdi
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(VaultInfoResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "VaultInfoResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/info")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3273,9 +3256,24 @@ func (c *Client) Ingest(ctx context.Context, options *IngestRequestOptions, reqE
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*IngestResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*IngestResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(IngestResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "IngestResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(IngestErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3297,31 +3295,14 @@ func (c *Client) Ingest(ctx context.Context, options *IngestRequestOptions, reqE
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(IngestResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "IngestResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3341,9 +3322,24 @@ func (c *Client) PreflightIngest(ctx context.Context, options *PreflightIngestRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreflightIngestResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreflightIngestResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreflightIngestResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreflightIngestResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreflightIngestErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3365,31 +3361,14 @@ func (c *Client) PreflightIngest(ctx context.Context, options *PreflightIngestRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreflightIngestResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreflightIngestResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/preflight")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3409,9 +3388,18 @@ func (c *Client) StreamIngest(ctx context.Context, options *StreamIngestRequestO
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StreamIngestResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StreamIngestResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StreamIngestResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StreamIngestErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3433,17 +3421,14 @@ func (c *Client) StreamIngest(ctx context.Context, options *StreamIngestRequestO
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := StreamIngestResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3461,9 +3446,24 @@ func (c *Client) ListJobs(ctx context.Context, reqEditors ...runtime.RequestEdit
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListJobsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListJobsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListJobsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListJobsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListJobsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3485,31 +3485,14 @@ func (c *Client) ListJobs(ctx context.Context, reqEditors ...runtime.RequestEdit
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListJobsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListJobsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3528,9 +3511,24 @@ func (c *Client) GetStorageOperation(ctx context.Context, options *GetStorageOpe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetStorageOperationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetStorageOperationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetStorageOperationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetStorageOperationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetStorageOperationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3552,31 +3550,14 @@ func (c *Client) GetStorageOperation(ctx context.Context, options *GetStorageOpe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetStorageOperationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetStorageOperationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3595,9 +3576,24 @@ func (c *Client) CancelStorageOperation(ctx context.Context, options *CancelStor
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CancelStorageOperationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelStorageOperationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelStorageOperationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelStorageOperationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CancelStorageOperationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3619,31 +3615,14 @@ func (c *Client) CancelStorageOperation(ctx context.Context, options *CancelStor
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CancelStorageOperationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CancelStorageOperationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}/cancel")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3663,9 +3642,24 @@ func (c *Client) PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcq
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PlanMediaAcquisitionResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanMediaAcquisitionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanMediaAcquisitionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanMediaAcquisitionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PlanMediaAcquisitionErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3687,31 +3681,14 @@ func (c *Client) PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcq
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PlanMediaAcquisitionResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PlanMediaAcquisitionResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/acquisition-plan")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3731,9 +3708,24 @@ func (c *Client) GrantMediaAcquisitionConsent(ctx context.Context, options *Gran
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GrantMediaAcquisitionConsentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GrantMediaAcquisitionConsentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GrantMediaAcquisitionConsentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GrantMediaAcquisitionConsentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GrantMediaAcquisitionConsentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3755,31 +3747,14 @@ func (c *Client) GrantMediaAcquisitionConsent(ctx context.Context, options *Gran
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GrantMediaAcquisitionConsentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GrantMediaAcquisitionConsentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/consent/grants")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3799,9 +3774,24 @@ func (c *Client) RevokeMediaAcquisitionConsent(ctx context.Context, options *Rev
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RevokeMediaAcquisitionConsentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RevokeMediaAcquisitionConsentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RevokeMediaAcquisitionConsentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RevokeMediaAcquisitionConsentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RevokeMediaAcquisitionConsentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3823,31 +3813,14 @@ func (c *Client) RevokeMediaAcquisitionConsent(ctx context.Context, options *Rev
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RevokeMediaAcquisitionConsentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RevokeMediaAcquisitionConsentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/consent/revocations")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3873,9 +3846,24 @@ func (c *Client) ListMediaOccurrences(ctx context.Context, options *ListMediaOcc
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListMediaOccurrencesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListMediaOccurrencesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListMediaOccurrencesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListMediaOccurrencesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListMediaOccurrencesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3897,31 +3885,14 @@ func (c *Client) ListMediaOccurrences(ctx context.Context, options *ListMediaOcc
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListMediaOccurrencesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListMediaOccurrencesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -3941,9 +3912,24 @@ func (c *Client) DeclareMediaOccurrence(ctx context.Context, options *DeclareMed
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*DeclareMediaOccurrenceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeclareMediaOccurrenceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeclareMediaOccurrenceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeclareMediaOccurrenceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(DeclareMediaOccurrenceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3965,31 +3951,14 @@ func (c *Client) DeclareMediaOccurrence(ctx context.Context, options *DeclareMed
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(DeclareMediaOccurrenceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "DeclareMediaOccurrenceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4009,9 +3978,24 @@ func (c *Client) RevokeMediaOccurrence(ctx context.Context, options *RevokeMedia
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RevokeMediaOccurrenceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RevokeMediaOccurrenceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RevokeMediaOccurrenceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RevokeMediaOccurrenceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RevokeMediaOccurrenceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4033,31 +4017,14 @@ func (c *Client) RevokeMediaOccurrence(ctx context.Context, options *RevokeMedia
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RevokeMediaOccurrenceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RevokeMediaOccurrenceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences/{occurrence_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4075,9 +4042,24 @@ func (c *Client) ListMediaOrigins(ctx context.Context, reqEditors ...runtime.Req
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListMediaOriginsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListMediaOriginsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListMediaOriginsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListMediaOriginsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListMediaOriginsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4099,31 +4081,14 @@ func (c *Client) ListMediaOrigins(ctx context.Context, reqEditors ...runtime.Req
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListMediaOriginsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListMediaOriginsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/origins")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4148,9 +4113,24 @@ func (c *Client) ListMediaSources(ctx context.Context, options *ListMediaSources
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListMediaSourcesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListMediaSourcesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListMediaSourcesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListMediaSourcesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListMediaSourcesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4172,31 +4152,14 @@ func (c *Client) ListMediaSources(ctx context.Context, options *ListMediaSources
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListMediaSourcesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListMediaSourcesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4216,37 +4179,35 @@ func (c *Client) SubmitMediaSource(ctx context.Context, options *SubmitMediaSour
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*SubmitMediaSourceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SubmitMediaSourceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SubmitMediaSourceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SubmitMediaSourceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(SubmitMediaSourceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "SubmitMediaSourceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4265,9 +4226,24 @@ func (c *Client) GetMediaSource(ctx context.Context, options *GetMediaSourceRequ
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetMediaSourceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMediaSourceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetMediaSourceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetMediaSourceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetMediaSourceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4289,31 +4265,14 @@ func (c *Client) GetMediaSource(ctx context.Context, options *GetMediaSourceRequ
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetMediaSourceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetMediaSourceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4343,37 +4302,35 @@ func (c *Client) ImportMediaArtifact(ctx context.Context, options *ImportMediaAr
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ImportMediaArtifactResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ImportMediaArtifactResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ImportMediaArtifactResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ImportMediaArtifactResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ImportMediaArtifactResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ImportMediaArtifactResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/artifacts")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4393,9 +4350,24 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RetryMediaSourceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetryMediaSourceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetryMediaSourceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetryMediaSourceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RetryMediaSourceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4417,31 +4389,14 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RetryMediaSourceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RetryMediaSourceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/retry")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4461,9 +4416,24 @@ func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptio
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateNodeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CreateNodeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4485,31 +4455,14 @@ func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptio
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateNodeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateNodeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4528,9 +4481,24 @@ func (c *Client) GetNode(ctx context.Context, options *GetNodeRequestOptions, re
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetNodeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetNodeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4552,31 +4520,14 @@ func (c *Client) GetNode(ctx context.Context, options *GetNodeRequestOptions, re
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetNodeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetNodeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4596,9 +4547,24 @@ func (c *Client) MoveNode(ctx context.Context, options *MoveNodeRequestOptions, 
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*MoveNodeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MoveNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MoveNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MoveNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(MoveNodeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4620,31 +4586,14 @@ func (c *Client) MoveNode(ctx context.Context, options *MoveNodeRequestOptions, 
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(MoveNodeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "MoveNodeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4669,9 +4618,24 @@ func (c *Client) ListChildren(ctx context.Context, options *ListChildrenRequestO
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListChildrenResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListChildrenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListChildrenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListChildrenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListChildrenErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4693,31 +4657,14 @@ func (c *Client) ListChildren(ctx context.Context, options *ListChildrenRequestO
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListChildrenResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListChildrenResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/children")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4736,9 +4683,24 @@ func (c *Client) GetNodeContent(ctx context.Context, options *GetNodeContentRequ
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetNodeContentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNodeContentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNodeContentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNodeContentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetNodeContentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4760,31 +4722,14 @@ func (c *Client) GetNodeContent(ctx context.Context, options *GetNodeContentRequ
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetNodeContentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetNodeContentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4804,9 +4749,24 @@ func (c *Client) ReplaceNodeContent(ctx context.Context, options *ReplaceNodeCon
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReplaceNodeContentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReplaceNodeContentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReplaceNodeContentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReplaceNodeContentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReplaceNodeContentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4828,31 +4788,14 @@ func (c *Client) ReplaceNodeContent(ctx context.Context, options *ReplaceNodeCon
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ReplaceNodeContentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ReplaceNodeContentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4877,9 +4820,24 @@ func (c *Client) ListNodeProvenance(ctx context.Context, options *ListNodeProven
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListNodeProvenanceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListNodeProvenanceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListNodeProvenanceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListNodeProvenanceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListNodeProvenanceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4901,31 +4859,14 @@ func (c *Client) ListNodeProvenance(ctx context.Context, options *ListNodeProven
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListNodeProvenanceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListNodeProvenanceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/provenance")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -4945,9 +4886,24 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*AppendNodeProvenanceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AppendNodeProvenanceResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(AppendNodeProvenanceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AppendNodeProvenanceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(AppendNodeProvenanceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -4969,31 +4925,14 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(AppendNodeProvenanceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "AppendNodeProvenanceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/provenance")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5012,9 +4951,24 @@ func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RestoreNodeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RestoreNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RestoreNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RestoreNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RestoreNodeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5036,31 +4990,14 @@ func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RestoreNodeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RestoreNodeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/restore")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5080,9 +5017,24 @@ func (c *Client) RevertNodeContent(ctx context.Context, options *RevertNodeConte
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RevertNodeContentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RevertNodeContentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RevertNodeContentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RevertNodeContentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RevertNodeContentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5104,31 +5056,14 @@ func (c *Client) RevertNodeContent(ctx context.Context, options *RevertNodeConte
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RevertNodeContentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RevertNodeContentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/revert")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5153,9 +5088,24 @@ func (c *Client) ListNodeTags(ctx context.Context, options *ListNodeTagsRequestO
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListNodeTagsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListNodeTagsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListNodeTagsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListNodeTagsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListNodeTagsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5177,31 +5127,14 @@ func (c *Client) ListNodeTags(ctx context.Context, options *ListNodeTagsRequestO
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListNodeTagsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListNodeTagsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5220,9 +5153,24 @@ func (c *Client) UnassignTag(ctx context.Context, options *UnassignTagRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*UnassignTagResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UnassignTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UnassignTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UnassignTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(UnassignTagErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5244,31 +5192,14 @@ func (c *Client) UnassignTag(ctx context.Context, options *UnassignTagRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(UnassignTagResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "UnassignTagResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5287,9 +5218,24 @@ func (c *Client) AssignTag(ctx context.Context, options *AssignTagRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*AssignTagResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AssignTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AssignTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AssignTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(AssignTagErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5311,31 +5257,14 @@ func (c *Client) AssignTag(ctx context.Context, options *AssignTagRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(AssignTagResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "AssignTagResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5354,9 +5283,24 @@ func (c *Client) TrashNode(ctx context.Context, options *TrashNodeRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*TrashNodeResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TrashNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TrashNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(TrashNodeErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5378,31 +5322,14 @@ func (c *Client) TrashNode(ctx context.Context, options *TrashNodeRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(TrashNodeResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "TrashNodeResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/trash")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5421,9 +5348,24 @@ func (c *Client) VerifyNodeContent(ctx context.Context, options *VerifyNodeConte
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*VerifyNodeContentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VerifyNodeContentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VerifyNodeContentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VerifyNodeContentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(VerifyNodeContentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5445,31 +5387,14 @@ func (c *Client) VerifyNodeContent(ctx context.Context, options *VerifyNodeConte
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(VerifyNodeContentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "VerifyNodeContentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5494,9 +5419,24 @@ func (c *Client) ListContentVersions(ctx context.Context, options *ListContentVe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListContentVersionsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListContentVersionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListContentVersionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListContentVersionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListContentVersionsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5518,31 +5458,14 @@ func (c *Client) ListContentVersions(ctx context.Context, options *ListContentVe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListContentVersionsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListContentVersionsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/versions")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5562,9 +5485,24 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PruneNodeContentVersionsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PruneNodeContentVersionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PruneNodeContentVersionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PruneNodeContentVersionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PruneNodeContentVersionsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5586,31 +5524,14 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PruneNodeContentVersionsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PruneNodeContentVersionsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/versions/prune")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5634,9 +5555,24 @@ func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResolvePathResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePathResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ResolvePathErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5658,31 +5594,14 @@ func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ResolvePathResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ResolvePathResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5702,9 +5621,24 @@ func (c *Client) MkdirPath(ctx context.Context, options *MkdirPathRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*MkdirPathResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MkdirPathResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(MkdirPathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MkdirPathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(MkdirPathErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5726,31 +5660,14 @@ func (c *Client) MkdirPath(ctx context.Context, options *MkdirPathRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(MkdirPathResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "MkdirPathResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/mkdir")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5770,9 +5687,24 @@ func (c *Client) MovePath(ctx context.Context, options *MovePathRequestOptions, 
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*MovePathResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MovePathResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MovePathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MovePathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(MovePathErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5794,31 +5726,14 @@ func (c *Client) MovePath(ctx context.Context, options *MovePathRequestOptions, 
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(MovePathResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "MovePathResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/move")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5838,9 +5753,24 @@ func (c *Client) UnassignTagPath(ctx context.Context, options *UnassignTagPathRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*UnassignTagPathResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UnassignTagPathResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UnassignTagPathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UnassignTagPathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(UnassignTagPathErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5862,31 +5792,14 @@ func (c *Client) UnassignTagPath(ctx context.Context, options *UnassignTagPathRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(UnassignTagPathResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "UnassignTagPathResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5906,9 +5819,24 @@ func (c *Client) AssignTagPath(ctx context.Context, options *AssignTagPathReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*AssignTagPathResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AssignTagPathResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AssignTagPathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AssignTagPathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(AssignTagPathErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5930,31 +5858,14 @@ func (c *Client) AssignTagPath(ctx context.Context, options *AssignTagPathReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(AssignTagPathResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "AssignTagPathResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -5974,9 +5885,24 @@ func (c *Client) TrashPath(ctx context.Context, options *TrashPathRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*TrashPathResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashPathResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TrashPathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TrashPathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(TrashPathErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -5998,31 +5924,14 @@ func (c *Client) TrashPath(ctx context.Context, options *TrashPathRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(TrashPathResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "TrashPathResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/trash")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6042,9 +5951,24 @@ func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *Gr
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GrantDocumentProcessingConsentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GrantDocumentProcessingConsentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GrantDocumentProcessingConsentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GrantDocumentProcessingConsentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GrantDocumentProcessingConsentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6066,31 +5990,14 @@ func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *Gr
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GrantDocumentProcessingConsentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GrantDocumentProcessingConsentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consent/grants")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6108,9 +6015,24 @@ func (c *Client) RevokeDocumentProcessingConsent(ctx context.Context, reqEditors
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RevokeDocumentProcessingConsentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RevokeDocumentProcessingConsentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RevokeDocumentProcessingConsentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RevokeDocumentProcessingConsentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RevokeDocumentProcessingConsentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6132,31 +6054,14 @@ func (c *Client) RevokeDocumentProcessingConsent(ctx context.Context, reqEditors
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RevokeDocumentProcessingConsentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RevokeDocumentProcessingConsentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consent/revocations")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6176,9 +6081,24 @@ func (c *Client) GrantProcessingConsent(ctx context.Context, options *GrantProce
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GrantProcessingConsentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GrantProcessingConsentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GrantProcessingConsentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GrantProcessingConsentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GrantProcessingConsentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6200,31 +6120,14 @@ func (c *Client) GrantProcessingConsent(ctx context.Context, options *GrantProce
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GrantProcessingConsentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GrantProcessingConsentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consents")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6244,9 +6147,24 @@ func (c *Client) RevokeProcessingConsent(ctx context.Context, options *RevokePro
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RevokeProcessingConsentResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RevokeProcessingConsentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RevokeProcessingConsentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RevokeProcessingConsentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RevokeProcessingConsentErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6268,31 +6186,14 @@ func (c *Client) RevokeProcessingConsent(ctx context.Context, options *RevokePro
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RevokeProcessingConsentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RevokeProcessingConsentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consents/revoke")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6312,9 +6213,18 @@ func (c *Client) StartDocumentProcessing(ctx context.Context, options *StartDocu
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartDocumentProcessingResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StartDocumentProcessingResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StartDocumentProcessingResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StartDocumentProcessingErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6336,17 +6246,14 @@ func (c *Client) StartDocumentProcessing(ctx context.Context, options *StartDocu
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := StartDocumentProcessingResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/jobs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6365,9 +6272,24 @@ func (c *Client) GetDocumentProcessingJob(ctx context.Context, options *GetDocum
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetDocumentProcessingJobResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDocumentProcessingJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDocumentProcessingJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetDocumentProcessingJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetDocumentProcessingJobErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6389,31 +6311,14 @@ func (c *Client) GetDocumentProcessingJob(ctx context.Context, options *GetDocum
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetDocumentProcessingJobResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetDocumentProcessingJobResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/jobs/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6433,9 +6338,24 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PlanDocumentProcessingResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanDocumentProcessingResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanDocumentProcessingResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanDocumentProcessingResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PlanDocumentProcessingErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6457,31 +6377,14 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PlanDocumentProcessingResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PlanDocumentProcessingResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/plans")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6499,9 +6402,24 @@ func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors 
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListDocumentProcessingProfilesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListDocumentProcessingProfilesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListDocumentProcessingProfilesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListDocumentProcessingProfilesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListDocumentProcessingProfilesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6523,31 +6441,14 @@ func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors 
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListDocumentProcessingProfilesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListDocumentProcessingProfilesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/profiles")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6567,9 +6468,24 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResolveDocumentSourceFenceResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveDocumentSourceFenceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveDocumentSourceFenceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveDocumentSourceFenceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ResolveDocumentSourceFenceErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6591,31 +6507,14 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ResolveDocumentSourceFenceResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ResolveDocumentSourceFenceResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/source-fences/resolve")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6635,9 +6534,24 @@ func (c *Client) ParseQuery(ctx context.Context, options *ParseQueryRequestOptio
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ParseQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ParseQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ParseQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ParseQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ParseQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6659,31 +6573,14 @@ func (c *Client) ParseQuery(ctx context.Context, options *ParseQueryRequestOptio
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ParseQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ParseQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/queries/parse")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6703,9 +6600,18 @@ func (c *Client) ReadDocumentRenditionBySelector(ctx context.Context, options *R
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReadDocumentRenditionBySelectorResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadDocumentRenditionBySelectorResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadDocumentRenditionBySelectorResponse(resp.Content))
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReadDocumentRenditionBySelectorErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6727,17 +6633,14 @@ func (c *Client) ReadDocumentRenditionBySelector(ctx context.Context, options *R
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := ReadDocumentRenditionBySelectorResponse(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/select")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6757,9 +6660,24 @@ func (c *Client) ReadDocumentRenditionWindow(ctx context.Context, options *ReadD
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReadDocumentRenditionWindowResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadDocumentRenditionWindowResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadDocumentRenditionWindowResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadDocumentRenditionWindowResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReadDocumentRenditionWindowErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6781,37 +6699,20 @@ func (c *Client) ReadDocumentRenditionWindow(ctx context.Context, options *ReadD
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ReadDocumentRenditionWindowResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ReadDocumentRenditionWindowResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/windows")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
 
 // GetDocumentRendition Stream one exact active sanitized-Markdown rendition
-func (c *Client) GetDocumentRendition(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResponse206, error) {
+func (c *Client) GetDocumentRendition(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResult, error) {
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
@@ -6829,23 +6730,35 @@ func (c *Client) GetDocumentRendition(ctx context.Context, options *GetDocumentR
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetDocumentRenditionResponse206, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 206 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDocumentRenditionResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDocumentRenditionResponse(resp.Content))
+
+			return &GetDocumentRenditionResult{Status200: target}, nil
+
+		case 206:
+
+			target := new(GetDocumentRenditionResponse206(resp.Content))
+
+			return &GetDocumentRenditionResult{Status206: target}, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		result := GetDocumentRenditionResponse206(bodyBytes)
-		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/{attachment_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200, 206)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6871,9 +6784,24 @@ func (c *Client) ListSavedQueries(ctx context.Context, options *ListSavedQueries
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListSavedQueriesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListSavedQueriesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListSavedQueriesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListSavedQueriesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListSavedQueriesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6895,31 +6823,14 @@ func (c *Client) ListSavedQueries(ctx context.Context, options *ListSavedQueries
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListSavedQueriesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListSavedQueriesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -6939,9 +6850,24 @@ func (c *Client) CreateSavedQuery(ctx context.Context, options *CreateSavedQuery
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateSavedQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateSavedQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateSavedQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateSavedQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CreateSavedQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -6963,31 +6889,14 @@ func (c *Client) CreateSavedQuery(ctx context.Context, options *CreateSavedQuery
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateSavedQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateSavedQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7006,9 +6915,24 @@ func (c *Client) DeleteSavedQuery(ctx context.Context, options *DeleteSavedQuery
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*DeleteSavedQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeleteSavedQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeleteSavedQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeleteSavedQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(DeleteSavedQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7030,31 +6954,14 @@ func (c *Client) DeleteSavedQuery(ctx context.Context, options *DeleteSavedQuery
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(DeleteSavedQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "DeleteSavedQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7073,9 +6980,24 @@ func (c *Client) GetSavedQuery(ctx context.Context, options *GetSavedQueryReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetSavedQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetSavedQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetSavedQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetSavedQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetSavedQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7097,31 +7019,14 @@ func (c *Client) GetSavedQuery(ctx context.Context, options *GetSavedQueryReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetSavedQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetSavedQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7141,9 +7046,24 @@ func (c *Client) UpdateSavedQuery(ctx context.Context, options *UpdateSavedQuery
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*UpdateSavedQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateSavedQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateSavedQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateSavedQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(UpdateSavedQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7165,31 +7085,14 @@ func (c *Client) UpdateSavedQuery(ctx context.Context, options *UpdateSavedQuery
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(UpdateSavedQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "UpdateSavedQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7209,9 +7112,24 @@ func (c *Client) RunSavedQuery(ctx context.Context, options *RunSavedQueryReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunSavedQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RunSavedQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RunSavedQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RunSavedQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RunSavedQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7233,31 +7151,14 @@ func (c *Client) RunSavedQuery(ctx context.Context, options *RunSavedQueryReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RunSavedQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RunSavedQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}/runs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7287,9 +7188,24 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SearchResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SearchResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SearchResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(SearchErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7311,31 +7227,14 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(SearchResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "SearchResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7355,9 +7254,24 @@ func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchDocumentsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SearchDocumentsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SearchDocumentsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SearchDocumentsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(SearchDocumentsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7379,31 +7293,14 @@ func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(SearchDocumentsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "SearchDocumentsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7423,9 +7320,24 @@ func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDo
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ValidateDocumentSearchResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ValidateDocumentSearchResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ValidateDocumentSearchResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ValidateDocumentSearchResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ValidateDocumentSearchErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7447,31 +7359,14 @@ func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDo
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ValidateDocumentSearchResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ValidateDocumentSearchResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/validate")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7495,9 +7390,24 @@ func (c *Client) StorageStatus(ctx context.Context, options *StorageStatusReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StorageStatusResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StorageStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StorageStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StorageStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StorageStatusErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7519,31 +7429,14 @@ func (c *Client) StorageStatus(ctx context.Context, options *StorageStatusReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StorageStatusResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StorageStatusResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7563,9 +7456,24 @@ func (c *Client) StartStorageEvacuation(ctx context.Context, options *StartStora
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartStorageEvacuationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StartStorageEvacuationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StartStorageEvacuationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StartStorageEvacuationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StartStorageEvacuationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7587,31 +7495,14 @@ func (c *Client) StartStorageEvacuation(ctx context.Context, options *StartStora
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StartStorageEvacuationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StartStorageEvacuationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/evacuate")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7631,9 +7522,24 @@ func (c *Client) PreviewStorageEvacuation(ctx context.Context, options *PreviewS
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewStorageEvacuationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewStorageEvacuationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewStorageEvacuationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewStorageEvacuationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewStorageEvacuationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7655,31 +7561,14 @@ func (c *Client) PreviewStorageEvacuation(ctx context.Context, options *PreviewS
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewStorageEvacuationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewStorageEvacuationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/evacuate/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7699,9 +7588,24 @@ func (c *Client) StoragePack(ctx context.Context, options *StoragePackRequestOpt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StoragePackResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StoragePackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StoragePackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StoragePackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StoragePackErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7723,31 +7627,14 @@ func (c *Client) StoragePack(ctx context.Context, options *StoragePackRequestOpt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StoragePackResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StoragePackResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/pack")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7767,9 +7654,24 @@ func (c *Client) StartStoragePlacement(ctx context.Context, options *StartStorag
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartStoragePlacementResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StartStoragePlacementResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StartStoragePlacementResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StartStoragePlacementResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StartStoragePlacementErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7791,31 +7693,14 @@ func (c *Client) StartStoragePlacement(ctx context.Context, options *StartStorag
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StartStoragePlacementResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StartStoragePlacementResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/place")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7835,9 +7720,24 @@ func (c *Client) PreviewStoragePlacement(ctx context.Context, options *PreviewSt
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewStoragePlacementResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewStoragePlacementResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewStoragePlacementResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewStoragePlacementResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewStoragePlacementErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7859,31 +7759,14 @@ func (c *Client) PreviewStoragePlacement(ctx context.Context, options *PreviewSt
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewStoragePlacementResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewStoragePlacementResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/place/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7903,9 +7786,24 @@ func (c *Client) StorageRepack(ctx context.Context, options *StorageRepackReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StorageRepackResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StorageRepackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StorageRepackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StorageRepackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StorageRepackErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7927,31 +7825,14 @@ func (c *Client) StorageRepack(ctx context.Context, options *StorageRepackReques
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StorageRepackResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StorageRepackResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repack")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -7971,9 +7852,24 @@ func (c *Client) StartStorageRepair(ctx context.Context, options *StartStorageRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartStorageRepairResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StartStorageRepairResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StartStorageRepairResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StartStorageRepairResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StartStorageRepairErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -7995,31 +7891,14 @@ func (c *Client) StartStorageRepair(ctx context.Context, options *StartStorageRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StartStorageRepairResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StartStorageRepairResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repair")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8039,9 +7918,24 @@ func (c *Client) PreviewStorageRepair(ctx context.Context, options *PreviewStora
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewStorageRepairResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewStorageRepairResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewStorageRepairResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewStorageRepairResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewStorageRepairErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8063,31 +7957,14 @@ func (c *Client) PreviewStorageRepair(ctx context.Context, options *PreviewStora
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewStorageRepairResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewStorageRepairResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repair/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8107,9 +7984,24 @@ func (c *Client) StartStorageSalvage(ctx context.Context, options *StartStorageS
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*StartStorageSalvageResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StartStorageSalvageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(StartStorageSalvageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StartStorageSalvageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(StartStorageSalvageErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8131,31 +8023,14 @@ func (c *Client) StartStorageSalvage(ctx context.Context, options *StartStorageS
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(StartStorageSalvageResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "StartStorageSalvageResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/salvage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8175,9 +8050,24 @@ func (c *Client) PreviewStorageSalvage(ctx context.Context, options *PreviewStor
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewStorageSalvageResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewStorageSalvageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewStorageSalvageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewStorageSalvageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewStorageSalvageErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8199,31 +8089,14 @@ func (c *Client) PreviewStorageSalvage(ctx context.Context, options *PreviewStor
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewStorageSalvageResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewStorageSalvageResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/salvage/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8247,9 +8120,24 @@ func (c *Client) ListBlobStores(ctx context.Context, options *ListBlobStoresRequ
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListBlobStoresResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListBlobStoresResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListBlobStoresResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListBlobStoresResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListBlobStoresErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8271,31 +8159,14 @@ func (c *Client) ListBlobStores(ctx context.Context, options *ListBlobStoresRequ
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListBlobStoresResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListBlobStoresResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8315,9 +8186,24 @@ func (c *Client) RegisterBlobStore(ctx context.Context, options *RegisterBlobSto
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RegisterBlobStoreResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RegisterBlobStoreResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RegisterBlobStoreResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RegisterBlobStoreResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RegisterBlobStoreErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8339,31 +8225,14 @@ func (c *Client) RegisterBlobStore(ctx context.Context, options *RegisterBlobSto
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RegisterBlobStoreResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RegisterBlobStoreResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8383,9 +8252,24 @@ func (c *Client) PreviewBlobStoreRegistration(ctx context.Context, options *Prev
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewBlobStoreRegistrationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewBlobStoreRegistrationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewBlobStoreRegistrationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewBlobStoreRegistrationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(PreviewBlobStoreRegistrationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8407,31 +8291,14 @@ func (c *Client) PreviewBlobStoreRegistration(ctx context.Context, options *Prev
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(PreviewBlobStoreRegistrationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "PreviewBlobStoreRegistrationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8450,9 +8317,18 @@ func (c *Client) UnregisterBlobStore(ctx context.Context, options *UnregisterBlo
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 204 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(UnregisterBlobStoreErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8474,16 +8350,14 @@ func (c *Client) UnregisterBlobStore(ctx context.Context, options *UnregisterBlo
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		return nil, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/{store_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 204)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8502,9 +8376,24 @@ func (c *Client) DetachBlobStore(ctx context.Context, options *DetachBlobStoreRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*DetachBlobStoreResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DetachBlobStoreResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DetachBlobStoreResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DetachBlobStoreResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(DetachBlobStoreErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8526,31 +8415,14 @@ func (c *Client) DetachBlobStore(ctx context.Context, options *DetachBlobStoreRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(DetachBlobStoreResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "DetachBlobStoreResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/{store_id}/detach")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8575,9 +8447,24 @@ func (c *Client) ListTags(ctx context.Context, options *ListTagsRequestOptions, 
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListTagsResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTagsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTagsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTagsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListTagsErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8599,31 +8486,14 @@ func (c *Client) ListTags(ctx context.Context, options *ListTagsRequestOptions, 
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListTagsResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListTagsResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8643,9 +8513,24 @@ func (c *Client) CreateTag(ctx context.Context, options *CreateTagRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateTagResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CreateTagErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8667,31 +8552,14 @@ func (c *Client) CreateTag(ctx context.Context, options *CreateTagRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateTagResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateTagResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8715,9 +8583,24 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResolveTagByNameResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveTagByNameResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveTagByNameResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveTagByNameResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ResolveTagByNameErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8739,31 +8622,14 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ResolveTagByNameResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ResolveTagByNameResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/by-name")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8782,9 +8648,24 @@ func (c *Client) DeleteTag(ctx context.Context, options *DeleteTagRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*DeleteTagResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeleteTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeleteTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeleteTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(DeleteTagErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8806,31 +8687,14 @@ func (c *Client) DeleteTag(ctx context.Context, options *DeleteTagRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(DeleteTagResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "DeleteTagResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8849,9 +8713,24 @@ func (c *Client) GetTag(ctx context.Context, options *GetTagRequestOptions, reqE
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetTagResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetTagErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8873,31 +8752,14 @@ func (c *Client) GetTag(ctx context.Context, options *GetTagRequestOptions, reqE
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetTagResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetTagResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8917,9 +8779,24 @@ func (c *Client) RenameTag(ctx context.Context, options *RenameTagRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RenameTagResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RenameTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RenameTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RenameTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(RenameTagErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -8941,31 +8818,14 @@ func (c *Client) RenameTag(ctx context.Context, options *RenameTagRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RenameTagResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "RenameTagResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -8991,9 +8851,24 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListTagNodesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTagNodesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTagNodesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTagNodesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListTagNodesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9015,31 +8890,14 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListTagNodesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListTagNodesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}/nodes")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9057,9 +8915,24 @@ func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReadTimelineCoverageResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadTimelineCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadTimelineCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadTimelineCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReadTimelineCoverageErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9081,31 +8954,14 @@ func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ReadTimelineCoverageResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ReadTimelineCoverageResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/coverage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9125,9 +8981,24 @@ func (c *Client) CreateTimelineRebuild(ctx context.Context, options *CreateTimel
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateTimelineRebuildResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 202 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateTimelineRebuildResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(CreateTimelineRebuildResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateTimelineRebuildResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CreateTimelineRebuildErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9149,31 +9020,14 @@ func (c *Client) CreateTimelineRebuild(ctx context.Context, options *CreateTimel
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateTimelineRebuildResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateTimelineRebuildResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/rebuilds")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 202)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9192,9 +9046,24 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReadTimelineRebuildResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadTimelineRebuildResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadTimelineRebuildResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadTimelineRebuildResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReadTimelineRebuildErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9216,31 +9085,14 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ReadTimelineRebuildResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ReadTimelineRebuildResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/rebuilds/{operation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9265,9 +9117,24 @@ func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListTrashResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTrashResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTrashResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTrashResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListTrashErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9289,31 +9156,14 @@ func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListTrashResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListTrashResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/trash")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9333,9 +9183,24 @@ func (c *Client) EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptio
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*EmptyTrashResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*EmptyTrashResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(EmptyTrashResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "EmptyTrashResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(EmptyTrashErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9357,37 +9222,20 @@ func (c *Client) EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptio
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(EmptyTrashResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "EmptyTrashResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/trash/empty")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
 
 // UploadFile Upload one digest-checked file
-func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResponseJSON, error) {
+func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResult, error) {
 	var err error
 	bodyEncoding := make(map[string]runtime.FieldEncoding)
 	bodyEncoding["file"] = runtime.FieldEncoding{
@@ -9407,9 +9255,36 @@ func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptio
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*UploadFileResponseJSON, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UploadFileResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UploadFileResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadFileResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &UploadFileResult{Status200: target}, nil
+
+		case 201:
+
+			target := new(UploadFileResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadFileResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &UploadFileResult{Status201: target}, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(UploadFileErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9431,31 +9306,14 @@ func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptio
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(UploadFileResponseJSON)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "UploadFileResponseJSON",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/uploads")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9473,9 +9331,24 @@ func (c *Client) Verify(ctx context.Context, reqEditors ...runtime.RequestEditor
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*VerifyResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VerifyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VerifyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VerifyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(VerifyErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9497,31 +9370,14 @@ func (c *Client) Verify(ctx context.Context, reqEditors ...runtime.RequestEditor
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(VerifyResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "VerifyResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9540,9 +9396,24 @@ func (c *Client) GetContentVersion(ctx context.Context, options *GetContentVersi
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetContentVersionResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentVersionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContentVersionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentVersionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetContentVersionErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9564,31 +9435,14 @@ func (c *Client) GetContentVersion(ctx context.Context, options *GetContentVersi
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetContentVersionResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetContentVersionResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9607,9 +9461,24 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetContentVersionBytesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentVersionBytesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContentVersionBytesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentVersionBytesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetContentVersionBytesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9631,37 +9500,20 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetContentVersionBytesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetContentVersionBytesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
 
 // GetEmailMetadata Read selected email metadata for one immutable version
-func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResponseJSON, error) {
+func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResult, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/email",
@@ -9674,9 +9526,36 @@ func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadata
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailMetadataResponseJSON, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 202 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetEmailMetadataResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetEmailMetadataResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailMetadataResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &GetEmailMetadataResult{Status200: target}, nil
+
+		case 202:
+
+			target := new(GetEmailMetadataResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailMetadataResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &GetEmailMetadataResult{Status202: target}, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetEmailMetadataErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9698,31 +9577,14 @@ func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadata
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetEmailMetadataResponseJSON)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetEmailMetadataResponseJSON",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200, 202)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9742,9 +9604,24 @@ func (c *Client) EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*EnsureEmailMetadataResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*EnsureEmailMetadataResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(EnsureEmailMetadataResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "EnsureEmailMetadataResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(EnsureEmailMetadataErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9766,31 +9643,14 @@ func (c *Client) EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(EnsureEmailMetadataResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "EnsureEmailMetadataResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9809,9 +9669,24 @@ func (c *Client) GetEmailMetadataGeneration(ctx context.Context, options *GetEma
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailMetadataGenerationResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetEmailMetadataGenerationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetEmailMetadataGenerationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailMetadataGenerationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetEmailMetadataGenerationErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9833,31 +9708,14 @@ func (c *Client) GetEmailMetadataGeneration(ctx context.Context, options *GetEma
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetEmailMetadataGenerationResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetEmailMetadataGenerationResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9876,9 +9734,24 @@ func (c *Client) GetEmailPart(ctx context.Context, options *GetEmailPartRequestO
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailPartResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetEmailPartResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetEmailPartResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetEmailPartResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(GetEmailPartErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9900,31 +9773,14 @@ func (c *Client) GetEmailPart(ctx context.Context, options *GetEmailPartRequestO
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetEmailPartResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetEmailPartResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -9942,9 +9798,24 @@ func (c *Client) ListWatchedInboxes(ctx context.Context, reqEditors ...runtime.R
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListWatchedInboxesResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListWatchedInboxesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListWatchedInboxesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListWatchedInboxesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ListWatchedInboxesErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -9966,31 +9837,14 @@ func (c *Client) ListWatchedInboxes(ctx context.Context, reqEditors ...runtime.R
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ListWatchedInboxesResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ListWatchedInboxesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/watches")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -10010,9 +9864,24 @@ func (c *Client) CreateWorkspaceQuery(ctx context.Context, options *CreateWorksp
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateWorkspaceQueryResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateWorkspaceQueryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateWorkspaceQueryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateWorkspaceQueryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(CreateWorkspaceQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -10034,31 +9903,14 @@ func (c *Client) CreateWorkspaceQuery(ctx context.Context, options *CreateWorksp
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateWorkspaceQueryResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "CreateWorkspaceQueryResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/workspace/queries")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -10078,9 +9930,24 @@ func (c *Client) ReadWorkspaceQueryPage(ctx context.Context, options *ReadWorksp
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReadWorkspaceQueryPageResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadWorkspaceQueryPageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadWorkspaceQueryPageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadWorkspaceQueryPageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			target := new(ReadWorkspaceQueryPageErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -10102,31 +9969,14 @@ func (c *Client) ReadWorkspaceQueryPage(ctx context.Context, options *ReadWorksp
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ReadWorkspaceQueryPageResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ReadWorkspaceQueryPageResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/workspace/queries/{id}/pages")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -10143,42 +9993,58 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*HealthResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*HealthResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(HealthResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "HealthResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+			bodyBytes := resp.Content
+			_ = bodyBytes
 			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(HealthResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "HealthResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/health")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
-	// Streaming callers own the raw body through the transport hook.
 	if resp.Streaming {
-		return nil, nil
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
 
 var _ ClientInterface = (*Client)(nil)
+
+// GetDocumentRenditionResult contains the decoded body for the returned success status.
+type GetDocumentRenditionResult struct {
+	Status200 *GetDocumentRenditionResponse
+	Status206 *GetDocumentRenditionResponse206
+}
+
+// UploadFileResult contains the decoded body for the returned success status.
+type UploadFileResult struct {
+	Status200 *UploadFileResponse
+	Status201 *UploadFileResponseJSON
+}
+
+// GetEmailMetadataResult contains the decoded body for the returned success status.
+type GetEmailMetadataResult struct {
+	Status200 *GetEmailMetadataResponse
+	Status202 *GetEmailMetadataResponseJSON
+}
 
 // ChallengeDaemonRequestOptions is the options needed to make a request to ChallengeDaemon.
 type ChallengeDaemonRequestOptions struct {

@@ -42,11 +42,25 @@ func NewDefault{{$clientName}}(baseURL string, opts ...runtime.APIClientOption) 
     return &{{$clientName}}{apiClient: apiClient}, nil
 }
 
+// acceptStream checks the operation's status contract without consuming its body.
+func (c *{{$clientName}}) acceptStream(resp *runtime.Response, statuses ...int) error {
+    owner, ok := c.apiClient.(interface { OwnsResponseBody() bool })
+    if !ok || !owner.OwnsResponseBody() {
+        _ = resp.Raw.Body.Close()
+        return fmt.Errorf("streaming requires a transport that transfers response ownership")
+    }
+    for _, status := range statuses {
+        if resp.StatusCode == status { return nil }
+    }
+    _ = resp.Raw.Body.Close()
+    return runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+}
+
 // ClientInterface is the interface for the API client.
 type {{$clientName}}Interface interface {
     {{- range $operations }}{{$op := .}}
         {{if not $config.Generate.OmitDescription}}{{ toGoComment $op.Summary $op.ID}}{{end}}
-        {{$op.ID}}(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{ $op.Response.Success.ResponseName }}, error)
+        {{$op.ID}}(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{template "resultType" $op}}, error)
         {{- if $config.Generate.ClientWithResponse }}
         {{$op.ID}}WithResponse(ctx context.Context{{- if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{$op.WithResponseTypeName}}, error)
         {{- end }}
@@ -61,7 +75,7 @@ type {{$clientName}}Interface interface {
 
 {{range $operations}}{{$op := .}}
 {{if not $config.Generate.OmitDescription}}{{ toGoComment $op.Summary $op.ID}}{{end}}
-func (c *{{$clientName}}) {{$op.ID}}(ctx context.Context{{ if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{ $op.Response.Success.ResponseName }}, error) {
+func (c *{{$clientName}}) {{$op.ID}}(ctx context.Context{{ if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*{{template "resultType" $op}}, error) {
     var err error
     {{- template "requestParams" (dict "op" $op) }}
 
@@ -76,9 +90,8 @@ func (c *{{$clientName}}) {{$op.ID}}(ctx context.Context{{ if $op.HasRequestOpti
     if err != nil {
         return nil, fmt.Errorf("error executing request: %w", err)
     }
-    // Streaming callers own the raw body through the transport hook.
     if resp.Streaming {
-        return nil, nil
+        return nil, c.acceptStream(resp{{range $op.Response.Successes}}, {{.StatusCode}}{{end}})
     }
     return responseParser(ctx, resp)
 }
@@ -90,15 +103,46 @@ var _ {{$clientName}}Interface = (*{{$clientName}})(nil)
 
 {{ template "client" dict "config" .Config "operations" .Operations }}
 
-{{- define "responseParserFn" }}{{- $op := .op }}
-{{- $respName := $op.Response.Success.ResponseName }}
-{{- $hasErrorResponse := and $op.Response.Error $op.Response.Error.ResponseName }}
-{{- $needsBodyBytes := or (ne $op.Response.SuccessStatusCode 204) $hasErrorResponse }}
-responseParser := func(ctx context.Context, resp *runtime.Response) (*{{$op.Response.Success.ResponseName}}, error) {
-    {{- if $needsBodyBytes }}
-    bodyBytes := resp.Content
-    {{- end }}
-    if resp.StatusCode != {{$op.Response.SuccessStatusCode}} {
+{{define "resultType"}}{{if gt (len .Response.Successes) 1}}{{.ID}}Result{{else}}{{.Response.Success.ResponseName}}{{end}}{{end}}
+
+{{range .Operations}}{{$op := .}}
+{{if gt (len $op.Response.Successes) 1}}
+// {{$op.ID}}Result contains the decoded body for the returned success status.
+type {{$op.ID}}Result struct {
+    {{range $op.Response.Successes}}Status{{.StatusCode}} *{{.ResponseName}}
+    {{end}}
+}
+{{end}}{{end}}
+
+{{- define "responseParserFn" }}{{$op := .op}}
+responseParser := func(_ context.Context, resp *runtime.Response) (*{{template "resultType" $op}}, error) {
+    switch resp.StatusCode {
+    {{range $op.Response.Successes}}{{$rcd := .}}
+    case {{.StatusCode}}:
+        {{if eq .ResponseName "struct{}"}}
+        target := new(struct{})
+        {{else if .IsRaw}}
+        target := new({{.ResponseName}}(resp.Content))
+        {{else if eq .Schema.GoType "string"}}
+        target := new({{.ResponseName}}(resp.Content))
+        {{else}}
+        target := new({{.ResponseName}})
+        if err := json.Unmarshal(resp.Content, target); err != nil {
+            return nil, &runtime.ResponseDecodeError{
+                StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+                ContentLength: len(resp.Content), TargetType: "{{.ResponseName}}", Body: resp.Content, Err: err,
+            }
+        }
+        {{end}}
+        {{if gt (len $op.Response.Successes) 1}}
+        return &{{$op.ID}}Result{Status{{.StatusCode}}: target}, nil
+        {{else}}
+        return target, nil
+        {{end}}
+    {{end}}
+    default:
+        bodyBytes := resp.Content
+        _ = bodyBytes
         {{- with $op.Response.Error }}
             {{- if .ResponseName }}
                 target := new({{ .ResponseName }})
@@ -130,32 +174,5 @@ responseParser := func(ctx context.Context, resp *runtime.Response) (*{{$op.Resp
                 runtime.WithStatusCode(resp.StatusCode))
         {{- end }}
     }
-
-    {{- if eq $op.Response.SuccessStatusCode 204 }}
-        return nil, nil
-    {{ else if $op.Response.Success.IsRaw }}
-        result := {{ $respName }}(bodyBytes)
-        return &result, nil
-    {{ else }}
-        target := new({{ $respName }})
-        {{ if eq $op.Response.Success.NameTag "Formdata" }}
-            bodyBytes, err = runtime.ConvertFormFields(bodyBytes)
-        {{ end -}}
-        // Handle empty response body gracefully
-        if len(bodyBytes) == 0 {
-            return target, nil
-        }
-        if err = json.Unmarshal(bodyBytes, target); err != nil {
-            return nil, &runtime.ResponseDecodeError{
-                StatusCode:    resp.StatusCode,
-                ContentType:   resp.Headers.Get("Content-Type"),
-                ContentLength: len(bodyBytes),
-                TargetType:    "{{ $respName }}",
-                Body:          bodyBytes,
-                Err:           err,
-            }
-        }
-        return target, nil
-    {{ end -}}
 }
-{{- end }}
+{{end}}

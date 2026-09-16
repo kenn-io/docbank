@@ -32,6 +32,8 @@ type apiTransport struct {
 	response   **http.Response
 }
 
+func (t apiTransport) OwnsResponseBody() bool { return t.response != nil }
+
 func (t apiTransport) GetBaseURL() string { return t.connection.base }
 
 type bodylessOptions struct{ runtime.RequestOptions }
@@ -95,7 +97,7 @@ func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, _ s
 	}
 	defer func() { _ = resp.Body.Close() }()
 	result.Content, err = io.ReadAll(resp.Body)
-	if err == nil && len(result.Content) == 0 && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusAccepted {
+	if err == nil && len(result.Content) == 0 && resp.StatusCode != http.StatusNoContent && (resp.StatusCode != http.StatusAccepted || req.Method != http.MethodPost || req.URL.Path != "/api/daemon/shutdown") {
 		err = io.EOF
 	}
 	if err != nil {
