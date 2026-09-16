@@ -514,11 +514,12 @@ func proveOwnershipWithClient(
 	defer cancel()
 	connection := New("http://"+rec.Address, "")
 	connection.hc = challengeClient
-	response, err := connection.API().ChallengeDaemonWithResponse(clientruntime.WithStreamingResponse(probeCtx), &apiclient.ChallengeDaemonRequestOptions{Query: &apiclient.ChallengeDaemonQuery{Nonce: hex.EncodeToString(nonce)}})
+	var responseHTTP *http.Response
+	_, err := connection.apiWithResponse(&responseHTTP).ChallengeDaemon(clientruntime.WithStreamingResponse(probeCtx), &apiclient.ChallengeDaemonRequestOptions{Query: &apiclient.ChallengeDaemonQuery{Nonce: hex.EncodeToString(nonce)}})
 	if err != nil {
 		return false, nil
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))

@@ -1,6 +1,8 @@
 package daemonconn
 
 import (
+	"net/http"
+
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -26,12 +28,13 @@ func (c *Connection) RenditionTextWindow(
 		request.MaxChars < 1 || request.MaxChars > 16_000 {
 		return api.RenditionTextWindow{}, errors.New("rendition window request is invalid")
 	}
-	response, err := c.API().ReadDocumentRenditionWindowWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.ReadDocumentRenditionWindowRequestOptions{Body: &request})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).ReadDocumentRenditionWindow(runtime.WithStreamingResponse(ctx), &apiclient.ReadDocumentRenditionWindowRequestOptions{Body: &request})
 	if err != nil {
 		return api.RenditionTextWindow{}, err
 	}
-	defer func() { _ = response.HTTPResponse.Body.Close() }()
-	encoded, err := io.ReadAll(io.LimitReader(response.HTTPResponse.Body, maxRenditionWindowResponseBytes+1))
+	defer func() { _ = responseHTTP.Body.Close() }()
+	encoded, err := io.ReadAll(io.LimitReader(responseHTTP.Body, maxRenditionWindowResponseBytes+1))
 	if err != nil {
 		return api.RenditionTextWindow{}, errors.New("reading rendition window response")
 	}

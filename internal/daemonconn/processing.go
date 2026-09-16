@@ -212,11 +212,12 @@ type ProcessingEventStream struct {
 func (c *Connection) StartProcessingStream(ctx context.Context,
 	request api.StartProcessingRequest, profileFingerprint string,
 ) (*ProcessingEventStream, error) {
-	apiResponse, err := c.API().StartDocumentProcessingWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.StartDocumentProcessingRequestOptions{Body: new(request)})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).StartDocumentProcessing(runtime.WithStreamingResponse(ctx), &apiclient.StartDocumentProcessingRequestOptions{Body: new(request)})
 	if err != nil {
 		return nil, err
 	}
-	resp := apiResponse.HTTPResponse
+	resp := apiResponseHTTP
 
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-ndjson" {
@@ -394,11 +395,12 @@ func (stream *ProcessingEventStream) Close() error {
 func (c *Connection) RunDerivativePurge(ctx context.Context,
 	request api.DerivativePurgeJobRequest,
 ) (api.DerivativePurgeReceipt, error) {
-	apiResponse, err := c.API().RunDerivativePurgeWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.RunDerivativePurgeRequestOptions{Body: new(request)})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).RunDerivativePurge(runtime.WithStreamingResponse(ctx), &apiclient.RunDerivativePurgeRequestOptions{Body: new(request)})
 	if err != nil {
 		return api.DerivativePurgeReceipt{}, err
 	}
-	resp := apiResponse.HTTPResponse
+	resp := apiResponseHTTP
 	defer func() { _ = resp.Body.Close() }()
 
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
@@ -777,11 +779,12 @@ func (c *Connection) Rendition(ctx context.Context, attachmentID string, maxByte
 		}
 		params.MaxBytes = &maxBytes
 	}
-	response, err := c.API().GetDocumentRenditionWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetDocumentRenditionRequestOptions{PathParams: &apiclient.GetDocumentRenditionPath{AttachmentID: attachmentID}, Query: &params})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetDocumentRendition(runtime.WithStreamingResponse(ctx), &apiclient.GetDocumentRenditionRequestOptions{PathParams: &apiclient.GetDocumentRenditionPath{AttachmentID: attachmentID}, Query: &params})
 	if err != nil {
 		return nil, err
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	stream, err := decodeRenditionResponse(resp, attachmentID, maxBytes)
 	if err != nil {
 		_ = resp.Body.Close()
@@ -795,11 +798,12 @@ func (c *Connection) RenditionForSelector(ctx context.Context, selector api.Proc
 	if maxBytes < 1 || maxBytes > maxRenditionResponseBytes {
 		return nil, errors.New("rendition max bytes must be between 1 and 67108864")
 	}
-	response, err := c.API().ReadDocumentRenditionBySelectorWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.ReadDocumentRenditionBySelectorRequestOptions{Body: &api.RenditionSelectorRequest{Selector: selector, MaxBytes: maxBytes}})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).ReadDocumentRenditionBySelector(runtime.WithStreamingResponse(ctx), &apiclient.ReadDocumentRenditionBySelectorRequestOptions{Body: &api.RenditionSelectorRequest{Selector: selector, MaxBytes: maxBytes}})
 	if err != nil {
 		return nil, err
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	stream, err := decodeRenditionResponse(resp, "", maxBytes)
 	if err != nil {
 		_ = resp.Body.Close()
@@ -861,11 +865,12 @@ func (c *Connection) RenditionRange(ctx context.Context, attachmentID string,
 	if start < 0 || end <= start || end > 64<<20 {
 		return nil, errors.New("rendition range must be a non-empty half-open interval within 67108864 bytes")
 	}
-	response, err := c.API().GetDocumentRenditionWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetDocumentRenditionRequestOptions{PathParams: &apiclient.GetDocumentRenditionPath{AttachmentID: attachmentID}, Header: &apiclient.GetDocumentRenditionHeaders{Range: new(fmt.Sprintf("bytes=%d-%d", start, end-1))}})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetDocumentRendition(runtime.WithStreamingResponse(ctx), &apiclient.GetDocumentRenditionRequestOptions{PathParams: &apiclient.GetDocumentRenditionPath{AttachmentID: attachmentID}, Header: &apiclient.GetDocumentRenditionHeaders{Range: new(fmt.Sprintf("bytes=%d-%d", start, end-1))}})
 	if err != nil {
 		return nil, err
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	if resp.StatusCode != http.StatusPartialContent {
 		defer func() { _ = resp.Body.Close() }()
 		return nil, decodeError(resp)

@@ -26,11 +26,12 @@ func (c *Connection) SubmitSuppliedMedia(
 	var result api.MediaReceipt
 	err := readMediaMultipartReceipt(metadata, metadata.Filename, metadata.MediaType, content, &result,
 		func(edit runtime.RequestEditorFn) (*http.Response, error) {
-			response, err := c.API().SubmitMediaSourceWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.SubmitMediaSourceRequestOptions{}, edit)
+			var responseHTTP *http.Response
+			_, err := c.apiWithResponse(&responseHTTP).SubmitMediaSource(runtime.WithStreamingResponse(ctx), &apiclient.SubmitMediaSourceRequestOptions{}, edit)
 			if err != nil {
 				return nil, err
 			}
-			return response.HTTPResponse, nil
+			return responseHTTP, nil
 		})
 	return result, validateMediaReceipt(result, metadata.OperationID, err)
 }
@@ -109,11 +110,12 @@ func (c *Connection) ImportMediaArtifact(
 	var result api.MediaReceipt
 	err := readMediaMultipartReceipt(metadata, metadata.Filename, metadata.MediaType, content, &result,
 		func(edit runtime.RequestEditorFn) (*http.Response, error) {
-			response, err := c.API().ImportMediaArtifactWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.ImportMediaArtifactRequestOptions{PathParams: &apiclient.ImportMediaArtifactPath{SourceID: sourceID}}, edit)
+			var responseHTTP *http.Response
+			_, err := c.apiWithResponse(&responseHTTP).ImportMediaArtifact(runtime.WithStreamingResponse(ctx), &apiclient.ImportMediaArtifactRequestOptions{PathParams: &apiclient.ImportMediaArtifactPath{SourceID: sourceID}}, edit)
 			if err != nil {
 				return nil, err
 			}
-			return response.HTTPResponse, nil
+			return responseHTTP, nil
 		})
 	if err == nil && result.SourceID != sourceID {
 		err = errors.New("daemon returned artifact receipt for a different source")

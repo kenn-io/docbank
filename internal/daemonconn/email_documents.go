@@ -15,9 +15,10 @@ func (c *Connection) PublishEmailDocuments(ctx context.Context, r document.Email
 		return document.EmailDocumentPublicationReceipt{}, err
 	}
 	var out document.EmailDocumentPublicationReceipt
-	response, err := c.API().PublishEmailDocumentsWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.PublishEmailDocumentsRequestOptions{Body: &r}, limitEmailDocumentRequest)
+	var responseHTTP *http.Response
+	_, err = c.apiWithResponse(&responseHTTP).PublishEmailDocuments(runtime.WithStreamingResponse(ctx), &apiclient.PublishEmailDocumentsRequestOptions{Body: &r}, limitEmailDocumentRequest)
 	if err == nil {
-		err = decodeEmailDocuments(response.HTTPResponse, &out)
+		err = decodeEmailDocuments(responseHTTP, &out)
 	}
 	if err != nil {
 		return out, err
@@ -35,9 +36,10 @@ func (c *Connection) EmailDocumentPublication(ctx context.Context, id string) (d
 	if err := document.ValidateEmailDocumentOperationID(id); err != nil {
 		return out, err
 	}
-	response, err := c.API().GetEmailDocumentPublicationWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailDocumentPublicationRequestOptions{PathParams: &apiclient.GetEmailDocumentPublicationPath{OperationID: id}})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetEmailDocumentPublication(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailDocumentPublicationRequestOptions{PathParams: &apiclient.GetEmailDocumentPublicationPath{OperationID: id}})
 	if err == nil {
-		err = decodeEmailDocuments(response.HTTPResponse, &out)
+		err = decodeEmailDocuments(responseHTTP, &out)
 	}
 	if err == nil {
 		err = document.ValidateEmailDocumentReceipt(out)
@@ -62,9 +64,10 @@ func (c *Connection) EmailDocumentRelations(ctx context.Context, q document.Emai
 	if q.AfterOperationID != "" {
 		params.AfterOperationID = &q.AfterOperationID
 	}
-	response, err := c.API().ListEmailDocumentRelationsWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.ListEmailDocumentRelationsRequestOptions{Query: &params})
+	var responseHTTP *http.Response
+	_, err = c.apiWithResponse(&responseHTTP).ListEmailDocumentRelations(runtime.WithStreamingResponse(ctx), &apiclient.ListEmailDocumentRelationsRequestOptions{Query: &params})
 	if err == nil {
-		err = decodeEmailDocuments(response.HTTPResponse, &out)
+		err = decodeEmailDocuments(responseHTTP, &out)
 	}
 	if err == nil && len(out.Items) > q.Limit {
 		return document.EmailDocumentRelationPage{}, integrityErrorf("email relation response exceeds requested page")
@@ -75,17 +78,19 @@ func (c *Connection) RemoveEmailDocumentPublication(ctx context.Context, id, dig
 	if err := document.ValidateEmailDocumentOperationID(id); err != nil {
 		return err
 	}
-	response, err := c.API().RemoveEmailDocumentPublicationWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.RemoveEmailDocumentPublicationRequestOptions{PathParams: &apiclient.RemoveEmailDocumentPublicationPath{OperationID: id}, Body: &apiclient.RemoveEmailDocumentPublicationBody{RequestDigest: digest}}, limitEmailDocumentRequest)
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).RemoveEmailDocumentPublication(runtime.WithStreamingResponse(ctx), &apiclient.RemoveEmailDocumentPublicationRequestOptions{PathParams: &apiclient.RemoveEmailDocumentPublicationPath{OperationID: id}, Body: &apiclient.RemoveEmailDocumentPublicationBody{RequestDigest: digest}}, limitEmailDocumentRequest)
 	if err != nil {
 		return err
 	}
-	return decodeEmailDocuments(response.HTTPResponse, nil)
+	return decodeEmailDocuments(responseHTTP, nil)
 }
 func (c *Connection) RequestEmailDocumentProcessing(ctx context.Context, r document.EmailDocumentProcessingRequest) (document.EmailDocumentProcessingReceipt, error) {
 	var out document.EmailDocumentProcessingReceipt
-	response, err := c.API().RequestEmailDocumentProcessingWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.RequestEmailDocumentProcessingRequestOptions{Body: &r}, limitEmailDocumentRequest)
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).RequestEmailDocumentProcessing(runtime.WithStreamingResponse(ctx), &apiclient.RequestEmailDocumentProcessingRequestOptions{Body: &r}, limitEmailDocumentRequest)
 	if err == nil {
-		err = decodeEmailDocuments(response.HTTPResponse, &out)
+		err = decodeEmailDocuments(responseHTTP, &out)
 	}
 	return out, err
 }

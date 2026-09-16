@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"net/http"
 	"time"
 
 	"uuid"
@@ -39,585 +38,439 @@ func NewDefaultClient(baseURL string, opts ...runtime.APIClientOption) (*Client,
 // ClientInterface is the interface for the API client.
 type ClientInterface interface {
 	ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResponse, error)
-	ChallengeDaemonWithResponse(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResp, error)
 
 	ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-	ShutdownDaemonWithResponse(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ShutdownDaemonResp, error)
 
 	// PrepareWebDownload Verify a document and prepare a browser download
 	PrepareWebDownload(ctx context.Context, options *PrepareWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareWebDownloadResponse, error)
-	PrepareWebDownloadWithResponse(ctx context.Context, options *PrepareWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareWebDownloadResp, error)
 
 	// RevokeWebSession Revoke the current browser session
 	RevokeWebSession(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-	RevokeWebSessionWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RevokeWebSessionResp, error)
 
 	// CreateWebSession Issue a scoped browser session
 	CreateWebSession(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*CreateWebSessionResponse, error)
-	CreateWebSessionWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*CreateWebSessionResp, error)
 
 	// EnableAudit Permanently enable the exact reviewed audit scope
 	EnableAudit(ctx context.Context, options *EnableAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableAuditResponse, error)
-	EnableAuditWithResponse(ctx context.Context, options *EnableAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableAuditResp, error)
 
 	// AuditNodeHistory Read one audited node's canonical event timeline
 	AuditNodeHistory(ctx context.Context, options *AuditNodeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditNodeHistoryResponse, error)
-	AuditNodeHistoryWithResponse(ctx context.Context, options *AuditNodeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditNodeHistoryResp, error)
 
 	// PreviewAuditEnrollment Preview one permanent audit scope without changing the vault
 	PreviewAuditEnrollment(ctx context.Context, options *PreviewAuditEnrollmentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewAuditEnrollmentResponse, error)
-	PreviewAuditEnrollmentWithResponse(ctx context.Context, options *PreviewAuditEnrollmentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewAuditEnrollmentResp, error)
 
 	// AuditScopeHistory Read canonical events across one permanent audit scope
 	AuditScopeHistory(ctx context.Context, options *AuditScopeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditScopeHistoryResponse, error)
-	AuditScopeHistoryWithResponse(ctx context.Context, options *AuditScopeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditScopeHistoryResp, error)
 
 	// AuditStatus Inspect audit authority and optional node protection
 	AuditStatus(ctx context.Context, options *AuditStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditStatusResponse, error)
-	AuditStatusWithResponse(ctx context.Context, options *AuditStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditStatusResp, error)
 
 	// VerifyAudit Replay audit authority and verify every protected blob
 	VerifyAudit(ctx context.Context, options *VerifyAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyAuditResponse, error)
-	VerifyAuditWithResponse(ctx context.Context, options *VerifyAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyAuditResp, error)
 
 	// InitBackupRepository Initialize an immutable backup repository
 	InitBackupRepository(ctx context.Context, options *InitBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InitBackupRepositoryResponse, error)
-	InitBackupRepositoryWithResponse(ctx context.Context, options *InitBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InitBackupRepositoryResp, error)
 
 	// RestoreBackupSnapshot Restore and prove a snapshot in a separate vault directory
 	RestoreBackupSnapshot(ctx context.Context, options *RestoreBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreBackupSnapshotResponse, error)
-	RestoreBackupSnapshotWithResponse(ctx context.Context, options *RestoreBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreBackupSnapshotResp, error)
 
 	// StreamBackupSnapshotRestore Restore and prove a snapshot while streaming structured progress
 	StreamBackupSnapshotRestore(ctx context.Context, options *StreamBackupSnapshotRestoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotRestoreResponse, error)
-	StreamBackupSnapshotRestoreWithResponse(ctx context.Context, options *StreamBackupSnapshotRestoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotRestoreResp, error)
 
 	// ListBackupSnapshots List snapshots in a backup repository
 	ListBackupSnapshots(ctx context.Context, options *ListBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBackupSnapshotsResponse, error)
-	ListBackupSnapshotsWithResponse(ctx context.Context, options *ListBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBackupSnapshotsResp, error)
 
 	// CreateBackupSnapshot Capture a verified logical snapshot of the live vault
 	CreateBackupSnapshot(ctx context.Context, options *CreateBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateBackupSnapshotResponse, error)
-	CreateBackupSnapshotWithResponse(ctx context.Context, options *CreateBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateBackupSnapshotResp, error)
 
 	// StreamBackupSnapshotCreation Capture a snapshot and stream structured progress
 	StreamBackupSnapshotCreation(ctx context.Context, options *StreamBackupSnapshotCreationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotCreationResponse, error)
-	StreamBackupSnapshotCreationWithResponse(ctx context.Context, options *StreamBackupSnapshotCreationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotCreationResp, error)
 
 	// VerifyBackupRepository Verify backup repository integrity
 	VerifyBackupRepository(ctx context.Context, options *VerifyBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyBackupRepositoryResponse, error)
-	VerifyBackupRepositoryWithResponse(ctx context.Context, options *VerifyBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyBackupRepositoryResp, error)
 
 	// StreamBackupRepositoryVerification Verify a backup repository and stream structured progress
 	StreamBackupRepositoryVerification(ctx context.Context, options *StreamBackupRepositoryVerificationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupRepositoryVerificationResponse, error)
-	StreamBackupRepositoryVerificationWithResponse(ctx context.Context, options *StreamBackupRepositoryVerificationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupRepositoryVerificationResp, error)
 
 	// BatchMove Apply an all-or-nothing document reorganization
 	BatchMove(ctx context.Context, options *BatchMoveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BatchMoveResponse, error)
-	BatchMoveWithResponse(ctx context.Context, options *BatchMoveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BatchMoveResp, error)
 
 	// ChangeBatchTags Assign or remove one tag across an atomic selected set
 	ChangeBatchTags(ctx context.Context, options *ChangeBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChangeBatchTagsResponse, error)
-	ChangeBatchTagsWithResponse(ctx context.Context, options *ChangeBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChangeBatchTagsResp, error)
 
 	// PreviewBatchTags Observe exact tag membership for a revision-fenced selected set
 	PreviewBatchTags(ctx context.Context, options *PreviewBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBatchTagsResponse, error)
-	PreviewBatchTagsWithResponse(ctx context.Context, options *PreviewBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBatchTagsResp, error)
 
 	// ListCollections List document-bearing ingest runs, newest first
 	ListCollections(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResponse, error)
-	ListCollectionsWithResponse(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResp, error)
 
 	// GetCollection Inspect one ingest run and its current live summary
 	GetCollection(ctx context.Context, options *GetCollectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionResponse, error)
-	GetCollectionWithResponse(ctx context.Context, options *GetCollectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionResp, error)
 
 	// GetCollectionLabel Read a collection's independently revisioned label
 	GetCollectionLabel(ctx context.Context, options *GetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionLabelResponse, error)
-	GetCollectionLabelWithResponse(ctx context.Context, options *GetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionLabelResp, error)
 
 	// SetCollectionLabel Set or clear a collection label under its label revision
 	SetCollectionLabel(ctx context.Context, options *SetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCollectionLabelResponse, error)
-	SetCollectionLabelWithResponse(ctx context.Context, options *SetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCollectionLabelResp, error)
 
 	// ListCollectionMembers List a collection's current live file members
 	ListCollectionMembers(ctx context.Context, options *ListCollectionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionMembersResponse, error)
-	ListCollectionMembersWithResponse(ctx context.Context, options *ListCollectionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionMembersResp, error)
 
 	// GetCollectionQuality Inspect bounded current collection quality and text coverage
 	GetCollectionQuality(ctx context.Context, options *GetCollectionQualityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionQualityResponse, error)
-	GetCollectionQualityWithResponse(ctx context.Context, options *GetCollectionQualityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionQualityResp, error)
 
 	// LookupContentReferences Find stable document versions that retain a SHA-256 identity
 	LookupContentReferences(ctx context.Context, options *LookupContentReferencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupContentReferencesResponse, error)
-	LookupContentReferencesWithResponse(ctx context.Context, options *LookupContentReferencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupContentReferencesResp, error)
 
 	// GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
 	GetDocumentProcessingCoverage(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResponse, error)
-	GetDocumentProcessingCoverageWithResponse(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResp, error)
 
 	// RunDerivativePurge Run one exact reviewed live derivative purge
 	RunDerivativePurge(ctx context.Context, options *RunDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunDerivativePurgeResponse, error)
-	RunDerivativePurgeWithResponse(ctx context.Context, options *RunDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunDerivativePurgeResp, error)
 
 	// PlanDerivativePurge Preview one exact live derivative purge
 	PlanDerivativePurge(ctx context.Context, options *PlanDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDerivativePurgeResponse, error)
-	PlanDerivativePurgeWithResponse(ctx context.Context, options *PlanDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDerivativePurgeResp, error)
 
 	// ListDocuments List current live documents with authenticated keyset pagination
 	ListDocuments(ctx context.Context, options *ListDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentsResponse, error)
-	ListDocumentsWithResponse(ctx context.Context, options *ListDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentsResp, error)
 
 	// ResolveDocumentSummaries Resolve bounded exact current live document summaries
 	ResolveDocumentSummaries(ctx context.Context, options *ResolveDocumentSummariesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSummariesResponse, error)
-	ResolveDocumentSummariesWithResponse(ctx context.Context, options *ResolveDocumentSummariesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSummariesResp, error)
 
 	// ListDuplicateContent Find live documents that share current content
 	ListDuplicateContent(ctx context.Context, options *ListDuplicateContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDuplicateContentResponse, error)
-	ListDuplicateContentWithResponse(ctx context.Context, options *ListDuplicateContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDuplicateContentResp, error)
 
 	// RequestEmailDocumentProcessing Request ordinary consent-aware attachment processing
 	RequestEmailDocumentProcessing(ctx context.Context, options *RequestEmailDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RequestEmailDocumentProcessingResponse, error)
-	RequestEmailDocumentProcessingWithResponse(ctx context.Context, options *RequestEmailDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RequestEmailDocumentProcessingResp, error)
 
 	// PublishEmailDocuments Publish exact email attachments as ordinary documents
 	PublishEmailDocuments(ctx context.Context, options *PublishEmailDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishEmailDocumentsResponse, error)
-	PublishEmailDocumentsWithResponse(ctx context.Context, options *PublishEmailDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishEmailDocumentsResp, error)
 
 	// RemoveEmailDocumentPublication Release one receipt without deleting children
 	RemoveEmailDocumentPublication(ctx context.Context, options *RemoveEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-	RemoveEmailDocumentPublicationWithResponse(ctx context.Context, options *RemoveEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemoveEmailDocumentPublicationResp, error)
 
 	// GetEmailDocumentPublication Read an immutable publication receipt
 	GetEmailDocumentPublication(ctx context.Context, options *GetEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailDocumentPublicationResponse, error)
-	GetEmailDocumentPublicationWithResponse(ctx context.Context, options *GetEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailDocumentPublicationResp, error)
 
 	// ListEmailDocumentRelations Read a bounded page of exact parent or child occurrences
 	ListEmailDocumentRelations(ctx context.Context, options *ListEmailDocumentRelationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailDocumentRelationsResponse, error)
-	ListEmailDocumentRelationsWithResponse(ctx context.Context, options *ListEmailDocumentRelationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailDocumentRelationsResp, error)
 
 	// ReadFormatCapabilities Read per-format capability coverage
 	ReadFormatCapabilities(ctx context.Context, options *ReadFormatCapabilitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadFormatCapabilitiesResponse, error)
-	ReadFormatCapabilitiesWithResponse(ctx context.Context, options *ReadFormatCapabilitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadFormatCapabilitiesResp, error)
 
 	// Gc Report (run=false) or reclaim (run=true) unreachable blobs
 	Gc(ctx context.Context, options *GcRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GcResponse, error)
-	GcWithResponse(ctx context.Context, options *GcRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GcResp, error)
 
 	// VaultInfo Identify the selected vault and summarize its contents
 	VaultInfo(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VaultInfoResponse, error)
-	VaultInfoWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VaultInfoResp, error)
 
 	// Ingest Import server-side files or directory trees (loopback callers only)
 	Ingest(ctx context.Context, options *IngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*IngestResponse, error)
-	IngestWithResponse(ctx context.Context, options *IngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*IngestResp, error)
 
 	// PreflightIngest Inventory server-side files without opening content or mutating the vault
 	PreflightIngest(ctx context.Context, options *PreflightIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightIngestResponse, error)
-	PreflightIngestWithResponse(ctx context.Context, options *PreflightIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightIngestResp, error)
 
 	// StreamIngest Import server-side paths while streaming structured progress
 	StreamIngest(ctx context.Context, options *StreamIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamIngestResponse, error)
-	StreamIngestWithResponse(ctx context.Context, options *StreamIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamIngestResp, error)
 
 	// ListJobs List daemon background jobs and their current status
 	ListJobs(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListJobsResponse, error)
-	ListJobsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListJobsResp, error)
 
 	// GetStorageOperation Inspect one durable storage operation and its latest receipt
 	GetStorageOperation(ctx context.Context, options *GetStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetStorageOperationResponse, error)
-	GetStorageOperationWithResponse(ctx context.Context, options *GetStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetStorageOperationResp, error)
 
 	// CancelStorageOperation Request cancellation at the next durable object boundary
 	CancelStorageOperation(ctx context.Context, options *CancelStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelStorageOperationResponse, error)
-	CancelStorageOperationWithResponse(ctx context.Context, options *CancelStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelStorageOperationResp, error)
 
 	// PlanMediaAcquisition Recognize a private reference without network access
 	PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcquisitionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanMediaAcquisitionResponse, error)
-	PlanMediaAcquisitionWithResponse(ctx context.Context, options *PlanMediaAcquisitionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanMediaAcquisitionResp, error)
 
 	// GrantMediaAcquisitionConsent Grant one exact current media acquisition plan
 	GrantMediaAcquisitionConsent(ctx context.Context, options *GrantMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantMediaAcquisitionConsentResponse, error)
-	GrantMediaAcquisitionConsentWithResponse(ctx context.Context, options *GrantMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantMediaAcquisitionConsentResp, error)
 
 	// RevokeMediaAcquisitionConsent Revoke acquisition consent for one registered origin
 	RevokeMediaAcquisitionConsent(ctx context.Context, options *RevokeMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaAcquisitionConsentResponse, error)
-	RevokeMediaAcquisitionConsentWithResponse(ctx context.Context, options *RevokeMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaAcquisitionConsentResp, error)
 
 	// ListMediaOccurrences List caller-visible media occurrences
 	ListMediaOccurrences(ctx context.Context, options *ListMediaOccurrencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaOccurrencesResponse, error)
-	ListMediaOccurrencesWithResponse(ctx context.Context, options *ListMediaOccurrencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaOccurrencesResp, error)
 
 	// DeclareMediaOccurrence Declare one immutable caller occurrence revision
 	DeclareMediaOccurrence(ctx context.Context, options *DeclareMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeclareMediaOccurrenceResponse, error)
-	DeclareMediaOccurrenceWithResponse(ctx context.Context, options *DeclareMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeclareMediaOccurrenceResp, error)
 
 	// RevokeMediaOccurrence Revoke one caller-owned occurrence
 	RevokeMediaOccurrence(ctx context.Context, options *RevokeMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaOccurrenceResponse, error)
-	RevokeMediaOccurrenceWithResponse(ctx context.Context, options *RevokeMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaOccurrenceResp, error)
 
 	// ListMediaOrigins List registered media origin capabilities
 	ListMediaOrigins(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListMediaOriginsResponse, error)
-	ListMediaOriginsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListMediaOriginsResp, error)
 
 	// ListMediaSources List caller-visible media sources
 	ListMediaSources(ctx context.Context, options *ListMediaSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaSourcesResponse, error)
-	ListMediaSourcesWithResponse(ctx context.Context, options *ListMediaSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaSourcesResp, error)
 
 	// SubmitMediaSource Retain one bounded supplied recording or private reference
 	SubmitMediaSource(ctx context.Context, options *SubmitMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SubmitMediaSourceResponse, error)
-	SubmitMediaSourceWithResponse(ctx context.Context, options *SubmitMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SubmitMediaSourceResp, error)
 
 	// GetMediaSource Read caller-visible media status
 	GetMediaSource(ctx context.Context, options *GetMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMediaSourceResponse, error)
-	GetMediaSourceWithResponse(ctx context.Context, options *GetMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMediaSourceResp, error)
 
 	// ImportMediaArtifact Retain one bounded original media or transcript input
 	ImportMediaArtifact(ctx context.Context, options *ImportMediaArtifactRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMediaArtifactResponse, error)
-	ImportMediaArtifactWithResponse(ctx context.Context, options *ImportMediaArtifactRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMediaArtifactResp, error)
 
 	// RetryMediaSource Retry explicit processing for one source
 	RetryMediaSource(ctx context.Context, options *RetryMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryMediaSourceResponse, error)
-	RetryMediaSourceWithResponse(ctx context.Context, options *RetryMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryMediaSourceResp, error)
 
 	// CreateNode Create a directory
 	CreateNode(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResponse, error)
-	CreateNodeWithResponse(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResp, error)
 
 	// GetNode Stat a node by id (live or trashed)
 	GetNode(ctx context.Context, options *GetNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeResponse, error)
-	GetNodeWithResponse(ctx context.Context, options *GetNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeResp, error)
 
 	// MoveNode Move and/or rename a node (metadata only; bytes never move)
 	MoveNode(ctx context.Context, options *MoveNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveNodeResponse, error)
-	MoveNodeWithResponse(ctx context.Context, options *MoveNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveNodeResp, error)
 
 	// ListChildren List a directory's live children (dirs first, name-sorted), paginated
 	ListChildren(ctx context.Context, options *ListChildrenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListChildrenResponse, error)
-	ListChildrenWithResponse(ctx context.Context, options *ListChildrenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListChildrenResp, error)
 
 	// GetNodeContent Stream a file's bytes
 	GetNodeContent(ctx context.Context, options *GetNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeContentResponse, error)
-	GetNodeContentWithResponse(ctx context.Context, options *GetNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeContentResp, error)
 
 	// ReplaceNodeContent Replace a file's content with a new immutable head
 	ReplaceNodeContent(ctx context.Context, options *ReplaceNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReplaceNodeContentResponse, error)
-	ReplaceNodeContentWithResponse(ctx context.Context, options *ReplaceNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReplaceNodeContentResp, error)
 
 	// ListNodeProvenance List immutable origin facts for one file node
 	ListNodeProvenance(ctx context.Context, options *ListNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeProvenanceResponse, error)
-	ListNodeProvenanceWithResponse(ctx context.Context, options *ListNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeProvenanceResp, error)
 
 	// AppendNodeProvenance Append an immutable origin fact to a file node
 	AppendNodeProvenance(ctx context.Context, options *AppendNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendNodeProvenanceResponse, error)
-	AppendNodeProvenanceWithResponse(ctx context.Context, options *AppendNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendNodeProvenanceResp, error)
 
 	// RestoreNode Restore a trash root to its original location (root fallback, suffix on collision)
 	RestoreNode(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResponse, error)
-	RestoreNodeWithResponse(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResp, error)
 
 	// RevertNodeContent Create a new head from one of the file's prior immutable versions
 	RevertNodeContent(ctx context.Context, options *RevertNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevertNodeContentResponse, error)
-	RevertNodeContentWithResponse(ctx context.Context, options *RevertNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevertNodeContentResp, error)
 
 	// ListNodeTags List tags assigned to a node
 	ListNodeTags(ctx context.Context, options *ListNodeTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeTagsResponse, error)
-	ListNodeTagsWithResponse(ctx context.Context, options *ListNodeTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeTagsResp, error)
 
 	// UnassignTag Remove a tag assignment from a node
 	UnassignTag(ctx context.Context, options *UnassignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagResponse, error)
-	UnassignTagWithResponse(ctx context.Context, options *UnassignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagResp, error)
 
 	// AssignTag Assign a tag to a node
 	AssignTag(ctx context.Context, options *AssignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagResponse, error)
-	AssignTagWithResponse(ctx context.Context, options *AssignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagResp, error)
 
 	// TrashNode Move a node and its subtree to the trash
 	TrashNode(ctx context.Context, options *TrashNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashNodeResponse, error)
-	TrashNodeWithResponse(ctx context.Context, options *TrashNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashNodeResp, error)
 
 	// VerifyNodeContent Re-hash one file and bind the evidence to its node revision
 	VerifyNodeContent(ctx context.Context, options *VerifyNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyNodeContentResponse, error)
-	VerifyNodeContentWithResponse(ctx context.Context, options *VerifyNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyNodeContentResp, error)
 
 	// ListContentVersions List a file's immutable content versions, newest first
 	ListContentVersions(ctx context.Context, options *ListContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContentVersionsResponse, error)
-	ListContentVersionsWithResponse(ctx context.Context, options *ListContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContentVersionsResp, error)
 
 	// PruneNodeContentVersions Preview or prune selected non-current content versions
 	PruneNodeContentVersions(ctx context.Context, options *PruneNodeContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PruneNodeContentVersionsResponse, error)
-	PruneNodeContentVersionsWithResponse(ctx context.Context, options *PruneNodeContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PruneNodeContentVersionsResp, error)
 
 	// ResolvePath Resolve an absolute virtual path to its node
 	ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error)
-	ResolvePathWithResponse(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResp, error)
 
 	// MkdirPath Create one directory at an exact virtual path
 	MkdirPath(ctx context.Context, options *MkdirPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MkdirPathResponse, error)
-	MkdirPathWithResponse(ctx context.Context, options *MkdirPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MkdirPathResp, error)
 
 	// MovePath Move a node by virtual path in one transaction
 	MovePath(ctx context.Context, options *MovePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePathResponse, error)
-	MovePathWithResponse(ctx context.Context, options *MovePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePathResp, error)
 
 	// UnassignTagPath Remove a tag from a transactionally resolved path
 	UnassignTagPath(ctx context.Context, options *UnassignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagPathResponse, error)
-	UnassignTagPathWithResponse(ctx context.Context, options *UnassignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagPathResp, error)
 
 	// AssignTagPath Assign a tag to a transactionally resolved path
 	AssignTagPath(ctx context.Context, options *AssignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagPathResponse, error)
-	AssignTagPathWithResponse(ctx context.Context, options *AssignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagPathResp, error)
 
 	// TrashPath Move a virtual path and its subtree to the trash in one transaction
 	TrashPath(ctx context.Context, options *TrashPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPathResponse, error)
-	TrashPathWithResponse(ctx context.Context, options *TrashPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPathResp, error)
 
 	// GrantDocumentProcessingConsent Grant consent for one exact reviewed processing plan
 	GrantDocumentProcessingConsent(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResponse, error)
-	GrantDocumentProcessingConsentWithResponse(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResp, error)
 
 	// RevokeDocumentProcessingConsent Revoke current operator processing consent
 	RevokeDocumentProcessingConsent(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RevokeDocumentProcessingConsentResponse, error)
-	RevokeDocumentProcessingConsentWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RevokeDocumentProcessingConsentResp, error)
 
 	// GrantProcessingConsent Explicitly grant existing processing consent
 	GrantProcessingConsent(ctx context.Context, options *GrantProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantProcessingConsentResponse, error)
-	GrantProcessingConsentWithResponse(ctx context.Context, options *GrantProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantProcessingConsentResp, error)
 
 	// RevokeProcessingConsent Revoke a principal and scope before further provider access
 	RevokeProcessingConsent(ctx context.Context, options *RevokeProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeProcessingConsentResponse, error)
-	RevokeProcessingConsentWithResponse(ctx context.Context, options *RevokeProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeProcessingConsentResp, error)
 
 	// StartDocumentProcessing Start the exact reviewed document-processing plan
 	StartDocumentProcessing(ctx context.Context, options *StartDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartDocumentProcessingResponse, error)
-	StartDocumentProcessingWithResponse(ctx context.Context, options *StartDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartDocumentProcessingResp, error)
 
 	// GetDocumentProcessingJob Read aggregate document-processing status
 	GetDocumentProcessingJob(ctx context.Context, options *GetDocumentProcessingJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingJobResponse, error)
-	GetDocumentProcessingJobWithResponse(ctx context.Context, options *GetDocumentProcessingJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingJobResp, error)
 
 	// PlanDocumentProcessing Preview provider disclosure for one document version
 	PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error)
-	PlanDocumentProcessingWithResponse(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResp, error)
 
 	// ListDocumentProcessingProfiles List locally executable document-processing profiles
 	ListDocumentProcessingProfiles(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error)
-	ListDocumentProcessingProfilesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResp, error)
 
 	// ResolveDocumentSourceFence Resolve exact current live document search authority
 	ResolveDocumentSourceFence(ctx context.Context, options *ResolveDocumentSourceFenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSourceFenceResponse, error)
-	ResolveDocumentSourceFenceWithResponse(ctx context.Context, options *ResolveDocumentSourceFenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSourceFenceResp, error)
 
 	// ParseQuery Validate a search expression and resolve its saved references
 	ParseQuery(ctx context.Context, options *ParseQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ParseQueryResponse, error)
-	ParseQueryWithResponse(ctx context.Context, options *ParseQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ParseQueryResp, error)
 
 	// ReadDocumentRenditionBySelector Stream the active rendition for one exact source selector
 	ReadDocumentRenditionBySelector(ctx context.Context, options *ReadDocumentRenditionBySelectorRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionBySelectorResponse, error)
-	ReadDocumentRenditionBySelectorWithResponse(ctx context.Context, options *ReadDocumentRenditionBySelectorRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionBySelectorResp, error)
 
 	// ReadDocumentRenditionWindow Read one bounded Unicode rendition window
 	ReadDocumentRenditionWindow(ctx context.Context, options *ReadDocumentRenditionWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionWindowResponse, error)
-	ReadDocumentRenditionWindowWithResponse(ctx context.Context, options *ReadDocumentRenditionWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionWindowResp, error)
 
 	// GetDocumentRendition Stream one exact active sanitized-Markdown rendition
 	GetDocumentRendition(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResponse206, error)
-	GetDocumentRenditionWithResponse(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResp, error)
 
 	// ListSavedQueries List saved query and highlight definitions by name
 	ListSavedQueries(ctx context.Context, options *ListSavedQueriesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSavedQueriesResponse, error)
-	ListSavedQueriesWithResponse(ctx context.Context, options *ListSavedQueriesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSavedQueriesResp, error)
 
 	// CreateSavedQuery Save one complete query or literal highlight set
 	CreateSavedQuery(ctx context.Context, options *CreateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateSavedQueryResponse, error)
-	CreateSavedQueryWithResponse(ctx context.Context, options *CreateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateSavedQueryResp, error)
 
 	// DeleteSavedQuery Delete a saved definition under its current revision
 	DeleteSavedQuery(ctx context.Context, options *DeleteSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteSavedQueryResponse, error)
-	DeleteSavedQueryWithResponse(ctx context.Context, options *DeleteSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteSavedQueryResp, error)
 
 	// GetSavedQuery Inspect one saved definition by stable ID
 	GetSavedQuery(ctx context.Context, options *GetSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSavedQueryResponse, error)
-	GetSavedQueryWithResponse(ctx context.Context, options *GetSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSavedQueryResp, error)
 
 	// UpdateSavedQuery Edit a saved definition under its current revision
 	UpdateSavedQuery(ctx context.Context, options *UpdateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateSavedQueryResponse, error)
-	UpdateSavedQueryWithResponse(ctx context.Context, options *UpdateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateSavedQueryResp, error)
 
 	// RunSavedQuery Run one revision-fenced saved query and retain its receipt
 	RunSavedQuery(ctx context.Context, options *RunSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedQueryResponse, error)
-	RunSavedQueryWithResponse(ctx context.Context, options *RunSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedQueryResp, error)
 
 	// Search Search live document names and extracted text
 	Search(ctx context.Context, options *SearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchResponse, error)
-	SearchWithResponse(ctx context.Context, options *SearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchResp, error)
 
 	// SearchDocuments Search exact source-fenced document versions
 	SearchDocuments(ctx context.Context, options *SearchDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchDocumentsResponse, error)
-	SearchDocumentsWithResponse(ctx context.Context, options *SearchDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchDocumentsResp, error)
 
 	// ValidateDocumentSearch Validate document-search semantics without executing a search
 	ValidateDocumentSearch(ctx context.Context, options *ValidateDocumentSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateDocumentSearchResponse, error)
-	ValidateDocumentSearchWithResponse(ctx context.Context, options *ValidateDocumentSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateDocumentSearchResp, error)
 
 	// StorageStatus Report loose and packed physical storage usage
 	StorageStatus(ctx context.Context, options *StorageStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageStatusResponse, error)
-	StorageStatusWithResponse(ctx context.Context, options *StorageStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageStatusResp, error)
 
 	// StartStorageEvacuation Start the exact store evacuation reviewed by a preview
 	StartStorageEvacuation(ctx context.Context, options *StartStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageEvacuationResponse, error)
-	StartStorageEvacuationWithResponse(ctx context.Context, options *StartStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageEvacuationResp, error)
 
 	// PreviewStorageEvacuation Preview complete evacuation of one secondary store to primary
 	PreviewStorageEvacuation(ctx context.Context, options *PreviewStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageEvacuationResponse, error)
-	PreviewStorageEvacuationWithResponse(ctx context.Context, options *PreviewStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageEvacuationResp, error)
 
 	// StoragePack Pack authorized loose blobs into immutable pack files
 	StoragePack(ctx context.Context, options *StoragePackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StoragePackResponse, error)
-	StoragePackWithResponse(ctx context.Context, options *StoragePackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StoragePackResp, error)
 
 	// StartStoragePlacement Start the exact verified placement reviewed by a preview
 	StartStoragePlacement(ctx context.Context, options *StartStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStoragePlacementResponse, error)
-	StartStoragePlacementWithResponse(ctx context.Context, options *StartStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStoragePlacementResp, error)
 
 	// PreviewStoragePlacement Preview verified placement for retained content beneath one node
 	PreviewStoragePlacement(ctx context.Context, options *PreviewStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStoragePlacementResponse, error)
-	PreviewStoragePlacementWithResponse(ctx context.Context, options *PreviewStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStoragePlacementResp, error)
 
 	// StorageRepack Rewrite eligible sparse packs and retire dead pack files
 	StorageRepack(ctx context.Context, options *StorageRepackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageRepackResponse, error)
-	StorageRepackWithResponse(ctx context.Context, options *StorageRepackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageRepackResp, error)
 
 	// StartStorageRepair Start the exact storage repair reviewed by a preview
 	StartStorageRepair(ctx context.Context, options *StartStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageRepairResponse, error)
-	StartStorageRepairWithResponse(ctx context.Context, options *StartStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageRepairResp, error)
 
 	// PreviewStorageRepair Preview one explicit verified storage repair
 	PreviewStorageRepair(ctx context.Context, options *PreviewStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageRepairResponse, error)
-	PreviewStorageRepairWithResponse(ctx context.Context, options *PreviewStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageRepairResp, error)
 
 	// StartStorageSalvage Start the exact storage salvage reviewed by a preview
 	StartStorageSalvage(ctx context.Context, options *StartStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageSalvageResponse, error)
-	StartStorageSalvageWithResponse(ctx context.Context, options *StartStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageSalvageResp, error)
 
 	// PreviewStorageSalvage Preview one explicit verified storage salvage
 	PreviewStorageSalvage(ctx context.Context, options *PreviewStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageSalvageResponse, error)
-	PreviewStorageSalvageWithResponse(ctx context.Context, options *PreviewStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageSalvageResp, error)
 
 	// ListBlobStores List cataloged blob stores and their deployment state
 	ListBlobStores(ctx context.Context, options *ListBlobStoresRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBlobStoresResponse, error)
-	ListBlobStoresWithResponse(ctx context.Context, options *ListBlobStoresRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBlobStoresResp, error)
 
 	// RegisterBlobStore Attach the exact secondary store reviewed by a preview
 	RegisterBlobStore(ctx context.Context, options *RegisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterBlobStoreResponse, error)
-	RegisterBlobStoreWithResponse(ctx context.Context, options *RegisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterBlobStoreResp, error)
 
 	// PreviewBlobStoreRegistration Preview attaching one configured secondary blob store
 	PreviewBlobStoreRegistration(ctx context.Context, options *PreviewBlobStoreRegistrationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBlobStoreRegistrationResponse, error)
-	PreviewBlobStoreRegistrationWithResponse(ctx context.Context, options *PreviewBlobStoreRegistrationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBlobStoreRegistrationResp, error)
 
 	// UnregisterBlobStore Forget one detached and empty secondary store identity
 	UnregisterBlobStore(ctx context.Context, options *UnregisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
-	UnregisterBlobStoreWithResponse(ctx context.Context, options *UnregisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnregisterBlobStoreResp, error)
 
 	// DetachBlobStore Detach one empty secondary store from runtime use
 	DetachBlobStore(ctx context.Context, options *DetachBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachBlobStoreResponse, error)
-	DetachBlobStoreWithResponse(ctx context.Context, options *DetachBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachBlobStoreResp, error)
 
 	// ListTags List tag definitions by name
 	ListTags(ctx context.Context, options *ListTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagsResponse, error)
-	ListTagsWithResponse(ctx context.Context, options *ListTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagsResp, error)
 
 	// CreateTag Define a tag with a new stable ID
 	CreateTag(ctx context.Context, options *CreateTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTagResponse, error)
-	CreateTagWithResponse(ctx context.Context, options *CreateTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTagResp, error)
 
 	// ResolveTagByName Resolve an exact tag name to its stable ID
 	ResolveTagByName(ctx context.Context, options *ResolveTagByNameRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTagByNameResponse, error)
-	ResolveTagByNameWithResponse(ctx context.Context, options *ResolveTagByNameRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTagByNameResp, error)
 
 	// DeleteTag Delete a tag definition and all assignments
 	DeleteTag(ctx context.Context, options *DeleteTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteTagResponse, error)
-	DeleteTagWithResponse(ctx context.Context, options *DeleteTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteTagResp, error)
 
 	// GetTag Inspect one tag definition by stable ID
 	GetTag(ctx context.Context, options *GetTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTagResponse, error)
-	GetTagWithResponse(ctx context.Context, options *GetTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTagResp, error)
 
 	// RenameTag Rename a tag without changing its stable ID
 	RenameTag(ctx context.Context, options *RenameTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameTagResponse, error)
-	RenameTagWithResponse(ctx context.Context, options *RenameTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameTagResp, error)
 
 	// ListTagNodes List live and trashed nodes carrying a tag
 	ListTagNodes(ctx context.Context, options *ListTagNodesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagNodesResponse, error)
-	ListTagNodesWithResponse(ctx context.Context, options *ListTagNodesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagNodesResp, error)
 
 	// ReadTimelineCoverage Read current-file timeline coverage
 	ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineCoverageResponse, error)
-	ReadTimelineCoverageWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineCoverageResp, error)
 
 	// CreateTimelineRebuild Start or replay a timeline rebuild
 	CreateTimelineRebuild(ctx context.Context, options *CreateTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTimelineRebuildResponse, error)
-	CreateTimelineRebuildWithResponse(ctx context.Context, options *CreateTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTimelineRebuildResp, error)
 
 	// ReadTimelineRebuild Read timeline rebuild progress
 	ReadTimelineRebuild(ctx context.Context, options *ReadTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineRebuildResponse, error)
-	ReadTimelineRebuildWithResponse(ctx context.Context, options *ReadTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineRebuildResp, error)
 
 	// ListTrash List restorable trash roots, newest first, optionally paginated
 	ListTrash(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResponse, error)
-	ListTrashWithResponse(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResp, error)
 
 	// EmptyTrash Report (run=false) or hard-delete (run=true) trash roots
 	EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EmptyTrashResponse, error)
-	EmptyTrashWithResponse(ctx context.Context, options *EmptyTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EmptyTrashResp, error)
 
 	// UploadFile Upload one digest-checked file
 	UploadFile(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResponseJSON, error)
-	UploadFileWithResponse(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResp, error)
 
 	// Verify Validate metadata and re-hash every stored blob
 	Verify(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResponse, error)
-	VerifyWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResp, error)
 
 	// GetContentVersion Inspect one immutable content version by stable ID
 	GetContentVersion(ctx context.Context, options *GetContentVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionResponse, error)
-	GetContentVersionWithResponse(ctx context.Context, options *GetContentVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionResp, error)
 
 	// GetContentVersionBytes Stream one immutable content version by stable ID
 	GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResponse, error)
-	GetContentVersionBytesWithResponse(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResp, error)
 
 	// GetEmailMetadata Read selected email metadata for one immutable version
 	GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResponseJSON, error)
-	GetEmailMetadataWithResponse(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResp, error)
 
 	// EnsureEmailMetadata Ensure email metadata for one immutable version
 	EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnsureEmailMetadataResponse, error)
-	EnsureEmailMetadataWithResponse(ctx context.Context, options *EnsureEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnsureEmailMetadataResp, error)
 
 	// GetEmailMetadataGeneration Read an immutable email generation attached to one version
 	GetEmailMetadataGeneration(ctx context.Context, options *GetEmailMetadataGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataGenerationResponse, error)
-	GetEmailMetadataGenerationWithResponse(ctx context.Context, options *GetEmailMetadataGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataGenerationResp, error)
 
 	// GetEmailPart Stream one verified immutable email part artifact
 	GetEmailPart(ctx context.Context, options *GetEmailPartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailPartResponse, error)
-	GetEmailPartWithResponse(ctx context.Context, options *GetEmailPartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailPartResp, error)
 
 	// ListWatchedInboxes List effective watched-inbox configuration and runner status
 	ListWatchedInboxes(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListWatchedInboxesResponse, error)
-	ListWatchedInboxesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListWatchedInboxesResp, error)
 
 	// CreateWorkspaceQuery Create an exact bounded query snapshot
 	CreateWorkspaceQuery(ctx context.Context, options *CreateWorkspaceQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateWorkspaceQueryResponse, error)
-	CreateWorkspaceQueryWithResponse(ctx context.Context, options *CreateWorkspaceQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateWorkspaceQueryResp, error)
 
 	// ReadWorkspaceQueryPage Read one exact snapshot page
 	ReadWorkspaceQueryPage(ctx context.Context, options *ReadWorkspaceQueryPageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadWorkspaceQueryPageResponse, error)
-	ReadWorkspaceQueryPageWithResponse(ctx context.Context, options *ReadWorkspaceQueryPageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadWorkspaceQueryPageResp, error)
 
 	Health(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HealthResponse, error)
-	HealthWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HealthResp, error)
 }
 
 func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResponse, error) {
@@ -660,6 +513,10 @@ func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRe
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/challenge")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -705,6 +562,10 @@ func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequ
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -737,6 +598,10 @@ func (c *Client) PrepareWebDownload(ctx context.Context, options *PrepareWebDown
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -764,6 +629,10 @@ func (c *Client) RevokeWebSession(ctx context.Context, reqEditors ...runtime.Req
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-session")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -808,6 +677,10 @@ func (c *Client) CreateWebSession(ctx context.Context, reqEditors ...runtime.Req
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-session")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -872,6 +745,10 @@ func (c *Client) EnableAudit(ctx context.Context, options *EnableAuditRequestOpt
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/enable")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -944,6 +821,10 @@ func (c *Client) AuditNodeHistory(ctx context.Context, options *AuditNodeHistory
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1007,6 +888,10 @@ func (c *Client) PreviewAuditEnrollment(ctx context.Context, options *PreviewAud
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -1077,6 +962,10 @@ func (c *Client) AuditScopeHistory(ctx context.Context, options *AuditScopeHisto
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1146,6 +1035,10 @@ func (c *Client) AuditStatus(ctx context.Context, options *AuditStatusRequestOpt
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1209,6 +1102,10 @@ func (c *Client) VerifyAudit(ctx context.Context, options *VerifyAuditRequestOpt
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -1274,6 +1171,10 @@ func (c *Client) InitBackupRepository(ctx context.Context, options *InitBackupRe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1338,6 +1239,10 @@ func (c *Client) RestoreBackupSnapshot(ctx context.Context, options *RestoreBack
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1387,6 +1292,10 @@ func (c *Client) StreamBackupSnapshotRestore(ctx context.Context, options *Strea
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/restore/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -1456,6 +1365,10 @@ func (c *Client) ListBackupSnapshots(ctx context.Context, options *ListBackupSna
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1520,6 +1433,10 @@ func (c *Client) CreateBackupSnapshot(ctx context.Context, options *CreateBackup
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1569,6 +1486,10 @@ func (c *Client) StreamBackupSnapshotCreation(ctx context.Context, options *Stre
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -1634,6 +1555,10 @@ func (c *Client) VerifyBackupRepository(ctx context.Context, options *VerifyBack
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1683,6 +1608,10 @@ func (c *Client) StreamBackupRepositoryVerification(ctx context.Context, options
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/verify/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -1748,6 +1677,10 @@ func (c *Client) BatchMove(ctx context.Context, options *BatchMoveRequestOptions
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1812,6 +1745,10 @@ func (c *Client) ChangeBatchTags(ctx context.Context, options *ChangeBatchTagsRe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -1875,6 +1812,10 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/tags/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -1945,6 +1886,10 @@ func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2007,6 +1952,10 @@ func (c *Client) GetCollection(ctx context.Context, options *GetCollectionReques
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2071,6 +2020,10 @@ func (c *Client) GetCollectionLabel(ctx context.Context, options *GetCollectionL
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2134,6 +2087,10 @@ func (c *Client) SetCollectionLabel(ctx context.Context, options *SetCollectionL
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/label")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2204,6 +2161,10 @@ func (c *Client) ListCollectionMembers(ctx context.Context, options *ListCollect
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2272,6 +2233,10 @@ func (c *Client) GetCollectionQuality(ctx context.Context, options *GetCollectio
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/quality")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2343,6 +2308,10 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2412,6 +2381,10 @@ func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *Get
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2461,6 +2434,10 @@ func (c *Client) RunDerivativePurge(ctx context.Context, options *RunDerivativeP
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/derivatives/purge-jobs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2525,6 +2502,10 @@ func (c *Client) PlanDerivativePurge(ctx context.Context, options *PlanDerivativ
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/derivatives/purge-plans")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2598,6 +2579,10 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2661,6 +2646,10 @@ func (c *Client) ResolveDocumentSummaries(ctx context.Context, options *ResolveD
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/resolve")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2731,6 +2720,10 @@ func (c *Client) ListDuplicateContent(ctx context.Context, options *ListDuplicat
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2794,6 +2787,10 @@ func (c *Client) RequestEmailDocumentProcessing(ctx context.Context, options *Re
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-processing")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2859,6 +2856,10 @@ func (c *Client) PublishEmailDocuments(ctx context.Context, options *PublishEmai
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -2907,6 +2908,10 @@ func (c *Client) RemoveEmailDocumentPublication(ctx context.Context, options *Re
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications/{operation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -2971,6 +2976,10 @@ func (c *Client) GetEmailDocumentPublication(ctx context.Context, options *GetEm
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3033,6 +3042,10 @@ func (c *Client) ListEmailDocumentRelations(ctx context.Context, options *ListEm
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-relations")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3104,6 +3117,10 @@ func (c *Client) ReadFormatCapabilities(ctx context.Context, options *ReadFormat
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3168,6 +3185,10 @@ func (c *Client) Gc(ctx context.Context, options *GcRequestOptions, reqEditors .
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3229,6 +3250,10 @@ func (c *Client) VaultInfo(ctx context.Context, reqEditors ...runtime.RequestEdi
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/info")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3294,6 +3319,10 @@ func (c *Client) Ingest(ctx context.Context, options *IngestRequestOptions, reqE
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3358,6 +3387,10 @@ func (c *Client) PreflightIngest(ctx context.Context, options *PreflightIngestRe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3407,6 +3440,10 @@ func (c *Client) StreamIngest(ctx context.Context, options *StreamIngestRequestO
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/stream")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3469,6 +3506,10 @@ func (c *Client) ListJobs(ctx context.Context, reqEditors ...runtime.RequestEdit
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3533,6 +3574,10 @@ func (c *Client) GetStorageOperation(ctx context.Context, options *GetStorageOpe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3595,6 +3640,10 @@ func (c *Client) CancelStorageOperation(ctx context.Context, options *CancelStor
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}/cancel")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3660,6 +3709,10 @@ func (c *Client) PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcq
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3724,6 +3777,10 @@ func (c *Client) GrantMediaAcquisitionConsent(ctx context.Context, options *Gran
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3787,6 +3844,10 @@ func (c *Client) RevokeMediaAcquisitionConsent(ctx context.Context, options *Rev
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/consent/revocations")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3858,6 +3919,10 @@ func (c *Client) ListMediaOccurrences(ctx context.Context, options *ListMediaOcc
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -3921,6 +3986,10 @@ func (c *Client) DeclareMediaOccurrence(ctx context.Context, options *DeclareMed
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -3986,6 +4055,10 @@ func (c *Client) RevokeMediaOccurrence(ctx context.Context, options *RevokeMedia
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4047,6 +4120,10 @@ func (c *Client) ListMediaOrigins(ctx context.Context, reqEditors ...runtime.Req
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/origins")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4117,6 +4194,10 @@ func (c *Client) ListMediaSources(ctx context.Context, options *ListMediaSources
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4162,6 +4243,10 @@ func (c *Client) SubmitMediaSource(ctx context.Context, options *SubmitMediaSour
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4226,6 +4311,10 @@ func (c *Client) GetMediaSource(ctx context.Context, options *GetMediaSourceRequ
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4281,6 +4370,10 @@ func (c *Client) ImportMediaArtifact(ctx context.Context, options *ImportMediaAr
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/artifacts")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4346,6 +4439,10 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4410,6 +4507,10 @@ func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptio
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4472,6 +4573,10 @@ func (c *Client) GetNode(ctx context.Context, options *GetNodeRequestOptions, re
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4536,6 +4641,10 @@ func (c *Client) MoveNode(ctx context.Context, options *MoveNodeRequestOptions, 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4606,6 +4715,10 @@ func (c *Client) ListChildren(ctx context.Context, options *ListChildrenRequestO
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4668,6 +4781,10 @@ func (c *Client) GetNodeContent(ctx context.Context, options *GetNodeContentRequ
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4732,6 +4849,10 @@ func (c *Client) ReplaceNodeContent(ctx context.Context, options *ReplaceNodeCon
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4802,6 +4923,10 @@ func (c *Client) ListNodeProvenance(ctx context.Context, options *ListNodeProven
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4866,6 +4991,10 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -4928,6 +5057,10 @@ func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOpt
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/restore")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -4992,6 +5125,10 @@ func (c *Client) RevertNodeContent(ctx context.Context, options *RevertNodeConte
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/revert")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5062,6 +5199,10 @@ func (c *Client) ListNodeTags(ctx context.Context, options *ListNodeTagsRequestO
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5124,6 +5265,10 @@ func (c *Client) UnassignTag(ctx context.Context, options *UnassignTagRequestOpt
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5188,6 +5333,10 @@ func (c *Client) AssignTag(ctx context.Context, options *AssignTagRequestOptions
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5251,6 +5400,10 @@ func (c *Client) TrashNode(ctx context.Context, options *TrashNodeRequestOptions
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5313,6 +5466,10 @@ func (c *Client) VerifyNodeContent(ctx context.Context, options *VerifyNodeConte
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5383,6 +5540,10 @@ func (c *Client) ListContentVersions(ctx context.Context, options *ListContentVe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5446,6 +5607,10 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/versions/prune")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5515,6 +5680,10 @@ func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOpt
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5578,6 +5747,10 @@ func (c *Client) MkdirPath(ctx context.Context, options *MkdirPathRequestOptions
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/mkdir")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5643,6 +5816,10 @@ func (c *Client) MovePath(ctx context.Context, options *MovePathRequestOptions, 
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5706,6 +5883,10 @@ func (c *Client) UnassignTagPath(ctx context.Context, options *UnassignTagPathRe
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5771,6 +5952,10 @@ func (c *Client) AssignTagPath(ctx context.Context, options *AssignTagPathReques
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5834,6 +6019,10 @@ func (c *Client) TrashPath(ctx context.Context, options *TrashPathRequestOptions
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/trash")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -5899,6 +6088,10 @@ func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *Gr
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -5960,6 +6153,10 @@ func (c *Client) RevokeDocumentProcessingConsent(ctx context.Context, reqEditors
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consent/revocations")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6025,6 +6222,10 @@ func (c *Client) GrantProcessingConsent(ctx context.Context, options *GrantProce
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6089,6 +6290,10 @@ func (c *Client) RevokeProcessingConsent(ctx context.Context, options *RevokePro
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6138,6 +6343,10 @@ func (c *Client) StartDocumentProcessing(ctx context.Context, options *StartDocu
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/jobs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6201,6 +6410,10 @@ func (c *Client) GetDocumentProcessingJob(ctx context.Context, options *GetDocum
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/jobs/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6266,6 +6479,10 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6327,6 +6544,10 @@ func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/profiles")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6392,6 +6613,10 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6456,6 +6681,10 @@ func (c *Client) ParseQuery(ctx context.Context, options *ParseQueryRequestOptio
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6505,6 +6734,10 @@ func (c *Client) ReadDocumentRenditionBySelector(ctx context.Context, options *R
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/select")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6570,6 +6803,10 @@ func (c *Client) ReadDocumentRenditionWindow(ctx context.Context, options *ReadD
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6605,6 +6842,10 @@ func (c *Client) GetDocumentRendition(ctx context.Context, options *GetDocumentR
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/{attachment_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6676,6 +6917,10 @@ func (c *Client) ListSavedQueries(ctx context.Context, options *ListSavedQueries
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6740,6 +6985,10 @@ func (c *Client) CreateSavedQuery(ctx context.Context, options *CreateSavedQuery
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6803,6 +7052,10 @@ func (c *Client) DeleteSavedQuery(ctx context.Context, options *DeleteSavedQuery
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6865,6 +7118,10 @@ func (c *Client) GetSavedQuery(ctx context.Context, options *GetSavedQueryReques
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -6930,6 +7187,10 @@ func (c *Client) UpdateSavedQuery(ctx context.Context, options *UpdateSavedQuery
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -6993,6 +7254,10 @@ func (c *Client) RunSavedQuery(ctx context.Context, options *RunSavedQueryReques
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}/runs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7068,6 +7333,10 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7132,6 +7401,10 @@ func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7195,6 +7468,10 @@ func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDo
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/validate")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7264,6 +7541,10 @@ func (c *Client) StorageStatus(ctx context.Context, options *StorageStatusReques
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7327,6 +7608,10 @@ func (c *Client) StartStorageEvacuation(ctx context.Context, options *StartStora
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/evacuate")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7392,6 +7677,10 @@ func (c *Client) PreviewStorageEvacuation(ctx context.Context, options *PreviewS
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7455,6 +7744,10 @@ func (c *Client) StoragePack(ctx context.Context, options *StoragePackRequestOpt
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/pack")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7520,6 +7813,10 @@ func (c *Client) StartStoragePlacement(ctx context.Context, options *StartStorag
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7583,6 +7880,10 @@ func (c *Client) PreviewStoragePlacement(ctx context.Context, options *PreviewSt
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/place/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7648,6 +7949,10 @@ func (c *Client) StorageRepack(ctx context.Context, options *StorageRepackReques
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7711,6 +8016,10 @@ func (c *Client) StartStorageRepair(ctx context.Context, options *StartStorageRe
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repair")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7776,6 +8085,10 @@ func (c *Client) PreviewStorageRepair(ctx context.Context, options *PreviewStora
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7840,6 +8153,10 @@ func (c *Client) StartStorageSalvage(ctx context.Context, options *StartStorageS
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -7903,6 +8220,10 @@ func (c *Client) PreviewStorageSalvage(ctx context.Context, options *PreviewStor
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/salvage/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -7972,6 +8293,10 @@ func (c *Client) ListBlobStores(ctx context.Context, options *ListBlobStoresRequ
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8035,6 +8360,10 @@ func (c *Client) RegisterBlobStore(ctx context.Context, options *RegisterBlobSto
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8100,6 +8429,10 @@ func (c *Client) PreviewBlobStoreRegistration(ctx context.Context, options *Prev
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8147,6 +8480,10 @@ func (c *Client) UnregisterBlobStore(ctx context.Context, options *UnregisterBlo
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/{store_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8210,6 +8547,10 @@ func (c *Client) DetachBlobStore(ctx context.Context, options *DetachBlobStoreRe
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/{store_id}/detach")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8280,6 +8621,10 @@ func (c *Client) ListTags(ctx context.Context, options *ListTagsRequestOptions, 
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8343,6 +8688,10 @@ func (c *Client) CreateTag(ctx context.Context, options *CreateTagRequestOptions
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8412,6 +8761,10 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8474,6 +8827,10 @@ func (c *Client) DeleteTag(ctx context.Context, options *DeleteTagRequestOptions
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8538,6 +8895,10 @@ func (c *Client) GetTag(ctx context.Context, options *GetTagRequestOptions, reqE
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8601,6 +8962,10 @@ func (c *Client) RenameTag(ctx context.Context, options *RenameTagRequestOptions
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8672,6 +9037,10 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8733,6 +9102,10 @@ func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/coverage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8798,6 +9171,10 @@ func (c *Client) CreateTimelineRebuild(ctx context.Context, options *CreateTimel
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8860,6 +9237,10 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/rebuilds/{operation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -8930,6 +9311,10 @@ func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -8993,6 +9378,10 @@ func (c *Client) EmptyTrash(ctx context.Context, options *EmptyTrashRequestOptio
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/trash/empty")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -9064,6 +9453,10 @@ func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptio
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9125,6 +9518,10 @@ func (c *Client) Verify(ctx context.Context, reqEditors ...runtime.RequestEditor
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/verify")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -9189,6 +9586,10 @@ func (c *Client) GetContentVersion(ctx context.Context, options *GetContentVersi
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9252,6 +9653,10 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9314,6 +9719,10 @@ func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadata
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -9379,6 +9788,10 @@ func (c *Client) EnsureEmailMetadata(ctx context.Context, options *EnsureEmailMe
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9441,6 +9854,10 @@ func (c *Client) GetEmailMetadataGeneration(ctx context.Context, options *GetEma
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -9505,6 +9922,10 @@ func (c *Client) GetEmailPart(ctx context.Context, options *GetEmailPartRequestO
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9566,6 +9987,10 @@ func (c *Client) ListWatchedInboxes(ctx context.Context, reqEditors ...runtime.R
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/watches")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -9631,6 +10056,10 @@ func (c *Client) CreateWorkspaceQuery(ctx context.Context, options *CreateWorksp
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9695,6 +10124,10 @@ func (c *Client) ReadWorkspaceQueryPage(ctx context.Context, options *ReadWorksp
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
+	}
 	return responseParser(ctx, resp)
 }
 
@@ -9737,6 +10170,10 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/health")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	// Streaming callers own the raw body through the transport hook.
+	if resp.Streaming {
+		return nil, nil
 	}
 	return responseParser(ctx, resp)
 }
@@ -14009,7179 +14446,6 @@ func (o *ReadWorkspaceQueryPageRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
-func (c *Client) ChallengeDaemonWithResponse(ctx context.Context, options *ChallengeDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeDaemonResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/challenge",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/challenge")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ChallengeDaemonResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ChallengeDaemonResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ChallengeDaemonResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-func (c *Client) ShutdownDaemonWithResponse(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ShutdownDaemonResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/shutdown",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/shutdown")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ShutdownDaemonResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 202:
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PrepareWebDownload Verify a document and prepare a browser download
-func (c *Client) PrepareWebDownloadWithResponse(ctx context.Context, options *PrepareWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareWebDownloadResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/daemon/web-download",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-download")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PrepareWebDownloadResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RevokeWebSession Revoke the current browser session
-func (c *Client) RevokeWebSessionWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RevokeWebSessionResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-session",
-		Method:     "DELETE",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-session")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RevokeWebSessionResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 204:
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateWebSession Issue a scoped browser session
-func (c *Client) CreateWebSessionWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*CreateWebSessionResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-session",
-		Method:     "POST",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-session")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateWebSessionResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 201:
-		out.JSON201 = new(CreateWebSessionResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateWebSessionResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// EnableAudit Permanently enable the exact reviewed audit scope
-func (c *Client) EnableAuditWithResponse(ctx context.Context, options *EnableAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableAuditResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/audit/enable",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/enable")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &EnableAuditResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(EnableAuditResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "EnableAuditResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// AuditNodeHistory Read one audited node's canonical event timeline
-func (c *Client) AuditNodeHistoryWithResponse(ctx context.Context, options *AuditNodeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditNodeHistoryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/audit/history",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/history")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &AuditNodeHistoryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(AuditNodeHistoryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "AuditNodeHistoryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewAuditEnrollment Preview one permanent audit scope without changing the vault
-func (c *Client) PreviewAuditEnrollmentWithResponse(ctx context.Context, options *PreviewAuditEnrollmentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewAuditEnrollmentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/audit/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewAuditEnrollmentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewAuditEnrollmentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewAuditEnrollmentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// AuditScopeHistory Read canonical events across one permanent audit scope
-func (c *Client) AuditScopeHistoryWithResponse(ctx context.Context, options *AuditScopeHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditScopeHistoryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/audit/scopes/{scope_id}/history",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/scopes/{scope_id}/history")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &AuditScopeHistoryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(AuditScopeHistoryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "AuditScopeHistoryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// AuditStatus Inspect audit authority and optional node protection
-func (c *Client) AuditStatusWithResponse(ctx context.Context, options *AuditStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AuditStatusResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/audit/status",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/status")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &AuditStatusResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(AuditStatusResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "AuditStatusResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// VerifyAudit Replay audit authority and verify every protected blob
-func (c *Client) VerifyAuditWithResponse(ctx context.Context, options *VerifyAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyAuditResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/audit/verify",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/audit/verify")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &VerifyAuditResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(VerifyAuditResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "VerifyAuditResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// InitBackupRepository Initialize an immutable backup repository
-func (c *Client) InitBackupRepositoryWithResponse(ctx context.Context, options *InitBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InitBackupRepositoryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/init",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/init")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &InitBackupRepositoryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(InitBackupRepositoryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "InitBackupRepositoryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RestoreBackupSnapshot Restore and prove a snapshot in a separate vault directory
-func (c *Client) RestoreBackupSnapshotWithResponse(ctx context.Context, options *RestoreBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreBackupSnapshotResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/restore",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/restore")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RestoreBackupSnapshotResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RestoreBackupSnapshotResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RestoreBackupSnapshotResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StreamBackupSnapshotRestore Restore and prove a snapshot while streaming structured progress
-func (c *Client) StreamBackupSnapshotRestoreWithResponse(ctx context.Context, options *StreamBackupSnapshotRestoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotRestoreResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/restore/stream",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/restore/stream")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StreamBackupSnapshotRestoreResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListBackupSnapshots List snapshots in a backup repository
-func (c *Client) ListBackupSnapshotsWithResponse(ctx context.Context, options *ListBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBackupSnapshotsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/backup/snapshots",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListBackupSnapshotsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListBackupSnapshotsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListBackupSnapshotsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateBackupSnapshot Capture a verified logical snapshot of the live vault
-func (c *Client) CreateBackupSnapshotWithResponse(ctx context.Context, options *CreateBackupSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateBackupSnapshotResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/snapshots",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateBackupSnapshotResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(CreateBackupSnapshotResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateBackupSnapshotResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StreamBackupSnapshotCreation Capture a snapshot and stream structured progress
-func (c *Client) StreamBackupSnapshotCreationWithResponse(ctx context.Context, options *StreamBackupSnapshotCreationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupSnapshotCreationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/snapshots/stream",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/snapshots/stream")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StreamBackupSnapshotCreationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// VerifyBackupRepository Verify backup repository integrity
-func (c *Client) VerifyBackupRepositoryWithResponse(ctx context.Context, options *VerifyBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyBackupRepositoryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/verify",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/verify")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &VerifyBackupRepositoryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(VerifyBackupRepositoryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "VerifyBackupRepositoryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StreamBackupRepositoryVerification Verify a backup repository and stream structured progress
-func (c *Client) StreamBackupRepositoryVerificationWithResponse(ctx context.Context, options *StreamBackupRepositoryVerificationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamBackupRepositoryVerificationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/verify/stream",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/verify/stream")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StreamBackupRepositoryVerificationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// BatchMove Apply an all-or-nothing document reorganization
-func (c *Client) BatchMoveWithResponse(ctx context.Context, options *BatchMoveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BatchMoveResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/batch/move",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/move")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &BatchMoveResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(BatchMoveResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "BatchMoveResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ChangeBatchTags Assign or remove one tag across an atomic selected set
-func (c *Client) ChangeBatchTagsWithResponse(ctx context.Context, options *ChangeBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChangeBatchTagsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/batch/tags",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/tags")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ChangeBatchTagsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ChangeBatchTagsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ChangeBatchTagsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewBatchTags Observe exact tag membership for a revision-fenced selected set
-func (c *Client) PreviewBatchTagsWithResponse(ctx context.Context, options *PreviewBatchTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBatchTagsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/batch/tags/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/tags/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewBatchTagsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewBatchTagsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewBatchTagsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListCollections List document-bearing ingest runs, newest first
-func (c *Client) ListCollectionsWithResponse(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/collections",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListCollectionsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListCollectionsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListCollectionsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetCollection Inspect one ingest run and its current live summary
-func (c *Client) GetCollectionWithResponse(ctx context.Context, options *GetCollectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/collections/{id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetCollectionResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetCollectionResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetCollectionResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetCollectionLabel Read a collection's independently revisioned label
-func (c *Client) GetCollectionLabelWithResponse(ctx context.Context, options *GetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionLabelResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/collections/{id}/label",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/label")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetCollectionLabelResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetCollectionLabelResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetCollectionLabelResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &GetCollectionLabelResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// SetCollectionLabel Set or clear a collection label under its label revision
-func (c *Client) SetCollectionLabelWithResponse(ctx context.Context, options *SetCollectionLabelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetCollectionLabelResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/collections/{id}/label",
-		Method:      "PUT",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/label")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &SetCollectionLabelResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(SetCollectionLabelResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "SetCollectionLabelResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &SetCollectionLabelResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListCollectionMembers List a collection's current live file members
-func (c *Client) ListCollectionMembersWithResponse(ctx context.Context, options *ListCollectionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionMembersResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/collections/{id}/members",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/members")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListCollectionMembersResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListCollectionMembersResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListCollectionMembersResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetCollectionQuality Inspect bounded current collection quality and text coverage
-func (c *Client) GetCollectionQualityWithResponse(ctx context.Context, options *GetCollectionQualityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCollectionQualityResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/collections/{id}/quality",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/collections/{id}/quality")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetCollectionQualityResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetCollectionQualityResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetCollectionQualityResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// LookupContentReferences Find stable document versions that retain a SHA-256 identity
-func (c *Client) LookupContentReferencesWithResponse(ctx context.Context, options *LookupContentReferencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupContentReferencesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/content-references",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/content-references")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &LookupContentReferencesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(LookupContentReferencesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "LookupContentReferencesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
-func (c *Client) GetDocumentProcessingCoverageWithResponse(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/coverage",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/coverage")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetDocumentProcessingCoverageResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetDocumentProcessingCoverageResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetDocumentProcessingCoverageResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RunDerivativePurge Run one exact reviewed live derivative purge
-func (c *Client) RunDerivativePurgeWithResponse(ctx context.Context, options *RunDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunDerivativePurgeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/derivatives/purge-jobs",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/derivatives/purge-jobs")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RunDerivativePurgeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PlanDerivativePurge Preview one exact live derivative purge
-func (c *Client) PlanDerivativePurgeWithResponse(ctx context.Context, options *PlanDerivativePurgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDerivativePurgeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/derivatives/purge-plans",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/derivatives/purge-plans")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PlanDerivativePurgeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PlanDerivativePurgeResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PlanDerivativePurgeResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListDocuments List current live documents with authenticated keyset pagination
-func (c *Client) ListDocumentsWithResponse(ctx context.Context, options *ListDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/documents",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListDocumentsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListDocumentsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListDocumentsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ResolveDocumentSummaries Resolve bounded exact current live document summaries
-func (c *Client) ResolveDocumentSummariesWithResponse(ctx context.Context, options *ResolveDocumentSummariesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSummariesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/documents/resolve",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/resolve")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ResolveDocumentSummariesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ResolveDocumentSummariesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ResolveDocumentSummariesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListDuplicateContent Find live documents that share current content
-func (c *Client) ListDuplicateContentWithResponse(ctx context.Context, options *ListDuplicateContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDuplicateContentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/duplicates",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/duplicates")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListDuplicateContentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListDuplicateContentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListDuplicateContentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RequestEmailDocumentProcessing Request ordinary consent-aware attachment processing
-func (c *Client) RequestEmailDocumentProcessingWithResponse(ctx context.Context, options *RequestEmailDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RequestEmailDocumentProcessingResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/email-document-processing",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-processing")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RequestEmailDocumentProcessingResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RequestEmailDocumentProcessingResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RequestEmailDocumentProcessingResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PublishEmailDocuments Publish exact email attachments as ordinary documents
-func (c *Client) PublishEmailDocumentsWithResponse(ctx context.Context, options *PublishEmailDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishEmailDocumentsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/email-document-publications",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PublishEmailDocumentsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PublishEmailDocumentsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PublishEmailDocumentsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RemoveEmailDocumentPublication Release one receipt without deleting children
-func (c *Client) RemoveEmailDocumentPublicationWithResponse(ctx context.Context, options *RemoveEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemoveEmailDocumentPublicationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/email-document-publications/{operation_id}",
-		Method:      "DELETE",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications/{operation_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RemoveEmailDocumentPublicationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 204:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetEmailDocumentPublication Read an immutable publication receipt
-func (c *Client) GetEmailDocumentPublicationWithResponse(ctx context.Context, options *GetEmailDocumentPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailDocumentPublicationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/email-document-publications/{operation_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-publications/{operation_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetEmailDocumentPublicationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetEmailDocumentPublicationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetEmailDocumentPublicationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListEmailDocumentRelations Read a bounded page of exact parent or child occurrences
-func (c *Client) ListEmailDocumentRelationsWithResponse(ctx context.Context, options *ListEmailDocumentRelationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailDocumentRelationsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/email-document-relations",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/email-document-relations")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListEmailDocumentRelationsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListEmailDocumentRelationsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListEmailDocumentRelationsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReadFormatCapabilities Read per-format capability coverage
-func (c *Client) ReadFormatCapabilitiesWithResponse(ctx context.Context, options *ReadFormatCapabilitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadFormatCapabilitiesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/formats/capabilities",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/formats/capabilities")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReadFormatCapabilitiesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ReadFormatCapabilitiesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ReadFormatCapabilitiesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// Gc Report (run=false) or reclaim (run=true) unreachable blobs
-func (c *Client) GcWithResponse(ctx context.Context, options *GcRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GcResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/gc",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/gc")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GcResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GcResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GcResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// VaultInfo Identify the selected vault and summarize its contents
-func (c *Client) VaultInfoWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VaultInfoResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/info",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/info")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &VaultInfoResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(VaultInfoResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "VaultInfoResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// Ingest Import server-side files or directory trees (loopback callers only)
-func (c *Client) IngestWithResponse(ctx context.Context, options *IngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*IngestResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/ingest",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &IngestResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(IngestResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "IngestResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreflightIngest Inventory server-side files without opening content or mutating the vault
-func (c *Client) PreflightIngestWithResponse(ctx context.Context, options *PreflightIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightIngestResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/ingest/preflight",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/preflight")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreflightIngestResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreflightIngestResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreflightIngestResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StreamIngest Import server-side paths while streaming structured progress
-func (c *Client) StreamIngestWithResponse(ctx context.Context, options *StreamIngestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StreamIngestResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/ingest/stream",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/stream")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StreamIngestResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListJobs List daemon background jobs and their current status
-func (c *Client) ListJobsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListJobsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/jobs",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListJobsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListJobsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListJobsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetStorageOperation Inspect one durable storage operation and its latest receipt
-func (c *Client) GetStorageOperationWithResponse(ctx context.Context, options *GetStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetStorageOperationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/jobs/{operation_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetStorageOperationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetStorageOperationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetStorageOperationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CancelStorageOperation Request cancellation at the next durable object boundary
-func (c *Client) CancelStorageOperationWithResponse(ctx context.Context, options *CancelStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelStorageOperationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/jobs/{operation_id}/cancel",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}/cancel")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CancelStorageOperationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(CancelStorageOperationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CancelStorageOperationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PlanMediaAcquisition Recognize a private reference without network access
-func (c *Client) PlanMediaAcquisitionWithResponse(ctx context.Context, options *PlanMediaAcquisitionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanMediaAcquisitionResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/acquisition-plan",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/acquisition-plan")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PlanMediaAcquisitionResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PlanMediaAcquisitionResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PlanMediaAcquisitionResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GrantMediaAcquisitionConsent Grant one exact current media acquisition plan
-func (c *Client) GrantMediaAcquisitionConsentWithResponse(ctx context.Context, options *GrantMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantMediaAcquisitionConsentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/consent/grants",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/consent/grants")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GrantMediaAcquisitionConsentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GrantMediaAcquisitionConsentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GrantMediaAcquisitionConsentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RevokeMediaAcquisitionConsent Revoke acquisition consent for one registered origin
-func (c *Client) RevokeMediaAcquisitionConsentWithResponse(ctx context.Context, options *RevokeMediaAcquisitionConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaAcquisitionConsentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/consent/revocations",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/consent/revocations")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RevokeMediaAcquisitionConsentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RevokeMediaAcquisitionConsentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RevokeMediaAcquisitionConsentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListMediaOccurrences List caller-visible media occurrences
-func (c *Client) ListMediaOccurrencesWithResponse(ctx context.Context, options *ListMediaOccurrencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaOccurrencesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/occurrences",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListMediaOccurrencesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListMediaOccurrencesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListMediaOccurrencesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// DeclareMediaOccurrence Declare one immutable caller occurrence revision
-func (c *Client) DeclareMediaOccurrenceWithResponse(ctx context.Context, options *DeclareMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeclareMediaOccurrenceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/occurrences",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &DeclareMediaOccurrenceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(DeclareMediaOccurrenceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "DeclareMediaOccurrenceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RevokeMediaOccurrence Revoke one caller-owned occurrence
-func (c *Client) RevokeMediaOccurrenceWithResponse(ctx context.Context, options *RevokeMediaOccurrenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeMediaOccurrenceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/occurrences/{occurrence_id}",
-		Method:      "DELETE",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/occurrences/{occurrence_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RevokeMediaOccurrenceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RevokeMediaOccurrenceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RevokeMediaOccurrenceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListMediaOrigins List registered media origin capabilities
-func (c *Client) ListMediaOriginsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListMediaOriginsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/origins",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/origins")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListMediaOriginsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListMediaOriginsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListMediaOriginsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListMediaSources List caller-visible media sources
-func (c *Client) ListMediaSourcesWithResponse(ctx context.Context, options *ListMediaSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMediaSourcesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/sources",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListMediaSourcesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListMediaSourcesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListMediaSourcesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// SubmitMediaSource Retain one bounded supplied recording or private reference
-func (c *Client) SubmitMediaSourceWithResponse(ctx context.Context, options *SubmitMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SubmitMediaSourceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/sources",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &SubmitMediaSourceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(SubmitMediaSourceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "SubmitMediaSourceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetMediaSource Read caller-visible media status
-func (c *Client) GetMediaSourceWithResponse(ctx context.Context, options *GetMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMediaSourceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/sources/{source_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetMediaSourceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetMediaSourceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMediaSourceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ImportMediaArtifact Retain one bounded original media or transcript input
-func (c *Client) ImportMediaArtifactWithResponse(ctx context.Context, options *ImportMediaArtifactRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportMediaArtifactResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/sources/{source_id}/artifacts",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "multipart/form-data",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/artifacts")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ImportMediaArtifactResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ImportMediaArtifactResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ImportMediaArtifactResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RetryMediaSource Retry explicit processing for one source
-func (c *Client) RetryMediaSourceWithResponse(ctx context.Context, options *RetryMediaSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryMediaSourceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/media/sources/{source_id}/retry",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/retry")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RetryMediaSourceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RetryMediaSourceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RetryMediaSourceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateNode Create a directory
-func (c *Client) CreateNodeWithResponse(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateNodeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 201:
-		out.JSON201 = new(CreateNodeResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateNodeResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers201 = &CreateNodeResp201Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetNode Stat a node by id (live or trashed)
-func (c *Client) GetNodeWithResponse(ctx context.Context, options *GetNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetNodeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetNodeResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetNodeResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &GetNodeResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// MoveNode Move and/or rename a node (metadata only; bytes never move)
-func (c *Client) MoveNodeWithResponse(ctx context.Context, options *MoveNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveNodeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}",
-		Method:      "PATCH",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &MoveNodeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(MoveNodeResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "MoveNodeResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &MoveNodeResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListChildren List a directory's live children (dirs first, name-sorted), paginated
-func (c *Client) ListChildrenWithResponse(ctx context.Context, options *ListChildrenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListChildrenResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/children",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/children")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListChildrenResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListChildrenResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListChildrenResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetNodeContent Stream a file's bytes
-func (c *Client) GetNodeContentWithResponse(ctx context.Context, options *GetNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNodeContentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/content",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/content")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetNodeContentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.Headers200 = &GetNodeContentResp200Headers{
-			ContentDigest:          resp.Headers.Get("Content-Digest"),
-			XDocbankBlobHash:       resp.Headers.Get("X-Docbank-Blob-Hash"),
-			XDocbankBlobSize:       resp.Headers.Get("X-Docbank-Blob-Size"),
-			XDocbankContentVersion: resp.Headers.Get("X-Docbank-Content-Version"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReplaceNodeContent Replace a file's content with a new immutable head
-func (c *Client) ReplaceNodeContentWithResponse(ctx context.Context, options *ReplaceNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReplaceNodeContentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/content",
-		Method:      "PUT",
-		Options:     options,
-		ContentType: "*/*",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/content")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReplaceNodeContentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ReplaceNodeContentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ReplaceNodeContentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &ReplaceNodeContentResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListNodeProvenance List immutable origin facts for one file node
-func (c *Client) ListNodeProvenanceWithResponse(ctx context.Context, options *ListNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeProvenanceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/provenance",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/provenance")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListNodeProvenanceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListNodeProvenanceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListNodeProvenanceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// AppendNodeProvenance Append an immutable origin fact to a file node
-func (c *Client) AppendNodeProvenanceWithResponse(ctx context.Context, options *AppendNodeProvenanceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendNodeProvenanceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/provenance",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/provenance")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &AppendNodeProvenanceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 201:
-		out.JSON201 = new(AppendNodeProvenanceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "AppendNodeProvenanceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers201 = &AppendNodeProvenanceResp201Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RestoreNode Restore a trash root to its original location (root fallback, suffix on collision)
-func (c *Client) RestoreNodeWithResponse(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/restore",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/restore")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RestoreNodeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RestoreNodeResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RestoreNodeResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &RestoreNodeResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RevertNodeContent Create a new head from one of the file's prior immutable versions
-func (c *Client) RevertNodeContentWithResponse(ctx context.Context, options *RevertNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevertNodeContentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/revert",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/revert")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RevertNodeContentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RevertNodeContentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RevertNodeContentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &RevertNodeContentResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListNodeTags List tags assigned to a node
-func (c *Client) ListNodeTagsWithResponse(ctx context.Context, options *ListNodeTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNodeTagsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/tags",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListNodeTagsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListNodeTagsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListNodeTagsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// UnassignTag Remove a tag assignment from a node
-func (c *Client) UnassignTagWithResponse(ctx context.Context, options *UnassignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/tags/{tag_id}",
-		Method:     "DELETE",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &UnassignTagResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(UnassignTagResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "UnassignTagResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &UnassignTagResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// AssignTag Assign a tag to a node
-func (c *Client) AssignTagWithResponse(ctx context.Context, options *AssignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/tags/{tag_id}",
-		Method:     "PUT",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &AssignTagResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(AssignTagResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "AssignTagResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &AssignTagResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// TrashNode Move a node and its subtree to the trash
-func (c *Client) TrashNodeWithResponse(ctx context.Context, options *TrashNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashNodeResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/trash",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/trash")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &TrashNodeResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(TrashNodeResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "TrashNodeResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &TrashNodeResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// VerifyNodeContent Re-hash one file and bind the evidence to its node revision
-func (c *Client) VerifyNodeContentWithResponse(ctx context.Context, options *VerifyNodeContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyNodeContentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/verify",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/verify")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &VerifyNodeContentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(VerifyNodeContentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "VerifyNodeContentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListContentVersions List a file's immutable content versions, newest first
-func (c *Client) ListContentVersionsWithResponse(ctx context.Context, options *ListContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContentVersionsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/versions",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/versions")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListContentVersionsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListContentVersionsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListContentVersionsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PruneNodeContentVersions Preview or prune selected non-current content versions
-func (c *Client) PruneNodeContentVersionsWithResponse(ctx context.Context, options *PruneNodeContentVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PruneNodeContentVersionsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/versions/prune",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/versions/prune")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PruneNodeContentVersionsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PruneNodeContentVersionsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PruneNodeContentVersionsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &PruneNodeContentVersionsResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ResolvePath Resolve an absolute virtual path to its node
-func (c *Client) ResolvePathWithResponse(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/path",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ResolvePathResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ResolvePathResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ResolvePathResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &ResolvePathResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// MkdirPath Create one directory at an exact virtual path
-func (c *Client) MkdirPathWithResponse(ctx context.Context, options *MkdirPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MkdirPathResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/path/mkdir",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/mkdir")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &MkdirPathResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 201:
-		out.JSON201 = new(MkdirPathResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "MkdirPathResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers201 = &MkdirPathResp201Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// MovePath Move a node by virtual path in one transaction
-func (c *Client) MovePathWithResponse(ctx context.Context, options *MovePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePathResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/path/move",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/move")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &MovePathResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(MovePathResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "MovePathResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &MovePathResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// UnassignTagPath Remove a tag from a transactionally resolved path
-func (c *Client) UnassignTagPathWithResponse(ctx context.Context, options *UnassignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagPathResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/path/tags/{tag_id}",
-		Method:      "DELETE",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &UnassignTagPathResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(UnassignTagPathResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "UnassignTagPathResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &UnassignTagPathResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// AssignTagPath Assign a tag to a transactionally resolved path
-func (c *Client) AssignTagPathWithResponse(ctx context.Context, options *AssignTagPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignTagPathResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/path/tags/{tag_id}",
-		Method:      "PUT",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &AssignTagPathResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(AssignTagPathResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "AssignTagPathResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &AssignTagPathResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// TrashPath Move a virtual path and its subtree to the trash in one transaction
-func (c *Client) TrashPathWithResponse(ctx context.Context, options *TrashPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPathResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/path/trash",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/trash")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &TrashPathResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(TrashPathResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "TrashPathResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &TrashPathResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GrantDocumentProcessingConsent Grant consent for one exact reviewed processing plan
-func (c *Client) GrantDocumentProcessingConsentWithResponse(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/consent/grants",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consent/grants")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GrantDocumentProcessingConsentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GrantDocumentProcessingConsentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GrantDocumentProcessingConsentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RevokeDocumentProcessingConsent Revoke current operator processing consent
-func (c *Client) RevokeDocumentProcessingConsentWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RevokeDocumentProcessingConsentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/consent/revocations",
-		Method:     "POST",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consent/revocations")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RevokeDocumentProcessingConsentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RevokeDocumentProcessingConsentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RevokeDocumentProcessingConsentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GrantProcessingConsent Explicitly grant existing processing consent
-func (c *Client) GrantProcessingConsentWithResponse(ctx context.Context, options *GrantProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantProcessingConsentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/consents",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consents")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GrantProcessingConsentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GrantProcessingConsentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GrantProcessingConsentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RevokeProcessingConsent Revoke a principal and scope before further provider access
-func (c *Client) RevokeProcessingConsentWithResponse(ctx context.Context, options *RevokeProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeProcessingConsentResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/consents/revoke",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consents/revoke")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RevokeProcessingConsentResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RevokeProcessingConsentResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RevokeProcessingConsentResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StartDocumentProcessing Start the exact reviewed document-processing plan
-func (c *Client) StartDocumentProcessingWithResponse(ctx context.Context, options *StartDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartDocumentProcessingResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/jobs",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/jobs")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StartDocumentProcessingResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetDocumentProcessingJob Read aggregate document-processing status
-func (c *Client) GetDocumentProcessingJobWithResponse(ctx context.Context, options *GetDocumentProcessingJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingJobResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/jobs/{id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/jobs/{id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetDocumentProcessingJobResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetDocumentProcessingJobResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetDocumentProcessingJobResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PlanDocumentProcessing Preview provider disclosure for one document version
-func (c *Client) PlanDocumentProcessingWithResponse(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/plans",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/plans")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PlanDocumentProcessingResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PlanDocumentProcessingResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PlanDocumentProcessingResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListDocumentProcessingProfiles List locally executable document-processing profiles
-func (c *Client) ListDocumentProcessingProfilesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/profiles")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListDocumentProcessingProfilesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListDocumentProcessingProfilesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListDocumentProcessingProfilesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ResolveDocumentSourceFence Resolve exact current live document search authority
-func (c *Client) ResolveDocumentSourceFenceWithResponse(ctx context.Context, options *ResolveDocumentSourceFenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveDocumentSourceFenceResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/source-fences/resolve",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/source-fences/resolve")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ResolveDocumentSourceFenceResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ResolveDocumentSourceFenceResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ResolveDocumentSourceFenceResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ParseQuery Validate a search expression and resolve its saved references
-func (c *Client) ParseQueryWithResponse(ctx context.Context, options *ParseQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ParseQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/queries/parse",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/queries/parse")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ParseQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ParseQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ParseQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReadDocumentRenditionBySelector Stream the active rendition for one exact source selector
-func (c *Client) ReadDocumentRenditionBySelectorWithResponse(ctx context.Context, options *ReadDocumentRenditionBySelectorRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionBySelectorResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/renditions/select",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/select")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReadDocumentRenditionBySelectorResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.Headers200 = &ReadDocumentRenditionBySelectorResp200Headers{
-			AcceptRanges:                  resp.Headers.Get("Accept-Ranges"),
-			ContentDigest:                 resp.Headers.Get("Content-Digest"),
-			ContentRange:                  resp.Headers.Get("Content-Range"),
-			Trailer:                       resp.Headers.Get("Trailer"),
-			XDocbankBlobHash:              resp.Headers.Get("X-Docbank-Blob-Hash"),
-			XDocbankBlobSize:              resp.Headers.Get("X-Docbank-Blob-Size"),
-			XDocbankContentVersion:        resp.Headers.Get("X-Docbank-Content-Version"),
-			XDocbankRenditionArtifact:     resp.Headers.Get("X-Docbank-Rendition-Artifact"),
-			XDocbankRenditionAttachment:   resp.Headers.Get("X-Docbank-Rendition-Attachment"),
-			XDocbankRenditionBuild:        resp.Headers.Get("X-Docbank-Rendition-Build"),
-			XDocbankRenditionCompleteness: resp.Headers.Get("X-Docbank-Rendition-Completeness"),
-			XDocbankRenditionProfile:      resp.Headers.Get("X-Docbank-Rendition-Profile"),
-			XDocbankRenditionWarnings:     resp.Headers.Get("X-Docbank-Rendition-Warnings"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReadDocumentRenditionWindow Read one bounded Unicode rendition window
-func (c *Client) ReadDocumentRenditionWindowWithResponse(ctx context.Context, options *ReadDocumentRenditionWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadDocumentRenditionWindowResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/renditions/windows",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/windows")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReadDocumentRenditionWindowResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ReadDocumentRenditionWindowResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ReadDocumentRenditionWindowResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetDocumentRendition Stream one exact active sanitized-Markdown rendition
-func (c *Client) GetDocumentRenditionWithResponse(ctx context.Context, options *GetDocumentRenditionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentRenditionResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/renditions/{attachment_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/renditions/{attachment_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetDocumentRenditionResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.Headers200 = &GetDocumentRenditionResp200Headers{
-			AcceptRanges:                  resp.Headers.Get("Accept-Ranges"),
-			ContentDigest:                 resp.Headers.Get("Content-Digest"),
-			ContentRange:                  resp.Headers.Get("Content-Range"),
-			Trailer:                       resp.Headers.Get("Trailer"),
-			XDocbankBlobHash:              resp.Headers.Get("X-Docbank-Blob-Hash"),
-			XDocbankBlobSize:              resp.Headers.Get("X-Docbank-Blob-Size"),
-			XDocbankContentVersion:        resp.Headers.Get("X-Docbank-Content-Version"),
-			XDocbankRenditionArtifact:     resp.Headers.Get("X-Docbank-Rendition-Artifact"),
-			XDocbankRenditionAttachment:   resp.Headers.Get("X-Docbank-Rendition-Attachment"),
-			XDocbankRenditionBuild:        resp.Headers.Get("X-Docbank-Rendition-Build"),
-			XDocbankRenditionCompleteness: resp.Headers.Get("X-Docbank-Rendition-Completeness"),
-			XDocbankRenditionProfile:      resp.Headers.Get("X-Docbank-Rendition-Profile"),
-			XDocbankRenditionWarnings:     resp.Headers.Get("X-Docbank-Rendition-Warnings"),
-		}
-		return out, nil
-	case 206:
-		out.Headers206 = &GetDocumentRenditionResp206Headers{
-			AcceptRanges:                  resp.Headers.Get("Accept-Ranges"),
-			ContentDigest:                 resp.Headers.Get("Content-Digest"),
-			ContentRange:                  resp.Headers.Get("Content-Range"),
-			Trailer:                       resp.Headers.Get("Trailer"),
-			XDocbankBlobHash:              resp.Headers.Get("X-Docbank-Blob-Hash"),
-			XDocbankBlobSize:              resp.Headers.Get("X-Docbank-Blob-Size"),
-			XDocbankContentVersion:        resp.Headers.Get("X-Docbank-Content-Version"),
-			XDocbankRenditionArtifact:     resp.Headers.Get("X-Docbank-Rendition-Artifact"),
-			XDocbankRenditionAttachment:   resp.Headers.Get("X-Docbank-Rendition-Attachment"),
-			XDocbankRenditionBuild:        resp.Headers.Get("X-Docbank-Rendition-Build"),
-			XDocbankRenditionCompleteness: resp.Headers.Get("X-Docbank-Rendition-Completeness"),
-			XDocbankRenditionProfile:      resp.Headers.Get("X-Docbank-Rendition-Profile"),
-			XDocbankRenditionWarnings:     resp.Headers.Get("X-Docbank-Rendition-Warnings"),
-		}
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListSavedQueries List saved query and highlight definitions by name
-func (c *Client) ListSavedQueriesWithResponse(ctx context.Context, options *ListSavedQueriesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSavedQueriesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/saved-queries",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListSavedQueriesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListSavedQueriesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListSavedQueriesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateSavedQuery Save one complete query or literal highlight set
-func (c *Client) CreateSavedQueryWithResponse(ctx context.Context, options *CreateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateSavedQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/saved-queries",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateSavedQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 201:
-		out.JSON201 = new(CreateSavedQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateSavedQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers201 = &CreateSavedQueryResp201Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// DeleteSavedQuery Delete a saved definition under its current revision
-func (c *Client) DeleteSavedQueryWithResponse(ctx context.Context, options *DeleteSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteSavedQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/saved-queries/{saved_query_id}",
-		Method:     "DELETE",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &DeleteSavedQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(DeleteSavedQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "DeleteSavedQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &DeleteSavedQueryResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetSavedQuery Inspect one saved definition by stable ID
-func (c *Client) GetSavedQueryWithResponse(ctx context.Context, options *GetSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSavedQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/saved-queries/{saved_query_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetSavedQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetSavedQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetSavedQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &GetSavedQueryResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// UpdateSavedQuery Edit a saved definition under its current revision
-func (c *Client) UpdateSavedQueryWithResponse(ctx context.Context, options *UpdateSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateSavedQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/saved-queries/{saved_query_id}",
-		Method:      "PATCH",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &UpdateSavedQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(UpdateSavedQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "UpdateSavedQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &UpdateSavedQueryResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RunSavedQuery Run one revision-fenced saved query and retain its receipt
-func (c *Client) RunSavedQueryWithResponse(ctx context.Context, options *RunSavedQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunSavedQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/saved-queries/{saved_query_id}/runs",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/saved-queries/{saved_query_id}/runs")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RunSavedQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RunSavedQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RunSavedQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// Search Search live document names and extracted text
-func (c *Client) SearchWithResponse(ctx context.Context, options *SearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/search",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &SearchResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(SearchResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "SearchResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// SearchDocuments Search exact source-fenced document versions
-func (c *Client) SearchDocumentsWithResponse(ctx context.Context, options *SearchDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchDocumentsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &SearchDocumentsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(SearchDocumentsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "SearchDocumentsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ValidateDocumentSearch Validate document-search semantics without executing a search
-func (c *Client) ValidateDocumentSearchWithResponse(ctx context.Context, options *ValidateDocumentSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateDocumentSearchResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search/validate",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/validate")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ValidateDocumentSearchResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ValidateDocumentSearchResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ValidateDocumentSearchResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StorageStatus Report loose and packed physical storage usage
-func (c *Client) StorageStatusWithResponse(ctx context.Context, options *StorageStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageStatusResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/storage",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StorageStatusResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StorageStatusResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StorageStatusResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StartStorageEvacuation Start the exact store evacuation reviewed by a preview
-func (c *Client) StartStorageEvacuationWithResponse(ctx context.Context, options *StartStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageEvacuationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/evacuate",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/evacuate")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StartStorageEvacuationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StartStorageEvacuationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StartStorageEvacuationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewStorageEvacuation Preview complete evacuation of one secondary store to primary
-func (c *Client) PreviewStorageEvacuationWithResponse(ctx context.Context, options *PreviewStorageEvacuationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageEvacuationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/evacuate/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/evacuate/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewStorageEvacuationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewStorageEvacuationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewStorageEvacuationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StoragePack Pack authorized loose blobs into immutable pack files
-func (c *Client) StoragePackWithResponse(ctx context.Context, options *StoragePackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StoragePackResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/pack",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/pack")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StoragePackResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StoragePackResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StoragePackResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StartStoragePlacement Start the exact verified placement reviewed by a preview
-func (c *Client) StartStoragePlacementWithResponse(ctx context.Context, options *StartStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStoragePlacementResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/place",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/place")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StartStoragePlacementResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StartStoragePlacementResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StartStoragePlacementResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewStoragePlacement Preview verified placement for retained content beneath one node
-func (c *Client) PreviewStoragePlacementWithResponse(ctx context.Context, options *PreviewStoragePlacementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStoragePlacementResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/place/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/place/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewStoragePlacementResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewStoragePlacementResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewStoragePlacementResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StorageRepack Rewrite eligible sparse packs and retire dead pack files
-func (c *Client) StorageRepackWithResponse(ctx context.Context, options *StorageRepackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageRepackResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/repack",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repack")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StorageRepackResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StorageRepackResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StorageRepackResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StartStorageRepair Start the exact storage repair reviewed by a preview
-func (c *Client) StartStorageRepairWithResponse(ctx context.Context, options *StartStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageRepairResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/repair",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repair")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StartStorageRepairResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StartStorageRepairResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StartStorageRepairResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewStorageRepair Preview one explicit verified storage repair
-func (c *Client) PreviewStorageRepairWithResponse(ctx context.Context, options *PreviewStorageRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageRepairResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/repair/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/repair/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewStorageRepairResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewStorageRepairResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewStorageRepairResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// StartStorageSalvage Start the exact storage salvage reviewed by a preview
-func (c *Client) StartStorageSalvageWithResponse(ctx context.Context, options *StartStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartStorageSalvageResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/salvage",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/salvage")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &StartStorageSalvageResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(StartStorageSalvageResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "StartStorageSalvageResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewStorageSalvage Preview one explicit verified storage salvage
-func (c *Client) PreviewStorageSalvageWithResponse(ctx context.Context, options *PreviewStorageSalvageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewStorageSalvageResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/salvage/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/salvage/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewStorageSalvageResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewStorageSalvageResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewStorageSalvageResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListBlobStores List cataloged blob stores and their deployment state
-func (c *Client) ListBlobStoresWithResponse(ctx context.Context, options *ListBlobStoresRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBlobStoresResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/storage/stores",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListBlobStoresResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListBlobStoresResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListBlobStoresResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RegisterBlobStore Attach the exact secondary store reviewed by a preview
-func (c *Client) RegisterBlobStoreWithResponse(ctx context.Context, options *RegisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterBlobStoreResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/stores",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RegisterBlobStoreResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RegisterBlobStoreResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RegisterBlobStoreResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// PreviewBlobStoreRegistration Preview attaching one configured secondary blob store
-func (c *Client) PreviewBlobStoreRegistrationWithResponse(ctx context.Context, options *PreviewBlobStoreRegistrationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewBlobStoreRegistrationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/storage/stores/preview",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/preview")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &PreviewBlobStoreRegistrationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(PreviewBlobStoreRegistrationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "PreviewBlobStoreRegistrationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// UnregisterBlobStore Forget one detached and empty secondary store identity
-func (c *Client) UnregisterBlobStoreWithResponse(ctx context.Context, options *UnregisterBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnregisterBlobStoreResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/storage/stores/{store_id}",
-		Method:     "DELETE",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/{store_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &UnregisterBlobStoreResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 204:
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// DetachBlobStore Detach one empty secondary store from runtime use
-func (c *Client) DetachBlobStoreWithResponse(ctx context.Context, options *DetachBlobStoreRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachBlobStoreResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/storage/stores/{store_id}/detach",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/storage/stores/{store_id}/detach")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &DetachBlobStoreResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(DetachBlobStoreResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "DetachBlobStoreResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListTags List tag definitions by name
-func (c *Client) ListTagsWithResponse(ctx context.Context, options *ListTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagsResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tags",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListTagsResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListTagsResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListTagsResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateTag Define a tag with a new stable ID
-func (c *Client) CreateTagWithResponse(ctx context.Context, options *CreateTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTagResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateTagResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 201:
-		out.JSON201 = new(CreateTagResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateTagResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers201 = &CreateTagResp201Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ResolveTagByName Resolve an exact tag name to its stable ID
-func (c *Client) ResolveTagByNameWithResponse(ctx context.Context, options *ResolveTagByNameRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTagByNameResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tags/by-name",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/by-name")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ResolveTagByNameResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ResolveTagByNameResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ResolveTagByNameResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &ResolveTagByNameResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// DeleteTag Delete a tag definition and all assignments
-func (c *Client) DeleteTagWithResponse(ctx context.Context, options *DeleteTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteTagResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}",
-		Method:     "DELETE",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &DeleteTagResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(DeleteTagResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "DeleteTagResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &DeleteTagResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetTag Inspect one tag definition by stable ID
-func (c *Client) GetTagWithResponse(ctx context.Context, options *GetTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTagResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetTagResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetTagResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetTagResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &GetTagResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// RenameTag Rename a tag without changing its stable ID
-func (c *Client) RenameTagWithResponse(ctx context.Context, options *RenameTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameTagResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}",
-		Method:      "PATCH",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &RenameTagResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(RenameTagResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "RenameTagResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &RenameTagResp200Headers{
-			ETag: resp.Headers.Get("ETag"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListTagNodes List live and trashed nodes carrying a tag
-func (c *Client) ListTagNodesWithResponse(ctx context.Context, options *ListTagNodesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagNodesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}/nodes",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}/nodes")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListTagNodesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListTagNodesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListTagNodesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReadTimelineCoverage Read current-file timeline coverage
-func (c *Client) ReadTimelineCoverageWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineCoverageResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/timeline/coverage",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/coverage")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReadTimelineCoverageResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ReadTimelineCoverageResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ReadTimelineCoverageResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateTimelineRebuild Start or replay a timeline rebuild
-func (c *Client) CreateTimelineRebuildWithResponse(ctx context.Context, options *CreateTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTimelineRebuildResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/timeline/rebuilds",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/rebuilds")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateTimelineRebuildResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 202:
-		out.JSON202 = new(CreateTimelineRebuildResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON202); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateTimelineRebuildResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReadTimelineRebuild Read timeline rebuild progress
-func (c *Client) ReadTimelineRebuildWithResponse(ctx context.Context, options *ReadTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineRebuildResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/timeline/rebuilds/{operation_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/rebuilds/{operation_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReadTimelineRebuildResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ReadTimelineRebuildResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ReadTimelineRebuildResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListTrash List restorable trash roots, newest first, optionally paginated
-func (c *Client) ListTrashWithResponse(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/trash",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/trash")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListTrashResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListTrashResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListTrashResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// EmptyTrash Report (run=false) or hard-delete (run=true) trash roots
-func (c *Client) EmptyTrashWithResponse(ctx context.Context, options *EmptyTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EmptyTrashResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/trash/empty",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/trash/empty")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &EmptyTrashResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(EmptyTrashResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "EmptyTrashResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// UploadFile Upload one digest-checked file
-func (c *Client) UploadFileWithResponse(ctx context.Context, options *UploadFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadFileResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/uploads",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "multipart/form-data",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/uploads")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &UploadFileResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(UploadFileResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "UploadFileResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 201:
-		out.JSON201 = new(UploadFileResponseJSON)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "UploadFileResponseJSON",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// Verify Validate metadata and re-hash every stored blob
-func (c *Client) VerifyWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/verify",
-		Method:     "POST",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/verify")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &VerifyResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(VerifyResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "VerifyResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetContentVersion Inspect one immutable content version by stable ID
-func (c *Client) GetContentVersionWithResponse(ctx context.Context, options *GetContentVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetContentVersionResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetContentVersionResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetContentVersionResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetContentVersionBytes Stream one immutable content version by stable ID
-func (c *Client) GetContentVersionBytesWithResponse(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/content",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/content")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetContentVersionBytesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.Headers200 = &GetContentVersionBytesResp200Headers{
-			ContentDigest:          resp.Headers.Get("Content-Digest"),
-			XDocbankBlobHash:       resp.Headers.Get("X-Docbank-Blob-Hash"),
-			XDocbankBlobSize:       resp.Headers.Get("X-Docbank-Blob-Size"),
-			XDocbankContentVersion: resp.Headers.Get("X-Docbank-Content-Version"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetEmailMetadata Read selected email metadata for one immutable version
-func (c *Client) GetEmailMetadataWithResponse(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/email",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetEmailMetadataResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetEmailMetadataResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetEmailMetadataResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &GetEmailMetadataResp200Headers{
-			CacheControl: resp.Headers.Get("Cache-Control"),
-		}
-		return out, nil
-	case 202:
-		out.JSON202 = new(GetEmailMetadataResponseJSON)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON202); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetEmailMetadataResponseJSON",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers202 = &GetEmailMetadataResp202Headers{
-			CacheControl: resp.Headers.Get("Cache-Control"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// EnsureEmailMetadata Ensure email metadata for one immutable version
-func (c *Client) EnsureEmailMetadataWithResponse(ctx context.Context, options *EnsureEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnsureEmailMetadataResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/email",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &EnsureEmailMetadataResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(EnsureEmailMetadataResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "EnsureEmailMetadataResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &EnsureEmailMetadataResp200Headers{
-			CacheControl: resp.Headers.Get("Cache-Control"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetEmailMetadataGeneration Read an immutable email generation attached to one version
-func (c *Client) GetEmailMetadataGenerationWithResponse(ctx context.Context, options *GetEmailMetadataGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataGenerationResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/email/generations/{generation_id}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetEmailMetadataGenerationResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetEmailMetadataGenerationResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetEmailMetadataGenerationResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		out.Headers200 = &GetEmailMetadataGenerationResp200Headers{
-			CacheControl: resp.Headers.Get("Cache-Control"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// GetEmailPart Stream one verified immutable email part artifact
-func (c *Client) GetEmailPartWithResponse(ctx context.Context, options *GetEmailPartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailPartResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetEmailPartResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.Headers200 = &GetEmailPartResp200Headers{
-			ContentDigest:           resp.Headers.Get("Content-Digest"),
-			XDocbankBlobHash:        resp.Headers.Get("X-Docbank-Blob-Hash"),
-			XDocbankBlobSize:        resp.Headers.Get("X-Docbank-Blob-Size"),
-			XDocbankContentVersion:  resp.Headers.Get("X-Docbank-Content-Version"),
-			XDocbankEmailAttachment: resp.Headers.Get("X-Docbank-Email-Attachment"),
-			XDocbankEmailGeneration: resp.Headers.Get("X-Docbank-Email-Generation"),
-			XDocbankEmailPartPath:   resp.Headers.Get("X-Docbank-Email-Part-Path"),
-			XDocbankEmailPartRole:   resp.Headers.Get("X-Docbank-Email-Part-Role"),
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ListWatchedInboxes List effective watched-inbox configuration and runner status
-func (c *Client) ListWatchedInboxesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListWatchedInboxesResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/watches",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/watches")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ListWatchedInboxesResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ListWatchedInboxesResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ListWatchedInboxesResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// CreateWorkspaceQuery Create an exact bounded query snapshot
-func (c *Client) CreateWorkspaceQueryWithResponse(ctx context.Context, options *CreateWorkspaceQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateWorkspaceQueryResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/workspace/queries",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/workspace/queries")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &CreateWorkspaceQueryResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(CreateWorkspaceQueryResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "CreateWorkspaceQueryResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-// ReadWorkspaceQueryPage Read one exact snapshot page
-func (c *Client) ReadWorkspaceQueryPageWithResponse(ctx context.Context, options *ReadWorkspaceQueryPageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadWorkspaceQueryPageResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/workspace/queries/{id}/pages",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/workspace/queries/{id}/pages")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &ReadWorkspaceQueryPageResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ReadWorkspaceQueryPageResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ReadWorkspaceQueryPageResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 500:
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
-func (c *Client) HealthWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HealthResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/health",
-		Method:     "GET",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/health")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &HealthResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(HealthResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "HealthResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	default:
-		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
 type CreateNodeRequestKind string
 
 const (
@@ -22506,1253 +15770,6 @@ type HealthResponse struct {
 	Status        string `json:"status"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Version       string `json:"version"`
-}
-
-type ChallengeDaemonResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ChallengeDaemonResponse
-}
-
-type ShutdownDaemonResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type PrepareWebDownloadResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type RevokeWebSessionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type CreateWebSessionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *CreateWebSessionResponse
-}
-
-type EnableAuditResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *EnableAuditResponse
-}
-
-type AuditNodeHistoryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *AuditNodeHistoryResponse
-}
-
-type PreviewAuditEnrollmentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewAuditEnrollmentResponse
-}
-
-type AuditScopeHistoryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *AuditScopeHistoryResponse
-}
-
-type AuditStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *AuditStatusResponse
-}
-
-type VerifyAuditResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *VerifyAuditResponse
-}
-
-type InitBackupRepositoryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *InitBackupRepositoryResponse
-}
-
-type RestoreBackupSnapshotResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RestoreBackupSnapshotResponse
-}
-
-type StreamBackupSnapshotRestoreResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type ListBackupSnapshotsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListBackupSnapshotsResponse
-}
-
-type CreateBackupSnapshotResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CreateBackupSnapshotResponse
-}
-
-type StreamBackupSnapshotCreationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type VerifyBackupRepositoryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *VerifyBackupRepositoryResponse
-}
-
-type StreamBackupRepositoryVerificationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type BatchMoveResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *BatchMoveResponse
-}
-
-type ChangeBatchTagsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ChangeBatchTagsResponse
-}
-
-type PreviewBatchTagsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewBatchTagsResponse
-}
-
-type ListCollectionsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListCollectionsResponse
-}
-
-type GetCollectionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetCollectionResponse
-}
-
-type GetCollectionLabelResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type GetCollectionLabelResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetCollectionLabelResponse
-	Headers200   *GetCollectionLabelResp200Headers
-}
-
-type SetCollectionLabelResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type SetCollectionLabelResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SetCollectionLabelResponse
-	Headers200   *SetCollectionLabelResp200Headers
-}
-
-type ListCollectionMembersResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListCollectionMembersResponse
-}
-
-type GetCollectionQualityResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetCollectionQualityResponse
-}
-
-type LookupContentReferencesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *LookupContentReferencesResponse
-}
-
-type GetDocumentProcessingCoverageResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetDocumentProcessingCoverageResponse
-}
-
-type RunDerivativePurgeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type PlanDerivativePurgeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PlanDerivativePurgeResponse
-}
-
-type ListDocumentsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListDocumentsResponse
-}
-
-type ResolveDocumentSummariesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ResolveDocumentSummariesResponse
-}
-
-type ListDuplicateContentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListDuplicateContentResponse
-}
-
-type RequestEmailDocumentProcessingResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RequestEmailDocumentProcessingResponse
-}
-
-type PublishEmailDocumentsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PublishEmailDocumentsResponse
-}
-
-type RemoveEmailDocumentPublicationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type GetEmailDocumentPublicationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetEmailDocumentPublicationResponse
-}
-
-type ListEmailDocumentRelationsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListEmailDocumentRelationsResponse
-}
-
-type ReadFormatCapabilitiesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ReadFormatCapabilitiesResponse
-}
-
-type GcResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GcResponse
-}
-
-type VaultInfoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *VaultInfoResponse
-}
-
-type IngestResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *IngestResponse
-}
-
-type PreflightIngestResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreflightIngestResponse
-}
-
-type StreamIngestResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type ListJobsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListJobsResponse
-}
-
-type GetStorageOperationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetStorageOperationResponse
-}
-
-type CancelStorageOperationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CancelStorageOperationResponse
-}
-
-type PlanMediaAcquisitionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PlanMediaAcquisitionResponse
-}
-
-type GrantMediaAcquisitionConsentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GrantMediaAcquisitionConsentResponse
-}
-
-type RevokeMediaAcquisitionConsentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RevokeMediaAcquisitionConsentResponse
-}
-
-type ListMediaOccurrencesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListMediaOccurrencesResponse
-}
-
-type DeclareMediaOccurrenceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *DeclareMediaOccurrenceResponse
-}
-
-type RevokeMediaOccurrenceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RevokeMediaOccurrenceResponse
-}
-
-type ListMediaOriginsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListMediaOriginsResponse
-}
-
-type ListMediaSourcesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListMediaSourcesResponse
-}
-
-type SubmitMediaSourceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SubmitMediaSourceResponse
-}
-
-type GetMediaSourceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetMediaSourceResponse
-}
-
-type ImportMediaArtifactResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ImportMediaArtifactResponse
-}
-
-type RetryMediaSourceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RetryMediaSourceResponse
-}
-
-type CreateNodeResp201Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type CreateNodeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *CreateNodeResponse
-	Headers201   *CreateNodeResp201Headers
-}
-
-type GetNodeResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type GetNodeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetNodeResponse
-	Headers200   *GetNodeResp200Headers
-}
-
-type MoveNodeResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type MoveNodeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *MoveNodeResponse
-	Headers200   *MoveNodeResp200Headers
-}
-
-type ListChildrenResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListChildrenResponse
-}
-
-type GetNodeContentResp200Headers struct {
-	ContentDigest          string `header:"Content-Digest"`
-	XDocbankBlobHash       string `header:"X-Docbank-Blob-Hash"`
-	XDocbankBlobSize       string `header:"X-Docbank-Blob-Size"`
-	XDocbankContentVersion string `header:"X-Docbank-Content-Version"`
-}
-
-type GetNodeContentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	Headers200   *GetNodeContentResp200Headers
-}
-
-type ReplaceNodeContentResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type ReplaceNodeContentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ReplaceNodeContentResponse
-	Headers200   *ReplaceNodeContentResp200Headers
-}
-
-type ListNodeProvenanceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListNodeProvenanceResponse
-}
-
-type AppendNodeProvenanceResp201Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type AppendNodeProvenanceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *AppendNodeProvenanceResponse
-	Headers201   *AppendNodeProvenanceResp201Headers
-}
-
-type RestoreNodeResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type RestoreNodeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RestoreNodeResponse
-	Headers200   *RestoreNodeResp200Headers
-}
-
-type RevertNodeContentResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type RevertNodeContentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RevertNodeContentResponse
-	Headers200   *RevertNodeContentResp200Headers
-}
-
-type ListNodeTagsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListNodeTagsResponse
-}
-
-type UnassignTagResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type UnassignTagResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *UnassignTagResponse
-	Headers200   *UnassignTagResp200Headers
-}
-
-type AssignTagResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type AssignTagResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *AssignTagResponse
-	Headers200   *AssignTagResp200Headers
-}
-
-type TrashNodeResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type TrashNodeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *TrashNodeResponse
-	Headers200   *TrashNodeResp200Headers
-}
-
-type VerifyNodeContentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *VerifyNodeContentResponse
-}
-
-type ListContentVersionsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListContentVersionsResponse
-}
-
-type PruneNodeContentVersionsResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type PruneNodeContentVersionsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PruneNodeContentVersionsResponse
-	Headers200   *PruneNodeContentVersionsResp200Headers
-}
-
-type ResolvePathResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type ResolvePathResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ResolvePathResponse
-	Headers200   *ResolvePathResp200Headers
-}
-
-type MkdirPathResp201Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type MkdirPathResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *MkdirPathResponse
-	Headers201   *MkdirPathResp201Headers
-}
-
-type MovePathResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type MovePathResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *MovePathResponse
-	Headers200   *MovePathResp200Headers
-}
-
-type UnassignTagPathResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type UnassignTagPathResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *UnassignTagPathResponse
-	Headers200   *UnassignTagPathResp200Headers
-}
-
-type AssignTagPathResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type AssignTagPathResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *AssignTagPathResponse
-	Headers200   *AssignTagPathResp200Headers
-}
-
-type TrashPathResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type TrashPathResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *TrashPathResponse
-	Headers200   *TrashPathResp200Headers
-}
-
-type GrantDocumentProcessingConsentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GrantDocumentProcessingConsentResponse
-}
-
-type RevokeDocumentProcessingConsentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RevokeDocumentProcessingConsentResponse
-}
-
-type GrantProcessingConsentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GrantProcessingConsentResponse
-}
-
-type RevokeProcessingConsentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RevokeProcessingConsentResponse
-}
-
-type StartDocumentProcessingResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type GetDocumentProcessingJobResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetDocumentProcessingJobResponse
-}
-
-type PlanDocumentProcessingResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PlanDocumentProcessingResponse
-}
-
-type ListDocumentProcessingProfilesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListDocumentProcessingProfilesResponse
-}
-
-type ResolveDocumentSourceFenceResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ResolveDocumentSourceFenceResponse
-}
-
-type ParseQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ParseQueryResponse
-}
-
-type ReadDocumentRenditionBySelectorResp200Headers struct {
-	AcceptRanges                  string `header:"Accept-Ranges"`
-	ContentDigest                 string `header:"Content-Digest"`
-	ContentRange                  string `header:"Content-Range"`
-	Trailer                       string `header:"Trailer"`
-	XDocbankBlobHash              string `header:"X-Docbank-Blob-Hash"`
-	XDocbankBlobSize              string `header:"X-Docbank-Blob-Size"`
-	XDocbankContentVersion        string `header:"X-Docbank-Content-Version"`
-	XDocbankRenditionArtifact     string `header:"X-Docbank-Rendition-Artifact"`
-	XDocbankRenditionAttachment   string `header:"X-Docbank-Rendition-Attachment"`
-	XDocbankRenditionBuild        string `header:"X-Docbank-Rendition-Build"`
-	XDocbankRenditionCompleteness string `header:"X-Docbank-Rendition-Completeness"`
-	XDocbankRenditionProfile      string `header:"X-Docbank-Rendition-Profile"`
-	XDocbankRenditionWarnings     string `header:"X-Docbank-Rendition-Warnings"`
-}
-
-type ReadDocumentRenditionBySelectorResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	Headers200   *ReadDocumentRenditionBySelectorResp200Headers
-}
-
-type ReadDocumentRenditionWindowResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ReadDocumentRenditionWindowResponse
-}
-
-type GetDocumentRenditionResp200Headers struct {
-	AcceptRanges                  string `header:"Accept-Ranges"`
-	ContentDigest                 string `header:"Content-Digest"`
-	ContentRange                  string `header:"Content-Range"`
-	Trailer                       string `header:"Trailer"`
-	XDocbankBlobHash              string `header:"X-Docbank-Blob-Hash"`
-	XDocbankBlobSize              string `header:"X-Docbank-Blob-Size"`
-	XDocbankContentVersion        string `header:"X-Docbank-Content-Version"`
-	XDocbankRenditionArtifact     string `header:"X-Docbank-Rendition-Artifact"`
-	XDocbankRenditionAttachment   string `header:"X-Docbank-Rendition-Attachment"`
-	XDocbankRenditionBuild        string `header:"X-Docbank-Rendition-Build"`
-	XDocbankRenditionCompleteness string `header:"X-Docbank-Rendition-Completeness"`
-	XDocbankRenditionProfile      string `header:"X-Docbank-Rendition-Profile"`
-	XDocbankRenditionWarnings     string `header:"X-Docbank-Rendition-Warnings"`
-}
-
-type GetDocumentRenditionResp206Headers struct {
-	AcceptRanges                  string `header:"Accept-Ranges"`
-	ContentDigest                 string `header:"Content-Digest"`
-	ContentRange                  string `header:"Content-Range"`
-	Trailer                       string `header:"Trailer"`
-	XDocbankBlobHash              string `header:"X-Docbank-Blob-Hash"`
-	XDocbankBlobSize              string `header:"X-Docbank-Blob-Size"`
-	XDocbankContentVersion        string `header:"X-Docbank-Content-Version"`
-	XDocbankRenditionArtifact     string `header:"X-Docbank-Rendition-Artifact"`
-	XDocbankRenditionAttachment   string `header:"X-Docbank-Rendition-Attachment"`
-	XDocbankRenditionBuild        string `header:"X-Docbank-Rendition-Build"`
-	XDocbankRenditionCompleteness string `header:"X-Docbank-Rendition-Completeness"`
-	XDocbankRenditionProfile      string `header:"X-Docbank-Rendition-Profile"`
-	XDocbankRenditionWarnings     string `header:"X-Docbank-Rendition-Warnings"`
-}
-
-type GetDocumentRenditionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	Headers200   *GetDocumentRenditionResp200Headers
-	Headers206   *GetDocumentRenditionResp206Headers
-}
-
-type ListSavedQueriesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListSavedQueriesResponse
-}
-
-type CreateSavedQueryResp201Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type CreateSavedQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *CreateSavedQueryResponse
-	Headers201   *CreateSavedQueryResp201Headers
-}
-
-type DeleteSavedQueryResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type DeleteSavedQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *DeleteSavedQueryResponse
-	Headers200   *DeleteSavedQueryResp200Headers
-}
-
-type GetSavedQueryResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type GetSavedQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetSavedQueryResponse
-	Headers200   *GetSavedQueryResp200Headers
-}
-
-type UpdateSavedQueryResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type UpdateSavedQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *UpdateSavedQueryResponse
-	Headers200   *UpdateSavedQueryResp200Headers
-}
-
-type RunSavedQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RunSavedQueryResponse
-}
-
-type SearchResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SearchResponse
-}
-
-type SearchDocumentsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SearchDocumentsResponse
-}
-
-type ValidateDocumentSearchResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ValidateDocumentSearchResponse
-}
-
-type StorageStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StorageStatusResponse
-}
-
-type StartStorageEvacuationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StartStorageEvacuationResponse
-}
-
-type PreviewStorageEvacuationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewStorageEvacuationResponse
-}
-
-type StoragePackResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StoragePackResponse
-}
-
-type StartStoragePlacementResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StartStoragePlacementResponse
-}
-
-type PreviewStoragePlacementResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewStoragePlacementResponse
-}
-
-type StorageRepackResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StorageRepackResponse
-}
-
-type StartStorageRepairResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StartStorageRepairResponse
-}
-
-type PreviewStorageRepairResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewStorageRepairResponse
-}
-
-type StartStorageSalvageResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *StartStorageSalvageResponse
-}
-
-type PreviewStorageSalvageResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewStorageSalvageResponse
-}
-
-type ListBlobStoresResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListBlobStoresResponse
-}
-
-type RegisterBlobStoreResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RegisterBlobStoreResponse
-}
-
-type PreviewBlobStoreRegistrationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PreviewBlobStoreRegistrationResponse
-}
-
-type UnregisterBlobStoreResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type DetachBlobStoreResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *DetachBlobStoreResponse
-}
-
-type ListTagsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListTagsResponse
-}
-
-type CreateTagResp201Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type CreateTagResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *CreateTagResponse
-	Headers201   *CreateTagResp201Headers
-}
-
-type ResolveTagByNameResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type ResolveTagByNameResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ResolveTagByNameResponse
-	Headers200   *ResolveTagByNameResp200Headers
-}
-
-type DeleteTagResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type DeleteTagResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *DeleteTagResponse
-	Headers200   *DeleteTagResp200Headers
-}
-
-type GetTagResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type GetTagResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetTagResponse
-	Headers200   *GetTagResp200Headers
-}
-
-type RenameTagResp200Headers struct {
-	ETag string `header:"ETag"`
-}
-
-type RenameTagResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RenameTagResponse
-	Headers200   *RenameTagResp200Headers
-}
-
-type ListTagNodesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListTagNodesResponse
-}
-
-type ReadTimelineCoverageResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ReadTimelineCoverageResponse
-}
-
-type CreateTimelineRebuildResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON202      *CreateTimelineRebuildResponse
-}
-
-type ReadTimelineRebuildResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ReadTimelineRebuildResponse
-}
-
-type ListTrashResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListTrashResponse
-}
-
-type EmptyTrashResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *EmptyTrashResponse
-}
-
-type UploadFileResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *UploadFileResponse
-	JSON201      *UploadFileResponseJSON
-}
-
-type VerifyResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *VerifyResponse
-}
-
-type GetContentVersionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetContentVersionResponse
-}
-
-type GetContentVersionBytesResp200Headers struct {
-	ContentDigest          string `header:"Content-Digest"`
-	XDocbankBlobHash       string `header:"X-Docbank-Blob-Hash"`
-	XDocbankBlobSize       string `header:"X-Docbank-Blob-Size"`
-	XDocbankContentVersion string `header:"X-Docbank-Content-Version"`
-}
-
-type GetContentVersionBytesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	Headers200   *GetContentVersionBytesResp200Headers
-}
-
-type GetEmailMetadataResp200Headers struct {
-	CacheControl string `header:"Cache-Control"`
-}
-
-type GetEmailMetadataResp202Headers struct {
-	CacheControl string `header:"Cache-Control"`
-}
-
-type GetEmailMetadataResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetEmailMetadataResponse
-	Headers200   *GetEmailMetadataResp200Headers
-	JSON202      *GetEmailMetadataResponseJSON
-	Headers202   *GetEmailMetadataResp202Headers
-}
-
-type EnsureEmailMetadataResp200Headers struct {
-	CacheControl string `header:"Cache-Control"`
-}
-
-type EnsureEmailMetadataResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *EnsureEmailMetadataResponse
-	Headers200   *EnsureEmailMetadataResp200Headers
-}
-
-type GetEmailMetadataGenerationResp200Headers struct {
-	CacheControl string `header:"Cache-Control"`
-}
-
-type GetEmailMetadataGenerationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetEmailMetadataGenerationResponse
-	Headers200   *GetEmailMetadataGenerationResp200Headers
-}
-
-type GetEmailPartResp200Headers struct {
-	ContentDigest           string `header:"Content-Digest"`
-	XDocbankBlobHash        string `header:"X-Docbank-Blob-Hash"`
-	XDocbankBlobSize        string `header:"X-Docbank-Blob-Size"`
-	XDocbankContentVersion  string `header:"X-Docbank-Content-Version"`
-	XDocbankEmailAttachment string `header:"X-Docbank-Email-Attachment"`
-	XDocbankEmailGeneration string `header:"X-Docbank-Email-Generation"`
-	XDocbankEmailPartPath   string `header:"X-Docbank-Email-Part-Path"`
-	XDocbankEmailPartRole   string `header:"X-Docbank-Email-Part-Role"`
-}
-
-type GetEmailPartResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	Headers200   *GetEmailPartResp200Headers
-}
-
-type ListWatchedInboxesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListWatchedInboxesResponse
-}
-
-type CreateWorkspaceQueryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CreateWorkspaceQueryResponse
-}
-
-type ReadWorkspaceQueryPageResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ReadWorkspaceQueryPageResponse
-}
-
-type HealthResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *HealthResponse
 }
 
 type AssignTagPathRequest struct {

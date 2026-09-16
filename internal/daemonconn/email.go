@@ -28,11 +28,12 @@ func (c *Connection) EmailMetadata(ctx context.Context, versionID string) (api.E
 	if !validUUIDv4(versionID) {
 		return metadata, errors.New("email metadata requires a canonical UUIDv4 version ID")
 	}
-	response, err := c.API().GetEmailMetadataWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailMetadataRequestOptions{PathParams: &apiclient.GetEmailMetadataPath{VersionID: uuid.MustParse(versionID)}})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetEmailMetadata(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailMetadataRequestOptions{PathParams: &apiclient.GetEmailMetadataPath{VersionID: uuid.MustParse(versionID)}})
 	if err != nil {
 		return metadata, err
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusAccepted {
 		var pending api.EmailPending
@@ -110,11 +111,12 @@ func (c *Connection) OpenEmailPart(
 		AttachmentID: metadata.AttachmentID, PartPath: partPath, Role: role,
 		BlobSHA256: artifact.SHA256, Size: artifact.Size,
 	}
-	response, err := c.API().GetEmailPartWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailPartRequestOptions{PathParams: &apiclient.GetEmailPartPath{VersionID: uuid.MustParse(versionID), GenerationID: generationID, PartPath: partPath, Role: apiclient.GetEmailPartPathRole(role)}})
+	var responseHTTP *http.Response
+	_, err = c.apiWithResponse(&responseHTTP).GetEmailPart(runtime.WithStreamingResponse(ctx), &apiclient.GetEmailPartRequestOptions{PathParams: &apiclient.GetEmailPartPath{VersionID: uuid.MustParse(versionID), GenerationID: generationID, PartPath: partPath, Role: apiclient.GetEmailPartPathRole(role)}})
 	if err != nil {
 		return nil, api.EmailPartReceipt{}, err
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	if resp.StatusCode != http.StatusOK {
 		defer func() { _ = resp.Body.Close() }()
 		return nil, api.EmailPartReceipt{}, decodeError(resp)

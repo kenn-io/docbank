@@ -18,10 +18,19 @@ func (c *Connection) API() *apiclient.Client {
 	return apiclient.NewClient(apiTransport{connection: c})
 }
 
+// apiWithResponse retains HTTP metadata for receipt validation and stream ownership.
+// The generated operation still returns its decoded body for ordinary responses.
+func (c *Connection) apiWithResponse(response **http.Response) *apiclient.Client {
+	return apiclient.NewClient(apiTransport{connection: c, response: response})
+}
+
 // apiTransport is the generator's transport hook. Route, parameter and body
 // definitions belong to the generated client; this hook supplies JSON v2,
 // daemon credentials, outcome classification and caller-owned response streams.
-type apiTransport struct{ connection *Connection }
+type apiTransport struct {
+	connection *Connection
+	response   **http.Response
+}
 
 func (t apiTransport) GetBaseURL() string { return t.connection.base }
 
@@ -71,6 +80,9 @@ func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, _ s
 	resp, err := t.connection.hc.Do(req) // #nosec G704 -- Generated paths use the caller-selected daemon connection.
 	if err != nil {
 		return nil, classifyRequestFailure(resp, err)
+	}
+	if t.response != nil {
+		*t.response = resp
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		defer func() { _ = resp.Body.Close() }()

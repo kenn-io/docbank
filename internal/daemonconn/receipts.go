@@ -495,11 +495,12 @@ func (c *Connection) ChildrenPage(
 }
 
 func (c *Connection) Content(ctx context.Context, id int64) (*ContentStream, error) {
-	response, err := c.API().GetNodeContentWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetNodeContentRequestOptions{PathParams: &apiclient.GetNodeContentPath{ID: id}})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetNodeContent(runtime.WithStreamingResponse(ctx), &apiclient.GetNodeContentRequestOptions{PathParams: &apiclient.GetNodeContentPath{ID: id}})
 	if err != nil {
 		return nil, err
 	}
-	return decodeContent(response.HTTPResponse, fmt.Sprintf("content of node %d", id))
+	return decodeContent(responseHTTP, fmt.Sprintf("content of node %d", id))
 }
 
 // Provenance returns one bounded newest-ingest-first page of immutable origin
@@ -544,10 +545,11 @@ func (c *Connection) AppendProvenance(
 		return receipt, errors.New("provenance source kind, description, and path are required")
 	}
 	var headers http.Header
-	apiResponse, err := c.API().AppendNodeProvenanceWithResponse(ctx, &apiclient.AppendNodeProvenanceRequestOptions{PathParams: &apiclient.AppendNodeProvenancePath{ID: nodeID}, Header: &apiclient.AppendNodeProvenanceHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &request})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).AppendNodeProvenance(ctx, &apiclient.AppendNodeProvenanceRequestOptions{PathParams: &apiclient.AppendNodeProvenancePath{ID: nodeID}, Header: &apiclient.AppendNodeProvenanceHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &request})
 	if err == nil {
-		receipt = *apiResponse.JSON201
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		receipt = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return api.ProvenanceAppendReceipt{}, err
@@ -599,11 +601,12 @@ func equalOptionalString(a, b *string) bool {
 
 // VersionContent streams immutable bytes by stable version ID.
 func (c *Connection) VersionContent(ctx context.Context, id string) (*ContentStream, error) {
-	response, err := c.API().GetContentVersionBytesWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.GetContentVersionBytesRequestOptions{PathParams: &apiclient.GetContentVersionBytesPath{VersionID: id}})
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetContentVersionBytes(runtime.WithStreamingResponse(ctx), &apiclient.GetContentVersionBytesRequestOptions{PathParams: &apiclient.GetContentVersionBytesPath{VersionID: id}})
 	if err != nil {
 		return nil, err
 	}
-	stream, err := decodeContent(response.HTTPResponse, "content version "+id)
+	stream, err := decodeContent(responseHTTP, "content version "+id)
 	if err != nil {
 		return nil, err
 	}
@@ -630,10 +633,11 @@ func (c *Connection) PruneContentVersions(
 		return report, err
 	}
 	var headers http.Header
-	apiResponse, err := c.API().PruneNodeContentVersionsWithResponse(ctx, &apiclient.PruneNodeContentVersionsRequestOptions{PathParams: &apiclient.PruneNodeContentVersionsPath{ID: nodeID}, Header: &apiclient.PruneNodeContentVersionsHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &request})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).PruneNodeContentVersions(ctx, &apiclient.PruneNodeContentVersionsRequestOptions{PathParams: &apiclient.PruneNodeContentVersionsPath{ID: nodeID}, Header: &apiclient.PruneNodeContentVersionsHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &request})
 	if err == nil {
-		report = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		report = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return api.VersionPruneReport{}, err
@@ -1716,10 +1720,11 @@ func (c *Connection) SavedQuery(ctx context.Context, id string) (api.SavedQuery,
 		return saved, errors.New("saved query ID must be a canonical UUIDv4")
 	}
 	var headers http.Header
-	apiResponse, err := c.API().GetSavedQueryWithResponse(ctx, &apiclient.GetSavedQueryRequestOptions{PathParams: &apiclient.GetSavedQueryPath{SavedQueryID: id}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).GetSavedQuery(ctx, &apiclient.GetSavedQueryRequestOptions{PathParams: &apiclient.GetSavedQueryPath{SavedQueryID: id}})
 	if err == nil {
-		saved = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		saved = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return saved, err
@@ -1739,10 +1744,11 @@ func (c *Connection) CreateSavedQuery(
 ) (api.SavedQuery, error) {
 	var saved api.SavedQuery
 	var headers http.Header
-	apiResponse, err := c.API().CreateSavedQueryWithResponse(ctx, &apiclient.CreateSavedQueryRequestOptions{Body: &request})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).CreateSavedQuery(ctx, &apiclient.CreateSavedQueryRequestOptions{Body: &request})
 	if err == nil {
-		saved = *apiResponse.JSON201
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		saved = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return saved, err
@@ -1771,10 +1777,11 @@ func (c *Connection) UpdateSavedQuery(
 		return saved, errors.New("saved query patch must set at least one field")
 	}
 	var headers http.Header
-	apiResponse, err := c.API().UpdateSavedQueryWithResponse(ctx, &apiclient.UpdateSavedQueryRequestOptions{PathParams: &apiclient.UpdateSavedQueryPath{SavedQueryID: id}, Header: &apiclient.UpdateSavedQueryHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &patch})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).UpdateSavedQuery(ctx, &apiclient.UpdateSavedQueryRequestOptions{PathParams: &apiclient.UpdateSavedQueryPath{SavedQueryID: id}, Header: &apiclient.UpdateSavedQueryHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &patch})
 	if err == nil {
-		saved = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		saved = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return saved, err
@@ -1800,10 +1807,11 @@ func (c *Connection) DeleteSavedQuery(
 		return saved, errors.New("saved query revision must be positive")
 	}
 	var headers http.Header
-	apiResponse, err := c.API().DeleteSavedQueryWithResponse(ctx, &apiclient.DeleteSavedQueryRequestOptions{PathParams: &apiclient.DeleteSavedQueryPath{SavedQueryID: id}, Header: &apiclient.DeleteSavedQueryHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).DeleteSavedQuery(ctx, &apiclient.DeleteSavedQueryRequestOptions{PathParams: &apiclient.DeleteSavedQueryPath{SavedQueryID: id}, Header: &apiclient.DeleteSavedQueryHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
 	if err == nil {
-		saved = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		saved = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return saved, err
@@ -1914,10 +1922,11 @@ func (c *Connection) Tag(ctx context.Context, id string) (api.Tag, error) {
 		return tag, errors.New("tag ID must be a canonical UUIDv4")
 	}
 	var headers http.Header
-	apiResponse, err := c.API().GetTagWithResponse(ctx, &apiclient.GetTagRequestOptions{PathParams: &apiclient.GetTagPath{TagID: id}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).GetTag(ctx, &apiclient.GetTagRequestOptions{PathParams: &apiclient.GetTagPath{TagID: id}})
 	if err == nil {
-		tag = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		tag = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return tag, err
@@ -1939,10 +1948,11 @@ func (c *Connection) TagByName(ctx context.Context, name string) (api.Tag, error
 		return tag, err
 	}
 	var headers http.Header
-	apiResponse, err := c.API().ResolveTagByNameWithResponse(ctx, &apiclient.ResolveTagByNameRequestOptions{Query: &apiclient.ResolveTagByNameQuery{Name: normalized}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).ResolveTagByName(ctx, &apiclient.ResolveTagByNameRequestOptions{Query: &apiclient.ResolveTagByNameQuery{Name: normalized}})
 	if err == nil {
-		tag = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		tag = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return tag, err
@@ -1964,10 +1974,11 @@ func (c *Connection) CreateTag(ctx context.Context, name string) (api.Tag, error
 		return tag, err
 	}
 	var headers http.Header
-	apiResponse, err := c.API().CreateTagWithResponse(ctx, &apiclient.CreateTagRequestOptions{Body: &apiclient.CreateTagBody{Name: normalized}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).CreateTag(ctx, &apiclient.CreateTagRequestOptions{Body: &apiclient.CreateTagBody{Name: normalized}})
 	if err == nil {
-		tag = *apiResponse.JSON201
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		tag = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return tag, err
@@ -1995,10 +2006,11 @@ func (c *Connection) RenameTag(ctx context.Context, id string, revision int64, n
 		return tag, err
 	}
 	var headers http.Header
-	apiResponse, err := c.API().RenameTagWithResponse(ctx, &apiclient.RenameTagRequestOptions{PathParams: &apiclient.RenameTagPath{TagID: id}, Header: &apiclient.RenameTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &apiclient.RenameTagBody{Name: normalized}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).RenameTag(ctx, &apiclient.RenameTagRequestOptions{PathParams: &apiclient.RenameTagPath{TagID: id}, Header: &apiclient.RenameTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &apiclient.RenameTagBody{Name: normalized}})
 	if err == nil {
-		tag = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		tag = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return tag, err
@@ -2024,10 +2036,11 @@ func (c *Connection) DeleteTag(
 		return receipt, errors.New("tag revision must be positive")
 	}
 	var headers http.Header
-	apiResponse, err := c.API().DeleteTagWithResponse(ctx, &apiclient.DeleteTagRequestOptions{PathParams: &apiclient.DeleteTagPath{TagID: id}, Header: &apiclient.DeleteTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).DeleteTag(ctx, &apiclient.DeleteTagRequestOptions{PathParams: &apiclient.DeleteTagPath{TagID: id}, Header: &apiclient.DeleteTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
 	if err == nil {
-		receipt = *apiResponse.JSON200
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		receipt = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return receipt, err
@@ -2124,19 +2137,21 @@ func (c *Connection) changeTagAssignment(
 	}
 	var etag string
 	if method == http.MethodPut {
-		response, err := c.API().AssignTagWithResponse(ctx, &apiclient.AssignTagRequestOptions{PathParams: &apiclient.AssignTagPath{ID: nodeID, TagID: tagID}, Header: &apiclient.AssignTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
+		var responseHTTP *http.Response
+		response, err := c.apiWithResponse(&responseHTTP).AssignTag(ctx, &apiclient.AssignTagRequestOptions{PathParams: &apiclient.AssignTagPath{ID: nodeID, TagID: tagID}, Header: &apiclient.AssignTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
 		if err != nil {
 			return receipt, err
 		}
-		receipt = *response.JSON200
-		etag = response.HTTPResponse.Header.Get("ETag")
+		receipt = *response
+		etag = responseHTTP.Header.Get("ETag")
 	} else {
-		response, err := c.API().UnassignTagWithResponse(ctx, &apiclient.UnassignTagRequestOptions{PathParams: &apiclient.UnassignTagPath{ID: nodeID, TagID: tagID}, Header: &apiclient.UnassignTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
+		var responseHTTP *http.Response
+		response, err := c.apiWithResponse(&responseHTTP).UnassignTag(ctx, &apiclient.UnassignTagRequestOptions{PathParams: &apiclient.UnassignTagPath{ID: nodeID, TagID: tagID}, Header: &apiclient.UnassignTagHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
 		if err != nil {
 			return receipt, err
 		}
-		receipt = *response.JSON200
-		etag = response.HTTPResponse.Header.Get("ETag")
+		receipt = *response
+		etag = responseHTTP.Header.Get("ETag")
 	}
 	if err := validateTagAssignmentReceipt(receipt, etag, tagID); err != nil {
 		return api.TagAssignmentReceipt{}, err
@@ -2175,19 +2190,21 @@ func (c *Connection) changeTagAssignmentPath(
 	}
 	var etag string
 	if method == http.MethodPut {
-		response, err := c.API().AssignTagPathWithResponse(ctx, &apiclient.AssignTagPathRequestOptions{PathParams: &apiclient.AssignTagPathPath{TagID: tagID}, Body: &apiclient.AssignTagPathBody{Path: path}})
+		var responseHTTP *http.Response
+		response, err := c.apiWithResponse(&responseHTTP).AssignTagPath(ctx, &apiclient.AssignTagPathRequestOptions{PathParams: &apiclient.AssignTagPathPath{TagID: tagID}, Body: &apiclient.AssignTagPathBody{Path: path}})
 		if err != nil {
 			return receipt, err
 		}
-		receipt = *response.JSON200
-		etag = response.HTTPResponse.Header.Get("ETag")
+		receipt = *response
+		etag = responseHTTP.Header.Get("ETag")
 	} else {
-		response, err := c.API().UnassignTagPathWithResponse(ctx, &apiclient.UnassignTagPathRequestOptions{PathParams: &apiclient.UnassignTagPathPath{TagID: tagID}, Body: &apiclient.UnassignTagPathBody{Path: path}})
+		var responseHTTP *http.Response
+		response, err := c.apiWithResponse(&responseHTTP).UnassignTagPath(ctx, &apiclient.UnassignTagPathRequestOptions{PathParams: &apiclient.UnassignTagPathPath{TagID: tagID}, Body: &apiclient.UnassignTagPathBody{Path: path}})
 		if err != nil {
 			return receipt, err
 		}
-		receipt = *response.JSON200
-		etag = response.HTTPResponse.Header.Get("ETag")
+		receipt = *response
+		etag = responseHTTP.Header.Get("ETag")
 	}
 	if err := validateTagAssignmentReceipt(receipt, etag, tagID); err != nil {
 		return api.TagAssignmentReceipt{}, err
@@ -2341,10 +2358,11 @@ func (c *Connection) MkdirPath(ctx context.Context, path string) (api.Node, erro
 	}
 	var node api.Node
 	var headers http.Header
-	apiResponse, err := c.API().MkdirPathWithResponse(ctx, &apiclient.MkdirPathRequestOptions{Body: &apiclient.MkdirPathBody{Path: path}})
+	var apiResponseHTTP *http.Response
+	apiResponse, err := c.apiWithResponse(&apiResponseHTTP).MkdirPath(ctx, &apiclient.MkdirPathRequestOptions{Body: &apiclient.MkdirPathBody{Path: path}})
 	if err == nil {
-		node = *apiResponse.JSON201
-		headers = apiResponse.HTTPResponse.Header.Clone()
+		node = *apiResponse
+		headers = apiResponseHTTP.Header.Clone()
 	}
 	if err != nil {
 		return api.Node{}, err
@@ -2410,11 +2428,12 @@ func (c *Connection) IngestStream(
 	opts IngestOptions,
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
-	apiResponse, err := c.API().StreamIngestWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.StreamIngestRequestOptions{Body: new(opts.requestBody(paths, dest))})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).StreamIngest(runtime.WithStreamingResponse(ctx), &apiclient.StreamIngestRequestOptions{Body: new(opts.requestBody(paths, dest))})
 	if err != nil {
 		return api.IngestReport{}, err
 	}
-	resp := apiResponse.HTTPResponse
+	resp := apiResponseHTTP
 	defer func() { _ = resp.Body.Close() }()
 
 	decoder := jsontext.NewDecoder(resp.Body)
@@ -2514,7 +2533,8 @@ func (c *Connection) Upload(
 		writeDone <- err
 	}()
 
-	response, callErr := c.API().UploadFileWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, func(_ context.Context, req *http.Request) error {
+	var responseHTTP *http.Response
+	_, callErr := c.apiWithResponse(&responseHTTP).UploadFile(runtime.WithStreamingResponse(ctx), &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, func(_ context.Context, req *http.Request) error {
 		req.Body = pipeReader
 		req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 		return nil
@@ -2524,7 +2544,7 @@ func (c *Connection) Upload(
 		<-writeDone
 		return receipt, fmt.Errorf("uploading %q: %w", name, callErr)
 	}
-	resp := response.HTTPResponse
+	resp := responseHTTP
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		_ = pipeReader.Close()
@@ -2575,7 +2595,8 @@ func (c *Connection) ReplaceContent(
 		mimeType = mime.FormatMediaType(mediaType, params)
 	}
 
-	response, err := c.API().ReplaceNodeContentWithResponse(ctx, &apiclient.ReplaceNodeContentRequestOptions{PathParams: &apiclient.ReplaceNodeContentPath{ID: nodeID}, Header: &apiclient.ReplaceNodeContentHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10)), XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, func(_ context.Context, req *http.Request) error {
+	var responseHTTP *http.Response
+	response, err := c.apiWithResponse(&responseHTTP).ReplaceNodeContent(ctx, &apiclient.ReplaceNodeContentRequestOptions{PathParams: &apiclient.ReplaceNodeContentPath{ID: nodeID}, Header: &apiclient.ReplaceNodeContentHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10)), XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, func(_ context.Context, req *http.Request) error {
 		req.Body = io.NopCloser(content)
 		req.ContentLength = expectedSize
 		req.Header.Set("Content-Type", mimeType)
@@ -2585,8 +2606,8 @@ func (c *Connection) ReplaceContent(
 	if err != nil {
 		return receipt, err
 	}
-	receipt = *response.JSON200
-	resp := response.HTTPResponse
+	receipt = *response
+	resp := responseHTTP
 	if err := validateReplacementReceipt(
 		receipt, resp.Header.Get("ETag"), nodeID, revision, mimeType, expectedHash, expectedSize,
 	); err != nil {
@@ -2648,12 +2669,13 @@ func (c *Connection) RevertContent(
 	if !validUUIDv4(sourceVersionID) {
 		return receipt, errors.New("reversion source must be a canonical UUIDv4")
 	}
-	response, err := c.API().RevertNodeContentWithResponse(ctx, &apiclient.RevertNodeContentRequestOptions{PathParams: &apiclient.RevertNodeContentPath{ID: nodeID}, Header: &apiclient.RevertNodeContentHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &apiclient.RevertNodeContentBody{SourceVersionID: uuid.MustParse(sourceVersionID)}})
+	var responseHTTP *http.Response
+	response, err := c.apiWithResponse(&responseHTTP).RevertNodeContent(ctx, &apiclient.RevertNodeContentRequestOptions{PathParams: &apiclient.RevertNodeContentPath{ID: nodeID}, Header: &apiclient.RevertNodeContentHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}, Body: &apiclient.RevertNodeContentBody{SourceVersionID: uuid.MustParse(sourceVersionID)}})
 	if err != nil {
 		return receipt, err
 	}
-	receipt = *response.JSON200
-	resp := response.HTTPResponse
+	receipt = *response
+	resp := responseHTTP
 	if err := validateReversionReceipt(
 		receipt, resp.Header.Get("ETag"), nodeID, revision, sourceVersionID,
 	); err != nil {
@@ -2797,12 +2819,13 @@ func (c *Connection) FormatCapabilities(
 		params.Extension = &extension
 	}
 
-	apiResponse, err := c.API().ReadFormatCapabilitiesWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.ReadFormatCapabilitiesRequestOptions{Query: &params})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).ReadFormatCapabilities(runtime.WithStreamingResponse(ctx), &apiclient.ReadFormatCapabilitiesRequestOptions{Query: &params})
 	if err != nil {
 		return api.FormatCoverageResponse{}, err
 	}
-	defer func() { _ = apiResponse.HTTPResponse.Body.Close() }()
-	raw, err := io.ReadAll(apiResponse.HTTPResponse.Body)
+	defer func() { _ = apiResponseHTTP.Body.Close() }()
+	raw, err := io.ReadAll(apiResponseHTTP.Body)
 	if err != nil {
 		return api.FormatCoverageResponse{}, &responseDecodeError{err: err}
 	}
@@ -2885,11 +2908,12 @@ func (c *Connection) BackupCreateStream(
 	opts BackupCreateOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupSnapshot, error) {
-	apiResponse, err := c.API().StreamBackupSnapshotCreationWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.StreamBackupSnapshotCreationRequestOptions{Body: new(backupCreateRequest(opts))})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).StreamBackupSnapshotCreation(runtime.WithStreamingResponse(ctx), &apiclient.StreamBackupSnapshotCreationRequestOptions{Body: new(backupCreateRequest(opts))})
 	if err != nil {
 		return api.BackupSnapshot{}, err
 	}
-	resp := apiResponse.HTTPResponse
+	resp := apiResponseHTTP
 	defer func() { _ = resp.Body.Close() }()
 
 	decoder := jsontext.NewDecoder(resp.Body)
@@ -2957,11 +2981,12 @@ func (c *Connection) BackupVerifyStream(
 	opts BackupVerifyOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupVerifyReport, error) {
-	apiResponse, err := c.API().StreamBackupRepositoryVerificationWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.StreamBackupRepositoryVerificationRequestOptions{Body: new(backupVerifyRequest(opts))})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).StreamBackupRepositoryVerification(runtime.WithStreamingResponse(ctx), &apiclient.StreamBackupRepositoryVerificationRequestOptions{Body: new(backupVerifyRequest(opts))})
 	if err != nil {
 		return api.BackupVerifyReport{}, err
 	}
-	resp := apiResponse.HTTPResponse
+	resp := apiResponseHTTP
 	defer func() { _ = resp.Body.Close() }()
 
 	decoder := jsontext.NewDecoder(resp.Body)
@@ -3033,11 +3058,12 @@ func (c *Connection) BackupRestoreStream(
 	opts BackupRestoreOptions,
 	progress func(api.BackupProgress),
 ) (api.BackupRestoreReport, error) {
-	apiResponse, err := c.API().StreamBackupSnapshotRestoreWithResponse(runtime.WithStreamingResponse(ctx), &apiclient.StreamBackupSnapshotRestoreRequestOptions{Body: new(backupRestoreRequest(opts))})
+	var apiResponseHTTP *http.Response
+	_, err := c.apiWithResponse(&apiResponseHTTP).StreamBackupSnapshotRestore(runtime.WithStreamingResponse(ctx), &apiclient.StreamBackupSnapshotRestoreRequestOptions{Body: new(backupRestoreRequest(opts))})
 	if err != nil {
 		return api.BackupRestoreReport{}, err
 	}
-	resp := apiResponse.HTTPResponse
+	resp := apiResponseHTTP
 	defer func() { _ = resp.Body.Close() }()
 
 	decoder := jsontext.NewDecoder(resp.Body)
