@@ -27,6 +27,7 @@ canonical evidence is the validated text and source locations behind it.
 | Stage exact bytes for an authorized provider upload | `document/upload` |
 | Bind outbound connections to a declared destination | `document/providerhttp` |
 | Convert CSV locally for PDF OCR | `document/csvpdf` |
+| Convert DOCX or XLSX locally to a bounded PDF | `document/renderpdf` |
 
 These are reusable Go contracts. Vault-owned publication, consent, backup, and
 search are described in [Document processing](architecture/document-processing.md).
@@ -476,7 +477,7 @@ pdfSource, err := converted.Source()
 if err != nil {
     return err
 }
-// Retain receipt with the source and pass pdfSource to the authorized PDF processor.
+// Keep the receipt with pdfSource before a later caller authorizes upload.
 ```
 
 The defaults are also hard ceilings. `NewPolicy` accepts positive, tighter
@@ -514,6 +515,41 @@ The receipt does not authorize upload. Your application must:
 3. Retain the conversion policy with that consent.
 
 This Go API does not add CSV OCR to the daemon or CLI.
+
+## Convert DOCX or XLSX locally to PDF
+
+Use `document/renderpdf` when an application needs a local PDF derived from a
+DOCX or XLSX source. The converter uses an operator-pinned LibreOffice
+executable. It first writes flat ODF inside the Linux sandbox, checks the
+normalized XML for external or active content, and then renders only admitted
+bytes to PDF.
+
+```go
+policy, err := renderpdf.NewPolicy(renderer, renderpdf.DefaultLimits())
+if err != nil {
+    return err
+}
+converted, err := renderpdf.Convert(ctx, source, "docx", policy)
+if err != nil {
+    return err
+}
+receipt := converted.Receipt()
+pdfSource, err := converted.Source()
+if err != nil {
+    return err
+}
+// Keep receipt with pdfSource before a later caller authorizes upload.
+```
+
+The initial profiles accept DOCX to FODT and XLSX to FODS. The normalized scan
+rejects external and relative links, DDE and database sources, scripts, event
+handlers, linked fields, external formulas, and opaque active objects. Local
+formulas, internal fragment links, and embedded raster images remain valid.
+
+The receipt records both source and normalized identities, the exact PDF hash,
+the page count, the policy, and the runtime identities. `Result.Source` is a
+fresh `application/pdf` source. The receipt does not authorize upload, and the
+package adds no DOCX route or daemon operation.
 
 ## Package boundary
 

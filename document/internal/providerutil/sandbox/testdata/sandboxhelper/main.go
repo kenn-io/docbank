@@ -15,6 +15,7 @@ import (
 var (
 	mode           = "echo"
 	networkAddress string
+	outputName     = "output.bin"
 )
 
 type echoResponse struct {
@@ -89,6 +90,14 @@ func main() {
 			if _, err := os.Stdout.Write(block); err != nil {
 				return
 			}
+		}
+	case "file-output":
+		if err := os.WriteFile("/tmp/work/"+outputName, []byte("supervised output"), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "file-overflow":
+		if err := os.WriteFile("/tmp/work/"+outputName, make([]byte, 2048), 0o600); err != nil {
+			os.Exit(5)
 		}
 	case "exit-125":
 		os.Exit(125)

@@ -1,0 +1,194 @@
+//go:build linux
+
+package renderpdf
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"io"
+	"net"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type countingRunner struct {
+	inner Runner
+	mu    sync.Mutex
+	calls []Request
+}
+
+func (runner *countingRunner) Identity() string { return runner.inner.Identity() }
+
+func (runner *countingRunner) Run(ctx context.Context, request Request) (StageResult, error) {
+	runner.mu.Lock()
+	runner.calls = append(runner.calls, request)
+	runner.mu.Unlock()
+	return runner.inner.Run(ctx, request)
+}
+
+func (runner *countingRunner) count() int {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return len(runner.calls)
+}
+
+func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
+	policy := realLibreOfficePolicy(t, nil)
+	content := realDOCX(false)
+	result, err := Convert(t.Context(), testSource(t, content, docxMediaType), "docx", policy)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.NotEmpty(t, result.PDF())
+	assert.Positive(t, result.Receipt().Pages)
+}
+
+func TestLibreOfficeConvertsSafeXLSX(t *testing.T) {
+	policy := realLibreOfficePolicy(t, nil)
+	content := realXLSX("safe")
+	result, err := Convert(t.Context(), testSource(t, content, xlsxMediaType), "xlsx", policy)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.NotEmpty(t, result.PDF())
+	assert.Positive(t, result.Receipt().Pages)
+}
+
+func TestLibreOfficeRejectsOrStripsExternalDOCXRelationship(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	hit := make(chan struct{}, 1)
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			select {
+			case hit <- struct{}{}:
+			default:
+			}
+			_ = connection.Close()
+		}
+	}()
+	content := realDOCX(true)
+	inner, err := newNativeRunner(Renderer{})
+	require.NoError(t, err)
+	runner := &countingRunner{inner: inner}
+	policy := realLibreOfficePolicy(t, runner)
+	result, err := Convert(t.Context(), testSource(t, content, docxMediaType), "docx", policy)
+	select {
+	case <-hit:
+		t.Fatal("LibreOffice reached the host listener")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err == nil {
+		require.NotNil(t, result)
+		assert.Equal(t, 2, runner.count())
+	} else {
+		assert.Nil(t, result)
+		assert.Equal(t, 1, runner.count())
+	}
+}
+
+func TestLibreOfficeRejectsOrStripsLinkedXLSXField(t *testing.T) {
+	inner, err := newNativeRunner(Renderer{})
+	require.NoError(t, err)
+	runner := &countingRunner{inner: inner}
+	policy := realLibreOfficePolicy(t, runner)
+	content := realXLSX("webservice")
+	result, err := Convert(t.Context(), testSource(t, content, xlsxMediaType), "xlsx", policy)
+	if err == nil {
+		require.NotNil(t, result)
+		assert.Equal(t, 2, runner.count())
+	} else {
+		assert.Nil(t, result)
+		assert.Equal(t, 1, runner.count())
+	}
+}
+
+func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
+	policy := realLibreOfficePolicy(t, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	result, err := Convert(ctx, testSource(t, realDOCX(false), docxMediaType), "docx", policy)
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "deadline exceeded"))
+}
+
+func realLibreOfficePolicy(t *testing.T, runner Runner) Policy {
+	t.Helper()
+	executable := os.Getenv("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE")
+	if executable == "" {
+		executable = "/usr/lib/libreoffice/program/soffice.bin"
+	}
+	content, err := os.ReadFile(executable)
+	require.NoError(t, err)
+	if runner == nil {
+		runner, err = newNativeRunner(Renderer{})
+		require.NoError(t, err)
+	}
+	policy, err := NewPolicy(Renderer{
+		Executable: executable, ExecutableSHA256: digest(content),
+		RuntimeIdentity: testRunnerIdentity, Runner: runner,
+	}, DefaultLimits())
+	require.NoError(t, err)
+	return policy
+}
+
+func realDOCX(external bool) []byte {
+	entries := map[string]string{
+		"[Content_Types].xml": `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+		"_rels/.rels":         `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
+		"word/document.xml":   `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>safe synthetic document</w:t></w:r></w:p>`,
+	}
+	if external {
+		entries["word/document.xml"] += `<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+		entries["word/_rels/document.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="http://127.0.0.1/external.png" TargetMode="External"/></Relationships>`
+	}
+	entries["word/document.xml"] += `</w:body></w:document>`
+	return zipEntries(entries)
+}
+
+func realXLSX(kind string) []byte {
+	formula := ""
+	switch kind {
+	case "webservice":
+		formula = `<f>WEBSERVICE("https://example.test")</f>`
+	case "safe":
+		formula = `<f>SUM(A1:A2)</f>`
+	}
+	entries := map[string]string{
+		"[Content_Types].xml":        `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+		"_rels/.rels":                `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+		"xl/workbook.xml":            `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+		"xl/worksheets/sheet1.xml":   `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>one</t></is></c><c r="A2" t="inlineStr"><is><t>two</t></is></c><c r="A3">` + formula + `<v>3</v></c></row></sheetData></worksheet>`,
+	}
+	return zipEntries(entries)
+}
+
+func zipEntries(entries map[string]string) []byte {
+	var buffer bytes.Buffer
+	archive := zip.NewWriter(&buffer)
+	for name, content := range entries {
+		file, err := archive.Create(name)
+		if err != nil {
+			return nil
+		}
+		if _, err := io.WriteString(file, content); err != nil {
+			return nil
+		}
+	}
+	if err := archive.Close(); err != nil {
+		return nil
+	}
+	return buffer.Bytes()
+}
