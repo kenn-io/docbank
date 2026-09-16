@@ -173,17 +173,17 @@ func registerEmailDocumentRoute(mux *http.ServeMux, api huma.API, op huma.Operat
 	registry := api.OpenAPI().Components.Schemas
 	if input != nil {
 		op.RequestBody = &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
-			emailDocumentJSONMediaType: {Schema: huma.SchemaFromType(registry, input)},
+			emailDocumentJSONMediaType: {Schema: registry.Schema(input, true, "")},
 		}}
 	}
 	op.Responses = map[string]*huma.Response{
 		"default": {Description: "Request failed", Content: map[string]*huma.MediaType{
-			emailDocumentJSONMediaType: {Schema: huma.SchemaFromType(registry, reflect.TypeFor[Error]())},
+			emailDocumentJSONMediaType: {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")},
 		}},
 	}
 	if output != nil {
 		op.Responses["200"] = &huma.Response{Description: "Exact retained authority", Content: map[string]*huma.MediaType{
-			emailDocumentJSONMediaType: {Schema: huma.SchemaFromType(registry, output)},
+			emailDocumentJSONMediaType: {Schema: registry.Schema(output, true, "")},
 		}}
 	} else {
 		op.Responses["204"] = &huma.Response{Description: "Receipt removed"}

@@ -1,0 +1,14 @@
+package: apiclient
+output:
+  directory: internal/apiclient
+  filename: client.gen.go
+  use-single-file: true
+generate:
+  client: true
+  client-with-response: true
+  validation:
+    skip: true
+user-templates:
+  header.tmpl: scripts/oapi-codegen/header.tmpl
+  types.tmpl: scripts/oapi-codegen/types.tmpl
+  client-options.tmpl: scripts/oapi-codegen/client-options.tmpl

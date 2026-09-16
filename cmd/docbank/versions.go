@@ -11,7 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const maxVersionsLimit = 1000
@@ -53,7 +54,7 @@ var versionsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -61,7 +62,8 @@ var versionsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		page, err := c.Versions(cmd.Context(), node.ID, versionsLimit, versionsOffset)
+		page, err := c.API().ListContentVersions(cmd.Context(), &apiclient.ListContentVersionsRequestOptions{PathParams: &apiclient.ListContentVersionsPath{ID: node.ID}, Query: &apiclient.ListContentVersionsQuery{Limit: new(int64(versionsLimit)), Offset: new(int64(versionsOffset))}})
+
 		if err != nil {
 			return err
 		}
@@ -99,11 +101,12 @@ var versionsShowCmd = &cobra.Command{
 		if err := validateVersionID(args[0]); err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		version, err := c.Version(cmd.Context(), args[0])
+		version, err := c.API().GetContentVersion(cmd.Context(), &apiclient.GetContentVersionRequestOptions{PathParams: &apiclient.GetContentVersionPath{VersionID: args[0]}})
+
 		if err != nil {
 			return err
 		}
@@ -139,7 +142,7 @@ var versionsCatCmd = &cobra.Command{
 		if err := validateVersionID(args[0]); err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -177,7 +180,7 @@ var versionsPruneCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -256,7 +259,7 @@ func writeVersionJSON(w io.Writer, value any) error {
 }
 
 func validateVersionID(id string) error {
-	if client.IsCanonicalUUIDv4(id) {
+	if daemonconn.IsCanonicalUUIDv4(id) {
 		return nil
 	}
 	return usageError(fmt.Errorf("version ID %q must be a canonical UUIDv4", id))

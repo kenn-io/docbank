@@ -17,7 +17,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -59,7 +60,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	renderer := newBackupProgressRenderer(cmd.ErrOrStderr(), progressMode)
 	defer renderer.finish()
 
-	c, err := client.Ensure(cmd.Context())
+	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -132,11 +133,12 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	// Editors may remain open much longer than the daemon idle timeout. Reacquire
 	// a compatible daemon only after local hashing, then confirm the authority
 	// originally staged before reporting a no-op or attempting replacement.
-	c, err = client.Ensure(cmd.Context())
+	c, err = daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
 	}
-	current, err := c.Node(cmd.Context(), node.ID)
+	current, err := c.API().GetNode(cmd.Context(), &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: node.ID}})
+
 	if err != nil {
 		return fmt.Errorf("rechecking edited node %d: %w", node.ID, err)
 	}
@@ -237,7 +239,7 @@ func normalizedMIMEOverride(value string) (string, error) {
 }
 
 func stageCurrentVersion(
-	ctx context.Context, c *client.Client, node api.Node, staging *privateStaging,
+	ctx context.Context, c *daemonconn.Connection, node api.Node, staging *privateStaging,
 	renderer *backupProgressRenderer,
 ) (path string, retErr error) {
 	stream, err := c.VersionContent(ctx, node.CurrentVersionID)
@@ -279,7 +281,7 @@ func stageCurrentVersion(
 	return path, nil
 }
 
-func validateEditStreamAuthority(stream *client.ContentStream, node api.Node) error {
+func validateEditStreamAuthority(stream *daemonconn.ContentStream, node api.Node) error {
 	if stream.BlobHash == node.BlobHash && stream.Size == node.Size {
 		return nil
 	}

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,8 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
@@ -111,9 +113,10 @@ func TestProcessingCoverageReportsConfiguredEmbeddingUnavailableBeforeFirstRun(t
 func TestProcessingClientReturnsCompletedEmbeddingIDs(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
 	node := createFileWithContent(t, ts, catalog, "/combined-receipt.txt", "synthetic combined receipt\n")
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
 		PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
@@ -133,9 +136,10 @@ func TestProcessingClientReportsRequiredEmbeddingFailure(t *testing.T) {
 			ts, catalog := newTestServer(t,
 				configureProcessingTestServiceWithProviders(t, rendition, provider, true, activation))
 			node := createFileWithContent(t, ts, catalog, "/embedding-failure.txt", "synthetic embedding failure\n")
-			c := client.New(ts.URL, testAPIKey)
+			c := daemonconn.New(ts.URL, testAPIKey)
 			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-			plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+			plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 			require.NoError(t, err)
 			job, startErr := c.StartProcessing(t.Context(), api.StartProcessingRequest{
 				Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
@@ -386,9 +390,10 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
 	t.Cleanup(func() { closeProcessingSignal(provider.release) })
 	node := createFileWithContent(t, ts, catalog, "/shutdown.txt", "recover accepted processing after shutdown\n")
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	start := api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}
 	payload, err := json.Marshal(start)
@@ -666,9 +671,10 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 		catalog.VaultID()+"&content_version_id="+node.CurrentVersionID, nil)
 	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageBody)
 	assert.Contains(t, coverageBody, `"state":"complete"`)
-	processingClient := client.New(ts.URL, testAPIKey)
-	coverage, err := processingClient.DocumentCoverage(t.Context(), "private", api.DocumentSourceFence{
-		VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID, outside.CurrentVersionID}})
+	processingClient := daemonconn.New(ts.URL, testAPIKey)
+	vaultID, err := uuid.Parse(catalog.VaultID())
+	require.NoError(t, err)
+	coverage, err := processingClient.API().GetDocumentProcessingCoverage(t.Context(), &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{Profile: "private", VaultUID: vaultID, ContentVersionID: []string{node.CurrentVersionID, outside.CurrentVersionID}}})
 	require.NoError(t, err)
 	assert.Equal(t, 1, coverage.Renditions.Complete)
 	assert.Equal(t, 1, coverage.Renditions.Unavailable)
@@ -1160,22 +1166,24 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
 		require.NoError(t, err)
 	})
 	node := createFileWithContent(t, ts, catalog, "/consent-change.txt", "synthetic consent evidence\n")
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	grant := api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}
 	expires := time.Now().UTC().Add(2 * time.Second)
 	grant.ExpiresAt = expires.Format(time.RFC3339Nano)
 	provider.afterRender = func() { time.Sleep(time.Until(expires) + time.Millisecond) }
 
-	_, err = c.GrantProcessingConsent(t.Context(), grant)
+	_, err = c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: new(grant)})
+
 	require.NoError(t, err)
 	for range 2 {
 		_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
 			PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
-		require.ErrorIs(t, err, client.ErrProcessingConsent)
-		code, ok := client.ProblemCode(err)
+		require.ErrorIs(t, err, daemonconn.ErrProcessingConsent)
+		code, ok := daemonconn.ProblemCode(err)
 		require.True(t, ok)
 		require.Equal(t, "processing_consent_expired", code)
 	}
@@ -1184,14 +1192,16 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
 func TestDerivativePurgeReturnsCommittedReceiptWhenCleanupFails(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/purge-partial.txt", "synthetic partial purge evidence\n")
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
 		PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
-	purgePlan, err := c.PlanDerivativePurge(t.Context(), api.DerivativePurgePlanRequest{AttachmentIDs: []string{job.AttachmentID}})
+	purgePlan, err := c.API().PlanDerivativePurge(t.Context(), &apiclient.PlanDerivativePurgeRequestOptions{Body: &api.DerivativePurgePlanRequest{AttachmentIDs: []string{job.AttachmentID}}})
+
 	require.NoError(t, err)
 	view, err := catalog.ActiveRenditionByAttachment(t.Context(), job.AttachmentID)
 	require.NoError(t, err)
@@ -1218,37 +1228,42 @@ func TestDerivativePurgeReturnsCommittedReceiptWhenCleanupFails(t *testing.T) {
 
 func TestDerivativePurgePreviewTracksOnlySelectedDerivatives(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	first := createFileWithContent(t, ts, catalog, "/first.txt", "first synthetic source\n")
 	selector := api.ProcessingSelector{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Profile: "private"}
 	versionRequest := api.DerivativePurgePlanRequest{ContentVersionIDs: []string{first.CurrentVersionID}}
-	before, err := c.PlanDerivativePurge(t.Context(), versionRequest)
+	before, err := c.API().PlanDerivativePurge(t.Context(), &apiclient.PlanDerivativePurgeRequestOptions{Body: new(versionRequest)})
+
 	require.NoError(t, err)
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector,
 		PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	_, err = c.RunDerivativePurge(t.Context(), api.DerivativePurgeJobRequest{
 		ContentVersionIDs: versionRequest.ContentVersionIDs, PlanFingerprint: before.Fingerprint})
-	require.ErrorIs(t, err, client.ErrProcessingPlanChanged)
+	require.ErrorIs(t, err, daemonconn.ErrProcessingPlanChanged)
 	view, err := catalog.ActiveRenditionByAttachment(t.Context(), job.AttachmentID)
 	require.NoError(t, err)
 	requests := []api.DerivativePurgePlanRequest{versionRequest,
 		{AttachmentIDs: []string{job.AttachmentID}}, {BuildIDs: []string{view.Build.ID}}, {All: true}}
-	previews := make([]api.DerivativePurgePlan, len(requests))
+	previews := make([]*api.DerivativePurgePlan, len(requests))
 	for index, request := range requests {
-		previews[index], err = c.PlanDerivativePurge(t.Context(), request)
+		previews[index], err = c.API().PlanDerivativePurge(t.Context(), &apiclient.PlanDerivativePurgeRequestOptions{Body: new(request)})
+
 		require.NoError(t, err)
 	}
 	second := createFileWithContent(t, ts, catalog, "/second.txt", "second unrelated synthetic source\n")
 	selector = api.ProcessingSelector{NodeID: second.ID, ContentVersionID: second.CurrentVersionID, Profile: "private"}
-	plan, err = c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err = c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	for index, request := range requests {
-		after, err := c.PlanDerivativePurge(t.Context(), request)
+		after, err := c.API().PlanDerivativePurge(t.Context(), &apiclient.PlanDerivativePurgeRequestOptions{Body: new(request)})
+
 		require.NoError(t, err)
 		if request.All {
 			assert.NotEqual(t, previews[index].Fingerprint, after.Fingerprint)

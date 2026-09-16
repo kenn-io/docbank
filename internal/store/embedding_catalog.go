@@ -304,7 +304,7 @@ func normalizeEmbeddingSetRecord(record EmbeddingSetRecord) (EmbeddingSetRecord,
 		record.InputGeneration.FormatterFingerprint = hashCatalogText(generation.Chunk.Formatter)
 		record.InputGeneration.AttachmentContextFingerprint = ""
 		if generation.AttachmentContext != nil {
-			encodedContext, marshalErr := json.Marshal(generation.AttachmentContext)
+			encodedContext, marshalErr := json.Marshal(generation.AttachmentContext, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 			if marshalErr != nil {
 				return EmbeddingSetRecord{}, marshalErr
 			}
@@ -391,7 +391,7 @@ func validateExactEmbeddingGenerationArtifact(record EmbeddingInputGenerationRec
 	}
 	contextFingerprint := ""
 	if generation.AttachmentContext != nil {
-		encoded, marshalErr := json.Marshal(generation.AttachmentContext)
+		encoded, marshalErr := json.Marshal(generation.AttachmentContext, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if marshalErr != nil {
 			return marshalErr
 		}

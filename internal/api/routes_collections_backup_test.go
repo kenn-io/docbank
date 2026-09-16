@@ -15,8 +15,8 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
@@ -86,8 +86,8 @@ func TestCollectionAuthoritySurvivesPhysicalBackupRestore(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, firstLabel.Label)
 
-			c := client.New(ts.URL, testAPIKey)
-			preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{
+			c := daemonconn.New(ts.URL, testAPIKey)
+			preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{
 				NodeID: live.RootID(), AgentLabel: "physical-backup-test",
 			})
 			require.NoError(t, err)

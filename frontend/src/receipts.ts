@@ -375,7 +375,7 @@ function boundedLaneRank(value: unknown): boolean {
 }
 
 export async function renditionArtifact(session: string, attachmentID: string): Promise<RenditionArtifact> {
-  const response = await generated.getDocumentRendition(attachmentID, undefined, { session, headers: { Accept: "text/markdown" } });
+  const response = await generated.getDocumentRendition(attachmentID, undefined, undefined, { session, headers: { Accept: "text/markdown" } });
   if (!(response.headers.get("Content-Type") ?? "").toLowerCase().startsWith("text/markdown")) {
     throw new Error("The daemon returned an invalid rendition content type.");
   }
@@ -601,7 +601,7 @@ export async function renameTag(
   name: string,
 ): Promise<Tag> {
   const normalized = name.normalize("NFC");
-  const tag = await generated.renameTag(tagID, { name }, { session, headers: { "If-Match": String(revision) } });
+  const tag = await generated.renameTag(tagID, { name }, { "If-Match": String(revision) }, { session });
   if (tag.id !== tagID || tag.name !== normalized || tag.revision < revision) {
     throw new Error("The daemon returned an invalid renamed-tag receipt.");
   }
@@ -613,7 +613,7 @@ export async function deleteTag(
   tagID: string,
   revision: number,
 ): Promise<TagDeletionReceipt> {
-  const receipt = await generated.deleteTag(tagID, { session, headers: { "If-Match": String(revision) } });
+  const receipt = await generated.deleteTag(tagID, { "If-Match": String(revision) }, { session });
   if (
     receipt.tag.id !== tagID ||
     receipt.tag.revision !== revision ||
@@ -631,7 +631,7 @@ export async function changeNodeTag(
   tagID: string,
   assign: boolean,
 ): Promise<TagAssignmentReceipt> {
-  const receipt = await (assign ? generated.assignTag : generated.unassignTag)(nodeID, tagID, { session, headers: { "If-Match": String(revision) } });
+  const receipt = await (assign ? generated.assignTag : generated.unassignTag)(nodeID, tagID, { "If-Match": String(revision) }, { session });
   if (
     receipt.node.id !== nodeID ||
     receipt.node.revision < revision ||
@@ -649,7 +649,7 @@ export async function trashNode(
   nodeID: number,
   revision: number,
 ): Promise<Node> {
-  const node = await generated.trashNode(nodeID, { session, headers: { "If-Match": String(revision) } });
+  const node = await generated.trashNode(nodeID, { "If-Match": String(revision) }, { session });
   if (
     node.id !== nodeID ||
     node.revision <= revision ||
@@ -666,7 +666,7 @@ export async function restoreNode(
   nodeID: number,
   revision: number,
 ): Promise<Node> {
-  const node = await generated.restoreNode(nodeID, { session, headers: { "If-Match": String(revision) } });
+  const node = await generated.restoreNode(nodeID, { "If-Match": String(revision) }, { session });
   if (
     node.id !== nodeID ||
     node.revision <= revision ||

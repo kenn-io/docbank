@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -286,13 +286,13 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 	}{
 		{name: "not found", err: store.ErrNotFound, code: "not_found"},
 		{name: "stale version", err: store.ErrProcessingSourceFenceStaleVersion, code: "stale_version"},
-		{name: "consent", err: client.ErrProcessingConsent, code: "consent_required"},
+		{name: "consent", err: daemonconn.ErrProcessingConsent, code: "consent_required"},
 		{name: "cursor", err: store.ErrDocumentCursorExpired, code: "cursor_expired"},
 		{name: "daemon unavailable", err: fmt.Errorf("private daemon detail: %w", errDaemonUnavailable),
 			code: "daemon_unavailable", redaction: "private daemon detail"},
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
 			code: "invalid_document_cursor", redaction: "private cursor detail"},
-		{name: "scope", err: &client.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
+		{name: "scope", err: &daemonconn.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -303,6 +303,15 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 			structured, structuredOK := result.StructuredContent.(toolErrorOutput)
 			require.True(t, structuredOK)
 			assert.Equal(t, test.code, structured.Code)
+			var wire map[string]any
+			text, isText := result.Content[0].(*sdkmcp.TextContent)
+			require.True(t, isText)
+			require.NoError(t, json.Unmarshal([]byte(text.Text), &wire))
+			if test.code == "scope_too_large" {
+				assert.EqualValues(t, 4097, wire["observed_scope_count"])
+			} else {
+				assert.NotContains(t, wire, "observed_scope_count")
+			}
 			assert.NotContains(t, structured.Message, "/synthetic/private")
 			encoded, err := json.Marshal(result)
 			require.NoError(t, err)
@@ -514,9 +523,9 @@ func assertJSONValueEqual(t *testing.T, want, got any, label string) {
 
 func callToolWire(t *testing.T, name string, arguments map[string]any) []byte {
 	t.Helper()
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return nil, errors.New("synthetic daemon unavailable")
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 	return exchangeRaw(t, newServerWithOptionsAndDaemon(testImplementation(),
 		ServerOptions{AllowProcessing: true}, lease),
 		requestFor("tools/call", map[string]any{"name": name, "arguments": arguments}))

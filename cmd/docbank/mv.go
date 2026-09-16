@@ -11,7 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -40,21 +41,23 @@ var mvCmd = &cobra.Command{
 		if !strings.HasPrefix(args[1], "/") {
 			return usageError(errors.New("move destination must be an absolute virtual path"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		var moved api.Node
+		var moved *api.Node
 		if source.isID() {
 			current, resolveErr := source.resolve(cmd.Context(), c)
 			if resolveErr != nil {
 				return resolveErr
 			}
-			moved, err = c.MoveToPath(
+			movedValue, moveErr := c.MoveToPath(
 				cmd.Context(), current.ID, current.Revision, args[1],
 			)
+			moved, err = &movedValue, moveErr
 		} else {
-			moved, err = c.MovePath(cmd.Context(), source.path, args[1])
+			moved, err = c.API().MovePath(cmd.Context(), &apiclient.MovePathRequestOptions{Body: &apiclient.MovePathBody{SrcPath: source.path, DestPath: args[1]}})
+
 		}
 		if err != nil {
 			return err
@@ -85,7 +88,7 @@ directory that another item moves in the same transaction.`,
 		if err != nil {
 			return usageError(err)
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var infoJSON bool
@@ -17,11 +17,12 @@ var infoCmd = &cobra.Command{
 	Short: "Identify the selected vault and summarize its contents",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		info, err := c.Info(cmd.Context())
+		info, err := c.API().VaultInfo(cmd.Context())
+
 		if err != nil {
 			return err
 		}

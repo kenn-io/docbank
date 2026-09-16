@@ -223,7 +223,7 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 func registerMediaUploadOpenAPI(api huma.API) {
 	const jsonMediaType = "application/json"
 	registry := api.OpenAPI().Components.Schemas
-	receipt := huma.SchemaFromType(registry, reflect.TypeFor[MediaReceipt]())
+	receipt := registry.Schema(reflect.TypeFor[MediaReceipt](), true, "")
 	for _, route := range []struct {
 		id, path, summary string
 		metadata          reflect.Type

@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var (
@@ -43,7 +43,7 @@ var auditHistoryCmd = &cobra.Command{
 		if nodeIDSet && auditHistoryNodeID < 1 {
 			return usageError(errors.New("audit history --node-id must be positive"))
 		}
-		if scopeSet && !client.IsCanonicalUUIDv4(auditHistoryScope) {
+		if scopeSet && !daemonconn.IsCanonicalUUIDv4(auditHistoryScope) {
 			return usageError(errors.New("audit history --scope must be a canonical UUIDv4"))
 		}
 		path := ""
@@ -59,7 +59,7 @@ var auditHistoryCmd = &cobra.Command{
 				path = selector.path
 			}
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

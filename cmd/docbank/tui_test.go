@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
@@ -27,8 +27,8 @@ func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
 		assert.NoError(t, json.MarshalWrite(w, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: &job}))
 	}))
 	t.Cleanup(server.Close)
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
-		return client.New(server.URL, ""), nil
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, ""), nil
 	}}
 	stream, err := backend.StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: api.ProcessingSelector{ContentVersionID: job.ContentVersionID}}, job.ProfileFingerprint)
 	require.NoError(t, err)
@@ -65,10 +65,10 @@ func TestTUIBackendReacquiresAfterPinnedDaemonConnectionCloses(t *testing.T) {
 
 	var reacquires atomic.Int32
 	backend := &tuiDaemonBackend{
-		initial: client.New("http://127.0.0.1:1", ""),
-		ensure: func(context.Context) (*client.Client, error) {
+		initial: daemonconn.New("http://127.0.0.1:1", ""),
+		ensure: func(context.Context) (*daemonconn.Connection, error) {
 			reacquires.Add(1)
-			return client.New(live.URL, ""), nil
+			return daemonconn.New(live.URL, ""), nil
 		},
 	}
 	node, err := backend.Stat(t.Context(), "/")
@@ -88,9 +88,9 @@ func TestTUIBackendDoesNotRetryDaemonProblemResponses(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	var acquires atomic.Int32
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		acquires.Add(1)
-		return client.New(server.URL, ""), nil
+		return daemonconn.New(server.URL, ""), nil
 	}}
 	_, err := backend.Node(t.Context(), 42)
 	require.ErrorIs(t, err, store.ErrNotFound)
@@ -106,13 +106,13 @@ func TestTUIBackendDoesNotRetryMalformedDaemonResponses(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	var acquires atomic.Int32
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		acquires.Add(1)
-		return client.New(server.URL, ""), nil
+		return daemonconn.New(server.URL, ""), nil
 	}}
 	_, err := backend.Node(t.Context(), 42)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decoding GET /api/v1/nodes/42 response")
+	assert.Contains(t, err.Error(), "error decoding response")
 	assert.NotContains(t, err.Error(), "reconnecting")
 	assert.Equal(t, int32(1), acquires.Load())
 }
@@ -127,14 +127,14 @@ func TestTUIBackendRetriesInterruptedDaemonAcquisition(t *testing.T) {
 	t.Cleanup(live.Close)
 
 	var acquires atomic.Int32
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		if acquires.Add(1) == 1 {
 			return nil, fmt.Errorf(
 				"ownership proof raced daemon exit: %w",
-				client.ErrTransientDaemonAcquisition,
+				daemonconn.ErrTransientDaemonAcquisition,
 			)
 		}
-		return client.New(live.URL, ""), nil
+		return daemonconn.New(live.URL, ""), nil
 	}}
 	node, err := backend.Stat(t.Context(), "/")
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestTUIBackendRetriesInterruptedDaemonAcquisition(t *testing.T) {
 func TestTUIBackendDoesNotRetryDeterministicAcquisitionFailure(t *testing.T) {
 	deterministic := errors.New("config.toml has an unknown key")
 	var acquires atomic.Int32
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		acquires.Add(1)
 		return nil, deterministic
 	}}
@@ -158,10 +158,10 @@ func TestTUIBackendDoesNotRetryCanceledAcquisition(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	var acquires atomic.Int32
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		acquires.Add(1)
 		return nil, fmt.Errorf(
-			"%w: %w", client.ErrTransientDaemonAcquisition, context.Canceled,
+			"%w: %w", daemonconn.ErrTransientDaemonAcquisition, context.Canceled,
 		)
 	}}
 	_, err := backend.Stat(ctx, "/")
@@ -190,9 +190,9 @@ func TestTUIBackendDoesNotReplayMutationAfterResponseIsLost(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	var acquires atomic.Int32
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
 		acquires.Add(1)
-		return client.New(server.URL, ""), nil
+		return daemonconn.New(server.URL, ""), nil
 	}}
 	_, err := backend.Trash(t.Context(), 42, 3)
 	require.ErrorContains(t, err, "trash outcome is unconfirmed")
@@ -211,8 +211,8 @@ func TestTUIBackendReportsTruncatedMutationReceiptAsUnconfirmed(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	backend := &tuiDaemonBackend{ensure: func(context.Context) (*client.Client, error) {
-		return client.New(server.URL, ""), nil
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, ""), nil
 	}}
 	_, err := backend.Trash(t.Context(), 42, 3)
 	require.ErrorContains(t, err, "trash outcome is unconfirmed")

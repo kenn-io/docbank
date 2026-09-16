@@ -14,7 +14,7 @@
   } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { type Node } from "./generated/docbank.js";
-  import type { UploadFile200 as UploadReceipt } from "./generated/docbank.js";
+  import type { UploadReceipt } from "./generated/docbank.js";
   import {
     hashFile,
     type TransferProgress,

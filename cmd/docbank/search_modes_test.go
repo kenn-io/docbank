@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
@@ -51,7 +51,7 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	c := client.New(server.URL, "test-key")
+	c := daemonconn.New(server.URL, "test-key")
 
 	command, _ := processingTestCommand()
 	err := runDocumentSearch(command, c, "synthetic", documentSearchCLIOptions{
@@ -74,7 +74,7 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 
 func TestSearchModesRequireSourceFence(t *testing.T) {
 	command, _ := processingTestCommand()
-	err := runDocumentSearch(command, client.New("http://127.0.0.1:1", "test-key"), "query",
+	err := runDocumentSearch(command, daemonconn.New("http://127.0.0.1:1", "test-key"), "query",
 		documentSearchCLIOptions{Mode: "auto", Profile: "private", Limit: 10})
 	require.ErrorContains(t, err, "--source-version")
 }

@@ -178,9 +178,9 @@ func writeEmailStoreError(w http.ResponseWriter, err error) {
 
 func registerEmailOpenAPI(api huma.API) {
 	registry := api.OpenAPI().Components.Schemas
-	metadata := huma.SchemaFromType(registry, reflect.TypeFor[EmailMetadata]())
-	pending := huma.SchemaFromType(registry, reflect.TypeFor[EmailPending]())
-	errorSchema := huma.SchemaFromType(registry, reflect.TypeFor[Error]())
+	metadata := registry.Schema(reflect.TypeFor[EmailMetadata](), true, "")
+	pending := registry.Schema(reflect.TypeFor[EmailPending](), true, "")
+	errorSchema := registry.Schema(reflect.TypeFor[Error](), true, "")
 	jsonResponse := func(description string, schema *huma.Schema) *huma.Response {
 		return &huma.Response{Description: description, Headers: map[string]*huma.Param{
 			"Cache-Control": {Description: "Mutable selection state is not cacheable", Schema: &huma.Schema{Type: openAPIStringType}},

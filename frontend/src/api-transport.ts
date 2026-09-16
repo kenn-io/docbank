@@ -25,6 +25,9 @@ export interface SessionOptions extends RequestInit {
 // Orval's transport hook adds the scoped credential and preserves problem details.
 export async function sessionResponse<_T>(url: string, { session = "", ...init }: SessionOptions): Promise<Response> {
   const headers = new Headers(init.headers);
+  if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {
+    headers.set("Content-Type", init.body.type);
+  }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
   const response = await fetch(url, { ...init, headers, credentials: "same-origin" });

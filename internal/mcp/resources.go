@@ -10,7 +10,7 @@ import (
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const renditionResourceTemplate = "docbank://vaults/{vault_id}/documents/{node_id}/versions/{content_version_id}/renditions/{attachment_id}{?offset,max_chars}"
@@ -48,7 +48,7 @@ func parseRenditionResourceURI(raw string) (renditionResourceIdentity, rendition
 	}
 	nodeID, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || nodeID < 1 || strconv.FormatInt(nodeID, 10) != parts[2] ||
-		!client.IsCanonicalUUIDv4(parts[0]) || !client.IsCanonicalUUIDv4(parts[4]) || !validSHA256Identity(parts[6]) {
+		!daemonconn.IsCanonicalUUIDv4(parts[0]) || !daemonconn.IsCanonicalUUIDv4(parts[4]) || !validSHA256Identity(parts[6]) {
 		return renditionResourceIdentity{}, renditionWindow{}, errors.New("invalid rendition resource identity")
 	}
 	query, err := url.ParseQuery(parsed.RawQuery)
@@ -112,7 +112,7 @@ func renditionResourceHandler(lease *daemonLease, logger *slog.Logger) sdkmcp.Re
 		if err != nil {
 			return nil, sdkmcp.ResourceNotFoundError(request.Params.URI)
 		}
-		window, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (api.RenditionTextWindow, error) {
+		window, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.RenditionTextWindow, error) {
 			return c.RenditionTextWindow(ctx, api.RenditionWindowRequest{
 				VaultID: identity.VaultID, NodeID: identity.NodeID,
 				ContentVersionID: identity.ContentVersionID, AttachmentID: identity.AttachmentID,

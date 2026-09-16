@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var rmJSON bool
@@ -23,19 +25,21 @@ var rmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		var n api.Node
+		var n *api.Node
 		if selector.isID() {
 			current, resolveErr := selector.resolve(cmd.Context(), c)
 			if resolveErr != nil {
 				return resolveErr
 			}
-			n, err = c.Trash(cmd.Context(), current.ID, current.Revision)
+			n, err = c.API().TrashNode(cmd.Context(), &apiclient.TrashNodeRequestOptions{PathParams: &apiclient.TrashNodePath{ID: current.ID}, Header: &apiclient.TrashNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(current.Revision, 10))}})
+
 		} else {
-			n, err = c.TrashPath(cmd.Context(), selector.path)
+			n, err = c.API().TrashPath(cmd.Context(), &apiclient.TrashPathRequestOptions{Body: &apiclient.TrashPathBody{Path: selector.path}})
+
 		}
 		if err != nil {
 			return err

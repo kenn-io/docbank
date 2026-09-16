@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -34,8 +34,8 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "vault busy", err: home.ErrVaultLocked, started: true, want: exitBusy},
 		{name: "repository busy", err: backup.ErrRepoLocked, started: true, want: exitBusy},
 		{name: "retirement busy", err: packstore.ErrPackRetirementDeferred, started: true, want: exitBusy},
-		{name: "maintenance busy", err: client.ErrMaintenanceBusy, started: true, want: exitBusy},
-		{name: "content integrity", err: client.ErrIntegrity, started: true, want: exitIntegrity},
+		{name: "maintenance busy", err: daemonconn.ErrMaintenanceBusy, started: true, want: exitBusy},
+		{name: "content integrity", err: daemonconn.ErrIntegrity, started: true, want: exitIntegrity},
 		{name: "reported integrity", err: integrityError(errors.New("problems")), started: true, want: exitIntegrity},
 	}
 	for _, tt := range tests {

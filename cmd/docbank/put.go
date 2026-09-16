@@ -21,7 +21,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -85,7 +85,7 @@ var putCmd = &cobra.Command{
 		// Keep the potentially long local pass outside the daemon lifecycle.
 		// Inspect the target only when the upload is ready to begin so an idle
 		// daemon cannot disappear while the source is being hashed.
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

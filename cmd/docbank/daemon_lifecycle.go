@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 )
 
@@ -18,8 +18,8 @@ var daemonCmd = &cobra.Command{
 	Short: "Manage the docbank daemon",
 }
 
-// printEnsured reports what client.EnsureDaemon found or did.
-func printEnsured(cmd *cobra.Command, res client.EnsureResult) {
+// printEnsured reports what daemonconn.EnsureDaemon found or did.
+func printEnsured(cmd *cobra.Command, res daemonconn.EnsureResult) {
 	if res.Replaced != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "replaced daemon %s (pid %d) with %s: pid %d at %s\n",
 			res.Replaced.Version, res.Replaced.PID, res.Record.Version, res.Record.PID, res.Record.Address)
@@ -46,7 +46,7 @@ var daemonStartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		res, err := client.EnsureDaemon(cmd.Context(), layout.Root)
+		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}
@@ -66,7 +66,7 @@ var daemonStatusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		rec, info, ok, err := client.Find(cmd.Context(), layout.Root)
+		rec, info, ok, err := daemonconn.Find(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ var daemonStopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		stopped, err := client.Stop(cmd.Context(), layout.Root)
+		stopped, err := daemonconn.Stop(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}
@@ -123,11 +123,11 @@ var daemonRestartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		wasRunning, err := client.Stop(cmd.Context(), layout.Root)
+		wasRunning, err := daemonconn.Stop(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}
-		res, err := client.EnsureDaemon(cmd.Context(), layout.Root)
+		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root)
 		if err != nil {
 			return err
 		}

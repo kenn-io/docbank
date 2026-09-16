@@ -109,9 +109,9 @@ function validateID(id: string): void {
   if (!uuid.test(id)) throw new Error("Invalid saved definition ID.");
 }
 
-function fence(value: SavedQuery): HeadersInit {
+function fence(value: SavedQuery): { "If-Match": string } {
   if (!positiveInteger(value.revision)) throw new Error("A positive saved definition revision is required.");
-  return { "Content-Type": "application/json", "If-Match": `"${value.revision}"` };
+  return { "If-Match": `"${value.revision}"` };
 }
 
 async function readResponse(response: Response): Promise<SavedQuery> {
@@ -171,14 +171,14 @@ export async function updateSavedQuery(session: string, observed: SavedQuery, pa
   };
   const revision = observed.revision + (sameDefinition(observed, expected) ? 0 : 1);
   requireReceipt(Number.isSafeInteger(revision));
-  const saved = await readResponse(await generated.updateSavedQuery(observed.id, body, { session, headers }));
+  const saved = await readResponse(await generated.updateSavedQuery(observed.id, body, headers, { session }));
   requireReceipt(saved.id === observed.id && saved.revision === revision && saved.created_at === observed.created_at && sameDefinition(saved, expected));
   return saved;
 }
 
 export async function deleteSavedQuery(session: string, observed: SavedQuery): Promise<SavedQuery> {
   validateID(observed.id);
-  const saved = await readResponse(await generated.deleteSavedQuery(observed.id, { session, headers: fence(observed) }));
+  const saved = await readResponse(await generated.deleteSavedQuery(observed.id, fence(observed), { session }));
   requireReceipt(saved.id === observed.id && saved.revision === observed.revision &&
     saved.created_at === observed.created_at && saved.updated_at === observed.updated_at && sameDefinition(saved, observed));
   return saved;

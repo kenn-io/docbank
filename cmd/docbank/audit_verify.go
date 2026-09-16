@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var auditVerifyJSON bool
@@ -31,7 +31,7 @@ var auditVerifyCmd = &cobra.Command{
 				return err
 			}
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func readExpectedAuditEvidence(path string) (*api.AuditEvidence, error) {
 			(!report.EvidenceCheck.Extends || len(report.EvidenceCheck.Problems) != 0)) {
 		return nil, errors.New("expected audit report was not a successful active verification")
 	}
-	if err := client.ValidateAuditEvidence(*report.Evidence); err != nil {
+	if err := daemonconn.ValidateAuditEvidence(*report.Evidence); err != nil {
 		return nil, fmt.Errorf("invalid evidence in expected audit report: %w", err)
 	}
 	return report.Evidence, nil

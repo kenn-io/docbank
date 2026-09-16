@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -49,7 +49,7 @@ type treeOmission struct {
 }
 
 type treeWalker struct {
-	client     *client.Client
+	daemonconn *daemonconn.Connection
 	maxDepth   int
 	maxEntries int
 	items      []treeEntry
@@ -78,7 +78,7 @@ var treeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ var treeCmd = &cobra.Command{
 			return fmt.Errorf("%s: %w", raw, store.ErrNotDir)
 		}
 		walker := treeWalker{
-			client: c, maxDepth: treeDepth, maxEntries: treeMaxEntries,
+			daemonconn: c, maxDepth: treeDepth, maxEntries: treeMaxEntries,
 			items: []treeEntry{}, omissions: []treeOmission{},
 		}
 		if treeAll {
@@ -124,7 +124,7 @@ func (w *treeWalker) walk(ctx context.Context, parentPath string, dirID int64, d
 		if limit == 0 {
 			return nil
 		}
-		page, err := w.client.ChildrenPage(ctx, dirID, limit, offset)
+		page, err := w.daemonconn.ChildrenPage(ctx, dirID, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -166,7 +166,7 @@ func (w *treeWalker) walk(ctx context.Context, parentPath string, dirID int64, d
 func (w *treeWalker) omitChildren(
 	ctx context.Context, dirPath string, dirID int64, reason string,
 ) error {
-	page, err := w.client.ChildrenPage(ctx, dirID, 1, 0)
+	page, err := w.daemonconn.ChildrenPage(ctx, dirID, 1, 0)
 	if err != nil {
 		return err
 	}

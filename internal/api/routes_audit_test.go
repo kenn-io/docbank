@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -25,7 +25,7 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateFile(t.Context(), taxes.ID, "return.txt", testHash("return"), 6, "text/plain")
 	require.NoError(t, err)
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 
 	status, err := c.AuditStatus(t.Context(), "/Taxes/return.txt", 0)
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 	require.NotNil(t, status.Membership)
 	assert.False(t, status.Membership.Protected)
 
-	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{Path: "/Taxes"})
+	preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{Path: "/Taxes"})
 	require.NoError(t, err)
 	assert.Equal(t, taxes.ID, preview.TargetNodeID)
 	assert.Equal(t, 2, preview.MemberCount)
@@ -202,15 +202,15 @@ func TestAuditAddsASecondDisjointScope(t *testing.T) {
 	require.NoError(t, err)
 	contracts, err := s.Mkdir(t.Context(), s.RootID(), "Contracts")
 	require.NoError(t, err)
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 
-	first, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	first, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: taxes.ID})
 	require.NoError(t, err)
 	assert.True(t, first.InitialAuthority)
 	_, err = c.EnableAudit(t.Context(), first.PreviewToken, true)
 	require.NoError(t, err)
 
-	second, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{Path: "/Contracts"})
+	second, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{Path: "/Contracts"})
 	require.NoError(t, err)
 	assert.False(t, second.InitialAuthority)
 	assert.Zero(t, second.VaultTopologyNodes)
@@ -230,11 +230,11 @@ func TestAuditAddsASecondDisjointScope(t *testing.T) {
 
 	nested, err := s.Mkdir(t.Context(), taxes.ID, "Nested")
 	require.NoError(t, err)
-	_, err = c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: nested.ID})
+	_, err = c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: nested.ID})
 	require.ErrorIs(t, err, store.ErrAuditScopeOverlap)
-	_, err = c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: s.RootID()})
+	_, err = c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: s.RootID()})
 	require.ErrorIs(t, err, store.ErrAuditScopeOverlap)
-	_, err = c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	_, err = c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: taxes.ID})
 	require.ErrorIs(t, err, store.ErrAuditScopeOverlap)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
@@ -245,12 +245,12 @@ func TestAdditionalAuditPreviewBecomesStaleAfterAuditedMutation(t *testing.T) {
 	require.NoError(t, err)
 	contracts, err := s.Mkdir(t.Context(), s.RootID(), "Contracts")
 	require.NoError(t, err)
-	c := client.New(ts.URL, testAPIKey)
-	first, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	c := daemonconn.New(ts.URL, testAPIKey)
+	first, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: taxes.ID})
 	require.NoError(t, err)
 	_, err = c.EnableAudit(t.Context(), first.PreviewToken, true)
 	require.NoError(t, err)
-	second, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: contracts.ID})
+	second, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: contracts.ID})
 	require.NoError(t, err)
 
 	_, err = s.Mkdir(t.Context(), taxes.ID, "2027")
@@ -261,7 +261,7 @@ func TestAdditionalAuditPreviewBecomesStaleAfterAuditedMutation(t *testing.T) {
 
 func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	ts, s := newTestServer(t, nil)
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
 		ts.URL+"/api/v1/audit/verify", nil)
 	require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 	assert.Nil(t, dormant.Evidence)
 
 	file := createFileWithContent(t, ts, s, "/record.txt", "protected content")
-	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: s.RootID()})
+	preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: s.RootID()})
 	require.NoError(t, err)
 	status, err := c.EnableAudit(t.Context(), preview.PreviewToken, true)
 	require.NoError(t, err)
@@ -342,9 +342,9 @@ func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 
 func TestAuditVerifyReturnsOnlyMetadataProblemsForMalformedPhysicalAuthority(t *testing.T) {
 	ts, s := newTestServer(t, nil)
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	file := createFileWithContent(t, ts, s, "/record.txt", "protected content")
-	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{
+	preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{
 		NodeID: s.RootID(),
 	})
 	require.NoError(t, err)
@@ -376,8 +376,8 @@ func TestAuditEnableRejectsPreviewAfterVaultMutation(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
-	c := client.New(ts.URL, testAPIKey)
-	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	c := daemonconn.New(ts.URL, testAPIKey)
+	preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: taxes.ID})
 	require.NoError(t, err)
 
 	_, err = s.Mkdir(t.Context(), s.RootID(), "Changed after review")
@@ -402,8 +402,8 @@ func TestAuditEnableReportsStaleWhenTargetIsTrashedOrDeleted(t *testing.T) {
 			ts, s := newTestServer(t, nil)
 			taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 			require.NoError(t, err)
-			c := client.New(ts.URL, testAPIKey)
-			preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{
+			c := daemonconn.New(ts.URL, testAPIKey)
+			preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{
 				NodeID: taxes.ID,
 			})
 			require.NoError(t, err)
@@ -501,8 +501,8 @@ func TestAuditPreviewTokenIsDaemonLocal(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
-	c := client.New(ts.URL, testAPIKey)
-	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: taxes.ID})
+	c := daemonconn.New(ts.URL, testAPIKey)
+	preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: taxes.ID})
 	require.NoError(t, err)
 
 	// A fresh server over the same store models daemon restart: no preview
@@ -515,7 +515,7 @@ func TestAuditPreviewTokenIsDaemonLocal(t *testing.T) {
 	})
 	restartServer := httptest.NewServer(restarted.Handler())
 	t.Cleanup(restartServer.Close)
-	restartClient := client.New(restartServer.URL, testAPIKey)
+	restartClient := daemonconn.New(restartServer.URL, testAPIKey)
 	_, err = restartClient.EnableAudit(t.Context(), preview.PreviewToken, true)
 	require.ErrorIs(t, err, store.ErrAuditPreviewStale)
 }

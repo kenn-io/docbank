@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,11 +20,11 @@ var revertCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !client.IsCanonicalUUIDv4(args[1]) {
+		if !daemonconn.IsCanonicalUUIDv4(args[1]) {
 			return usageError(fmt.Errorf(
 				"reversion source %q must be a canonical UUIDv4", args[1]))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

@@ -7,10 +7,11 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
+const jsonMediaType = "application/json"
+
 // These handlers use net/http directly. Document them alongside the Huma
 // operations so browser and daemon lifecycle requests can also be generated.
 func registerDaemonOpenAPI(api huma.API) {
-	const jsonMediaType = "application/json"
 	registry := api.OpenAPI().Components.Schemas
 	jsonResponse := func(description string, typ reflect.Type) *huma.Response {
 		return &huma.Response{Description: description, Content: map[string]*huma.MediaType{
@@ -32,7 +33,8 @@ func registerDaemonOpenAPI(api huma.API) {
 		Responses: map[string]*huma.Response{"204": {Description: "Session revoked"}},
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{
-		OperationID: "prepareWebDownload", Method: http.MethodPost, Path: webDownloadPreparePath,
+		BodyReadTimeout: -1,
+		OperationID:     "prepareWebDownload", Method: http.MethodPost, Path: webDownloadPreparePath,
 		Summary: "Verify a document and prepare a browser download",
 		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
 			jsonMediaType: {Schema: huma.SchemaFromType(registry, reflect.TypeFor[webDownloadRequest]())},

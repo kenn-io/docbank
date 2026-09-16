@@ -13,7 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var (
@@ -49,13 +50,14 @@ var addCmd = &cobra.Command{
 		if addPreflight && addReplace {
 			return usageError(errors.New("--replace cannot be used with --preflight"))
 		}
-		opts := client.IngestOptions{Include: addInclude, Exclude: addExclude, Replace: addReplace}
-		c, err := client.Ensure(cmd.Context())
+		opts := daemonconn.IngestOptions{Include: addInclude, Exclude: addExclude, Replace: addReplace}
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
 		if addPreflight {
-			rep, err := c.PreflightIngest(cmd.Context(), abs, addInclude, addExclude)
+			rep, err := c.API().PreflightIngest(cmd.Context(), &apiclient.PreflightIngestRequestOptions{Body: &apiclient.PreflightIngestBody{Paths: abs, Include: addInclude, Exclude: addExclude}})
+
 			if err != nil {
 				return err
 			}
@@ -65,7 +67,7 @@ var addCmd = &cobra.Command{
 					return fmt.Errorf("encoding preflight report: %w", err)
 				}
 			} else {
-				printIngestPreflight(cmd, rep)
+				printIngestPreflight(cmd, *rep)
 			}
 			if rep.Errors > 0 || rep.Rejected.Files > 0 {
 				return fmt.Errorf("preflight found %d error(s) and %d file(s) above the ingest limit",
@@ -75,7 +77,12 @@ var addCmd = &cobra.Command{
 		}
 		var rep api.IngestReport
 		if addJSON {
-			rep, err = c.IngestWithOptions(cmd.Context(), abs, addDest, opts)
+			response, requestErr := c.API().Ingest(cmd.Context(), &apiclient.IngestRequestOptions{Body: &apiclient.IngestBody{Paths: abs, Dest: addDest, Include: opts.Include, Exclude: opts.Exclude, Replace: opts.Replace, CollectionLabel: opts.CollectionLabel}})
+			err = requestErr
+			if err == nil {
+				rep = *response
+			}
+
 		} else {
 			mode, modeErr := progressModeFromFlag("add", addProgress)
 			if modeErr != nil {

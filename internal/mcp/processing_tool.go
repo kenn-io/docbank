@@ -9,7 +9,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const maxRememberedProcessingPlans = 4096
@@ -63,7 +63,7 @@ func (registry *processingPlanRegistry) reviewed(
 	contentVersionID, fingerprint string,
 ) (reviewedProcessingPlan, error) {
 	if registry == nil {
-		return reviewedProcessingPlan{}, client.ErrProcessingPlanChanged
+		return reviewedProcessingPlan{}, daemonconn.ErrProcessingPlanChanged
 	}
 	registry.mu.Lock()
 	reviewed, exists := registry.entries[processingPlanKey{
@@ -71,7 +71,7 @@ func (registry *processingPlanRegistry) reviewed(
 	}]
 	registry.mu.Unlock()
 	if !exists || reviewed.Selector.ContentVersionID != contentVersionID {
-		return reviewedProcessingPlan{}, client.ErrProcessingPlanChanged
+		return reviewedProcessingPlan{}, daemonconn.ErrProcessingPlanChanged
 	}
 	return reviewed, nil
 }
@@ -126,7 +126,7 @@ func executeProcessingTool(
 	if err != nil {
 		return nil, err
 	}
-	job, err := daemonProcessingStart(ctx, lease, func(c *client.Client) (api.ProcessingJob, error) {
+	job, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (api.ProcessingJob, error) {
 		return c.EnqueueProcessing(ctx, api.StartProcessingRequest{
 			Selector: reviewed.Selector, PlanFingerprint: input.PlanFingerprint, Consent: false,
 		}, reviewed.ProfileFingerprint)

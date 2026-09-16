@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const maxReferencesLimit = 1000
@@ -35,7 +35,7 @@ var referencesCmd = &cobra.Command{
 		if referencesOffset < 0 {
 			return usageError(errors.New("--offset must not be negative"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

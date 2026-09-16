@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 )
 
@@ -77,13 +77,13 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	out, err := run("daemon", "status")
 	require.Error(t, err) // exit 1 when not running
 	assert.Contains(t, out, "not running")
-	recs, lerr := client.RuntimeStore(dir).List()
+	recs, lerr := daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, lerr)
 	assert.Empty(t, recs, "status must not autostart")
 
 	out, err = run("daemon", "start")
 	require.NoError(t, err, out)
-	t.Cleanup(func() { _, _ = client.Stop(context.Background(), dir) })
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	startPID := parsePID(t, out)
 	out, err = run("daemon", "status")
 	require.NoError(t, err, out)
@@ -102,7 +102,7 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	require.NoError(t, err, out)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, _, found, err := client.Find(ctx, dir)
+	_, _, found, err := daemonconn.Find(ctx, dir)
 	require.NoError(t, err)
 	assert.False(t, found)
 }
@@ -159,7 +159,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 
 	out, err := run(oldBin, "daemon", "start")
 	require.NoError(t, err, out)
-	t.Cleanup(func() { _, _ = client.Stop(context.Background(), dir) })
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	oldPID := parsePID(t, out)
 
 	// A same-version start leaves the running daemon alone.
@@ -171,17 +171,17 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 9 predates background-job status. Ensure must replace it before
 	// the CLI requests /api/v1/jobs rather than sending the new request to a
 	// same-version daemon that will return 404.
-	recs, err := client.RuntimeStore(dir).List()
+	recs, err := daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	require.NotEmpty(t, recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "9"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "jobs", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"items"`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	jobsPID := strconv.Itoa(recs[0].PID)
@@ -192,18 +192,18 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// preflight returns 404 and a real ingest can silently ignore exclusions.
 	src := filepath.Join(t.TempDir(), "preflight.txt")
 	require.NoError(t, os.WriteFile(src, []byte("preview"), 0o600))
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	require.NotEmpty(t, recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "7"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 
 	out, err = run(oldBin, "add", src, "--preflight")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "files: 1")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	preflightPID := strconv.Itoa(recs[0].PID)
@@ -213,14 +213,14 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// must replace it before requesting that endpoint rather than fail with a
 	// 404 after the user has already selected a source tree.
 	recs[0].Metadata["protocol_version"] = "8"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "add", src, "--progress", "plain")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "scan:")
 	assert.Contains(t, out, "ingest:")
 	assert.Contains(t, out, "added: 1")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	ingestPID := strconv.Itoa(recs[0].PID)
@@ -230,12 +230,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// the new endpoint so a same-version stale daemon cannot return a misleading
 	// node without current-version identity or a 404 for the listing.
 	recs[0].Metadata["protocol_version"] = "10"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "versions", "list", "/inbox/preflight.txt")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "content_create")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	versionsPID := strconv.Itoa(recs[0].PID)
@@ -246,12 +246,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	boundarySrc := filepath.Join(t.TempDir(), "utf8-boundary.txt")
 	require.NoError(t, os.WriteFile(boundarySrc, []byte("safe metadata"), 0o600))
 	recs[0].Metadata["protocol_version"] = "11"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "add", boundarySrc, "--progress", "plain")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "added: 1")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	metadataPID := strconv.Itoa(recs[0].PID)
@@ -263,12 +263,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	replacementSrc := filepath.Join(t.TempDir(), "replacement.txt")
 	require.NoError(t, os.WriteFile(replacementSrc, []byte("replacement content"), 0o600))
 	recs[0].Metadata["protocol_version"] = "12"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "put", replacementSrc, "/inbox/preflight.txt", "--progress", "plain")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "updated /inbox/preflight.txt")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	putPID := strconv.Itoa(recs[0].PID)
@@ -284,12 +284,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.Len(t, versionPage.Items, 2)
 	sourceVersionID := versionPage.Items[1].ID
 	recs[0].Metadata["protocol_version"] = "13"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "revert", "/inbox/preflight.txt", sourceVersionID, "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"transition_kind":"content_revert"`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	revertPID := strconv.Itoa(recs[0].PID)
@@ -298,12 +298,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 15 predates tag organization. Replace it before a tag command
 	// reaches a same-version daemon that cannot honor the new authority.
 	recs[0].Metadata["protocol_version"] = "15"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "tag", "create", "protocol-check", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"name":"protocol-check"`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	tagPID := strconv.Itoa(recs[0].PID)
@@ -313,12 +313,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// run reaches a same-version daemon that would return 404 instead of a
 	// trustworthy history inventory.
 	recs[0].Metadata["protocol_version"] = "16"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "versions", "prune", "/inbox/preflight.txt", "--all-prior", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"checkpoint_required":true`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	prunePID := strconv.Itoa(recs[0].PID)
@@ -327,12 +327,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 17 predates permanent audit enrollment and status. Replace it
 	// before the CLI reaches a same-version daemon without the audit contract.
 	recs[0].Metadata["protocol_version"] = "17"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "audit", "status", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"enabled": false`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	auditPID := strconv.Itoa(recs[0].PID)
@@ -341,12 +341,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 18 predates bounded audit-history reads. Replace it before the
 	// CLI reaches a same-version daemon that cannot expose canonical events.
 	recs[0].Metadata["protocol_version"] = "18"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "audit", "history", "/inbox/preflight.txt", "--json")
 	require.Error(t, err)
 	assert.Contains(t, out, "not enrolled in an audit scope")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	historyPID := strconv.Itoa(recs[0].PID)
@@ -355,12 +355,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 20 predates exact-prefix checks against externally recorded
 	// audit evidence. Replace it before any expected evidence can be ignored.
 	recs[0].Metadata["protocol_version"] = "20"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "audit", "verify", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"enabled": false`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	verifyPID := strconv.Itoa(recs[0].PID)
@@ -369,12 +369,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 23 predates vault introspection. Replace it before the CLI asks
 	// the daemon to identify the selected vault and summarize its contents.
 	recs[0].Metadata["protocol_version"] = "23"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "info", "--json")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"vault_id"`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	infoPID := strconv.Itoa(recs[0].PID)
@@ -385,12 +385,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	batchPlan := filepath.Join(t.TempDir(), "batch-move.json")
 	require.NoError(t, os.WriteFile(batchPlan, []byte(`{"moves":[{"source":"/inbox/preflight.txt","destination":"/inbox/protocol-batch.txt"}]}`), 0o600))
 	recs[0].Metadata["protocol_version"] = "24"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "mv", "batch", batchPlan)
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `"/inbox/preflight.txt" -> "/inbox/protocol-batch.txt"`)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	batchPID := strconv.Itoa(recs[0].PID)
@@ -404,12 +404,12 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	var trashed api.Node
 	require.NoError(t, json.Unmarshal([]byte(out), &trashed))
 	require.NotEmpty(t, trashed.TrashedAt)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	require.NotEmpty(t, recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "33"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "stat", formatNodeSelector(trashed.ID), "--json")
 	require.NoError(t, err, out)
@@ -417,7 +417,7 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &inspected))
 	assert.Equal(t, trashed.ID, inspected.ID)
 	assert.Empty(t, inspected.Path)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	statPID := strconv.Itoa(recs[0].PID)
@@ -426,14 +426,14 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Protocol 34 predates effective watched-inbox inspection. Replace it
 	// before the CLI calls the new route, even when no watches are configured.
 	recs[0].Metadata["protocol_version"] = "34"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 	out, err = run(oldBin, "watch", "list", "--json")
 	require.NoError(t, err, out)
 	var watches api.WatchedInboxList
 	require.NoError(t, json.Unmarshal([]byte(out), &watches))
 	assert.Empty(t, watches.Items)
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	watchPID := strconv.Itoa(recs[0].PID)
@@ -450,19 +450,19 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 	// Simulate the immediately preceding same-version dev protocol. Data
 	// commands share daemon start's convergence path, so backup create must
 	// replace it instead of reaching the old daemon and failing with 404.
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	require.NotEmpty(t, recs[0].Metadata["protocol_version"])
 	recs[0].Metadata["protocol_version"] = "4"
-	_, err = client.RuntimeStore(dir).Write(recs[0])
+	_, err = daemonconn.RuntimeStore(dir).Write(recs[0])
 	require.NoError(t, err)
 
 	out, err = run(oldBin, "backup", "create", "--repo", repoPath, "--progress", "plain")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "freeze:")
 	assert.Contains(t, out, "created snapshot")
-	recs, err = client.RuntimeStore(dir).List()
+	recs, err = daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	protocolPID := strconv.Itoa(recs[0].PID)
@@ -498,6 +498,6 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 
 	out, err := run("daemon", "restart")
 	require.NoError(t, err, out)
-	t.Cleanup(func() { _, _ = client.Stop(context.Background(), dir) })
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	assert.Contains(t, out, "started (was not running)")
 }

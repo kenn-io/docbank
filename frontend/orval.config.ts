@@ -7,11 +7,26 @@ export default defineConfig({
       target: "src/generated/docbank.ts",
       client: "fetch",
       mode: "single",
+      headers: true,
       urlEncodeParameters: true,
       override: {
+        splitByContentType: true,
+        transformer: (operation) => {
+          // Fetch headers are text, including the contract's integer byte count.
+          if (operation.headers) {
+            operation.headers.schema.model = operation.headers.schema.model.replace(/: number/g, ": string");
+          }
+          if (operation.operationName === "uploadFile" && operation.body.formData) {
+            operation.body.formData = operation.body.formData.replace("uploadFileBody.file);", "uploadFileBody.file, params.name);");
+          }
+          return operation;
+        },
         fetch: { includeHttpResponseReturnType: false, arrayFormat: "repeat" },
         mutator: { path: "src/api-transport.ts", name: "sessionJSON" },
-        operations: Object.fromEntries([
+        operations: {
+          submitMediaSource: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
+          importMediaArtifact: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
+          ...Object.fromEntries([
           "startDocumentProcessing", "getDocumentRendition",
           "streamBackupSnapshotRestore", "streamBackupSnapshotCreation",
           "streamBackupRepositoryVerification", "runDerivativePurge", "streamIngest",
@@ -22,6 +37,7 @@ export default defineConfig({
         ].map((operation) => [operation, {
           mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
         }])),
+        },
       },
     },
   },

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -155,7 +156,7 @@ func (s *Store) publishDocumentEventsTx(
 		inputsSHA256, false); err != nil {
 		return DocumentEventGeneration{}, err
 	}
-	diagnostics, err := json.Marshal(record.Diagnostics)
+	diagnostics, err := json.Marshal(record.Diagnostics, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return DocumentEventGeneration{}, fmt.Errorf("encoding document event diagnostics: %w", err)
 	}

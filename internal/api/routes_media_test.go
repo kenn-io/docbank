@@ -21,8 +21,9 @@ import (
 
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -32,7 +33,7 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	unauthorized, body := get(t, ts, "/api/v1/media/sources?limit=10",
 		map[string]string{"X-Api-Key": ""})
 	require.Equal(t, 401, unauthorized.StatusCode, body)
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	spoofed, spoofedBody := do(t, ts, http.MethodPost, "/api/v1/media/sources", nil,
 		map[string]any{"operation_id": "00000000-0000-4000-8000-000000000300",
 			"reference_url": "https://recordings.invalid/private", "caller_principal": "other"})
@@ -60,7 +61,7 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	page, err := c.MediaSources(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
-	occurrences, err := c.MediaOccurrences(t.Context(), client.MediaOccurrenceOptions{Limit: 10})
+	occurrences, err := c.MediaOccurrences(t.Context(), daemonconn.MediaOccurrenceOptions{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, occurrences.Items, 1)
 
@@ -103,10 +104,11 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: version.NodeID,
 		ContentVersionID: version.ID, Profile: processing.SuppliedMediaProfileName}
-	processingPlan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	processingPlan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
-	_, err = c.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
-		Selector: selector, PlanFingerprint: processingPlan.Fingerprint})
+	_, err = c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: processingPlan.Fingerprint}})
+
 	require.NoError(t, err)
 	queued, err := c.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 		OperationID: "00000000-0000-4000-8000-000000000305",
@@ -187,7 +189,7 @@ func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
 			endpoint := "/api/v1/media/sources"
 			var metadata any = supplied
 			if artifact {
-				retained, err := client.New(ts.URL, testAPIKey).SubmitSuppliedMedia(t.Context(), supplied, bytes.NewReader(wav))
+				retained, err := daemonconn.New(ts.URL, testAPIKey).SubmitSuppliedMedia(t.Context(), supplied, bytes.NewReader(wav))
 				require.NoError(t, err)
 				endpoint += "/" + retained.SourceID + "/artifacts"
 				metadata = api.MediaArtifactMetadata{
@@ -281,7 +283,7 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, response.Body.Close())
 			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, string(responseBody))
-			page, err := client.New(ts.URL, testAPIKey).MediaSources(t.Context(), "", 10)
+			page, err := daemonconn.New(ts.URL, testAPIKey).MediaSources(t.Context(), "", 10)
 			require.NoError(t, err)
 			require.Empty(t, page.Items)
 			staged, err := filepath.Glob(filepath.Join(catalog.BlobsDir, "tmp", ".docbank-media-*"))
@@ -293,7 +295,7 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 
 func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
 		OperationID: "00000000-0000-4000-8000-000000000401", Filename: "call.wav",
@@ -313,7 +315,8 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: version.NodeID, ContentVersionID: version.ID,
 		Profile: processing.SuppliedMediaProfileName}
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	for _, test := range []struct {
 		name, profile, code string
@@ -331,12 +334,14 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 				if test.name == "expired" {
 					grant.ExpiresAt = expires.Format(time.RFC3339Nano)
 				}
-				_, err := c.GrantProcessingConsent(t.Context(), grant)
+				_, err := c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: new(grant)})
+
 				require.NoError(t, err)
 				if test.name == "expired" {
 					time.Sleep(time.Until(expires) + time.Millisecond)
 				} else {
-					_, err := c.RevokeProcessingConsent(t.Context())
+					_, err := c.API().RevokeDocumentProcessingConsent(t.Context())
+
 					require.NoError(t, err)
 				}
 			}
@@ -368,7 +373,7 @@ func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
 
 func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	mp3 := mediatest.MP3()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
 		OperationID: "00000000-0000-4000-8000-000000000351", Filename: "call.mp3",
@@ -393,7 +398,8 @@ func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: version.NodeID, ContentVersionID: version.ID,
 		Profile: processing.SuppliedMediaProfileName}
-	plan, err := c.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	require.NoError(t, err)
 	job, err := c.StartProcessing(t.Context(), api.StartProcessingRequest{
 		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
@@ -415,7 +421,7 @@ func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 
 func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	for index, operationID := range []string{
 		"00000000-0000-4000-8000-000000000361",
 		"00000000-0000-4000-8000-000000000362",

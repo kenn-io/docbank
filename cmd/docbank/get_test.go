@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
@@ -121,7 +121,7 @@ func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, staging.removeAll()) })
 	content := "complete bytes without the required digest trailer"
 	digest := sha256.Sum256([]byte(content))
-	stream := &client.ContentStream{
+	stream := &daemonconn.ContentStream{
 		ReadCloser: io.NopCloser(strings.NewReader(content)),
 		VersionID:  "7b0dbd90-5730-4436-b082-b692790725ff",
 		BlobHash:   hex.EncodeToString(digest[:]),
@@ -132,7 +132,7 @@ func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
 	_, err = stageAndPublishGet(context.Background(), staging, stream, stream.Size,
 		output, false, renderer)
 	require.Error(t, err)
-	require.ErrorIs(t, err, client.ErrIntegrity)
+	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
 	_, statErr := os.Lstat(output)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }

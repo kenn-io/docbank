@@ -317,9 +317,18 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}}, nil
 	})
 
+	renditionHeaders := map[string]*huma.Param{}
+	for _, name := range []string{RenditionAttachmentHeader, RenditionBuildHeader, RenditionArtifactHeader,
+		RenditionProfileHeader, RenditionCompletenessHeader, RenditionWarningsHeader,
+		ContentVersionHeader, BlobHashHeader, BlobSizeHeader, "Accept-Ranges", "Content-Range", "Trailer", "Content-Digest"} {
+		renditionHeaders[name] = &huma.Param{Schema: &huma.Schema{Type: "string"}}
+	}
+	renditionResponse := &huma.Response{Description: "Sanitized Markdown bytes with immutable identity headers", Headers: renditionHeaders,
+		Content: map[string]*huma.MediaType{"text/markdown": {Schema: &huma.Schema{Type: "string", Format: "binary"}}}}
 	huma.Register(api, huma.Operation{
 		OperationID: "getDocumentRendition", Method: http.MethodGet,
-		Path: "/api/v1/renditions/{attachment_id}", Summary: "Stream one exact active sanitized-Markdown rendition",
+		Responses: map[string]*huma.Response{"200": renditionResponse, "206": renditionResponse},
+		Path:      "/api/v1/renditions/{attachment_id}", Summary: "Stream one exact active sanitized-Markdown rendition",
 	}, func(ctx context.Context, input *struct {
 		AttachmentID string `path:"attachment_id" pattern:"^[0-9a-f]{64}$"`
 		MaxBytes     int64  `query:"max_bytes" default:"67108864" minimum:"1" maximum:"67108864"`
@@ -341,7 +350,8 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	type renditionSelectInput struct{ Body RenditionSelectorRequest }
 	huma.Register(api, huma.Operation{
 		OperationID: "readDocumentRenditionBySelector", Method: http.MethodPost,
-		Path: "/api/v1/renditions/select", Summary: "Stream the active rendition for one exact source selector",
+		Responses: map[string]*huma.Response{"200": renditionResponse},
+		Path:      "/api/v1/renditions/select", Summary: "Stream the active rendition for one exact source selector",
 	}, func(ctx context.Context, input *renditionSelectInput) (*huma.StreamResponse, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()

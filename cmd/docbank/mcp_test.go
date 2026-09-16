@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestMCPStdioCancellationWithInheritedPipes(t *testing.T) {
@@ -174,7 +174,7 @@ func TestMCPHTTPStartupRejectsTheEffectiveDaemonKeyAfterAcquisition(t *testing.T
 			name: "ephemeral key from empty server config",
 			runtimeToken: func(t *testing.T, home string) string {
 				t.Helper()
-				records, err := client.RuntimeStore(home).List()
+				records, err := daemonconn.RuntimeStore(home).List()
 				require.NoError(t, err)
 				require.Len(t, records, 1)
 				return records[0].Metadata["api_key"]
@@ -214,7 +214,7 @@ environment_variable = "DOCBANK_TEST_MCP_HTTP_TOKEN"
 			require.ErrorContains(t, err, "must differ from the daemon API key")
 			assert.NotContains(t, err.Error(), effectiveKey)
 			assert.NotContains(t, err.Error(), "different-current-config-key")
-			_, _, running, findErr := client.Find(context.Background(), home)
+			_, _, running, findErr := daemonconn.Find(context.Background(), home)
 			require.NoError(t, findErr)
 			assert.True(t, running)
 		})

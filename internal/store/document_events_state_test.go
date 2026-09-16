@@ -255,7 +255,7 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 
 	record := documentEventRecord(t, s.VaultID(), version.ID, "a")
 	record.Diagnostics = []document.DocumentEventDiagnosticV1{{
-		Code: "date_unparseable", Detail: "synthetic", SourceKey: "metadata/a/created",
+		Code: "date_unparseable", Detail: "<synthetic>&\u2028\u2029", SourceKey: "metadata/a/created",
 	}}
 	canonical := mustMarshalDocumentEvents(t, record)
 	_, err = s.PublishDocumentEvents(t.Context(), target, fingerprint, digest, canonical)
@@ -308,7 +308,7 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 	var indexedDiagnostics []byte
 	require.NoError(t, s.db.QueryRow(`SELECT diagnostic_json FROM document_event_attempts
 		WHERE content_version_id=?`, version.ID).Scan(&indexedDiagnostics))
-	require.JSONEq(t, `[{"code":"date_unparseable","detail":"synthetic","source_key":"metadata/a/created"}]`,
+	require.JSONEq(t, `[{"code":"date_unparseable","detail":"\u003csynthetic\u003e\u0026\u2028\u2029","source_key":"metadata/a/created"}]`,
 		string(indexedDiagnostics))
 	targets, err = s.MissingDocumentEventTargetsAfter(t.Context(), fingerprint, "", 10)
 	require.NoError(t, err)

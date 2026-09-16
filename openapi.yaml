@@ -37,6 +37,10 @@ components:
         - kind
         - identity
       type: object
+      x-go-type: api.AuditAttachmentChange
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditAttachmentIdentity:
       additionalProperties: false
       properties:
@@ -51,6 +55,10 @@ components:
           format: uuid
           type: string
       type: object
+      x-go-type: api.AuditAttachmentIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditAttachmentState:
       additionalProperties: false
       properties:
@@ -78,6 +86,10 @@ components:
         tag_name:
           type: string
       type: object
+      x-go-type: api.AuditAttachmentState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditEnrollmentPreview:
       additionalProperties: false
       properties:
@@ -181,6 +193,10 @@ components:
         - preview_token
         - expires_at
       type: object
+      x-go-type: api.AuditEnrollmentPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditEvent:
       additionalProperties: false
       properties:
@@ -257,6 +273,10 @@ components:
         - prior_node_revision
         - resulting_node_revision
       type: object
+      x-go-type: api.AuditEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditEventPage:
       additionalProperties: false
       properties:
@@ -294,6 +314,10 @@ components:
         - total
         - limit
       type: object
+      x-go-type: api.AuditEventPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditEvidence:
       additionalProperties: false
       properties:
@@ -328,6 +352,10 @@ components:
         - allocation_head
         - scopes
       type: object
+      x-go-type: api.AuditEvidence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditEvidenceCheck:
       additionalProperties: false
       properties:
@@ -340,6 +368,10 @@ components:
       required:
         - extends
       type: object
+      x-go-type: api.AuditEvidenceCheck
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditEvidenceProblem:
       additionalProperties: false
       properties:
@@ -363,6 +395,10 @@ components:
         - code
         - message
       type: object
+      x-go-type: api.AuditEvidenceProblem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditMembershipStatus:
       additionalProperties: false
       properties:
@@ -393,6 +429,10 @@ components:
         - scope_ids
         - baseline_digests
       type: object
+      x-go-type: api.AuditMembershipStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditPathState:
       additionalProperties: false
       properties:
@@ -407,6 +447,10 @@ components:
         - path
         - state
       type: object
+      x-go-type: api.AuditPathState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditScopeEventPage:
       additionalProperties: false
       properties:
@@ -442,6 +486,10 @@ components:
         - total
         - limit
       type: object
+      x-go-type: api.AuditScopeEventPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditScopeEvidence:
       additionalProperties: false
       properties:
@@ -460,6 +508,10 @@ components:
         - entry_count
         - chain_head
       type: object
+      x-go-type: api.AuditScopeEvidence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditScopeStatus:
       additionalProperties: false
       properties:
@@ -501,6 +553,10 @@ components:
         - entry_count
         - chain_head
       type: object
+      x-go-type: api.AuditScopeStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditStatus:
       additionalProperties: false
       properties:
@@ -546,6 +602,10 @@ components:
         - allocation_entry_count
         - scopes
       type: object
+      x-go-type: api.AuditStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditVerifyReport:
       additionalProperties: false
       properties:
@@ -588,6 +648,10 @@ components:
         - protected_bytes
         - verified_blobs
       type: object
+      x-go-type: api.AuditVerifyReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuditVerifyRequest:
       additionalProperties: false
       properties:
@@ -601,6 +665,10 @@ components:
         expected:
           $ref: "#/components/schemas/AuditEvidence"
       type: object
+      x-go-type: api.AuditVerifyRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AuthorizedUploadMetadata:
       additionalProperties: false
       properties:
@@ -633,6 +701,10 @@ components:
         - provider_metadata_checksum
         - input_kind
       type: object
+      x-go-type: document.AuthorizedUploadMetadata
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     BackupCreateEvent:
       additionalProperties: false
       properties:
@@ -658,6 +730,10 @@ components:
       required:
         - type
       type: object
+      x-go-type: api.BackupCreateEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupCreateRequest:
       additionalProperties: false
       properties:
@@ -707,6 +783,10 @@ components:
         - bytes_total
         - final
       type: object
+      x-go-type: api.BackupProgress
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupRepository:
       additionalProperties: false
       properties:
@@ -725,6 +805,10 @@ components:
         - id
         - path
       type: object
+      x-go-type: api.BackupRepository
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupRestoreEvent:
       additionalProperties: false
       properties:
@@ -750,6 +834,10 @@ components:
       required:
         - type
       type: object
+      x-go-type: api.BackupRestoreEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupRestoreFallback:
       additionalProperties: false
       properties:
@@ -770,6 +858,10 @@ components:
         - reason
         - count
       type: object
+      x-go-type: api.BackupRestoreFallback
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupRestoreProof:
       additionalProperties: false
       properties:
@@ -784,6 +876,10 @@ components:
         - sqlite_integrity
         - manifest_stats
       type: object
+      x-go-type: api.BackupRestoreProof
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupRestoreReport:
       additionalProperties: false
       properties:
@@ -849,6 +945,10 @@ components:
         - duration_seconds
         - proof
       type: object
+      x-go-type: api.BackupRestoreReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupRestoreRequest:
       additionalProperties: false
       properties:
@@ -931,6 +1031,10 @@ components:
         - bytes_added
         - duration_seconds
       type: object
+      x-go-type: api.BackupSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupSnapshotList:
       additionalProperties: false
       properties:
@@ -950,6 +1054,10 @@ components:
       required:
         - items
       type: object
+      x-go-type: api.BackupSnapshotList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupVerifyEvent:
       additionalProperties: false
       properties:
@@ -975,6 +1083,10 @@ components:
       required:
         - type
       type: object
+      x-go-type: api.BackupVerifyEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupVerifyProblem:
       additionalProperties: false
       properties:
@@ -986,6 +1098,10 @@ components:
         - snapshot_id
         - detail
       type: object
+      x-go-type: api.BackupVerifyProblem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupVerifyReport:
       additionalProperties: false
       properties:
@@ -1016,6 +1132,10 @@ components:
         - bytes_read
         - problems
       type: object
+      x-go-type: api.BackupVerifyReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BackupVerifyRequest:
       additionalProperties: false
       properties:
@@ -1060,6 +1180,10 @@ components:
       required:
         - destination_path
       type: object
+      x-go-type: api.BatchMoveItem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchMoveReceipt:
       additionalProperties: false
       properties:
@@ -1071,6 +1195,10 @@ components:
         - from_path
         - node
       type: object
+      x-go-type: api.BatchMoveReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchMoveReport:
       additionalProperties: false
       properties:
@@ -1088,6 +1216,10 @@ components:
       required:
         - items
       type: object
+      x-go-type: api.BatchMoveReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchMoveRequest:
       additionalProperties: false
       properties:
@@ -1107,6 +1239,10 @@ components:
       required:
         - moves
       type: object
+      x-go-type: api.BatchMoveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchTagNodeResult:
       additionalProperties: false
       properties:
@@ -1130,6 +1266,10 @@ components:
         - revision
         - changed
       type: object
+      x-go-type: api.BatchTagNodeResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchTagPreview:
       additionalProperties: false
       properties:
@@ -1158,6 +1298,10 @@ components:
         - tag_revision
         - nodes
       type: object
+      x-go-type: api.BatchTagPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchTagPreviewNode:
       additionalProperties: false
       properties:
@@ -1176,6 +1320,10 @@ components:
         - revision
         - assigned
       type: object
+      x-go-type: api.BatchTagPreviewNode
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchTagReceipt:
       additionalProperties: false
       properties:
@@ -1227,6 +1375,10 @@ components:
         - completed_at
         - nodes
       type: object
+      x-go-type: api.BatchTagReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchTagRequest:
       additionalProperties: false
       properties:
@@ -1257,6 +1409,10 @@ components:
         - assign
         - nodes
       type: object
+      x-go-type: api.BatchTagRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatchTagTarget:
       additionalProperties: false
       properties:
@@ -1272,6 +1428,10 @@ components:
         - node_id
         - revision
       type: object
+      x-go-type: api.BatchTagTarget
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BlobStore:
       additionalProperties: false
       properties:
@@ -1353,6 +1513,10 @@ components:
         - affected_documents
         - unreadable_objects
       type: object
+      x-go-type: api.BlobStore
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BlobStorePreview:
       additionalProperties: false
       properties:
@@ -1380,6 +1544,10 @@ components:
         - preview_token
         - expires_at
       type: object
+      x-go-type: api.BlobStorePreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CapabilityStateV1:
       additionalProperties: false
       properties:
@@ -1400,6 +1568,10 @@ components:
         - provider_fingerprint
         - state
       type: object
+      x-go-type: document.CapabilityStateV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     Collection:
       additionalProperties: false
       properties:
@@ -1452,6 +1624,10 @@ components:
         - label_revision
         - label_updated_at
       type: object
+      x-go-type: api.Collection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CollectionLabel:
       additionalProperties: false
       properties:
@@ -1482,6 +1658,10 @@ components:
         - revision
         - updated_at
       type: object
+      x-go-type: api.CollectionLabel
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CollectionMemberPage:
       additionalProperties: false
       properties:
@@ -1518,6 +1698,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.CollectionMemberPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CollectionPage:
       additionalProperties: false
       properties:
@@ -1551,6 +1735,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.CollectionPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CollectionQuality:
       additionalProperties: false
       properties:
@@ -1596,6 +1784,10 @@ components:
         - duplicate_documents
         - spikes
       type: object
+      x-go-type: api.CollectionQuality
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CollectionQualitySummary:
       additionalProperties: false
       properties:
@@ -1674,6 +1866,10 @@ components:
         - label_revision
         - label_updated_at
       type: object
+      x-go-type: api.CollectionQualitySummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentReference:
       additionalProperties: false
       properties:
@@ -1690,6 +1886,10 @@ components:
         - node
         - is_current
       type: object
+      x-go-type: api.ContentReference
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentReferencePage:
       additionalProperties: false
       properties:
@@ -1719,6 +1919,41 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.ContentReferencePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ContentReplacementReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ContentReplacementReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        computed_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        computed_size:
+          format: int64
+          minimum: 0
+          type: integer
+        node:
+          $ref: "#/components/schemas/Node"
+        version:
+          $ref: "#/components/schemas/ContentVersion"
+      required:
+        - node
+        - version
+        - computed_hash
+        - computed_size
+      type: object
+      x-go-type: api.ContentReplacementReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentReversionReceipt:
       additionalProperties: false
       properties:
@@ -1740,6 +1975,10 @@ components:
         - version
         - source_version
       type: object
+      x-go-type: api.ContentReversionReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentVerification:
       additionalProperties: false
       properties:
@@ -1788,6 +2027,10 @@ components:
         - computed_size
         - verified
       type: object
+      x-go-type: api.ContentVerification
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentVersion:
       additionalProperties: false
       properties:
@@ -1846,6 +2089,10 @@ components:
         - introduced_operation_id
         - transition_kind
       type: object
+      x-go-type: api.ContentVersion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentVersionPage:
       additionalProperties: false
       properties:
@@ -1875,6 +2122,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.ContentVersionPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CoverageClass:
       additionalProperties: false
       properties:
@@ -1924,6 +2175,10 @@ components:
         - previous_generation_serving
         - total
       type: object
+      x-go-type: api.CoverageClass
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CoverageCounts:
       additionalProperties: false
       properties:
@@ -1954,6 +2209,10 @@ components:
         - unprocessed
         - none
       type: object
+      x-go-type: api.CoverageCounts
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CoverageReport:
       additionalProperties: false
       properties:
@@ -1985,6 +2244,10 @@ components:
         - renditions
         - embeddings
       type: object
+      x-go-type: api.CoverageReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CoverageSourcesV1:
       additionalProperties: false
       properties:
@@ -2002,6 +2265,10 @@ components:
         - catalog_rows
         - extractor_id
       type: object
+      x-go-type: document.CoverageSourcesV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     CreateNodeRequest:
       additionalProperties: false
       properties:
@@ -2075,6 +2342,10 @@ components:
         - receipt
         - terminal
       type: object
+      x-go-type: api.DerivativePurgeEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DerivativePurgeJobRequest:
       additionalProperties: false
       properties:
@@ -2113,6 +2384,10 @@ components:
       required:
         - plan_fingerprint
       type: object
+      x-go-type: api.DerivativePurgeJobRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DerivativePurgePlan:
       additionalProperties: false
       properties:
@@ -2154,6 +2429,10 @@ components:
         - all
         - immutable_backup_copies_untouched
       type: object
+      x-go-type: api.DerivativePurgePlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DerivativePurgePlanRequest:
       additionalProperties: false
       properties:
@@ -2187,6 +2466,10 @@ components:
           type: array
           uniqueItems: true
       type: object
+      x-go-type: api.DerivativePurgePlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DerivativePurgeReceipt:
       additionalProperties: false
       properties:
@@ -2255,6 +2538,10 @@ components:
         - reclaimed_files
         - immutable_backup_copies_untouched
       type: object
+      x-go-type: api.DerivativePurgeReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentEventCoverage:
       additionalProperties: false
       properties:
@@ -2318,6 +2605,10 @@ components:
         - input_epoch
         - publication_epoch
       type: object
+      x-go-type: api.DocumentEventCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentEvidenceReference:
       additionalProperties: false
       properties:
@@ -2344,6 +2635,10 @@ components:
       required:
         - kind
       type: object
+      x-go-type: api.DocumentEvidenceReference
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentIdentity:
       additionalProperties: false
       properties:
@@ -2361,6 +2656,10 @@ components:
         - content_version_id
         - path
       type: object
+      x-go-type: api.DocumentIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentPage:
       additionalProperties: false
       properties:
@@ -2407,6 +2706,10 @@ components:
         - page_size
         - items
       type: object
+      x-go-type: api.DocumentPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentRenditionIdentity:
       additionalProperties: false
       properties:
@@ -2424,6 +2727,10 @@ components:
         - attachment_id
         - build_id
       type: object
+      x-go-type: api.DocumentRenditionIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchCoverage:
       additionalProperties: false
       properties:
@@ -2445,6 +2752,10 @@ components:
         - complete_documents
         - state
       type: object
+      x-go-type: api.DocumentSearchCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchReport:
       additionalProperties: false
       properties:
@@ -2484,6 +2795,10 @@ components:
         - truncated
         - trace
       type: object
+      x-go-type: api.DocumentSearchReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchRequest:
       additionalProperties: false
       properties:
@@ -2528,6 +2843,10 @@ components:
         - profile
         - fence
       type: object
+      x-go-type: api.DocumentSearchRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchResult:
       additionalProperties: false
       properties:
@@ -2575,6 +2894,10 @@ components:
         - path
         - evidence
       type: object
+      x-go-type: api.DocumentSearchResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchTrace:
       additionalProperties: false
       properties:
@@ -2588,6 +2911,10 @@ components:
         - code
         - count
       type: object
+      x-go-type: api.DocumentSearchTrace
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchValidation:
       additionalProperties: false
       properties:
@@ -2603,6 +2930,10 @@ components:
       required:
         - valid
       type: object
+      x-go-type: api.DocumentSearchValidation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchValidationRequest:
       additionalProperties: false
       properties:
@@ -2644,6 +2975,10 @@ components:
         - mode
         - profile
       type: object
+      x-go-type: api.DocumentSearchValidationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSourceFence:
       additionalProperties: false
       properties:
@@ -2661,6 +2996,10 @@ components:
         - vault_uid
         - content_version_ids
       type: object
+      x-go-type: api.DocumentSourceFence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSourceFenceFilters:
       additionalProperties: false
       properties:
@@ -2681,6 +3020,10 @@ components:
           minimum: 1
           type: integer
       type: object
+      x-go-type: api.DocumentSourceFenceFilters
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSourceFenceResolution:
       additionalProperties: false
       properties:
@@ -2705,6 +3048,10 @@ components:
         - fence_fingerprint
         - observed_scope_count
       type: object
+      x-go-type: api.DocumentSourceFenceResolution
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSourceFenceResolveRequest:
       additionalProperties: false
       properties:
@@ -2722,6 +3069,10 @@ components:
         filters:
           $ref: "#/components/schemas/DocumentSourceFenceFilters"
       type: object
+      x-go-type: api.DocumentSourceFenceResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSummary:
       additionalProperties: false
       properties:
@@ -2761,6 +3112,10 @@ components:
         - modified_at
         - active_renditions
       type: object
+      x-go-type: api.DocumentSummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSummaryResolveRequest:
       additionalProperties: false
       properties:
@@ -2780,6 +3135,10 @@ components:
       required:
         - identities
       type: object
+      x-go-type: api.DocumentSummaryResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSummaryResolveResponse:
       additionalProperties: false
       properties:
@@ -2798,6 +3157,10 @@ components:
       required:
         - items
       type: object
+      x-go-type: api.DocumentSummaryResolveResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DuplicateCollection:
       additionalProperties: false
       properties:
@@ -2812,6 +3175,10 @@ components:
         - id
         - label
       type: object
+      x-go-type: api.DuplicateCollection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DuplicateGroup:
       additionalProperties: false
       properties:
@@ -2845,6 +3212,10 @@ components:
         - references
         - references_truncated
       type: object
+      x-go-type: api.DuplicateGroup
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DuplicatePage:
       additionalProperties: false
       properties:
@@ -2884,6 +3255,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.DuplicatePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DuplicateReference:
       additionalProperties: false
       properties:
@@ -2906,6 +3281,10 @@ components:
         - collection_count
         - collections_truncated
       type: object
+      x-go-type: api.DuplicateReference
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EmailAddressV1:
       additionalProperties: false
       properties:
@@ -2917,6 +3296,10 @@ components:
         - name
         - address
       type: object
+      x-go-type: document.EmailAddressV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailAlternativeV1:
       additionalProperties: false
       properties:
@@ -2939,6 +3322,10 @@ components:
         - display
         - diagnostics
       type: object
+      x-go-type: document.EmailAlternativeV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailArtifactRefV1:
       additionalProperties: false
       properties:
@@ -2954,6 +3341,10 @@ components:
         - sha256
         - size
       type: object
+      x-go-type: document.EmailArtifactRefV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailBodySearch:
       additionalProperties: false
       properties:
@@ -2977,6 +3368,10 @@ components:
         - rendition_attachment_id
         - reason
       type: object
+      x-go-type: api.EmailBodySearch
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EmailContentIDV1:
       additionalProperties: false
       properties:
@@ -2996,6 +3391,10 @@ components:
         - value
         - state
       type: object
+      x-go-type: document.EmailContentIDV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDateV1:
       additionalProperties: false
       properties:
@@ -3033,6 +3432,10 @@ components:
         - timezone_state
         - diagnostics
       type: object
+      x-go-type: document.EmailDateV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDecodedFieldV1:
       additionalProperties: false
       properties:
@@ -3055,6 +3458,10 @@ components:
         - text
         - addresses
       type: object
+      x-go-type: document.EmailDecodedFieldV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDiagnosticV1:
       additionalProperties: false
       properties:
@@ -3080,6 +3487,10 @@ components:
         - header_index
         - detail
       type: object
+      x-go-type: document.EmailDiagnosticV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDocumentIdentity:
       additionalProperties: false
       properties:
@@ -3099,6 +3510,162 @@ components:
         - sha256
         - size
       type: object
+      x-go-type: document.EmailDocumentIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailDocumentProcessingReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailDocumentProcessingReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        child:
+          $ref: "#/components/schemas/EmailDocumentIdentity"
+        job_id:
+          type: string
+        state:
+          type: string
+        waiter_id:
+          type: string
+      required:
+        - job_id
+        - waiter_id
+        - child
+        - state
+      type: object
+      x-go-type: document.EmailDocumentProcessingReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailDocumentProcessingRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailDocumentProcessingRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        captured_artifact_policy: {}
+        execution_identity:
+          $ref: "#/components/schemas/RenditionExecutionIdentityV1"
+        input_classes:
+          items:
+            type: string
+          type: array
+        operation_id:
+          type: string
+        order:
+          format: int64
+          type: integer
+        principal:
+          type: string
+        profile:
+          $ref: "#/components/schemas/ProcessingProfileV1"
+        request_digest:
+          type: string
+        retained_artifact_classes:
+          items:
+            type: string
+          type: array
+        scope:
+          type: string
+      required:
+        - operation_id
+        - request_digest
+        - order
+        - profile
+        - execution_identity
+        - captured_artifact_policy
+        - principal
+        - scope
+        - input_classes
+        - retained_artifact_classes
+      type: object
+      x-go-type: document.EmailDocumentProcessingRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailDocumentPublicationReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailDocumentPublicationReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          type: string
+        inventory_state:
+          type: string
+        operation_id:
+          type: string
+        relations:
+          items:
+            $ref: "#/components/schemas/EmailDocumentRelation"
+          type: array
+        request_digest:
+          type: string
+      required:
+        - operation_id
+        - request_digest
+        - created_at
+        - inventory_state
+        - relations
+      type: object
+      x-go-type: document.EmailDocumentPublicationReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailDocumentPublicationRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailDocumentPublicationRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        attachment_id:
+          type: string
+        destination_id:
+          format: int64
+          type: integer
+        destination_revision:
+          format: int64
+          type: integer
+        generation_id:
+          type: string
+        operation_id:
+          type: string
+        parent:
+          $ref: "#/components/schemas/EmailDocumentIdentity"
+        reuse:
+          items:
+            $ref: "#/components/schemas/EmailDocumentReuse"
+          type: array
+      required:
+        - operation_id
+        - parent
+        - generation_id
+        - attachment_id
+        - destination_id
+        - destination_revision
+        - reuse
+      type: object
+      x-go-type: document.EmailDocumentPublicationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDocumentRelation:
       additionalProperties: false
       properties:
@@ -3136,6 +3703,42 @@ components:
         - outcome
         - child
       type: object
+      x-go-type: document.EmailDocumentRelation
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailDocumentRelationPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailDocumentRelationPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/EmailDocumentRelationStatus"
+          type: array
+        next_operation_id:
+          type: string
+        next_order:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - items
+        - total
+        - next_operation_id
+        - next_order
+      type: object
+      x-go-type: document.EmailDocumentRelationPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDocumentRelationStatus:
       additionalProperties: false
       properties:
@@ -3150,6 +3753,10 @@ components:
         - state
         - reason
       type: object
+      x-go-type: document.EmailDocumentRelationStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailDocumentReuse:
       additionalProperties: false
       properties:
@@ -3165,6 +3772,10 @@ components:
         - child
         - revision
       type: object
+      x-go-type: document.EmailDocumentReuse
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailFailureV1:
       additionalProperties: false
       properties:
@@ -3196,6 +3807,10 @@ components:
         - observed
         - detail
       type: object
+      x-go-type: document.EmailFailureV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailFieldsV1:
       additionalProperties: false
       properties:
@@ -3246,6 +3861,10 @@ components:
         - in_reply_to
         - references
       type: object
+      x-go-type: document.EmailFieldsV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailFilenameV1:
       additionalProperties: false
       properties:
@@ -3268,6 +3887,10 @@ components:
         - state
         - safe_name
       type: object
+      x-go-type: document.EmailFilenameV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailHeaderV1:
       additionalProperties: false
       properties:
@@ -3293,6 +3916,10 @@ components:
         - name
         - state
       type: object
+      x-go-type: document.EmailHeaderV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailInventoryV1:
       additionalProperties: false
       properties:
@@ -3324,6 +3951,10 @@ components:
         - diagnostics
         - termination
       type: object
+      x-go-type: document.EmailInventoryV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailLimitsV1:
       additionalProperties: false
       properties:
@@ -3393,6 +4024,10 @@ components:
         - diagnostic_detail_bytes
         - header_display_bytes
       type: object
+      x-go-type: document.EmailLimitsV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailMediaV1:
       additionalProperties: false
       properties:
@@ -3413,6 +4048,10 @@ components:
         - detected
         - diagnostics
       type: object
+      x-go-type: document.EmailMediaV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailMessageV1:
       additionalProperties: false
       properties:
@@ -3447,6 +4086,53 @@ components:
         - related_groups
         - diagnostics
       type: object
+      x-go-type: document.EmailMessageV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailMetadata:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailMetadata.json
+          format: uri
+          readOnly: true
+          type: string
+        attachment_id:
+          type: string
+        body_search:
+          $ref: "#/components/schemas/EmailBodySearch"
+        checksum:
+          type: string
+        created_at:
+          type: string
+        evidence:
+          $ref: "#/components/schemas/EmailV1"
+        generation_id:
+          type: string
+        published_at:
+          type: string
+        recipe_fingerprint:
+          type: string
+        version:
+          $ref: "#/components/schemas/ContentVersion"
+      required:
+        - version
+        - generation_id
+        - attachment_id
+        - recipe_fingerprint
+        - checksum
+        - evidence
+        - body_search
+        - created_at
+        - published_at
+      type: object
+      x-go-type: api.EmailMetadata
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EmailPartV1:
       additionalProperties: false
       properties:
@@ -3515,6 +4201,32 @@ components:
         - body_utf8
         - diagnostics
       type: object
+      x-go-type: document.EmailPartV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailPending:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailPending.json
+          format: uri
+          readOnly: true
+          type: string
+        state:
+          type: string
+        version:
+          $ref: "#/components/schemas/ContentVersion"
+      required:
+        - version
+        - state
+      type: object
+      x-go-type: api.EmailPending
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EmailRecipeV1:
       additionalProperties: false
       properties:
@@ -3545,6 +4257,10 @@ components:
         - body_profile
         - limits
       type: object
+      x-go-type: document.EmailRecipeV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailRelatedGroupV1:
       additionalProperties: false
       properties:
@@ -3563,6 +4279,10 @@ components:
         - body_path
         - resources
       type: object
+      x-go-type: document.EmailRelatedGroupV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailResourceV1:
       additionalProperties: false
       properties:
@@ -3581,6 +4301,10 @@ components:
         - candidates
         - state
       type: object
+      x-go-type: document.EmailResourceV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailSourceV1:
       additionalProperties: false
       properties:
@@ -3596,6 +4320,10 @@ components:
         - size
         - verification
       type: object
+      x-go-type: document.EmailSourceV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailTerminationV1:
       additionalProperties: false
       properties:
@@ -3624,6 +4352,10 @@ components:
         - limit
         - observed
       type: object
+      x-go-type: document.EmailTerminationV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailV1:
       additionalProperties: false
       properties:
@@ -3647,6 +4379,10 @@ components:
         - inventory
         - failure
       type: object
+      x-go-type: document.EmailV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmbeddingBindingV1:
       additionalProperties: false
       properties:
@@ -3723,6 +4459,10 @@ components:
         - scalar_encoding
         - trust_boundary
       type: object
+      x-go-type: document.EmbeddingBindingV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmbeddingChunkPolicyV1:
       additionalProperties: false
       properties:
@@ -3751,6 +4491,10 @@ components:
         - tokenizer_revision
         - truncation_policy
       type: object
+      x-go-type: document.EmbeddingChunkPolicyV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmptyTrashRequest:
       additionalProperties: false
       properties:
@@ -3821,6 +4565,10 @@ components:
         - title
         - status
       type: object
+      x-go-type: api.Error
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ErrorPosition:
       additionalProperties: false
       properties:
@@ -3834,6 +4582,10 @@ components:
         - offset
         - end
       type: object
+      x-go-type: api.ErrorPosition
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     EvidenceLexicalPolicyV1:
       additionalProperties: false
       properties:
@@ -3872,6 +4624,10 @@ components:
         - sanitizer_fingerprint
         - source_evidence_contract
       type: object
+      x-go-type: document.EvidenceLexicalPolicyV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EvidencePolicyIdentity:
       additionalProperties: false
       properties:
@@ -3905,6 +4661,10 @@ components:
         - max_tables_per_unit
         - max_units
       type: object
+      x-go-type: document.EvidencePolicyIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     FormatCapabilityV1:
       additionalProperties: false
       properties:
@@ -3937,6 +4697,10 @@ components:
         - unit_kind
         - variants
       type: object
+      x-go-type: document.FormatCapabilityV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     FormatCoverageResponse:
       additionalProperties: false
       properties:
@@ -3967,6 +4731,10 @@ components:
         - generated_by
         - pending
       type: object
+      x-go-type: api.FormatCoverageResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     FormatLookupV1:
       additionalProperties: false
       properties:
@@ -3982,6 +4750,10 @@ components:
         - match
         - query
       type: object
+      x-go-type: document.FormatLookupV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     FormatVariantCapabilityV1:
       additionalProperties: false
       properties:
@@ -3992,6 +4764,10 @@ components:
       required:
         - capabilities
       type: object
+      x-go-type: document.FormatVariantCapabilityV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     GCReport:
       additionalProperties: false
       properties:
@@ -4039,6 +4815,10 @@ components:
         - removed
         - run
       type: object
+      x-go-type: api.GCReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     GcRequest:
       additionalProperties: false
       properties:
@@ -4111,6 +4891,10 @@ components:
       required:
         - type
       type: object
+      x-go-type: api.IngestEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestFailure:
       additionalProperties: false
       properties:
@@ -4122,6 +4906,10 @@ components:
         - path
         - error
       type: object
+      x-go-type: api.IngestFailure
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestFileType:
       additionalProperties: false
       properties:
@@ -4138,6 +4926,10 @@ components:
         - files
         - bytes
       type: object
+      x-go-type: api.IngestFileType
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestPreflightFinding:
       additionalProperties: false
       properties:
@@ -4156,6 +4948,10 @@ components:
         - kind
         - detail
       type: object
+      x-go-type: api.IngestPreflightFinding
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestPreflightReport:
       additionalProperties: false
       properties:
@@ -4223,6 +5019,10 @@ components:
         - findings
         - findings_truncated
       type: object
+      x-go-type: api.IngestPreflightReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestPreflightRequest:
       additionalProperties: false
       properties:
@@ -4249,6 +5049,10 @@ components:
       required:
         - paths
       type: object
+      x-go-type: api.IngestPreflightRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestProgress:
       additionalProperties: false
       properties:
@@ -4295,6 +5099,10 @@ components:
         - failed
         - final
       type: object
+      x-go-type: api.IngestProgress
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestReport:
       additionalProperties: false
       properties:
@@ -4325,6 +5133,10 @@ components:
         - skipped
         - excluded
       type: object
+      x-go-type: api.IngestReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestRequest:
       additionalProperties: false
       properties:
@@ -4359,6 +5171,10 @@ components:
         - paths
         - dest
       type: object
+      x-go-type: api.IngestRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     IngestSizeClass:
       additionalProperties: false
       properties:
@@ -4372,6 +5188,10 @@ components:
         - files
         - bytes
       type: object
+      x-go-type: api.IngestSizeClass
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     InitBackupRepositoryRequest:
       additionalProperties: false
       properties:
@@ -4420,6 +5240,10 @@ components:
         - status
         - started_at
       type: object
+      x-go-type: api.Job
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     JobList:
       additionalProperties: false
       properties:
@@ -4437,6 +5261,10 @@ components:
       required:
         - items
       type: object
+      x-go-type: api.JobList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaAcquisitionGrantBody:
       additionalProperties: false
       properties:
@@ -4458,6 +5286,10 @@ components:
         - operation_id
         - plan_token
       type: object
+      x-go-type: api.MediaAcquisitionGrantBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaAcquisitionPlan:
       additionalProperties: false
       properties:
@@ -4494,6 +5326,10 @@ components:
         - retained_classes
         - grant_state
       type: object
+      x-go-type: api.MediaAcquisitionPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaAcquisitionRevokeBody:
       additionalProperties: false
       properties:
@@ -4512,6 +5348,10 @@ components:
         - operation_id
         - origin_id
       type: object
+      x-go-type: api.MediaAcquisitionRevokeBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaArtifactMetadata:
       additionalProperties: false
       properties:
@@ -4545,6 +5385,10 @@ components:
         - sha256
         - byte_length
       type: object
+      x-go-type: api.MediaArtifactMetadata
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaConsentReceipt:
       additionalProperties: false
       properties:
@@ -4571,6 +5415,10 @@ components:
         - origin_id
         - fence
       type: object
+      x-go-type: api.MediaConsentReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOccurrenceBody:
       additionalProperties: false
       properties:
@@ -4592,6 +5440,10 @@ components:
         - filename
         - message
       type: object
+      x-go-type: api.MediaOccurrenceBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOccurrenceMutationBody:
       additionalProperties: false
       properties:
@@ -4613,6 +5465,10 @@ components:
         - source_id
         - occurrence
       type: object
+      x-go-type: api.MediaOccurrenceMutationBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOccurrencePage:
       additionalProperties: false
       properties:
@@ -4636,6 +5492,10 @@ components:
         - items
         - total
       type: object
+      x-go-type: api.MediaOccurrencePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOccurrenceRevokeBody:
       additionalProperties: false
       properties:
@@ -4654,6 +5514,10 @@ components:
         - operation_id
         - revision
       type: object
+      x-go-type: api.MediaOccurrenceRevokeBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOccurrenceRow:
       additionalProperties: false
       properties:
@@ -4683,6 +5547,10 @@ components:
         - filename
         - message
       type: object
+      x-go-type: api.MediaOccurrenceRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOrigin:
       additionalProperties: false
       properties:
@@ -4697,6 +5565,10 @@ components:
         - provider
         - acquisition_available
       type: object
+      x-go-type: api.MediaOrigin
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaOriginPage:
       additionalProperties: false
       properties:
@@ -4714,6 +5586,10 @@ components:
       required:
         - items
       type: object
+      x-go-type: api.MediaOriginPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaProcessingBody:
       additionalProperties: false
       properties:
@@ -4724,6 +5600,10 @@ components:
       required:
         - profile
       type: object
+      x-go-type: api.MediaProcessingBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaReceipt:
       additionalProperties: false
       properties:
@@ -4763,6 +5643,10 @@ components:
         - operation_state
         - coverage_state
       type: object
+      x-go-type: api.MediaReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaReferenceBody:
       additionalProperties: false
       properties:
@@ -4795,6 +5679,10 @@ components:
         - acquire
         - occurrence
       type: object
+      x-go-type: api.MediaReferenceBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaRetryBody:
       additionalProperties: false
       properties:
@@ -4812,6 +5700,10 @@ components:
       required:
         - operation_id
       type: object
+      x-go-type: api.MediaRetryBody
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaSourcePage:
       additionalProperties: false
       properties:
@@ -4835,6 +5727,10 @@ components:
         - items
         - total
       type: object
+      x-go-type: api.MediaSourcePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaSourceRow:
       additionalProperties: false
       properties:
@@ -4861,6 +5757,10 @@ components:
         - outcome
         - coverage_state
       type: object
+      x-go-type: api.MediaSourceRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaSuppliedMetadata:
       additionalProperties: false
       properties:
@@ -4889,6 +5789,10 @@ components:
         - byte_length
         - occurrence
       type: object
+      x-go-type: api.MediaSuppliedMetadata
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaTimeSpan:
       additionalProperties: false
       properties:
@@ -4904,6 +5808,10 @@ components:
         - start_ms
         - end_ms
       type: object
+      x-go-type: api.MediaTimeSpan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MediaTimestamp:
       additionalProperties: false
       properties:
@@ -4930,6 +5838,10 @@ components:
         - timezone
         - fraction_digits
       type: object
+      x-go-type: api.MediaTimestamp
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MkdirPathRequest:
       additionalProperties: false
       properties:
@@ -4974,6 +5886,10 @@ components:
         - query
         - fingerprint
       type: object
+      x-go-type: document.ModelInputContract
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     ModelInputEncoder:
       additionalProperties: false
       properties:
@@ -4985,6 +5901,10 @@ components:
         - mode
         - template
       type: object
+      x-go-type: document.ModelInputEncoder
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     MoveNodeRequest:
       additionalProperties: false
       properties:
@@ -5086,6 +6006,10 @@ components:
         - created_at
         - modified_at
       type: object
+      x-go-type: api.Node
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     NodePage:
       additionalProperties: false
       properties:
@@ -5118,6 +6042,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.NodePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PendingFormatV1:
       additionalProperties: false
       properties:
@@ -5137,6 +6065,10 @@ components:
         - note
         - owner_slice
       type: object
+      x-go-type: document.PendingFormatV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PreviewAuditEnrollmentRequest:
       additionalProperties: false
       properties:
@@ -5312,6 +6244,10 @@ components:
         - plan_fingerprint
         - profile_fingerprint
       type: object
+      x-go-type: api.ProcessingConsentGrant
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingConsentGrantRequest:
       additionalProperties: false
       properties:
@@ -5334,6 +6270,87 @@ components:
         - selector
         - plan_fingerprint
       type: object
+      x-go-type: api.ProcessingConsentGrantRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProcessingConsentReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProcessingConsentReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        grant_id:
+          type: string
+        issued_at:
+          format: date-time
+          type: string
+        processing_incarnation_id:
+          type: string
+        revocation_fence:
+          format: int64
+          type: integer
+        vault_id:
+          type: string
+      required:
+        - grant_id
+        - vault_id
+        - processing_incarnation_id
+        - revocation_fence
+        - issued_at
+      type: object
+      x-go-type: document.ProcessingConsentReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    ProcessingConsentRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProcessingConsentRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        disclosure_fingerprint:
+          type: string
+        expires_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        input_classes:
+          items:
+            type: string
+          type: array
+        principal:
+          type: string
+        profile_fingerprint:
+          type: string
+        retained_artifact_classes:
+          items:
+            type: string
+          type: array
+        scope:
+          type: string
+      required:
+        - principal
+        - scope
+        - profile_fingerprint
+        - disclosure_fingerprint
+        - input_classes
+        - retained_artifact_classes
+        - expires_at
+      type: object
+      x-go-type: document.ProcessingConsentRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     ProcessingConsentRevocation:
       additionalProperties: false
       properties:
@@ -5350,6 +6367,62 @@ components:
       required:
         - revoked_at
       type: object
+      x-go-type: api.ProcessingConsentRevocation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProcessingConsentRevocationReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProcessingConsentRevocationReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        fence:
+          format: int64
+          type: integer
+        processing_incarnation_id:
+          type: string
+        revocation_id:
+          type: string
+        revoked_at:
+          format: date-time
+          type: string
+      required:
+        - revocation_id
+        - processing_incarnation_id
+        - fence
+        - revoked_at
+      type: object
+      x-go-type: document.ProcessingConsentRevocationReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    ProcessingConsentRevocationRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProcessingConsentRevocationRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        principal:
+          type: string
+        scope:
+          type: string
+      required:
+        - principal
+        - scope
+      type: object
+      x-go-type: document.ProcessingConsentRevocationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     ProcessingEstimate:
       additionalProperties: false
       properties:
@@ -5370,6 +6443,10 @@ components:
         - provider_calls
         - vector_spaces
       type: object
+      x-go-type: api.ProcessingEstimate
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingFlowHop:
       additionalProperties: false
       properties:
@@ -5397,6 +6474,10 @@ components:
         - disclose_filename
         - runtime_disclosure
       type: object
+      x-go-type: api.ProcessingFlowHop
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingJob:
       additionalProperties: false
       properties:
@@ -5425,6 +6506,10 @@ components:
         - profile_fingerprint
         - content_version_id
       type: object
+      x-go-type: api.ProcessingJob
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingJobEvent:
       additionalProperties: false
       properties:
@@ -5458,6 +6543,10 @@ components:
         - sequence
         - type
       type: object
+      x-go-type: api.ProcessingJobEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingPlan:
       additionalProperties: false
       properties:
@@ -5517,6 +6606,10 @@ components:
         - consent_state
         - backup_consequence
       type: object
+      x-go-type: api.ProcessingPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingPlanRequest:
       additionalProperties: false
       properties:
@@ -5532,6 +6625,10 @@ components:
       required:
         - selector
       type: object
+      x-go-type: api.ProcessingPlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingProfileSummary:
       additionalProperties: false
       properties:
@@ -5552,6 +6649,10 @@ components:
         - rendition
         - embedding_bindings
       type: object
+      x-go-type: api.ProcessingProfileSummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingProfileV1:
       additionalProperties: false
       properties:
@@ -5577,6 +6678,10 @@ components:
         - retention_disclosure
         - retrieval
       type: object
+      x-go-type: document.ProcessingProfileV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     ProcessingRuntimeDisclosure:
       additionalProperties: false
       properties:
@@ -5625,6 +6730,10 @@ components:
         - metadata_classes
         - retained_artifact_roles
       type: object
+      x-go-type: api.ProcessingRuntimeDisclosure
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingSelector:
       additionalProperties: false
       properties:
@@ -5645,6 +6754,10 @@ components:
         - content_version_id
         - profile
       type: object
+      x-go-type: api.ProcessingSelector
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProcessingStatus:
       additionalProperties: false
       properties:
@@ -5679,6 +6792,10 @@ components:
         - embedding_job_ids
         - completed_bindings
       type: object
+      x-go-type: api.ProcessingStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProvenanceAppendReceipt:
       additionalProperties: false
       properties:
@@ -5699,6 +6816,10 @@ components:
         - node
         - fact
       type: object
+      x-go-type: api.ProvenanceAppendReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProvenanceAppendRequest:
       additionalProperties: false
       properties:
@@ -5729,6 +6850,10 @@ components:
         - source_description
         - original_path
       type: object
+      x-go-type: api.ProvenanceAppendRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProvenanceFact:
       additionalProperties: false
       properties:
@@ -5771,6 +6896,10 @@ components:
         - original_path
         - active
       type: object
+      x-go-type: api.ProvenanceFact
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProvenancePage:
       additionalProperties: false
       properties:
@@ -5807,6 +6936,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.ProvenancePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProviderDescriptorV1:
       additionalProperties: false
       properties:
@@ -5818,6 +6951,10 @@ components:
         - id
         - fingerprint
       type: object
+      x-go-type: document.ProviderDescriptorV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     QualityBucket:
       additionalProperties: false
       properties:
@@ -5831,6 +6968,10 @@ components:
         - value
         - count
       type: object
+      x-go-type: api.QualityBucket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     QualityDimension:
       additionalProperties: false
       properties:
@@ -5855,6 +6996,10 @@ components:
         - missing
         - other
       type: object
+      x-go-type: api.QualityDimension
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     QualitySpike:
       additionalProperties: false
       properties:
@@ -5871,6 +7016,10 @@ components:
         - value
         - count
       type: object
+      x-go-type: api.QualitySpike
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     QueryDependency:
       additionalProperties: false
       properties:
@@ -5886,6 +7035,10 @@ components:
         - id
         - revision
       type: object
+      x-go-type: api.QueryDependency
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     QueryPreview:
       additionalProperties: false
       properties:
@@ -5909,6 +7062,10 @@ components:
         - query_fingerprint
         - dependencies
       type: object
+      x-go-type: api.QueryPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     RegisterBlobStoreRequest:
       additionalProperties: false
       properties:
@@ -5925,6 +7082,21 @@ components:
           type: string
       required:
         - preview_token
+      type: object
+    RemoveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RemoveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        request_digest:
+          type: string
+      required:
+        - request_digest
       type: object
     RenameTagRequest:
       additionalProperties: false
@@ -6005,6 +7177,10 @@ components:
         - max_artifacts
         - max_total_result_bytes
       type: object
+      x-go-type: document.RenditionAuthorizationIdentityV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RenditionBindingV1:
       additionalProperties: false
       properties:
@@ -6057,6 +7233,10 @@ components:
         - trust_boundary
         - upload_options_fingerprint
       type: object
+      x-go-type: document.RenditionBindingV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RenditionExecutionIdentityV1:
       additionalProperties: false
       properties:
@@ -6077,6 +7257,10 @@ components:
         - evidence_policy
         - rendition_policy
       type: object
+      x-go-type: document.RenditionExecutionIdentityV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RenditionPolicyIdentity:
       additionalProperties: false
       properties:
@@ -6102,6 +7286,10 @@ components:
         - max_source_unit_bytes
         - max_unit_runes
       type: object
+      x-go-type: document.RenditionPolicyIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RenditionSelectorRequest:
       additionalProperties: false
       properties:
@@ -6123,6 +7311,10 @@ components:
         - selector
         - max_bytes
       type: object
+      x-go-type: api.RenditionSelectorRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     RenditionTextWindow:
       additionalProperties: false
       properties:
@@ -6206,6 +7398,10 @@ components:
         - eof
         - response_bytes
       type: object
+      x-go-type: api.RenditionTextWindow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     RenditionWindowRequest:
       additionalProperties: false
       properties:
@@ -6246,6 +7442,10 @@ components:
         - attachment_id
         - max_chars
       type: object
+      x-go-type: api.RenditionWindowRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ResolvedDocumentSourceFence:
       additionalProperties: false
       properties:
@@ -6262,6 +7462,10 @@ components:
         - vault_uid
         - content_version_ids
       type: object
+      x-go-type: api.ResolvedDocumentSourceFence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     RetentionDisclosurePolicyV1:
       additionalProperties: false
       properties:
@@ -6285,6 +7489,10 @@ components:
         - retain_typed_artifacts
         - trust_boundary
       type: object
+      x-go-type: document.RetentionDisclosurePolicyV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RetrievalPolicyV1:
       additionalProperties: false
       properties:
@@ -6298,6 +7506,10 @@ components:
         - lexical_limit
         - vector_limit
       type: object
+      x-go-type: document.RetrievalPolicyV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RevertNodeContentRequest:
       additionalProperties: false
       properties:
@@ -6369,6 +7581,10 @@ components:
         - created_at
         - updated_at
       type: object
+      x-go-type: api.SavedQuery
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQueryCreateRequest:
       additionalProperties: false
       properties:
@@ -6400,6 +7616,10 @@ components:
         - kind
         - payload
       type: object
+      x-go-type: api.SavedQueryCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQueryFiltersSchema:
       additionalProperties: false
       properties:
@@ -6549,6 +7769,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.SavedQueryPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQueryRun:
       additionalProperties: false
       properties:
@@ -6615,6 +7839,10 @@ components:
         - expires_at
         - comparison
       type: object
+      x-go-type: api.SavedQueryRun
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQueryRunComparison:
       additionalProperties: false
       properties:
@@ -6630,6 +7858,10 @@ components:
         - total_delta
         - definition_changed
       type: object
+      x-go-type: api.SavedQueryRunComparison
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQueryRunRequest:
       additionalProperties: false
       properties:
@@ -6667,6 +7899,10 @@ components:
           maxLength: 128
           type: string
       type: object
+      x-go-type: api.SavedQueryRunRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQueryRunResult:
       additionalProperties: false
       properties:
@@ -6685,6 +7921,10 @@ components:
         - run
         - snapshot
       type: object
+      x-go-type: api.SavedQueryRunResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SavedQuerySortSchema:
       additionalProperties: false
       properties:
@@ -6760,6 +8000,10 @@ components:
         - path
         - match
       type: object
+      x-go-type: api.SearchHit
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SearchReport:
       additionalProperties: false
       properties:
@@ -6795,6 +8039,10 @@ components:
         - limit
         - truncated
       type: object
+      x-go-type: api.SearchReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SetCollectionLabelRequest:
       additionalProperties: false
       properties:
@@ -6841,6 +8089,10 @@ components:
         - warnings
         - attachment
       type: object
+      x-go-type: api.SourceMetadata
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SourceMetadataAttachmentFacts:
       additionalProperties: false
       properties:
@@ -6865,6 +8117,10 @@ components:
         - node_id
         - content_version_id
       type: object
+      x-go-type: store.SourceMetadataAttachmentFacts
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     SourceMetadataFieldV1:
       additionalProperties: false
       properties:
@@ -6885,6 +8141,10 @@ components:
         - source_field
         - value
       type: object
+      x-go-type: document.SourceMetadataFieldV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     SourceMetadataTimestampV1:
       additionalProperties: false
       properties:
@@ -6904,6 +8164,10 @@ components:
         - raw
         - timezone
       type: object
+      x-go-type: document.SourceMetadataTimestampV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     SourceMetadataValueV1:
       additionalProperties: false
       properties:
@@ -6936,6 +8200,10 @@ components:
       required:
         - kind
       type: object
+      x-go-type: document.SourceMetadataValueV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     SourceMetadataWarningV1:
       additionalProperties: false
       properties:
@@ -6953,6 +8221,10 @@ components:
         - namespace
         - source_field
       type: object
+      x-go-type: document.SourceMetadataWarningV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     StartProcessingRequest:
       additionalProperties: false
       properties:
@@ -6975,6 +8247,10 @@ components:
         - plan_fingerprint
         - consent
       type: object
+      x-go-type: api.StartProcessingRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StartStorageEvacuationRequest:
       additionalProperties: false
       properties:
@@ -7098,6 +8374,10 @@ components:
         - created_at
         - updated_at
       type: object
+      x-go-type: api.StorageOperation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StoragePackReport:
       additionalProperties: false
       properties:
@@ -7179,6 +8459,10 @@ components:
         - budget_exhausted
         - more
       type: object
+      x-go-type: api.StoragePackReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StoragePackRequest:
       additionalProperties: false
       properties:
@@ -7275,6 +8559,10 @@ components:
         - preview_token
         - expires_at
       type: object
+      x-go-type: api.StoragePlacementPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StorageRecoveryPreview:
       additionalProperties: false
       properties:
@@ -7315,6 +8603,10 @@ components:
         - preview_token
         - expires_at
       type: object
+      x-go-type: api.StorageRecoveryPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StorageRepackReport:
       additionalProperties: false
       properties:
@@ -7362,6 +8654,10 @@ components:
         - bytes_repacked
         - budget_exhausted
       type: object
+      x-go-type: api.StorageRepackReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StorageRepackRequest:
       additionalProperties: false
       properties:
@@ -7434,6 +8730,10 @@ components:
         - dead_packed_bytes
         - stores
       type: object
+      x-go-type: api.StorageStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StorageStoreStatus:
       additionalProperties: false
       properties:
@@ -7496,6 +8796,10 @@ components:
         - affected_documents
         - unreadable_objects
       type: object
+      x-go-type: api.StorageStoreStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Tag:
       additionalProperties: false
       properties:
@@ -7525,6 +8829,10 @@ components:
         - revision
         - assignment_count
       type: object
+      x-go-type: api.Tag
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TagAssignmentReceipt:
       additionalProperties: false
       properties:
@@ -7546,6 +8854,10 @@ components:
         - node
         - changed
       type: object
+      x-go-type: api.TagAssignmentReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TagDeletionReceipt:
       additionalProperties: false
       properties:
@@ -7566,6 +8878,10 @@ components:
         - tag
         - removed_assignments
       type: object
+      x-go-type: api.TagDeletionReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TagPage:
       additionalProperties: false
       properties:
@@ -7595,6 +8911,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.TagPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TaggedNode:
       additionalProperties: false
       properties:
@@ -7605,6 +8925,10 @@ components:
       required:
         - node
       type: object
+      x-go-type: api.TaggedNode
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TaggedNodePage:
       additionalProperties: false
       properties:
@@ -7638,6 +8962,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.TaggedNodePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TimelineBuild:
       additionalProperties: false
       properties:
@@ -7696,6 +9024,10 @@ components:
         - started_at
         - updated_at
       type: object
+      x-go-type: api.TimelineBuild
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TimelineRebuildRequest:
       additionalProperties: false
       properties:
@@ -7713,6 +9045,10 @@ components:
       required:
         - operation_id
       type: object
+      x-go-type: api.TimelineRebuildRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TrashEmptyReport:
       additionalProperties: false
       properties:
@@ -7736,6 +9072,10 @@ components:
         - deleted
         - run
       type: object
+      x-go-type: api.TrashEmptyReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TrashPage:
       additionalProperties: false
       properties:
@@ -7765,6 +9105,10 @@ components:
         - limit
         - offset
       type: object
+      x-go-type: api.TrashPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TrashPathRequest:
       additionalProperties: false
       properties:
@@ -7821,6 +9165,43 @@ components:
             - $ref: "#/components/schemas/SavedQueryV1Schema"
             - $ref: "#/components/schemas/HighlightSetV1Schema"
       type: object
+      x-go-type: api.SavedQueryPatch
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    UploadReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/UploadReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        computed_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        computed_size:
+          format: int64
+          type: integer
+        node:
+          $ref: "#/components/schemas/Node"
+        status:
+          enum:
+            - added
+            - skipped
+          type: string
+      required:
+        - status
+        - node
+        - computed_hash
+        - computed_size
+      type: object
+      x-go-type: api.UploadReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VaultInfo:
       additionalProperties: false
       properties:
@@ -7871,6 +9252,10 @@ components:
         - tracked_blob_bytes
         - storage
       type: object
+      x-go-type: api.VaultInfo
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VerifyProblem:
       additionalProperties: false
       properties:
@@ -7889,6 +9274,10 @@ components:
         - hash
         - problem
       type: object
+      x-go-type: api.VerifyProblem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VerifyReport:
       additionalProperties: false
       properties:
@@ -7913,6 +9302,10 @@ components:
       required:
         - ok
       type: object
+      x-go-type: api.VerifyReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VersionPruneReport:
       additionalProperties: false
       properties:
@@ -8006,6 +9399,10 @@ components:
         - changed
         - run
       type: object
+      x-go-type: api.VersionPruneReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VersionPruneRequest:
       additionalProperties: false
       properties:
@@ -8038,6 +9435,10 @@ components:
           type: array
           uniqueItems: true
       type: object
+      x-go-type: api.VersionPruneRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WatchedInbox:
       additionalProperties: false
       properties:
@@ -8068,6 +9469,10 @@ components:
         - scan_interval
         - exclude
       type: object
+      x-go-type: api.WatchedInbox
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WatchedInboxList:
       additionalProperties: false
       properties:
@@ -8085,6 +9490,10 @@ components:
       required:
         - items
       type: object
+      x-go-type: api.WatchedInboxList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -8104,6 +9513,10 @@ components:
         - count
         - selected
       type: object
+      x-go-type: api.WorkspaceFacetValue
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryCoverage:
       additionalProperties: false
       properties:
@@ -8119,6 +9532,10 @@ components:
       required:
         - configuration
       type: object
+      x-go-type: api.WorkspaceQueryCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryCreateRequest:
       additionalProperties: false
       properties:
@@ -8160,6 +9577,10 @@ components:
       required:
         - query
       type: object
+      x-go-type: api.WorkspaceQueryCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryDependency:
       additionalProperties: false
       properties:
@@ -8176,6 +9597,10 @@ components:
         - id
         - revision
       type: object
+      x-go-type: api.WorkspaceQueryDependency
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryGeneration:
       additionalProperties: false
       properties:
@@ -8189,6 +9614,10 @@ components:
       required:
         - kind
       type: object
+      x-go-type: api.WorkspaceQueryGeneration
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryPageRequest:
       additionalProperties: false
       properties:
@@ -8206,6 +9635,10 @@ components:
       required:
         - cursor
       type: object
+      x-go-type: api.WorkspaceQueryPageRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryResponse:
       additionalProperties: false
       properties:
@@ -8331,6 +9764,10 @@ components:
         - created_at
         - expires_at
       type: object
+      x-go-type: api.WorkspaceQueryResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryRow:
       additionalProperties: false
       properties:
@@ -8401,6 +9838,10 @@ components:
         - tags
         - collection_ids
       type: object
+      x-go-type: api.WorkspaceQueryRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceQueryTag:
       additionalProperties: false
       properties:
@@ -8418,6 +9859,10 @@ components:
         - name
         - revision
       type: object
+      x-go-type: api.WorkspaceQueryTag
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
   securitySchemes:
     apiKey:
       description: "The daemon's API key: configured `api_key`, or the ephemeral per-run key published in the runtime record."
@@ -8433,6 +9878,40 @@ info:
   version: dev
 openapi: 3.1.0
 paths:
+  /api/daemon/challenge:
+    get:
+      operationId: challengeDaemon
+      parameters:
+        - in: query
+          name: nonce
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  proof:
+                    type: string
+                required:
+                  - proof
+                type: object
+          description: Daemon ownership proof
+  /api/daemon/shutdown:
+    post:
+      operationId: shutdownDaemon
+      parameters:
+        - in: header
+          name: X-Docbank-Daemon-Token
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Shutdown accepted
   /api/daemon/web-download:
     post:
       operationId: prepareWebDownload
@@ -9424,95 +10903,20 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: false
-              properties:
-                captured_artifact_policy: {}
-                execution_identity:
-                  $ref: "#/components/schemas/RenditionExecutionIdentityV1"
-                input_classes:
-                  items:
-                    type: string
-                  type: array
-                operation_id:
-                  type: string
-                order:
-                  format: int64
-                  type: integer
-                principal:
-                  type: string
-                profile:
-                  $ref: "#/components/schemas/ProcessingProfileV1"
-                request_digest:
-                  type: string
-                retained_artifact_classes:
-                  items:
-                    type: string
-                  type: array
-                scope:
-                  type: string
-              required:
-                - operation_id
-                - request_digest
-                - order
-                - profile
-                - execution_identity
-                - captured_artifact_policy
-                - principal
-                - scope
-                - input_classes
-                - retained_artifact_classes
-              type: object
+              $ref: "#/components/schemas/EmailDocumentProcessingRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  child:
-                    $ref: "#/components/schemas/EmailDocumentIdentity"
-                  job_id:
-                    type: string
-                  state:
-                    type: string
-                  waiter_id:
-                    type: string
-                required:
-                  - job_id
-                  - waiter_id
-                  - child
-                  - state
-                type: object
+                $ref: "#/components/schemas/EmailDocumentProcessingReceipt"
           description: Exact retained authority
         default:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Request ordinary consent-aware attachment processing
   /api/v1/email-document-publications:
@@ -9522,91 +10926,20 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: false
-              properties:
-                attachment_id:
-                  type: string
-                destination_id:
-                  format: int64
-                  type: integer
-                destination_revision:
-                  format: int64
-                  type: integer
-                generation_id:
-                  type: string
-                operation_id:
-                  type: string
-                parent:
-                  $ref: "#/components/schemas/EmailDocumentIdentity"
-                reuse:
-                  items:
-                    $ref: "#/components/schemas/EmailDocumentReuse"
-                  type: array
-              required:
-                - operation_id
-                - parent
-                - generation_id
-                - attachment_id
-                - destination_id
-                - destination_revision
-                - reuse
-              type: object
+              $ref: "#/components/schemas/EmailDocumentPublicationRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  created_at:
-                    type: string
-                  inventory_state:
-                    type: string
-                  operation_id:
-                    type: string
-                  relations:
-                    items:
-                      $ref: "#/components/schemas/EmailDocumentRelation"
-                    type: array
-                  request_digest:
-                    type: string
-                required:
-                  - operation_id
-                  - request_digest
-                  - created_at
-                  - inventory_state
-                  - relations
-                type: object
+                $ref: "#/components/schemas/EmailDocumentPublicationReceipt"
           description: Exact retained authority
         default:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Publish exact email attachments as ordinary documents
   /api/v1/email-document-publications/{operation_id}:
@@ -9622,13 +10955,7 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: false
-              properties:
-                request_digest:
-                  type: string
-              required:
-                - request_digest
-              type: object
+              $ref: "#/components/schemas/RemoveRequest"
         required: true
       responses:
         "204":
@@ -9637,30 +10964,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Release one receipt without deleting children
     get:
@@ -9676,56 +10980,13 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  created_at:
-                    type: string
-                  inventory_state:
-                    type: string
-                  operation_id:
-                    type: string
-                  relations:
-                    items:
-                      $ref: "#/components/schemas/EmailDocumentRelation"
-                    type: array
-                  request_digest:
-                    type: string
-                required:
-                  - operation_id
-                  - request_digest
-                  - created_at
-                  - inventory_state
-                  - relations
-                type: object
+                $ref: "#/components/schemas/EmailDocumentPublicationReceipt"
           description: Exact retained authority
         default:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Read an immutable publication receipt
   /api/v1/email-document-relations:
@@ -9757,55 +11018,13 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  items:
-                    items:
-                      $ref: "#/components/schemas/EmailDocumentRelationStatus"
-                    type: array
-                  next_operation_id:
-                    type: string
-                  next_order:
-                    format: int64
-                    type: integer
-                  total:
-                    format: int64
-                    type: integer
-                required:
-                  - items
-                  - total
-                  - next_operation_id
-                  - next_order
-                type: object
+                $ref: "#/components/schemas/EmailDocumentRelationPage"
           description: Exact retained authority
         default:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Read a bounded page of exact parent or child occurrences
   /api/v1/formats/capabilities:
@@ -10261,37 +11480,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  content_version_id:
-                    type: string
-                  coverage_state:
-                    type: string
-                  job_id:
-                    type: string
-                  occurrence_id:
-                    type: string
-                  operation_id:
-                    type: string
-                  operation_state:
-                    type: string
-                  outcome:
-                    type: string
-                  source_id:
-                    type: string
-                  source_version_id:
-                    type: string
-                  supplied_input_id:
-                    type: string
-                  vault_uid:
-                    type: string
-                required:
-                  - vault_uid
-                  - source_id
-                  - operation_id
-                  - operation_state
-                  - coverage_state
-                type: object
+                $ref: "#/components/schemas/MediaReceipt"
           description: Durable media receipt
       summary: Retain one bounded supplied recording or private reference
   /api/v1/media/sources/{source_id}:
@@ -10358,37 +11547,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  content_version_id:
-                    type: string
-                  coverage_state:
-                    type: string
-                  job_id:
-                    type: string
-                  occurrence_id:
-                    type: string
-                  operation_id:
-                    type: string
-                  operation_state:
-                    type: string
-                  outcome:
-                    type: string
-                  source_id:
-                    type: string
-                  source_version_id:
-                    type: string
-                  supplied_input_id:
-                    type: string
-                  vault_uid:
-                    type: string
-                required:
-                  - vault_uid
-                  - source_id
-                  - operation_id
-                  - operation_state
-                  - coverage_state
-                type: object
+                $ref: "#/components/schemas/MediaReceipt"
           description: Durable media receipt
       summary: Retain one bounded original media or transcript input
   /api/v1/media/sources/{source_id}/retry:
@@ -10649,25 +11808,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  computed_hash:
-                    pattern: ^[0-9a-f]{64}$
-                    type: string
-                  computed_size:
-                    format: int64
-                    minimum: 0
-                    type: integer
-                  node:
-                    $ref: "#/components/schemas/Node"
-                  version:
-                    $ref: "#/components/schemas/ContentVersion"
-                required:
-                  - node
-                  - version
-                  - computed_hash
-                  - computed_size
-                type: object
+                $ref: "#/components/schemas/ContentReplacementReceipt"
           description: Replacement committed
           headers:
             ETag:
@@ -10678,30 +11819,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Error
       summary: Replace a file's content with a new immutable head
   /api/v1/nodes/{id}/provenance:
@@ -11349,94 +12467,20 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: false
-              properties:
-                disclosure_fingerprint:
-                  type: string
-                expires_at:
-                  format: date-time
-                  type:
-                    - string
-                    - "null"
-                input_classes:
-                  items:
-                    type: string
-                  type: array
-                principal:
-                  type: string
-                profile_fingerprint:
-                  type: string
-                retained_artifact_classes:
-                  items:
-                    type: string
-                  type: array
-                scope:
-                  type: string
-              required:
-                - principal
-                - scope
-                - profile_fingerprint
-                - disclosure_fingerprint
-                - input_classes
-                - retained_artifact_classes
-                - expires_at
-              type: object
+              $ref: "#/components/schemas/ProcessingConsentRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  grant_id:
-                    type: string
-                  issued_at:
-                    format: date-time
-                    type: string
-                  processing_incarnation_id:
-                    type: string
-                  revocation_fence:
-                    format: int64
-                    type: integer
-                  vault_id:
-                    type: string
-                required:
-                  - grant_id
-                  - vault_id
-                  - processing_incarnation_id
-                  - revocation_fence
-                  - issued_at
-                type: object
+                $ref: "#/components/schemas/ProcessingConsentReceipt"
           description: Exact retained authority
         default:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Explicitly grant existing processing consent
   /api/v1/processing/consents/revoke:
@@ -11446,69 +12490,20 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: false
-              properties:
-                principal:
-                  type: string
-                scope:
-                  type: string
-              required:
-                - principal
-                - scope
-              type: object
+              $ref: "#/components/schemas/ProcessingConsentRevocationRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  fence:
-                    format: int64
-                    type: integer
-                  processing_incarnation_id:
-                    type: string
-                  revocation_id:
-                    type: string
-                  revoked_at:
-                    format: date-time
-                    type: string
-                required:
-                  - revocation_id
-                  - processing_incarnation_id
-                  - fence
-                  - revoked_at
-                type: object
+                $ref: "#/components/schemas/ProcessingConsentRevocationReceipt"
           description: Exact retained authority
         default:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Revoke a principal and scope before further provider access
   /api/v1/processing/jobs:
@@ -11659,7 +12654,53 @@ paths:
         required: true
       responses:
         "200":
-          description: OK
+          content:
+            text/markdown:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Sanitized Markdown bytes with immutable identity headers
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+            Content-Digest:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Trailer:
+              schema:
+                type: string
+            X-Docbank-Blob-Hash:
+              schema:
+                type: string
+            X-Docbank-Blob-Size:
+              schema:
+                type: string
+            X-Docbank-Content-Version:
+              schema:
+                type: string
+            X-Docbank-Rendition-Artifact:
+              schema:
+                type: string
+            X-Docbank-Rendition-Attachment:
+              schema:
+                type: string
+            X-Docbank-Rendition-Build:
+              schema:
+                type: string
+            X-Docbank-Rendition-Completeness:
+              schema:
+                type: string
+            X-Docbank-Rendition-Profile:
+              schema:
+                type: string
+            X-Docbank-Rendition-Warnings:
+              schema:
+                type: string
         default:
           content:
             application/problem+json:
@@ -11715,13 +12756,101 @@ paths:
             type: string
       responses:
         "200":
-          description: OK
-        default:
           content:
-            application/problem+json:
+            text/markdown:
               schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Sanitized Markdown bytes with immutable identity headers
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+            Content-Digest:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Trailer:
+              schema:
+                type: string
+            X-Docbank-Blob-Hash:
+              schema:
+                type: string
+            X-Docbank-Blob-Size:
+              schema:
+                type: string
+            X-Docbank-Content-Version:
+              schema:
+                type: string
+            X-Docbank-Rendition-Artifact:
+              schema:
+                type: string
+            X-Docbank-Rendition-Attachment:
+              schema:
+                type: string
+            X-Docbank-Rendition-Build:
+              schema:
+                type: string
+            X-Docbank-Rendition-Completeness:
+              schema:
+                type: string
+            X-Docbank-Rendition-Profile:
+              schema:
+                type: string
+            X-Docbank-Rendition-Warnings:
+              schema:
+                type: string
+        "206":
+          content:
+            text/markdown:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Sanitized Markdown bytes with immutable identity headers
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+            Content-Digest:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Trailer:
+              schema:
+                type: string
+            X-Docbank-Blob-Hash:
+              schema:
+                type: string
+            X-Docbank-Blob-Size:
+              schema:
+                type: string
+            X-Docbank-Content-Version:
+              schema:
+                type: string
+            X-Docbank-Rendition-Artifact:
+              schema:
+                type: string
+            X-Docbank-Rendition-Attachment:
+              schema:
+                type: string
+            X-Docbank-Rendition-Build:
+              schema:
+                type: string
+            X-Docbank-Rendition-Completeness:
+              schema:
+                type: string
+            X-Docbank-Rendition-Profile:
+              schema:
+                type: string
+            X-Docbank-Rendition-Warnings:
+              schema:
+                type: string
       summary: Stream one exact active sanitized-Markdown rendition
   /api/v1/saved-queries:
     get:
@@ -12804,82 +13933,19 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  computed_hash:
-                    pattern: ^[0-9a-f]{64}$
-                    type: string
-                  computed_size:
-                    format: int64
-                    type: integer
-                  node:
-                    $ref: "#/components/schemas/Node"
-                  status:
-                    enum:
-                      - added
-                      - skipped
-                    type: string
-                required:
-                  - status
-                  - node
-                  - computed_hash
-                  - computed_size
-                type: object
+                $ref: "#/components/schemas/UploadReceipt"
           description: Idempotent retry converged on the existing node
         "201":
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  computed_hash:
-                    pattern: ^[0-9a-f]{64}$
-                    type: string
-                  computed_size:
-                    format: int64
-                    type: integer
-                  node:
-                    $ref: "#/components/schemas/Node"
-                  status:
-                    enum:
-                      - added
-                      - skipped
-                    type: string
-                required:
-                  - status
-                  - node
-                  - computed_hash
-                  - computed_size
-                type: object
+                $ref: "#/components/schemas/UploadReceipt"
           description: New file node created
         default:
           content:
             application/problem+json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Error
       summary: Upload one digest-checked file
   /api/v1/verify:
@@ -12983,37 +14049,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  attachment_id:
-                    type: string
-                  body_search:
-                    $ref: "#/components/schemas/EmailBodySearch"
-                  checksum:
-                    type: string
-                  created_at:
-                    type: string
-                  evidence:
-                    $ref: "#/components/schemas/EmailV1"
-                  generation_id:
-                    type: string
-                  published_at:
-                    type: string
-                  recipe_fingerprint:
-                    type: string
-                  version:
-                    $ref: "#/components/schemas/ContentVersion"
-                required:
-                  - version
-                  - generation_id
-                  - attachment_id
-                  - recipe_fingerprint
-                  - checksum
-                  - evidence
-                  - body_search
-                  - created_at
-                  - published_at
-                type: object
+                $ref: "#/components/schemas/EmailMetadata"
           description: Selected email metadata
           headers:
             Cache-Control:
@@ -13024,16 +14060,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  state:
-                    type: string
-                  version:
-                    $ref: "#/components/schemas/ContentVersion"
-                required:
-                  - version
-                  - state
-                type: object
+                $ref: "#/components/schemas/EmailPending"
           description: Eligible email metadata is pending
           headers:
             Cache-Control:
@@ -13044,30 +14071,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Error
       summary: Read selected email metadata for one immutable version
     post:
@@ -13091,37 +14095,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  attachment_id:
-                    type: string
-                  body_search:
-                    $ref: "#/components/schemas/EmailBodySearch"
-                  checksum:
-                    type: string
-                  created_at:
-                    type: string
-                  evidence:
-                    $ref: "#/components/schemas/EmailV1"
-                  generation_id:
-                    type: string
-                  published_at:
-                    type: string
-                  recipe_fingerprint:
-                    type: string
-                  version:
-                    $ref: "#/components/schemas/ContentVersion"
-                required:
-                  - version
-                  - generation_id
-                  - attachment_id
-                  - recipe_fingerprint
-                  - checksum
-                  - evidence
-                  - body_search
-                  - created_at
-                  - published_at
-                type: object
+                $ref: "#/components/schemas/EmailMetadata"
           description: Email metadata
           headers:
             Cache-Control:
@@ -13132,30 +14106,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Error
       summary: Ensure email metadata for one immutable version
   /api/v1/versions/{version_id}/email/generations/{generation_id}:
@@ -13179,37 +14130,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: false
-                properties:
-                  attachment_id:
-                    type: string
-                  body_search:
-                    $ref: "#/components/schemas/EmailBodySearch"
-                  checksum:
-                    type: string
-                  created_at:
-                    type: string
-                  evidence:
-                    $ref: "#/components/schemas/EmailV1"
-                  generation_id:
-                    type: string
-                  published_at:
-                    type: string
-                  recipe_fingerprint:
-                    type: string
-                  version:
-                    $ref: "#/components/schemas/ContentVersion"
-                required:
-                  - version
-                  - generation_id
-                  - attachment_id
-                  - recipe_fingerprint
-                  - checksum
-                  - evidence
-                  - body_search
-                  - created_at
-                  - published_at
-                type: object
+                $ref: "#/components/schemas/EmailMetadata"
           description: Attached email generation
           headers:
             Cache-Control:
@@ -13220,30 +14141,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Error
       summary: Read an immutable email generation attached to one version
   /api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}:
@@ -13331,30 +14229,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                additionalProperties: false
-                properties:
-                  code:
-                    type: string
-                  detail:
-                    type: string
-                  errors:
-                    items:
-                      type: string
-                    type: array
-                  observed_scope_count:
-                    format: int64
-                    type: integer
-                  position:
-                    $ref: "#/components/schemas/ErrorPosition"
-                  status:
-                    format: int64
-                    type: integer
-                  title:
-                    type: string
-                required:
-                  - title
-                  - status
-                type: object
+                $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one verified immutable email part artifact
   /api/v1/watches:
@@ -13426,6 +14301,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read one exact snapshot page
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  status:
+                    type: string
+                  uptime_seconds:
+                    format: int64
+                    type: integer
+                  version:
+                    type: string
+                required:
+                  - status
+                  - version
+                  - uptime_seconds
+                type: object
+          description: Daemon health
 security:
   - apiKey: []
   - bearer: []

@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -60,7 +60,7 @@ var searchCmd = &cobra.Command{
 			if err := validateDocumentSearchOptions(strings.Join(args, " "), options); err != nil {
 				return err
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -91,11 +91,11 @@ var searchCmd = &cobra.Command{
 				return err
 			}
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		opts := client.SearchOptions{
+		opts := daemonconn.SearchOptions{
 			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
 		var tagName string
@@ -181,16 +181,17 @@ func documentSearchFlagsChanged(cmd *cobra.Command) bool {
 		cmd.Flags().Changed("explain")
 }
 
-func runDocumentSearch(cmd *cobra.Command, c *client.Client, query string, options documentSearchCLIOptions) error {
+func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query string, options documentSearchCLIOptions) error {
 	if err := validateDocumentSearchOptions(query, options); err != nil {
 		return err
 	}
 
-	profiles, err := c.ProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+
 	if err != nil {
 		return err
 	}
-	profile, found := findProcessingProfile(profiles, options.Profile)
+	profile, found := findProcessingProfile(*profiles, options.Profile)
 	if !found {
 		return usageError(fmt.Errorf("processing profile %q is not executable on this daemon", options.Profile))
 	}
@@ -198,7 +199,8 @@ func runDocumentSearch(cmd *cobra.Command, c *client.Client, query string, optio
 	if err != nil {
 		return usageError(err)
 	}
-	info, err := c.Info(cmd.Context())
+	info, err := c.API().VaultInfo(cmd.Context())
+
 	if err != nil {
 		return err
 	}
@@ -240,7 +242,7 @@ func validateDocumentSearchOptions(query string, options documentSearchCLIOption
 	}
 	seen := make(map[string]struct{}, len(options.ContentVersionIDs))
 	for _, versionID := range options.ContentVersionIDs {
-		if !client.IsCanonicalUUIDv4(versionID) {
+		if !daemonconn.IsCanonicalUUIDv4(versionID) {
 			return usageError(fmt.Errorf("source version %q must be a canonical UUIDv4", versionID))
 		}
 		if _, exists := seen[versionID]; exists {

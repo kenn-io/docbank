@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestVersionsShowIncludesAuxiliaryMD5(t *testing.T) {
@@ -16,9 +17,10 @@ func TestVersionsShowIncludesAuxiliaryMD5(t *testing.T) {
 	_, err := runCLI(t, "add", source, "--dest", "/archive")
 	require.NoError(t, err)
 
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	node, err := c.Stat(context.Background(), "/archive/versioned.txt")
+	node, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/archive/versioned.txt"}})
+
 	require.NoError(t, err)
 	require.NotEmpty(t, node.MD5)
 

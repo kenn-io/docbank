@@ -20,8 +20,8 @@ import (
 	docbank "go.kenn.io/docbank"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
@@ -212,7 +212,7 @@ func TestServeServesAndShutsDownGracefully(t *testing.T) {
 
 	stop()
 	// Record removed on shutdown.
-	recs, err := client.RuntimeStore(dir).List()
+	recs, err := daemonconn.RuntimeStore(dir).List()
 	require.NoError(t, err)
 	assert.Empty(t, recs)
 	embedded, err = docbank.New(t.Context(), embeddedConfig)
@@ -287,7 +287,7 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 	healthClient := &http.Client{Timeout: time.Second}
 	var rec kitdaemon.RuntimeRecord
 	require.Eventually(t, func() bool {
-		recs, err := client.RuntimeStore(dir).List()
+		recs, err := daemonconn.RuntimeStore(dir).List()
 		if err != nil || len(recs) != 1 {
 			return false
 		}

@@ -4,8 +4,9 @@
  * docbank
  * OpenAPI spec version: dev
  */
-import { sessionResponse } from '../api-transport';
 import { sessionJSON } from '../api-transport';
+import { sessionResponse } from '../api-transport';
+import { mediaFormData } from '../media-form-data';
 
 // https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
 type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
@@ -1012,6 +1013,17 @@ export interface ContentReferencePage {
   total: number;
 }
 
+export interface ContentReplacementReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  computed_hash: string;
+  /** @minimum 0 */
+  computed_size: number;
+  node: Node;
+  version: ContentVersion;
+}
+
 export interface ContentReversionReceipt {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1627,6 +1639,184 @@ export interface EmailDocumentIdentity {
   version_id: string;
 }
 
+export interface EmailDocumentProcessingReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  child: EmailDocumentIdentity;
+  job_id: string;
+  state: string;
+  waiter_id: string;
+}
+
+export interface RenditionAuthorizationIdentityV1 {
+  allowed_artifact_roles: string[];
+  capability_record_checksum: string;
+  descriptor_fingerprint: string;
+  disclose_filename: boolean;
+  input_kind: string;
+  max_artifact_bytes: number;
+  max_artifacts: number;
+  max_provider_markdown_bytes: number;
+  max_total_result_bytes: number;
+  media_family: string;
+  media_type: string;
+  policy_fingerprint: string;
+  provider_id: string;
+  provider_metadata_checksum: string;
+  rendition_request_fingerprint: string;
+  source_bytes: number;
+  source_sha256: string;
+}
+
+export interface EvidencePolicyIdentity {
+  max_artifacts: number;
+  max_cells_per_table: number;
+  max_document_chars: number;
+  max_omissions: number;
+  max_regions_per_unit: number;
+  max_tables_per_unit: number;
+  max_units: number;
+}
+
+export interface RenditionPolicyIdentity {
+  max_document_chars: number;
+  max_link_chars: number;
+  max_segment_runes: number;
+  max_source_unit_bytes: number;
+  max_unit_runes: number;
+}
+
+export interface RenditionExecutionIdentityV1 {
+  authorization: RenditionAuthorizationIdentityV1;
+  contract_version: string;
+  evidence_policy: EvidencePolicyIdentity;
+  rendition_policy: RenditionPolicyIdentity;
+  upload: AuthorizedUploadMetadata;
+}
+
+export interface EmbeddingChunkPolicyV1 {
+  context_fingerprint: string;
+  formatter: string;
+  max_tokens: number;
+  overlap_tokens: number;
+  tokenizer: string;
+  tokenizer_revision: string;
+  truncation_policy: string;
+}
+
+export interface ProviderDescriptorV1 {
+  fingerprint: string;
+  id: string;
+}
+
+export interface ModelInputEncoder {
+  mode: string;
+  template: string;
+}
+
+export interface ModelInputContract {
+  compatibility_id: string;
+  document: ModelInputEncoder;
+  fingerprint: string;
+  profile: string;
+  query: ModelInputEncoder;
+  query_instruction?: string;
+  version: number;
+}
+
+export interface EmbeddingBindingV1 {
+  activation: string;
+  authorization_fingerprint: string;
+  chunk: EmbeddingChunkPolicyV1;
+  compatibility_id: string;
+  credential_binding: string;
+  descriptor: ProviderDescriptorV1;
+  dimensions: number;
+  disclosure_fingerprint: string;
+  document_formatter: string;
+  input_kind: string;
+  max_batch_items: number;
+  max_input_bytes: number;
+  max_input_tokens: number;
+  max_response_bytes: number;
+  metric: string;
+  model: string;
+  model_input: ModelInputContract;
+  name: string;
+  normalization: string;
+  query_formatter: string;
+  scalar_encoding: string;
+  trust_boundary: string;
+}
+
+export interface EvidenceLexicalPolicyV1 {
+  completeness_fingerprint: string;
+  lexical_segmenter_fingerprint: string;
+  max_document_chars: number;
+  max_segment_runes: number;
+  max_unit_runes: number;
+  normalized_evidence_contract: string;
+  normalizer_fingerprint: string;
+  rendition_contract: string;
+  sanitizer_fingerprint: string;
+  source_evidence_contract: string;
+}
+
+export interface RenditionBindingV1 {
+  adapter_contract: string;
+  authorization_fingerprint: string;
+  credential_binding: string;
+  deployment_fingerprint: string;
+  descriptor: ProviderDescriptorV1;
+  disclose_filename: boolean;
+  disclosure_fingerprint: string;
+  max_document_bytes: number;
+  max_response_bytes: number;
+  max_units: number;
+  name: string;
+  requested_artifacts: string[];
+  trust_boundary: string;
+  upload_options_fingerprint: string;
+}
+
+export interface RetentionDisclosurePolicyV1 {
+  attachment_policy_fingerprint: string;
+  consent_fingerprint: string;
+  retain_provider_markdown: boolean;
+  retain_sanitized_markdown: boolean;
+  retain_typed_artifacts: boolean;
+  trust_boundary: string;
+}
+
+export interface RetrievalPolicyV1 {
+  lexical_limit: number;
+  vector_limit: number;
+}
+
+export interface ProcessingProfileV1 {
+  contract_version: string;
+  embeddings: EmbeddingBindingV1[];
+  evidence_lexical: EvidenceLexicalPolicyV1;
+  rendition: RenditionBindingV1;
+  retention_disclosure: RetentionDisclosurePolicyV1;
+  retrieval: RetrievalPolicyV1;
+}
+
+export interface EmailDocumentProcessingRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  captured_artifact_policy: unknown;
+  execution_identity: RenditionExecutionIdentityV1;
+  input_classes: string[];
+  operation_id: string;
+  order: number;
+  principal: string;
+  profile: ProcessingProfileV1;
+  request_digest: string;
+  retained_artifact_classes: string[];
+  scope: string;
+}
+
 export interface EmailDocumentRelation {
   attachment_id: string;
   child: EmailDocumentIdentity;
@@ -1640,16 +1830,47 @@ export interface EmailDocumentRelation {
   sibling_order: number;
 }
 
-export interface EmailDocumentRelationStatus {
-  reason: string;
-  relation: EmailDocumentRelation;
-  state: string;
+export interface EmailDocumentPublicationReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  inventory_state: string;
+  operation_id: string;
+  relations: EmailDocumentRelation[];
+  request_digest: string;
 }
 
 export interface EmailDocumentReuse {
   child: EmailDocumentIdentity;
   part_path: string;
   revision: number;
+}
+
+export interface EmailDocumentPublicationRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  attachment_id: string;
+  destination_id: number;
+  destination_revision: number;
+  generation_id: string;
+  operation_id: string;
+  parent: EmailDocumentIdentity;
+  reuse: EmailDocumentReuse[];
+}
+
+export interface EmailDocumentRelationStatus {
+  reason: string;
+  relation: EmailDocumentRelation;
+  state: string;
+}
+
+export interface EmailDocumentRelationPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: EmailDocumentRelationStatus[];
+  next_operation_id: string;
+  next_order: number;
+  total: number;
 }
 
 export interface EmailFailureV1 {
@@ -1815,59 +2036,25 @@ export interface EmailV1 {
   source: EmailSourceV1;
 }
 
-export interface EmbeddingChunkPolicyV1 {
-  context_fingerprint: string;
-  formatter: string;
-  max_tokens: number;
-  overlap_tokens: number;
-  tokenizer: string;
-  tokenizer_revision: string;
-  truncation_policy: string;
+export interface EmailMetadata {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  attachment_id: string;
+  body_search: EmailBodySearch;
+  checksum: string;
+  created_at: string;
+  evidence: EmailV1;
+  generation_id: string;
+  published_at: string;
+  recipe_fingerprint: string;
+  version: ContentVersion;
 }
 
-export interface ProviderDescriptorV1 {
-  fingerprint: string;
-  id: string;
-}
-
-export interface ModelInputEncoder {
-  mode: string;
-  template: string;
-}
-
-export interface ModelInputContract {
-  compatibility_id: string;
-  document: ModelInputEncoder;
-  fingerprint: string;
-  profile: string;
-  query: ModelInputEncoder;
-  query_instruction?: string;
-  version: number;
-}
-
-export interface EmbeddingBindingV1 {
-  activation: string;
-  authorization_fingerprint: string;
-  chunk: EmbeddingChunkPolicyV1;
-  compatibility_id: string;
-  credential_binding: string;
-  descriptor: ProviderDescriptorV1;
-  dimensions: number;
-  disclosure_fingerprint: string;
-  document_formatter: string;
-  input_kind: string;
-  max_batch_items: number;
-  max_input_bytes: number;
-  max_input_tokens: number;
-  max_response_bytes: number;
-  metric: string;
-  model: string;
-  model_input: ModelInputContract;
-  name: string;
-  normalization: string;
-  query_formatter: string;
-  scalar_encoding: string;
-  trust_boundary: string;
+export interface EmailPending {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  state: string;
+  version: ContentVersion;
 }
 
 export interface EmptyTrashRequest {
@@ -1886,29 +2073,6 @@ export interface EnableAuditRequest {
      * @maxLength 43
      */
   preview_token: string;
-}
-
-export interface EvidenceLexicalPolicyV1 {
-  completeness_fingerprint: string;
-  lexical_segmenter_fingerprint: string;
-  max_document_chars: number;
-  max_segment_runes: number;
-  max_unit_runes: number;
-  normalized_evidence_contract: string;
-  normalizer_fingerprint: string;
-  rendition_contract: string;
-  sanitizer_fingerprint: string;
-  source_evidence_contract: string;
-}
-
-export interface EvidencePolicyIdentity {
-  max_artifacts: number;
-  max_cells_per_table: number;
-  max_document_chars: number;
-  max_omissions: number;
-  max_regions_per_unit: number;
-  max_tables_per_unit: number;
-  max_units: number;
 }
 
 export type FormatCapabilityV1Capabilities = {[key: string]: CapabilityStateV1};
@@ -2488,10 +2652,49 @@ export interface ProcessingConsentGrantRequest {
   selector: ProcessingSelector;
 }
 
+export interface ProcessingConsentReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  grant_id: string;
+  issued_at: string;
+  processing_incarnation_id: string;
+  revocation_fence: number;
+  vault_id: string;
+}
+
+export interface ProcessingConsentRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  disclosure_fingerprint: string;
+  /** @nullable */
+  expires_at: string | null;
+  input_classes: string[];
+  principal: string;
+  profile_fingerprint: string;
+  retained_artifact_classes: string[];
+  scope: string;
+}
+
 export interface ProcessingConsentRevocation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   revoked_at: string;
+}
+
+export interface ProcessingConsentRevocationReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fence: number;
+  processing_incarnation_id: string;
+  revocation_id: string;
+  revoked_at: string;
+}
+
+export interface ProcessingConsentRevocationRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  principal: string;
+  scope: string;
 }
 
 export interface ProcessingEstimate {
@@ -2636,46 +2839,6 @@ export interface ProcessingProfileSummary {
   fingerprint: string;
   name: string;
   rendition: boolean;
-}
-
-export interface RenditionBindingV1 {
-  adapter_contract: string;
-  authorization_fingerprint: string;
-  credential_binding: string;
-  deployment_fingerprint: string;
-  descriptor: ProviderDescriptorV1;
-  disclose_filename: boolean;
-  disclosure_fingerprint: string;
-  max_document_bytes: number;
-  max_response_bytes: number;
-  max_units: number;
-  name: string;
-  requested_artifacts: string[];
-  trust_boundary: string;
-  upload_options_fingerprint: string;
-}
-
-export interface RetentionDisclosurePolicyV1 {
-  attachment_policy_fingerprint: string;
-  consent_fingerprint: string;
-  retain_provider_markdown: boolean;
-  retain_sanitized_markdown: boolean;
-  retain_typed_artifacts: boolean;
-  trust_boundary: string;
-}
-
-export interface RetrievalPolicyV1 {
-  lexical_limit: number;
-  vector_limit: number;
-}
-
-export interface ProcessingProfileV1 {
-  contract_version: string;
-  embeddings: EmbeddingBindingV1[];
-  evidence_lexical: EvidenceLexicalPolicyV1;
-  rendition: RenditionBindingV1;
-  retention_disclosure: RetentionDisclosurePolicyV1;
-  retrieval: RetrievalPolicyV1;
 }
 
 export interface ProvenanceFact {
@@ -2899,47 +3062,17 @@ export interface RegisterBlobStoreRequest {
   preview_token: string;
 }
 
+export interface RemoveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  request_digest: string;
+}
+
 export interface RenameTagRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @minLength 1 */
   name: string;
-}
-
-export interface RenditionAuthorizationIdentityV1 {
-  allowed_artifact_roles: string[];
-  capability_record_checksum: string;
-  descriptor_fingerprint: string;
-  disclose_filename: boolean;
-  input_kind: string;
-  max_artifact_bytes: number;
-  max_artifacts: number;
-  max_provider_markdown_bytes: number;
-  max_total_result_bytes: number;
-  media_family: string;
-  media_type: string;
-  policy_fingerprint: string;
-  provider_id: string;
-  provider_metadata_checksum: string;
-  rendition_request_fingerprint: string;
-  source_bytes: number;
-  source_sha256: string;
-}
-
-export interface RenditionPolicyIdentity {
-  max_document_chars: number;
-  max_link_chars: number;
-  max_segment_runes: number;
-  max_source_unit_bytes: number;
-  max_unit_runes: number;
-}
-
-export interface RenditionExecutionIdentityV1 {
-  authorization: RenditionAuthorizationIdentityV1;
-  contract_version: string;
-  evidence_policy: EvidencePolicyIdentity;
-  rendition_policy: RenditionPolicyIdentity;
-  upload: AuthorizedUploadMetadata;
 }
 
 export interface RenditionSelectorRequest {
@@ -3628,6 +3761,24 @@ export interface UpdateSavedQueryRequest {
   payload?: SavedQueryV1Schema | HighlightSetV1Schema;
 }
 
+export type UploadReceiptStatus = typeof UploadReceiptStatus[keyof typeof UploadReceiptStatus];
+
+
+export const UploadReceiptStatus = {
+  added: 'added',
+  skipped: 'skipped',
+} as const;
+
+export interface UploadReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  computed_hash: string;
+  computed_size: number;
+  node: Node;
+  status: UploadReceiptStatus;
+}
+
 export interface VaultInfo {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3762,6 +3913,18 @@ export interface WorkspaceQueryPageRequest {
   cursor: string;
 }
 
+export type ChallengeDaemonParams = {
+nonce: string;
+};
+
+export type ChallengeDaemon200 = {
+  proof: string;
+};
+
+export type ShutdownDaemonHeaders = {
+'X-Docbank-Daemon-Token': string;
+};
+
 export type PrepareWebDownloadBody = {
   blob_hash: string;
   node_id: number;
@@ -3838,6 +4001,10 @@ limit?: number;
  * @minimum 0
  */
 offset?: number;
+};
+
+export type SetCollectionLabelHeaders = {
+'If-Match': string;
 };
 
 export type ListCollectionMembersParams = {
@@ -3937,119 +4104,12 @@ limit?: number;
 offset?: number;
 };
 
-export type RequestEmailDocumentProcessingBody = {
-  captured_artifact_policy: unknown;
-  execution_identity: RenditionExecutionIdentityV1;
-  input_classes: string[];
-  operation_id: string;
-  order: number;
-  principal: string;
-  profile: ProcessingProfileV1;
-  request_digest: string;
-  retained_artifact_classes: string[];
-  scope: string;
-};
-
-export type RequestEmailDocumentProcessing200 = {
-  child: EmailDocumentIdentity;
-  job_id: string;
-  state: string;
-  waiter_id: string;
-};
-
-export type RequestEmailDocumentProcessingDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
-export type PublishEmailDocumentsBody = {
-  attachment_id: string;
-  destination_id: number;
-  destination_revision: number;
-  generation_id: string;
-  operation_id: string;
-  parent: EmailDocumentIdentity;
-  reuse: EmailDocumentReuse[];
-};
-
-export type PublishEmailDocuments200 = {
-  created_at: string;
-  inventory_state: string;
-  operation_id: string;
-  relations: EmailDocumentRelation[];
-  request_digest: string;
-};
-
-export type PublishEmailDocumentsDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
-export type RemoveEmailDocumentPublicationBody = {
-  request_digest: string;
-};
-
-export type RemoveEmailDocumentPublicationDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
-export type GetEmailDocumentPublication200 = {
-  created_at: string;
-  inventory_state: string;
-  operation_id: string;
-  relations: EmailDocumentRelation[];
-  request_digest: string;
-};
-
-export type GetEmailDocumentPublicationDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
 export type ListEmailDocumentRelationsParams = {
 parent_version_id?: string;
 child_version_id?: string;
 after_operation_id?: string;
 after_order?: number;
 limit?: number;
-};
-
-export type ListEmailDocumentRelations200 = {
-  items: EmailDocumentRelationStatus[];
-  next_operation_id: string;
-  next_order: number;
-  total: number;
-};
-
-export type ListEmailDocumentRelationsDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
 };
 
 export type ReadFormatCapabilitiesParams = {
@@ -4100,37 +4160,13 @@ export type SubmitMediaSourceBodyTwo = {
   metadata: MediaSuppliedMetadata;
 };
 
-export type SubmitMediaSource200 = {
-  content_version_id?: string;
-  coverage_state: string;
-  job_id?: string;
-  occurrence_id?: string;
-  operation_id: string;
-  operation_state: string;
-  outcome?: string;
-  source_id: string;
-  source_version_id?: string;
-  supplied_input_id?: string;
-  vault_uid: string;
-};
-
 export type ImportMediaArtifactBody = {
   file: Blob | File;
   metadata: MediaArtifactMetadata;
 };
 
-export type ImportMediaArtifact200 = {
-  content_version_id?: string;
-  coverage_state: string;
-  job_id?: string;
-  occurrence_id?: string;
-  operation_id: string;
-  operation_state: string;
-  outcome?: string;
-  source_id: string;
-  source_version_id?: string;
-  supplied_input_id?: string;
-  vault_uid: string;
+export type MoveNodeHeaders = {
+'If-Match': string;
 };
 
 export type ListChildrenParams = {
@@ -4145,23 +4181,21 @@ limit?: number;
 offset?: number;
 };
 
-export type ReplaceNodeContent200 = {
-  /** @pattern ^[0-9a-f]{64}$ */
-  computed_hash: string;
-  /** @minimum 0 */
-  computed_size: number;
-  node: Node;
-  version: ContentVersion;
-};
-
-export type ReplaceNodeContentDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
+export type ReplaceNodeContentHeaders = {
+/**
+ * Quoted or bare current node revision
+ */
+'If-Match': string;
+/**
+ * Expected lowercase hexadecimal SHA-256 of the request body
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw request-body byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
 };
 
 export type ListNodeProvenanceParams = {
@@ -4176,6 +4210,18 @@ limit?: number;
 offset?: number;
 };
 
+export type AppendNodeProvenanceHeaders = {
+'If-Match': string;
+};
+
+export type RestoreNodeHeaders = {
+'If-Match': string;
+};
+
+export type RevertNodeContentHeaders = {
+'If-Match': string;
+};
+
 export type ListNodeTagsParams = {
 /**
  * @minimum 1
@@ -4186,6 +4232,22 @@ limit?: number;
  * @minimum 0
  */
 offset?: number;
+};
+
+export type UnassignTagHeaders = {
+'If-Match': string;
+};
+
+export type AssignTagHeaders = {
+'If-Match': string;
+};
+
+export type TrashNodeHeaders = {
+'If-Match': string;
+};
+
+export type VerifyNodeContentHeaders = {
+'If-Match': string;
 };
 
 export type ListContentVersionsParams = {
@@ -4200,59 +4262,12 @@ limit?: number;
 offset?: number;
 };
 
+export type PruneNodeContentVersionsHeaders = {
+'If-Match': string;
+};
+
 export type ResolvePathParams = {
 path: string;
-};
-
-export type GrantProcessingConsentBody = {
-  disclosure_fingerprint: string;
-  /** @nullable */
-  expires_at: string | null;
-  input_classes: string[];
-  principal: string;
-  profile_fingerprint: string;
-  retained_artifact_classes: string[];
-  scope: string;
-};
-
-export type GrantProcessingConsent200 = {
-  grant_id: string;
-  issued_at: string;
-  processing_incarnation_id: string;
-  revocation_fence: number;
-  vault_id: string;
-};
-
-export type GrantProcessingConsentDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
-export type RevokeProcessingConsentBody = {
-  principal: string;
-  scope: string;
-};
-
-export type RevokeProcessingConsent200 = {
-  fence: number;
-  processing_incarnation_id: string;
-  revocation_id: string;
-  revoked_at: string;
-};
-
-export type RevokeProcessingConsentDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
 };
 
 export type GetDocumentRenditionParams = {
@@ -4261,6 +4276,10 @@ export type GetDocumentRenditionParams = {
  * @maximum 67108864
  */
 max_bytes?: number;
+};
+
+export type GetDocumentRenditionHeaders = {
+Range?: string;
 };
 
 export type ListSavedQueriesParams = {
@@ -4283,6 +4302,18 @@ export const ListSavedQueriesKind = {
   query: 'query',
   highlight_set: 'highlight_set',
 } as const;
+
+export type DeleteSavedQueryHeaders = {
+'If-Match': string;
+};
+
+export type UpdateSavedQueryHeaders = {
+'If-Match': string;
+};
+
+export type RunSavedQueryHeaders = {
+'If-Match': string;
+};
 
 export type SearchParams = {
 q?: string;
@@ -4337,6 +4368,14 @@ export type ResolveTagByNameParams = {
 name: string;
 };
 
+export type DeleteTagHeaders = {
+'If-Match': string;
+};
+
+export type RenameTagHeaders = {
+'If-Match': string;
+};
+
 export type ListTagNodesParams = {
 /**
  * @minimum 1
@@ -4374,134 +4413,93 @@ parent_id: number;
 name: string;
 };
 
+export type UploadFileHeaders = {
+/**
+ * Expected lowercase hexadecimal SHA-256 of the file payload
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw file byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
+};
+
 export type UploadFileBody = {
   file: Blob | File;
 };
 
-export type UploadFile200Status = typeof UploadFile200Status[keyof typeof UploadFile200Status];
-
-
-export const UploadFile200Status = {
-  added: 'added',
-  skipped: 'skipped',
-} as const;
-
-export type UploadFile200 = {
-  /** @pattern ^[0-9a-f]{64}$ */
-  computed_hash: string;
-  computed_size: number;
-  node: Node;
-  status: UploadFile200Status;
-};
-
-export type UploadFile201Status = typeof UploadFile201Status[keyof typeof UploadFile201Status];
-
-
-export const UploadFile201Status = {
-  added: 'added',
-  skipped: 'skipped',
-} as const;
-
-export type UploadFile201 = {
-  /** @pattern ^[0-9a-f]{64}$ */
-  computed_hash: string;
-  computed_size: number;
-  node: Node;
-  status: UploadFile201Status;
-};
-
-export type UploadFileDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
-export type GetEmailMetadata200 = {
-  attachment_id: string;
-  body_search: EmailBodySearch;
-  checksum: string;
-  created_at: string;
-  evidence: EmailV1;
-  generation_id: string;
-  published_at: string;
-  recipe_fingerprint: string;
-  version: ContentVersion;
-};
-
-export type GetEmailMetadata202 = {
-  state: string;
-  version: ContentVersion;
-};
-
-export type GetEmailMetadataDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
-
 export type EnsureEmailMetadataBody = { [key: string]: unknown };
 
-export type EnsureEmailMetadata200 = {
-  attachment_id: string;
-  body_search: EmailBodySearch;
-  checksum: string;
-  created_at: string;
-  evidence: EmailV1;
-  generation_id: string;
-  published_at: string;
-  recipe_fingerprint: string;
-  version: ContentVersion;
+export type Health200 = {
+  status: string;
+  uptime_seconds: number;
+  version: string;
 };
 
-export type EnsureEmailMetadataDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
+export const getChallengeDaemonUrl = (params: ChallengeDaemonParams,) => {
+  const normalizedParams = new URLSearchParams();
 
-export type GetEmailMetadataGeneration200 = {
-  attachment_id: string;
-  body_search: EmailBodySearch;
-  checksum: string;
-  created_at: string;
-  evidence: EmailV1;
-  generation_id: string;
-  published_at: string;
-  recipe_fingerprint: string;
-  version: ContentVersion;
-};
+  Object.entries(params || {}).forEach(([key, value]) => {
 
-export type GetEmailMetadataGenerationDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
-export type GetEmailPartDefault = {
-  code?: string;
-  detail?: string;
-  errors?: string[];
-  observed_scope_count?: number;
-  position?: ErrorPosition;
-  status: number;
-  title: string;
-};
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/daemon/challenge?${stringifiedParams}` : `/api/daemon/challenge`
+}
+
+export const challengeDaemon = async (params: ChallengeDaemonParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeDaemon200> => {
+
+  return sessionJSON<ChallengeDaemon200>(getChallengeDaemonUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getShutdownDaemonUrl = () => {
+
+
+
+
+  return `/api/daemon/shutdown`
+}
+
+export const shutdownDaemon = async (headers: ShutdownDaemonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getShutdownDaemonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
 
 export const getPrepareWebDownloadUrl = () => {
 
@@ -5310,7 +5308,8 @@ export const getSetCollectionLabelUrl = (id: string,) => {
  * @summary Set or clear a collection label under its label revision
  */
 export const setCollectionLabel = (id: string,
-    setCollectionLabelRequest: NonReadonly<SetCollectionLabelRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+    setCollectionLabelRequest: NonReadonly<SetCollectionLabelRequest>,
+    headers: SetCollectionLabelHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5330,7 +5329,7 @@ return sessionResponse<CollectionLabel>(getSetCollectionLabelUrl(id),
   {
     ...options,
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setCollectionLabelRequest)
   }
 );}
@@ -5663,7 +5662,7 @@ export const getRequestEmailDocumentProcessingUrl = () => {
 /**
  * @summary Request ordinary consent-aware attachment processing
  */
-export const requestEmailDocumentProcessing = async (requestEmailDocumentProcessingBody: RequestEmailDocumentProcessingBody, options?: Parameters<typeof sessionJSON>[1]): Promise<RequestEmailDocumentProcessing200> => {
+export const requestEmailDocumentProcessing = async (emailDocumentProcessingRequest: NonReadonly<EmailDocumentProcessingRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailDocumentProcessingReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5679,12 +5678,12 @@ export const requestEmailDocumentProcessing = async (requestEmailDocumentProcess
     }
     return headers;
   };
-return sessionJSON<RequestEmailDocumentProcessing200>(getRequestEmailDocumentProcessingUrl(),
+return sessionJSON<EmailDocumentProcessingReceipt>(getRequestEmailDocumentProcessingUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(requestEmailDocumentProcessingBody)
+    body: JSON.stringify(emailDocumentProcessingRequest)
   }
 );}
 
@@ -5701,7 +5700,7 @@ export const getPublishEmailDocumentsUrl = () => {
 /**
  * @summary Publish exact email attachments as ordinary documents
  */
-export const publishEmailDocuments = async (publishEmailDocumentsBody: PublishEmailDocumentsBody, options?: Parameters<typeof sessionJSON>[1]): Promise<PublishEmailDocuments200> => {
+export const publishEmailDocuments = async (emailDocumentPublicationRequest: NonReadonly<EmailDocumentPublicationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailDocumentPublicationReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5717,12 +5716,12 @@ export const publishEmailDocuments = async (publishEmailDocumentsBody: PublishEm
     }
     return headers;
   };
-return sessionJSON<PublishEmailDocuments200>(getPublishEmailDocumentsUrl(),
+return sessionJSON<EmailDocumentPublicationReceipt>(getPublishEmailDocumentsUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(publishEmailDocumentsBody)
+    body: JSON.stringify(emailDocumentPublicationRequest)
   }
 );}
 
@@ -5740,7 +5739,7 @@ export const getRemoveEmailDocumentPublicationUrl = (operationId: string,) => {
  * @summary Release one receipt without deleting children
  */
 export const removeEmailDocumentPublication = async (operationId: string,
-    removeEmailDocumentPublicationBody: RemoveEmailDocumentPublicationBody, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+    removeRequest: NonReadonly<RemoveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -5761,7 +5760,7 @@ return sessionJSON<void>(getRemoveEmailDocumentPublicationUrl(operationId),
     ...options,
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(removeEmailDocumentPublicationBody)
+    body: JSON.stringify(removeRequest)
   }
 );}
 
@@ -5778,9 +5777,9 @@ export const getGetEmailDocumentPublicationUrl = (operationId: string,) => {
 /**
  * @summary Read an immutable publication receipt
  */
-export const getEmailDocumentPublication = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<GetEmailDocumentPublication200> => {
+export const getEmailDocumentPublication = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailDocumentPublicationReceipt> => {
 
-  return sessionJSON<GetEmailDocumentPublication200>(getGetEmailDocumentPublicationUrl(operationId),
+  return sessionJSON<EmailDocumentPublicationReceipt>(getGetEmailDocumentPublicationUrl(operationId),
   {
     ...options,
     method: 'GET'
@@ -5809,9 +5808,9 @@ export const getListEmailDocumentRelationsUrl = (params?: ListEmailDocumentRelat
 /**
  * @summary Read a bounded page of exact parent or child occurrences
  */
-export const listEmailDocumentRelations = async (params?: ListEmailDocumentRelationsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ListEmailDocumentRelations200> => {
+export const listEmailDocumentRelations = async (params?: ListEmailDocumentRelationsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailDocumentRelationPage> => {
 
-  return sessionJSON<ListEmailDocumentRelations200>(getListEmailDocumentRelationsUrl(params),
+  return sessionJSON<EmailDocumentRelationPage>(getListEmailDocumentRelationsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -6379,7 +6378,7 @@ export const listMediaSources = async (params?: ListMediaSourcesParams, options?
 
 
 
-export const getSubmitMediaSourceUrl = () => {
+export const getSubmitMediaSourceWithJsonUrl = () => {
 
 
 
@@ -6390,14 +6389,52 @@ export const getSubmitMediaSourceUrl = () => {
 /**
  * @summary Retain one bounded supplied recording or private reference
  */
-export const submitMediaSource = async (submitMediaSourceBody: NonReadonly<MediaReferenceBody | SubmitMediaSourceBodyTwo>, options?: Parameters<typeof sessionJSON>[1]): Promise<SubmitMediaSource200> => {
+export const submitMediaSourceWithJson = async (mediaReferenceBody: NonReadonly<MediaReferenceBody>, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
 
-  return sessionJSON<SubmitMediaSource200>(getSubmitMediaSourceUrl(),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MediaReceipt>(getSubmitMediaSourceWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mediaReferenceBody)
+  }
+);}
+
+
+
+export const getSubmitMediaSourceWithFormDataUrl = () => {
+
+
+
+
+  return `/api/v1/media/sources`
+}
+
+/**
+ * @summary Retain one bounded supplied recording or private reference
+ */
+export const submitMediaSourceWithFormData = async (submitMediaSourceBodyTwo: SubmitMediaSourceBodyTwo, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
+    const formData = mediaFormData(submitMediaSourceBodyTwo)
+  return sessionJSON<MediaReceipt>(getSubmitMediaSourceWithFormDataUrl(),
   {
     ...options,
     method: 'POST'
     ,
-    body: JSON.stringify(submitMediaSourceBody)
+    body: formData
   }
 );}
 
@@ -6439,12 +6476,9 @@ export const getImportMediaArtifactUrl = (sourceId: string,) => {
  * @summary Retain one bounded original media or transcript input
  */
 export const importMediaArtifact = async (sourceId: string,
-    importMediaArtifactBody: ImportMediaArtifactBody, options?: Parameters<typeof sessionJSON>[1]): Promise<ImportMediaArtifact200> => {
-    const formData = new FormData();
-formData.append(`file`, importMediaArtifactBody.file);
-formData.append(`metadata`, JSON.stringify(importMediaArtifactBody.metadata));
-
-  return sessionJSON<ImportMediaArtifact200>(getImportMediaArtifactUrl(sourceId),
+    importMediaArtifactBody: ImportMediaArtifactBody, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
+    const formData = mediaFormData(importMediaArtifactBody)
+  return sessionJSON<MediaReceipt>(getImportMediaArtifactUrl(sourceId),
   {
     ...options,
     method: 'POST'
@@ -6569,7 +6603,8 @@ export const getMoveNodeUrl = (id: number,) => {
  * @summary Move and/or rename a node (metadata only; bytes never move)
  */
 export const moveNode = async (id: number,
-    moveNodeRequest: NonReadonly<MoveNodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
+    moveNodeRequest: NonReadonly<MoveNodeRequest>,
+    headers: MoveNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6589,7 +6624,7 @@ return sessionJSON<Node>(getMoveNodeUrl(id),
   {
     ...options,
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(moveNodeRequest)
   }
 );}
@@ -6667,7 +6702,8 @@ export const getReplaceNodeContentUrl = (id: number,) => {
  * @summary Replace a file's content with a new immutable head
  */
 export const replaceNodeContent = async (id: number,
-    replaceNodeContentBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<ReplaceNodeContent200> => {
+    replaceNodeContentBody: Blob,
+    headers: ReplaceNodeContentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentReplacementReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6683,11 +6719,11 @@ export const replaceNodeContent = async (id: number,
     }
     return headers;
   };
-return sessionJSON<ReplaceNodeContent200>(getReplaceNodeContentUrl(id),
+return sessionJSON<ContentReplacementReceipt>(getReplaceNodeContentUrl(id),
   {
     ...options,
     method: 'PUT',
-    headers: { 'Content-Type': '*/*', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': '*/*',...headers, ...getHeaders(options?.headers) },
     body: replaceNodeContentBody
   }
 );}
@@ -6741,7 +6777,8 @@ export const getAppendNodeProvenanceUrl = (id: number,) => {
  * @summary Append an immutable origin fact to a file node
  */
 export const appendNodeProvenance = async (id: number,
-    provenanceAppendRequest: NonReadonly<ProvenanceAppendRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ProvenanceAppendReceipt> => {
+    provenanceAppendRequest: NonReadonly<ProvenanceAppendRequest>,
+    headers: AppendNodeProvenanceHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ProvenanceAppendReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6761,7 +6798,7 @@ return sessionJSON<ProvenanceAppendReceipt>(getAppendNodeProvenanceUrl(id),
   {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(provenanceAppendRequest)
   }
 );}
@@ -6779,13 +6816,28 @@ export const getRestoreNodeUrl = (id: number,) => {
 /**
  * @summary Restore a trash root to its original location (root fallback, suffix on collision)
  */
-export const restoreNode = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
+export const restoreNode = async (id: number,
+    headers: RestoreNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
-  return sessionJSON<Node>(getRestoreNodeUrl(id),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Node>(getRestoreNodeUrl(id),
   {
     ...options,
-    method: 'POST'
-
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -6805,7 +6857,8 @@ export const getRevertNodeContentUrl = (id: number,) => {
  * @summary Create a new head from one of the file's prior immutable versions
  */
 export const revertNodeContent = async (id: number,
-    revertNodeContentRequest: NonReadonly<RevertNodeContentRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentReversionReceipt> => {
+    revertNodeContentRequest: NonReadonly<RevertNodeContentRequest>,
+    headers: RevertNodeContentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentReversionReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6825,7 +6878,7 @@ return sessionJSON<ContentReversionReceipt>(getRevertNodeContentUrl(id),
   {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(revertNodeContentRequest)
   }
 );}
@@ -6878,13 +6931,28 @@ export const getUnassignTagUrl = (id: number,
  * @summary Remove a tag assignment from a node
  */
 export const unassignTag = async (id: number,
-    tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
+    tagId: string,
+    headers: UnassignTagHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
 
-  return sessionJSON<TagAssignmentReceipt>(getUnassignTagUrl(id,tagId),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagAssignmentReceipt>(getUnassignTagUrl(id,tagId),
   {
     ...options,
-    method: 'DELETE'
-
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -6904,13 +6972,28 @@ export const getAssignTagUrl = (id: number,
  * @summary Assign a tag to a node
  */
 export const assignTag = async (id: number,
-    tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
+    tagId: string,
+    headers: AssignTagHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TagAssignmentReceipt> => {
 
-  return sessionJSON<TagAssignmentReceipt>(getAssignTagUrl(id,tagId),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagAssignmentReceipt>(getAssignTagUrl(id,tagId),
   {
     ...options,
-    method: 'PUT'
-
+    method: 'PUT',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -6929,13 +7012,28 @@ export const getTrashNodeUrl = (id: number,) => {
  * The response's `path` is the node's pre-trash location (where a restore would return it), not a resolvable live path.
  * @summary Move a node and its subtree to the trash
  */
-export const trashNode = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
+export const trashNode = async (id: number,
+    headers: TrashNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
 
-  return sessionJSON<Node>(getTrashNodeUrl(id),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Node>(getTrashNodeUrl(id),
   {
     ...options,
-    method: 'POST'
-
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -6954,13 +7052,28 @@ export const getVerifyNodeContentUrl = (id: number,) => {
  * Requires If-Match from a prior node response. Returns catalog identity and a fresh read through the mixed loose/packed store; a concurrent node change returns 412.
  * @summary Re-hash one file and bind the evidence to its node revision
  */
-export const verifyNodeContent = async (id: number, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentVerification> => {
+export const verifyNodeContent = async (id: number,
+    headers: VerifyNodeContentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentVerification> => {
 
-  return sessionJSON<ContentVerification>(getVerifyNodeContentUrl(id),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentVerification>(getVerifyNodeContentUrl(id),
   {
     ...options,
-    method: 'POST'
-
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -7013,7 +7126,8 @@ export const getPruneNodeContentVersionsUrl = (id: number,) => {
  * @summary Preview or prune selected non-current content versions
  */
 export const pruneNodeContentVersions = async (id: number,
-    versionPruneRequest: NonReadonly<VersionPruneRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionPruneReport> => {
+    versionPruneRequest: NonReadonly<VersionPruneRequest>,
+    headers: PruneNodeContentVersionsHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionPruneReport> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7033,7 +7147,7 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
   {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(versionPruneRequest)
   }
 );}
@@ -7340,7 +7454,7 @@ export const getGrantProcessingConsentUrl = () => {
 /**
  * @summary Explicitly grant existing processing consent
  */
-export const grantProcessingConsent = async (grantProcessingConsentBody: GrantProcessingConsentBody, options?: Parameters<typeof sessionJSON>[1]): Promise<GrantProcessingConsent200> => {
+export const grantProcessingConsent = async (processingConsentRequest: NonReadonly<ProcessingConsentRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingConsentReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7356,12 +7470,12 @@ export const grantProcessingConsent = async (grantProcessingConsentBody: GrantPr
     }
     return headers;
   };
-return sessionJSON<GrantProcessingConsent200>(getGrantProcessingConsentUrl(),
+return sessionJSON<ProcessingConsentReceipt>(getGrantProcessingConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(grantProcessingConsentBody)
+    body: JSON.stringify(processingConsentRequest)
   }
 );}
 
@@ -7378,7 +7492,7 @@ export const getRevokeProcessingConsentUrl = () => {
 /**
  * @summary Revoke a principal and scope before further provider access
  */
-export const revokeProcessingConsent = async (revokeProcessingConsentBody: RevokeProcessingConsentBody, options?: Parameters<typeof sessionJSON>[1]): Promise<RevokeProcessingConsent200> => {
+export const revokeProcessingConsent = async (processingConsentRevocationRequest: NonReadonly<ProcessingConsentRevocationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingConsentRevocationReceipt> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7394,12 +7508,12 @@ export const revokeProcessingConsent = async (revokeProcessingConsentBody: Revok
     }
     return headers;
   };
-return sessionJSON<RevokeProcessingConsent200>(getRevokeProcessingConsentUrl(),
+return sessionJSON<ProcessingConsentRevocationReceipt>(getRevokeProcessingConsentUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(revokeProcessingConsentBody)
+    body: JSON.stringify(processingConsentRevocationRequest)
   }
 );}
 
@@ -7634,7 +7748,7 @@ export const readDocumentRenditionBySelector = (renditionSelectorRequest: NonRea
     }
     return headers;
   };
-return sessionResponse<void>(getReadDocumentRenditionBySelectorUrl(),
+return sessionResponse<Blob>(getReadDocumentRenditionBySelectorUrl(),
   {
     ...options,
     method: 'POST',
@@ -7703,13 +7817,28 @@ export const getGetDocumentRenditionUrl = (attachmentId: string,
  * @summary Stream one exact active sanitized-Markdown rendition
  */
 export const getDocumentRendition = (attachmentId: string,
-    params?: GetDocumentRenditionParams, options?: Parameters<typeof sessionResponse>[1]) => {
+    params?: GetDocumentRenditionParams,
+    headers?: GetDocumentRenditionHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionResponse<void>(getGetDocumentRenditionUrl(attachmentId,params),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Blob>(getGetDocumentRenditionUrl(attachmentId,params),
   {
     ...options,
-    method: 'GET'
-
+    method: 'GET',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -7797,13 +7926,28 @@ export const getDeleteSavedQueryUrl = (savedQueryId: string,) => {
 /**
  * @summary Delete a saved definition under its current revision
  */
-export const deleteSavedQuery = (savedQueryId: string, options?: Parameters<typeof sessionResponse>[1]) => {
+export const deleteSavedQuery = (savedQueryId: string,
+    headers: DeleteSavedQueryHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionResponse<SavedQuery>(getDeleteSavedQueryUrl(savedQueryId),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<SavedQuery>(getDeleteSavedQueryUrl(savedQueryId),
   {
     ...options,
-    method: 'DELETE'
-
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -7846,7 +7990,8 @@ export const getUpdateSavedQueryUrl = (savedQueryId: string,) => {
  * @summary Edit a saved definition under its current revision
  */
 export const updateSavedQuery = (savedQueryId: string,
-    updateSavedQueryRequest: NonReadonly<UpdateSavedQueryRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+    updateSavedQueryRequest: NonReadonly<UpdateSavedQueryRequest>,
+    headers: UpdateSavedQueryHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7866,7 +8011,7 @@ return sessionResponse<SavedQuery>(getUpdateSavedQueryUrl(savedQueryId),
   {
     ...options,
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(updateSavedQueryRequest)
   }
 );}
@@ -7885,7 +8030,8 @@ export const getRunSavedQueryUrl = (savedQueryId: string,) => {
  * @summary Run one revision-fenced saved query and retain its receipt
  */
 export const runSavedQuery = async (savedQueryId: string,
-    savedQueryRunRequest: NonReadonly<SavedQueryRunRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<SavedQueryRunResult> => {
+    savedQueryRunRequest: NonReadonly<SavedQueryRunRequest>,
+    headers: RunSavedQueryHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<SavedQueryRunResult> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7905,7 +8051,7 @@ return sessionJSON<SavedQueryRunResult>(getRunSavedQueryUrl(savedQueryId),
   {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(savedQueryRunRequest)
   }
 );}
@@ -8697,13 +8843,28 @@ export const getDeleteTagUrl = (tagId: string,) => {
 /**
  * @summary Delete a tag definition and all assignments
  */
-export const deleteTag = async (tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagDeletionReceipt> => {
+export const deleteTag = async (tagId: string,
+    headers: DeleteTagHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TagDeletionReceipt> => {
 
-  return sessionJSON<TagDeletionReceipt>(getDeleteTagUrl(tagId),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagDeletionReceipt>(getDeleteTagUrl(tagId),
   {
     ...options,
-    method: 'DELETE'
-
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -8746,7 +8907,8 @@ export const getRenameTagUrl = (tagId: string,) => {
  * @summary Rename a tag without changing its stable ID
  */
 export const renameTag = async (tagId: string,
-    renameTagRequest: NonReadonly<RenameTagRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
+    renameTagRequest: NonReadonly<RenameTagRequest>,
+    headers: RenameTagHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -8766,7 +8928,7 @@ return sessionJSON<Tag>(getRenameTagUrl(tagId),
   {
     ...options,
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(renameTagRequest)
   }
 );}
@@ -8981,15 +9143,30 @@ export const getUploadFileUrl = (params: UploadFileParams,) => {
  * @summary Upload one digest-checked file
  */
 export const uploadFile = async (uploadFileBody: UploadFileBody,
-    params: UploadFileParams, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadFile200 | UploadFile201> => {
+    params: UploadFileParams,
+    headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file);
+formData.append(`file`, uploadFileBody.file, params.name);
 
-  return sessionJSON<UploadFile200 | UploadFile201>(getUploadFileUrl(params),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<UploadReceipt>(getUploadFileUrl(params),
   {
     ...options,
-    method: 'POST'
-    ,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) },
     body: formData
   }
 );}
@@ -9080,9 +9257,9 @@ export const getGetEmailMetadataUrl = (versionId: string,) => {
 /**
  * @summary Read selected email metadata for one immutable version
  */
-export const getEmailMetadata = async (versionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<GetEmailMetadata200 | GetEmailMetadata202> => {
+export const getEmailMetadata = async (versionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailMetadata | EmailPending> => {
 
-  return sessionJSON<GetEmailMetadata200 | GetEmailMetadata202>(getGetEmailMetadataUrl(versionId),
+  return sessionJSON<EmailMetadata | EmailPending>(getGetEmailMetadataUrl(versionId),
   {
     ...options,
     method: 'GET'
@@ -9105,7 +9282,7 @@ export const getEnsureEmailMetadataUrl = (versionId: string,) => {
  * @summary Ensure email metadata for one immutable version
  */
 export const ensureEmailMetadata = async (versionId: string,
-    ensureEmailMetadataBody: EnsureEmailMetadataBody, options?: Parameters<typeof sessionJSON>[1]): Promise<EnsureEmailMetadata200> => {
+    ensureEmailMetadataBody: EnsureEmailMetadataBody, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailMetadata> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9121,7 +9298,7 @@ export const ensureEmailMetadata = async (versionId: string,
     }
     return headers;
   };
-return sessionJSON<EnsureEmailMetadata200>(getEnsureEmailMetadataUrl(versionId),
+return sessionJSON<EmailMetadata>(getEnsureEmailMetadataUrl(versionId),
   {
     ...options,
     method: 'POST',
@@ -9145,9 +9322,9 @@ export const getGetEmailMetadataGenerationUrl = (versionId: string,
  * @summary Read an immutable email generation attached to one version
  */
 export const getEmailMetadataGeneration = async (versionId: string,
-    generationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<GetEmailMetadataGeneration200> => {
+    generationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<EmailMetadata> => {
 
-  return sessionJSON<GetEmailMetadataGeneration200>(getGetEmailMetadataGenerationUrl(versionId,generationId),
+  return sessionJSON<EmailMetadata>(getGetEmailMetadataGenerationUrl(versionId,generationId),
   {
     ...options,
     method: 'GET'
@@ -9284,5 +9461,26 @@ return sessionJSON<WorkspaceQueryResponse>(getReadWorkspaceQueryPageUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(workspaceQueryPageRequest)
+  }
+);}
+
+
+
+export const getHealthUrl = () => {
+
+
+
+
+  return `/health`
+}
+
+export const health = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<Health200> => {
+
+  return sessionJSON<Health200>(getHealthUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}

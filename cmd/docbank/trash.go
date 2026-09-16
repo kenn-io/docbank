@@ -7,7 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var trashListJSON bool
@@ -26,24 +27,25 @@ var trashListCmd = &cobra.Command{
 	Short: "List restorable trashed nodes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		roots, err := c.TrashList(cmd.Context())
+		roots, err := c.API().ListTrash(cmd.Context(), &apiclient.ListTrashRequestOptions{})
+
 		if err != nil {
 			return err
 		}
 		if trashListJSON {
-			return writeCLIJSON(cmd.OutOrStdout(), trashListing{Items: roots})
+			return writeCLIJSON(cmd.OutOrStdout(), trashListing{Items: roots.Items})
 		}
-		if len(roots) == 0 {
+		if len(roots.Items) == 0 {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "trash is empty")
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "SELECTOR\tTRASHED AT\tNAME")
-		for _, n := range roots {
+		for _, n := range roots.Items {
 			trashedAt, err := formatHumanTimestamp(n.TrashedAt)
 			if err != nil {
 				return err
@@ -72,11 +74,12 @@ var trashEmptyCmd = &cobra.Command{
 		if _, err := api.ParseAge(trashOlderThan); err != nil {
 			return usageError(err)
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		rep, err := c.TrashEmpty(cmd.Context(), trashOlderThan, trashRun)
+		rep, err := c.API().EmptyTrash(cmd.Context(), &apiclient.EmptyTrashRequestOptions{Body: &apiclient.EmptyTrashBody{OlderThan: new(trashOlderThan), Run: new(trashRun)}})
+
 		if err != nil {
 			return err
 		}

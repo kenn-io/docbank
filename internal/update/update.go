@@ -12,7 +12,7 @@ import (
 
 	"go.kenn.io/kit/selfupdate"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -123,16 +123,16 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 
 	lockFn := opts.WithLaunchLock
 	if lockFn == nil {
-		lockFn = client.WithLaunchLock
+		lockFn = daemonconn.WithLaunchLock
 	}
 	stopFn := opts.Stop
 	if stopFn == nil {
-		stopFn = client.Stop
+		stopFn = daemonconn.Stop
 	}
 	startFn := opts.Start
 	if startFn == nil {
 		startFn = func(ctx context.Context, root string) error {
-			_, err := client.StartAnyVersion(ctx, root)
+			_, err := daemonconn.StartAnyVersion(ctx, root)
 			return err
 		}
 	}

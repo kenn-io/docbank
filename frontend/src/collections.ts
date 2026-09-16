@@ -124,7 +124,7 @@ export async function setCollectionLabel(session: string, observed: CollectionLa
   const label = normalizeLabel(value);
   const expectedRevision = observed.revision + (label === observed.label ? 0 : 1);
   check(Number.isSafeInteger(expectedRevision));
-  const response = await generated.setCollectionLabel(observed.ingest_id, { label }, { session, headers: { "If-Match": `"${observed.revision}"` } });
+  const response = await generated.setCollectionLabel(observed.ingest_id, { label }, { "If-Match": `"${observed.revision}"` }, { session });
   const result = await readLabel(response, observed.ingest_id);
   check(result.label === label && result.revision === expectedRevision && Date.parse(result.updated_at) >= Date.parse(observed.updated_at));
   return result;

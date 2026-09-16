@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var verifyCmd = &cobra.Command{
@@ -13,11 +13,12 @@ var verifyCmd = &cobra.Command{
 	Short: "Validate metadata and re-hash every stored blob",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		rep, err := c.Verify(cmd.Context())
+		rep, err := c.API().Verify(cmd.Context())
+
 		if err != nil {
 			return err
 		}
