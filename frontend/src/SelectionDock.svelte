@@ -9,7 +9,10 @@
     onselectvisible: () => void;
     ontags?: () => void;
     tagsDisabled?: boolean;
-    oncsv: () => void;
+    oncsv?: () => void;
+    context?: "live" | "snapshot";
+    wholeQueryCount?: number;
+    onwholequerytags?: () => void;
   }
 
   let {
@@ -21,6 +24,9 @@
     ontags,
     tagsDisabled = false,
     oncsv,
+    context = "live",
+    wholeQueryCount = 0,
+    onwholequerytags,
   }: Props = $props();
 </script>
 
@@ -37,8 +43,10 @@
 >
   {#snippet header()}
     <div class="selection-summary">
-      <strong>{selectedCount} selected on this page</strong>
-      {#if truncated}<span>More results exist beyond this page</span>{/if}
+      <strong>{selectedCount} selected on this {context === "snapshot" ? "frozen page" : "page"}</strong>
+      {#if context === "snapshot"}
+        <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
+      {:else if truncated}<span>More results exist beyond this page</span>{/if}
     </div>
   {/snippet}
 
@@ -50,9 +58,12 @@
     >Select visible documents</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
     {#if ontags}
-      <Button size="sm" disabled={tagsDisabled} onclick={ontags}>Edit tags</Button>
+      <Button size="sm" disabled={tagsDisabled} onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button>
     {/if}
-    <Button size="sm" onclick={oncsv}>Export page CSV</Button>
+    {#if context === "snapshot" && onwholequerytags}
+      <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}>Tag whole query</Button>
+    {/if}
+    {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
   </div>
 </BottomDock>
 

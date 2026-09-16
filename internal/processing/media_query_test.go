@@ -50,9 +50,9 @@ func TestMediaStatusSeparatesLatestAttemptFromSuccessfulCoverage(t *testing.T) {
 	}
 	firstInput := importInput(retained.OccurrenceID, "first synthetic transcript")
 	secondInput := importInput(secondOccurrence.OccurrenceID, "second synthetic transcript")
-	queue := func(inputID string) store.MediaPublicationReceipt {
+	queue := func(operationID, inputID string) store.MediaPublicationReceipt {
 		t.Helper()
-		op := store.MediaOperation{ID: uuid.New().String(), Principal: service.principal,
+		op := store.MediaOperation{ID: operationID, Principal: service.principal,
 			Verb: "retry_media", SourceID: retained.SourceID, RequestSHA256: processingHash(inputID)}
 		receipt := store.MediaPublicationReceipt{VaultUID: retained.VaultUID, SourceID: retained.SourceID,
 			SourceVersionID: retained.SourceVersionID, ContentVersionID: retained.ContentVersionID,
@@ -82,15 +82,16 @@ func TestMediaStatusSeparatesLatestAttemptFromSuccessfulCoverage(t *testing.T) {
 		require.Len(t, page.Items, 1)
 		assert.Equal(t, coverage, page.Items[0].CoverageState)
 	}
-	first := queue(firstInput)
+	// Match the operation-ID tie-break when the clock gives attempts equal timestamps.
+	first := queue("00000000-0000-4000-8000-000000000201", firstInput)
 	t.Run("first queued attempt", func(t *testing.T) { check(t, first, "queued", "pending") })
 	_, err = fixture.catalog.FailMediaProcessing(t.Context(), first.OperationID, service.principal)
 	require.NoError(t, err)
 	t.Run("first failed attempt", func(t *testing.T) { check(t, first, "failed", "unavailable") })
-	first = queue(firstInput)
+	first = queue("00000000-0000-4000-8000-000000000202", firstInput)
 	_, err = fixture.catalog.FinishMediaProcessing(t.Context(), first.OperationID, service.principal, true)
 	require.NoError(t, err)
-	second := queue(secondInput)
+	second := queue("00000000-0000-4000-8000-000000000203", secondInput)
 	t.Run("retry after success", func(t *testing.T) { check(t, second, "queued", "transcribed") })
 	// An older worker may finish after the newer attempt was admitted.
 	_, err = fixture.catalog.FinishMediaProcessing(t.Context(), first.OperationID, service.principal, true)
