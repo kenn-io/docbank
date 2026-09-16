@@ -63,3 +63,30 @@ func TestPersonHandleActorKeyMatchesV1(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, eventKey, personKey)
 }
+
+func TestPersonIdentityScopeBounds(t *testing.T) {
+	for _, test := range []struct {
+		name, kind, value string
+		valid             bool
+	}{
+		{"unscoped", "", "", true},
+		{"at limits", strings.Repeat("é", 32), strings.Repeat("é", 160), true},
+		{"kind too long", strings.Repeat("x", 65), "workspace-a", false},
+		{"value too long", "workspace", strings.Repeat("x", 321), false},
+		{"blank kind", " ", "workspace-a", false},
+		{"blank value", "workspace", "\u2003", false},
+		{"missing kind", "", "workspace-a", false},
+		{"missing value", "workspace", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			identity, err := NormalizeScopedPersonIdentity("handle", "chat/user-a", test.kind, test.value)
+			if !test.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.kind, identity.ScopeKind)
+			require.Equal(t, test.value, identity.ScopeValue)
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -106,6 +107,20 @@ func (s *Store) withMediaOperationState(
 			return err
 		}
 		stamp := nowRFC3339()
+		// Preserve admission order even when successive calls share a clock tick.
+		// The timestamp survives metadata export and restore; row IDs do not.
+		var previous string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(created_at),'') FROM media_operations
+			WHERE principal=? AND source_id IS ?`, op.Principal, nullableMediaID(op.SourceID)).Scan(&previous); err != nil {
+			return err
+		}
+		if stamp <= previous {
+			last, err := time.Parse(time.RFC3339Nano, previous)
+			if err != nil {
+				return fmt.Errorf("parsing previous media admission time: %w", err)
+			}
+			stamp = last.Add(time.Nanosecond).UTC().Format(timestampLayout)
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_operations(
 			operation_id,principal,verb,request_sha256,state,source_id,receipt_json,created_at,updated_at
 		) VALUES(?,?,?,?,?,?,?,?,?)`, op.ID, op.Principal, op.Verb, op.RequestSHA256,

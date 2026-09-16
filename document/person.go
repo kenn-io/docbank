@@ -30,6 +30,8 @@ type NormalizedIdentity struct {
 const (
 	MaxPersonDisplayNameBytes         = 200
 	MaxPersonIdentityValueBytes       = 320
+	MaxPersonIdentityScopeKindBytes   = 64
+	MaxPersonIdentityScopeValueBytes  = 320
 	MaxPersonIdentitiesPerPerson      = 200
 	MaxPersonExternalIdentities       = 64
 	MaxCustodianSourceRefBytes        = 512
@@ -56,7 +58,12 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 	if !validPersonIdentityText(raw) || len(raw) > MaxPersonIdentityValueBytes || strings.TrimSpace(raw) == "" {
 		return bad()
 	}
-	if (scopeKind == "") != (scopeValue == "") || (!validPersonIdentityText(scopeKind) && scopeKind != "") || (!validPersonIdentityText(scopeValue) && scopeValue != "") {
+	if len(scopeKind) > MaxPersonIdentityScopeKindBytes || len(scopeValue) > MaxPersonIdentityScopeValueBytes ||
+		(scopeKind == "") != (scopeValue == "") {
+		return bad()
+	}
+	if scopeKind != "" && (strings.TrimSpace(scopeKind) == "" || strings.TrimSpace(scopeValue) == "" ||
+		!validPersonIdentityText(scopeKind) || !validPersonIdentityText(scopeValue)) {
 		return bad()
 	}
 

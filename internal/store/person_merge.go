@@ -19,7 +19,7 @@ var ErrPersonMergeConflict = errors.New("person merge conflict")
 type PersonMergeMoved struct {
 	IdentityIDs            []string                          `json:"identity_ids"`
 	DeduplicatedIdentities []PersonMergeDeduplicatedIdentity `json:"deduplicated_identities"`
-	ExternalUIDs           []PersonMergeExternalUID          `json:"external_uids"`
+	ExternalUIDs           []PersonExternalUID               `json:"external_uids"`
 	AssignmentIDs          []string                          `json:"assignment_ids"`
 }
 
@@ -39,7 +39,7 @@ type PersonMergeDeduplicatedIdentity struct {
 	RetainedIdentityID string `json:"retained_identity_id"`
 }
 
-type PersonMergeExternalUID struct {
+type PersonExternalUID struct {
 	System    string `json:"system"`
 	ArchiveID string `json:"archive_id"`
 	UID       string `json:"uid"`
@@ -64,7 +64,7 @@ type PersonSplitRequest struct {
 	PersonID, OperationID, DisplayName string
 	Revision                           int64
 	IdentityIDs, AssignmentIDs         []string
-	External                           []PersonExternalIdentity
+	External                           []PersonExternalUID
 }
 
 func validatePersonSplitRequest(request PersonSplitRequest) error {
@@ -205,7 +205,7 @@ func personMergeReceiptTx(ctx context.Context, tx *sql.Tx, operationID, requestH
 func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (PersonMergeMoved, error) {
 	moved := PersonMergeMoved{
 		IdentityIDs: []string{}, DeduplicatedIdentities: []PersonMergeDeduplicatedIdentity{},
-		ExternalUIDs: []PersonMergeExternalUID{}, AssignmentIDs: []string{},
+		ExternalUIDs: []PersonExternalUID{}, AssignmentIDs: []string{},
 	}
 	queries := []struct {
 		query string
@@ -222,7 +222,7 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 		*item.dst = append(*item.dst, values...)
 	}
 	var err error
-	moved.ExternalUIDs, err = collectPersonMergeExternalUIDsTx(ctx, tx, absorbedID)
+	moved.ExternalUIDs, err = collectPersonExternalUIDsTx(ctx, tx, absorbedID)
 	if err != nil {
 		return PersonMergeMoved{}, err
 	}
@@ -233,15 +233,15 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 	return moved, nil
 }
 
-func collectPersonMergeExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID string) (_ []PersonMergeExternalUID, retErr error) {
+func collectPersonExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID string) (_ []PersonExternalUID, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT system,archive_id,uid FROM person_external_identities WHERE person_id=? ORDER BY system,archive_id,uid`, personID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	values := []PersonMergeExternalUID{}
+	values := []PersonExternalUID{}
 	for rows.Next() {
-		var value PersonMergeExternalUID
+		var value PersonExternalUID
 		if err := rows.Scan(&value.System, &value.ArchiveID, &value.UID); err != nil {
 			return nil, err
 		}

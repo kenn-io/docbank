@@ -73,7 +73,7 @@ func TestMergeReceiptKeepsExternalTupleComponentsDistinct(t *testing.T) {
 	require.NoError(t, err)
 	receipt, err := s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
 	require.NoError(t, err)
-	require.Equal(t, []PersonMergeExternalUID{{System: "msgvault", ArchiveID: "archive/part", UID: "uid/part"}}, receipt.Moved.ExternalUIDs)
+	require.Equal(t, []PersonExternalUID{{System: "msgvault", ArchiveID: "archive/part", UID: "uid/part"}}, receipt.Moved.ExternalUIDs)
 }
 
 func survivorAliasID(t *testing.T, s *Store, personID string) string {
@@ -220,7 +220,7 @@ func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
 	request := PersonSplitRequest{PersonID: source.PersonID, OperationID: operationID, DisplayName: "Split",
-		Revision: source.Revision, IdentityIDs: []string{}, AssignmentIDs: []string{assignment.AssignmentID}, External: []PersonExternalIdentity{external}}
+		Revision: source.Revision, IdentityIDs: []string{}, AssignmentIDs: []string{assignment.AssignmentID}, External: []PersonExternalUID{{System: external.System, ArchiveID: external.ArchiveID, UID: external.UID}}}
 	receipt, err := s.SplitPerson(ctx, request)
 	require.NoError(t, err)
 	resolved, err := s.ResolveExternalPersonUID(ctx, external.System, external.ArchiveID, external.UID)
@@ -230,10 +230,18 @@ func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, assignments, 1)
 	require.Equal(t, receipt.NewPersonID, *assignments[0].PersonID)
+	require.ErrorIs(t, s.RetireCustodian(ctx, assignment.AssignmentID, assignment.Revision), ErrStaleRevision)
+	// Rebuild the selector from the identity after its owner and timestamps changed.
+	moved, err := s.PersonExternalIdentities(ctx, receipt.NewPersonID)
+	require.NoError(t, err)
+	require.Len(t, moved, 1)
+	request.External = []PersonExternalUID{{System: moved[0].System, ArchiveID: moved[0].ArchiveID, UID: moved[0].UID}}
 	replayed, err := s.SplitPerson(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, receipt, replayed)
-	require.ErrorIs(t, s.RetireCustodian(ctx, assignment.AssignmentID, assignment.Revision), ErrStaleRevision)
+	request.External[0].UID = "different-uid"
+	_, err = s.SplitPerson(ctx, request)
+	require.ErrorIs(t, err, ErrPersonMergeConflict)
 	// Merging the split person back must fence the assignment a second time.
 	source, _, err = s.PersonByID(ctx, source.PersonID)
 	require.NoError(t, err)

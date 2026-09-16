@@ -1,14 +1,48 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		sourceID := strings.Repeat("a", 64)
+		_, err := s.db.Exec(`INSERT INTO media_sources VALUES(?, 'supplied_media','','',?,?)`, sourceID, sourceID, nowRFC3339())
+		require.NoError(t, err)
+		older := "00000000-0000-4000-8000-000000000002"
+		newer := "00000000-0000-4000-8000-000000000001"
+		for _, id := range []string{older, newer} {
+			receipt := MediaPublicationReceipt{VaultUID: s.VaultID(), SourceID: sourceID,
+				OperationID: id, OperationState: "queued", CoverageState: "pending", ProcessingProfile: "speech"}
+			_, err := s.QueueMediaRetry(ctx, MediaOperation{ID: id, Principal: "operator", Verb: "retry_media",
+				SourceID: sourceID, RequestSHA256: strings.Repeat("b", 64)}, receipt)
+			require.NoError(t, err)
+		}
+		_, err = s.FinishMediaProcessing(ctx, older, "operator", true)
+		require.NoError(t, err)
+		current, err := s.latestMediaProcessingReceipt(ctx, "operator", sourceID, false)
+		require.NoError(t, err)
+		require.Equal(t, newer, current.OperationID)
+
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(ctx, &exported))
+		restored := newTestStore(t)
+		require.NoError(t, restored.ImportMetadata(ctx, &exported))
+		current, err = restored.latestMediaProcessingReceipt(ctx, "operator", sourceID, false)
+		require.NoError(t, err)
+		require.Equal(t, newer, current.OperationID)
+	})
+}
 
 func TestMediaOperationReplaysWithoutRepeatingMutation(t *testing.T) {
 	s := newTestStore(t)
