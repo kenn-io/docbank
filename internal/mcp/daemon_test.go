@@ -467,9 +467,9 @@ func TestDaemonLeaseAcquisitionUsesBoundedLeaseContext(t *testing.T) {
 		}()
 		time.Sleep(timeout)
 		synctest.Wait()
+		err := <-done
 		require.Less(t, time.Since(startedAt), time.Second,
 			"acquisition must return on its lease deadline")
-		err := <-done
 		require.ErrorIs(t, err, errDaemonUnavailable)
 		assert.Equal(t, errDaemonUnavailable.Error(), err.Error())
 		assert.Equal(t, int32(1), ensures.Load())
