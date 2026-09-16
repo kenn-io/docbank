@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,9 +79,14 @@ func textProbeVariants(formatID string) ([]textProbeVariant, bool) {
 			textProbeVariant{name: "number", content: []byte("7319\n")},
 			textProbeVariant{name: "boolean", content: []byte("true\n")},
 			textProbeVariant{name: "null", content: []byte("null\n")},
+			textProbeVariant{name: "large", content: []byte("{\"sentinel\":\"" + sentinel + "\",\"body\":\"" + strings.Repeat("x", 100_000) + "\"}\n")},
+			textProbeVariant{name: "deep", content: []byte(strings.Repeat("[", 64) + "\"" + sentinel + "\"" + strings.Repeat("]", 64) + "\n")},
 		)
 	case "eml":
-		variants = append(variants, textProbeVariant{name: "multipart", content: []byte("From: probe@example.test\r\nTo: archive@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic multipart\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=docbank\r\n\r\n--docbank\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + sentinel + "\r\n--docbank\r\nContent-Type: message/rfc822\r\n\r\nFrom: nested@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\n\r\nnested\r\n--docbank--\r\n")})
+		variants = append(variants,
+			textProbeVariant{name: "multipart", content: []byte("From: probe@example.test\r\nTo: archive@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic multipart\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=docbank\r\n\r\n--docbank\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + sentinel + "\r\n--docbank\r\nContent-Type: message/rfc822\r\n\r\nFrom: nested@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\n\r\nnested\r\n--docbank--\r\n")},
+			textProbeVariant{name: "long", content: []byte("From: probe@example.test\r\nTo: archive@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic long message\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + sentinel + "\r\n" + strings.Repeat("long synthetic body ", 5_000) + "\r\n")},
+		)
 	}
 	return variants, true
 }

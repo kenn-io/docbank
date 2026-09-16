@@ -22,7 +22,7 @@ func countJSONValues(reader io.ReaderAt, size int64) (int, error) {
 	}
 	counting := &countingReader{reader: section}
 	decoder := jsontext.NewDecoder(counting, jsontext.AllowDuplicateNames(true))
-	if err := consumeJSONValue(decoder); err != nil {
+	if err := decoder.SkipValue(); err != nil {
 		return 0, fmt.Errorf("read Mistral JSON value: %w", err)
 	}
 	if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
@@ -65,35 +65,4 @@ func (reader *countingReader) Read(buffer []byte) (int, error) {
 	read, err := reader.reader.Read(buffer)
 	reader.read += int64(read)
 	return read, err
-}
-
-func consumeJSONValue(decoder *jsontext.Decoder) error {
-	token, err := decoder.ReadToken()
-	if err != nil {
-		return err
-	}
-	depth := 0
-	switch token.Kind() {
-	case jsontext.KindBeginObject, jsontext.KindBeginArray:
-		depth = 1
-	case jsontext.KindEndObject, jsontext.KindEndArray:
-		return errors.New("mistral JSON value starts with a closing delimiter")
-	case jsontext.KindInvalid, jsontext.KindNull, jsontext.KindFalse, jsontext.KindTrue,
-		jsontext.KindString, jsontext.KindNumber:
-	}
-	for depth > 0 {
-		token, err = decoder.ReadToken()
-		if err != nil {
-			return err
-		}
-		switch token.Kind() {
-		case jsontext.KindBeginObject, jsontext.KindBeginArray:
-			depth++
-		case jsontext.KindEndObject, jsontext.KindEndArray:
-			depth--
-		case jsontext.KindInvalid, jsontext.KindNull, jsontext.KindFalse, jsontext.KindTrue,
-			jsontext.KindString, jsontext.KindNumber:
-		}
-	}
-	return nil
 }
