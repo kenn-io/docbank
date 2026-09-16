@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -23,12 +25,16 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -95,7 +101,7 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 				var statusErr error
 				completed, statusErr = daemon.MediaStatus(t.Context(), receipt.SourceID)
 				require.NoError(collect, statusErr)
-				require.Equal(collect, "succeeded", completed.OperationState)
+				require.Equal(collect, "succeeded", completed.OperationState, "%+v", completed)
 				require.Equal(collect, "transcribed", completed.CoverageState)
 			}, 20*time.Second, 20*time.Millisecond)
 			require.Equal(t, receipt.ContentVersionID, completed.ContentVersionID)
@@ -369,6 +375,334 @@ func TestDaemonDoclingASRRestoredWork(t *testing.T) {
 	assert.Equal(t, beforeRestart, provider.requests.Load(), "a restart must not replay a held claim")
 }
 
+func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
+	provider := newDaemonDoclingServer(t)
+	provider.resultGate = make(chan struct{})
+	sourceRoot, daemon, stop := startDaemonASRTest(t, provider, daemonASRProviderKey, false)
+	thirdWAV := bytes.Clone(mediatest.WAV())
+	thirdWAV[len(thirdWAV)-1] ^= 1
+	cases := []daemonASRRestoreCase{
+		{
+			name: "running", state: "running", filename: "restored-running.wav",
+			mediaType: "audio/wav", content: mediatest.WAV(),
+			submitOperationID:    "00000000-0000-4000-8000-000000000701",
+			retryOperationID:     "00000000-0000-4000-8000-000000000702",
+			noConsentOperationID: "00000000-0000-4000-8000-000000000703",
+		},
+		{
+			name: "queued", state: "queued", filename: "restored-queued.mp3",
+			mediaType: "audio/mpeg", content: mediatest.MP3(),
+			submitOperationID:    "00000000-0000-4000-8000-000000000711",
+			retryOperationID:     "00000000-0000-4000-8000-000000000712",
+			noConsentOperationID: "00000000-0000-4000-8000-000000000713",
+		},
+		{
+			name: "retry_wait", state: "retry_wait", filename: "restored-retry.wav",
+			mediaType: "audio/wav", content: thirdWAV,
+			submitOperationID:    "00000000-0000-4000-8000-000000000721",
+			retryOperationID:     "00000000-0000-4000-8000-000000000722",
+			noConsentOperationID: "00000000-0000-4000-8000-000000000723",
+		},
+	}
+	for index := range cases {
+		testCase := &cases[index]
+		receipt, selector, plan := daemonASRSourceAndPlanWith(
+			t, daemon, testCase.submitOperationID, testCase.filename,
+			testCase.mediaType, testCase.content)
+		testCase.receipt, testCase.selector = receipt, selector
+		_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+			Selector: selector, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
+			OperationID: testCase.retryOperationID,
+			Processing:  &api.MediaProcessingBody{Profile: "asr"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, "queued", queued.OperationState)
+		if index == 0 {
+			select {
+			case <-provider.resultStarted:
+			case <-time.After(10 * time.Second):
+				t.Fatal("metadata-restore provider request did not start")
+			}
+		}
+	}
+	stop()
+	waitForDaemonStop(t, sourceRoot)
+	closeProviderResultGate(provider)
+	beforeRestore := provider.requests.Load()
+
+	var sourceMetadata bytes.Buffer
+	sourceCatalog, err := store.Open((home.Layout{Root: sourceRoot}).DBPath())
+	require.NoError(t, err)
+	require.NoError(t, sourceCatalog.ExportMetadata(t.Context(), &sourceMetadata))
+	require.NoError(t, sourceCatalog.Close())
+	mutatedMetadata, jobByWaiter := rewriteDaemonASRRestoreMetadata(t, sourceMetadata.Bytes(), cases)
+	for index := range cases {
+		cases[index].jobID = jobByWaiter[cases[index].receipt.JobID]
+	}
+	restoredRoot := restoreDaemonASRMetadata(t, sourceRoot, mutatedMetadata, cases)
+
+	_, restored, _ := startDaemonASRTest(t, provider, daemonASRProviderKey, false, restoredRoot)
+	for index := range cases {
+		testCase := &cases[index]
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := restored.ProcessingStatus(t.Context(), testCase.receipt.JobID)
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "failed", status.State)
+			require.Equal(collect, "consent", status.FailureCode)
+		}, 10*time.Second, 20*time.Millisecond)
+		_, err := restored.RetryMedia(t.Context(), testCase.receipt.SourceID, api.MediaRetryBody{
+			OperationID: testCase.noConsentOperationID,
+			Processing:  &api.MediaProcessingBody{Profile: "asr"},
+		})
+		require.Error(t, err)
+	}
+	require.Equal(t, beforeRestore, provider.requests.Load(),
+		"restored queued, running, and retry_wait jobs must not reach the provider without fresh consent")
+
+	for index := range cases {
+		testCase := &cases[index]
+		freshPlan, err := restored.PlanProcessing(t.Context(), api.ProcessingPlanRequest{
+			Selector: testCase.selector,
+		})
+		require.NoError(t, err)
+		_, err = restored.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+			Selector: testCase.selector, PlanFingerprint: freshPlan.Fingerprint,
+		})
+		require.NoError(t, err)
+		retried, err := restored.RetryMedia(t.Context(), testCase.receipt.SourceID, api.MediaRetryBody{
+			OperationID: testCase.retryOperationID,
+			Processing:  &api.MediaProcessingBody{Profile: "asr"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, "queued", retried.OperationState)
+	}
+	for index := range cases {
+		testCase := &cases[index]
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := restored.MediaStatus(t.Context(), testCase.receipt.SourceID)
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "succeeded", status.OperationState)
+			require.Equal(collect, "transcribed", status.CoverageState)
+		}, 20*time.Second, 20*time.Millisecond)
+	}
+	require.Greater(t, provider.requests.Load(), beforeRestore)
+}
+
+type daemonASRRestoreCase struct {
+	name, state, filename, mediaType string
+	content                          []byte
+	submitOperationID                string
+	retryOperationID                 string
+	noConsentOperationID             string
+	receipt                          api.MediaReceipt
+	selector                         api.ProcessingSelector
+	jobID                            string
+}
+
+type daemonASRMetadataWaiter struct {
+	id, jobID string
+	record    map[string]jsontext.Value
+}
+
+func rewriteDaemonASRRestoreMetadata(
+	t *testing.T, exported []byte, cases []daemonASRRestoreCase,
+) ([]byte, map[string]string) {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(exported), []byte{'\n'})
+	waiters := make(map[string]daemonASRMetadataWaiter)
+	for _, line := range lines {
+		var identity struct {
+			Type     string `json:"type"`
+			JobID    string `json:"job_id"`
+			WaiterID string `json:"waiter_id"`
+		}
+		require.NoError(t, json.Unmarshal(line, &identity))
+		if identity.Type != "rendition_job_waiter" {
+			continue
+		}
+		var record map[string]jsontext.Value
+		require.NoError(t, json.Unmarshal(line, &record))
+		waiters[identity.WaiterID] = daemonASRMetadataWaiter{
+			id: identity.WaiterID, jobID: identity.JobID, record: record,
+		}
+	}
+
+	type restoreJob struct {
+		state  string
+		waiter daemonASRMetadataWaiter
+	}
+	desired := make(map[string]restoreJob, len(cases))
+	jobByWaiter := make(map[string]string, len(cases))
+	for _, testCase := range cases {
+		waiter, ok := waiters[testCase.receipt.JobID]
+		require.True(t, ok, "metadata waiter %s is missing", testCase.receipt.JobID)
+		_, duplicate := desired[waiter.jobID]
+		require.False(t, duplicate, "metadata job %s is shared by restore cases", waiter.jobID)
+		desired[waiter.jobID] = restoreJob{state: testCase.state, waiter: waiter}
+		jobByWaiter[testCase.receipt.JobID] = waiter.jobID
+	}
+
+	var mutated bytes.Buffer
+	jobCount := 0
+	for _, line := range lines {
+		var identity struct {
+			Type  string `json:"type"`
+			JobID string `json:"job_id"`
+		}
+		require.NoError(t, json.Unmarshal(line, &identity))
+		if identity.Type == "rendition_job" {
+			wanted, ok := desired[identity.JobID]
+			require.True(t, ok, "unexpected rendition job %s in restore metadata", identity.JobID)
+			var record map[string]jsontext.Value
+			require.NoError(t, json.Unmarshal(line, &record))
+			setDaemonASRMetadataValue(t, record, "state", wanted.state)
+			setDaemonASRMetadataValue(t, record, "phase", "queued")
+			setDaemonASRMetadataValue(t, record, "available_at", daemonASRRestorePast)
+			setDaemonASRMetadataValue(t, record, "provider_started", false)
+			setDaemonASRMetadataValue(t, record, "provider_attempts", 0)
+			setDaemonASRMetadataValue(t, record, "provider_resume_handle", nil)
+			setDaemonASRMetadataValue(t, record, "execution_snapshot", nil)
+			setDaemonASRMetadataValue(t, record, "lexical_generation_id", nil)
+			setDaemonASRMetadataValue(t, record, "selected_waiter_id", wanted.waiter.id)
+			for _, field := range []string{
+				"authorization_grant_id", "authorization_incarnation_id",
+				"authorization_revocation_fence",
+			} {
+				restored, exists := wanted.waiter.record[field]
+				require.True(t, exists, "waiter metadata field %s is missing", field)
+				record[field] = restored
+			}
+			if wanted.state == "running" {
+				setDaemonASRMetadataValue(t, record, "claim_owner", "worker:restored-running")
+				setDaemonASRMetadataValue(t, record, "claim_epoch", 1)
+				setDaemonASRMetadataValue(t, record, "lease_expires_at", daemonASRRestorePast)
+			} else {
+				setDaemonASRMetadataValue(t, record, "claim_owner", nil)
+				setDaemonASRMetadataValue(t, record, "claim_epoch", 0)
+				setDaemonASRMetadataValue(t, record, "lease_expires_at", nil)
+			}
+			var failure any
+			if wanted.state == "retry_wait" {
+				failure = "transient"
+			}
+			setDaemonASRMetadataValue(t, record, "failure_code", failure)
+			encoded, err := json.Marshal(record, json.Deterministic(true))
+			require.NoError(t, err)
+			line = encoded
+			jobCount++
+		}
+		mutated.Write(line)
+		mutated.WriteByte('\n')
+	}
+	require.Equal(t, len(cases), jobCount)
+	return mutated.Bytes(), jobByWaiter
+}
+
+const daemonASRRestorePast = "2020-01-01T00:00:00.000000000Z"
+
+func setDaemonASRMetadataValue(
+	t *testing.T, record map[string]jsontext.Value, field string, value any,
+) {
+	t.Helper()
+	encoded, err := json.Marshal(value, json.Deterministic(true))
+	require.NoError(t, err)
+	record[field] = jsontext.Value(encoded)
+}
+
+func restoreDaemonASRMetadata(
+	t *testing.T, sourceRoot string, metadata []byte, cases []daemonASRRestoreCase,
+) string {
+	t.Helper()
+	root := t.TempDir()
+	layout := home.Layout{Root: root}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(layout.DBPath())
+	require.NoError(t, err)
+	require.NoError(t, catalog.ImportMetadata(t.Context(), bytes.NewReader(metadata)))
+	for _, testCase := range cases {
+		job, err := catalog.RenditionJobByID(t.Context(), testCase.jobID)
+		require.NoError(t, err)
+		require.Equal(t, store.RenditionJobState(testCase.state), job.State)
+		require.Equal(t, store.RenditionPhaseQueued, job.Phase)
+	}
+	var imported bytes.Buffer
+	require.NoError(t, catalog.ExportMetadata(t.Context(), &imported))
+	for _, testCase := range cases {
+		for _, line := range bytes.Split(bytes.TrimSpace(imported.Bytes()), []byte{'\n'}) {
+			var identity struct {
+				Type  string `json:"type"`
+				JobID string `json:"job_id"`
+			}
+			require.NoError(t, json.Unmarshal(line, &identity))
+			if identity.Type != "rendition_job" || identity.JobID != testCase.jobID {
+				continue
+			}
+			var record map[string]jsontext.Value
+			require.NoError(t, json.Unmarshal(line, &record))
+			for _, field := range []string{
+				"selected_waiter_id", "authorization_grant_id",
+				"authorization_incarnation_id", "authorization_revocation_fence",
+			} {
+				require.Contains(t, record, field)
+				require.Equal(t, "null", string(record[field]),
+					"restored %s job retained %s", testCase.state, field)
+			}
+			break
+		}
+	}
+	require.NoError(t, copyDaemonASRBlobTree(
+		filepath.Join(sourceRoot, "blobs"), layout.BlobsDir()))
+	restoredBlobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, restoredBlobs.Close())
+		require.NoError(t, catalog.Close())
+	}()
+	require.NoError(t, catalog.VerifyRenditionBlobBytes(t.Context(), restoredBlobs))
+	return root
+}
+
+func copyDaemonASRBlobTree(source, target string) error {
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "tmp" {
+			continue
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("blob restore source contains symlink %q", entry.Name())
+		}
+		sourcePath := filepath.Join(source, entry.Name())
+		targetPath := filepath.Join(target, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if err := os.MkdirAll(targetPath, info.Mode().Perm()); err != nil {
+				return err
+			}
+			if err := copyDaemonASRBlobTree(sourcePath, targetPath); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(targetPath, data, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type daemonDoclingTask struct {
 	filename string
 	source   []byte
@@ -596,11 +930,56 @@ func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret stri
 	require.NoError(t, writeDaemonASRConfig(root, cfg))
 	t.Setenv("DOCBANK_TEST_DOCLING_KEY", secret)
 	t.Setenv("DOCBANK_HOME", root)
-	stop := startServe(t)
-	record := waitForDaemon(t, root)
+	stop, done := startASRServe(t)
+	record := waitForASRDaemon(t, root, done)
 	daemon := client.New("http://"+record.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
 	return root, daemon, stop
+}
+
+func startASRServe(t *testing.T) (func(), chan error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx) }()
+	stop := sync.OnceFunc(func() {
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(daemonShutdownTimeout):
+			require.Fail(t, "daemon did not shut down")
+		}
+	})
+	t.Cleanup(stop)
+	return stop, done
+}
+
+func waitForASRDaemon(t *testing.T, root string, done chan error) kitdaemon.RuntimeRecord {
+	t.Helper()
+	healthClient := &http.Client{Timeout: time.Second}
+	var record kitdaemon.RuntimeRecord
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-done:
+			done <- err
+			require.NoError(t, err)
+			return false
+		default:
+		}
+		records, err := client.RuntimeStore(root).List()
+		if err != nil || len(records) != 1 {
+			return false
+		}
+		record = records[0]
+		response, err := healthClient.Get("http://" + record.Address + "/health")
+		if err != nil {
+			return false
+		}
+		_ = response.Body.Close()
+		return response.StatusCode == http.StatusOK
+	}, daemonStartTimeout, 50*time.Millisecond)
+	return record
 }
 
 func plaintextProviderForDaemonTest() (string, error) {
@@ -649,14 +1028,21 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 }
 
 func daemonASRSourceAndPlan(t *testing.T, daemon *client.Client, filename string, content []byte) (api.MediaReceipt, api.ProcessingSelector, api.ProcessingPlan) {
+	return daemonASRSourceAndPlanWith(t, daemon,
+		"00000000-0000-4000-8000-000000000671", filename, "audio/wav", content)
+}
+
+func daemonASRSourceAndPlanWith(
+	t *testing.T, daemon *client.Client, operationID, filename, mediaType string, content []byte,
+) (api.MediaReceipt, api.ProcessingSelector, api.ProcessingPlan) {
 	t.Helper()
 	digest := sha256.Sum256(content)
 	sha := hex.EncodeToString(digest[:])
 	extension := filepath.Ext(filename)
 	receipt, err := daemon.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
-		OperationID: "00000000-0000-4000-8000-000000000671", Filename: filename, MediaType: "audio/wav",
+		OperationID: operationID, Filename: filename, MediaType: mediaType,
 		SHA256: sha, ByteLength: int64(len(content)),
-		Occurrence: api.MediaOccurrenceBody{Ref: "daemon-asr", Revision: "1", Filename: filename},
+		Occurrence: api.MediaOccurrenceBody{Ref: filename, Revision: "1", Filename: filename},
 	}, bytes.NewReader(content))
 	require.NoError(t, err)
 	node, err := daemon.Stat(t.Context(), "/media/"+sha[:2]+"/"+sha+extension)

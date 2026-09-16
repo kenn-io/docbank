@@ -101,6 +101,32 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 		require.ErrorContains(t, err, "disclosure fingerprint does not bind the runtime endpoint")
 	})
 
+	t.Run("stale processing profile is rejected", func(t *testing.T) {
+		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		root := t.TempDir()
+		require.NoError(t, writeDaemonASRConfig(root, cfg))
+		loaded := config.Default()
+		_, err := toml.DecodeFile(filepath.Join(root, "config.toml"), &loaded)
+		require.NoError(t, err)
+		require.NoError(t, loaded.Validate())
+		cfg = loaded
+		providers, _, err := configureRenditionProviders(cfg)
+		require.NoError(t, err)
+		provider, ok := providers["asr"].(*configuredRenditionProvider)
+		require.True(t, ok)
+		resolved, err := cfg.ProcessingProfile("asr")
+		require.NoError(t, err)
+		_, fingerprints, err := document.CanonicalProfile(resolved.Document)
+		require.NoError(t, err)
+		_, ok = provider.allowedRenditionRequests[fingerprints.RenditionRequest]
+		require.True(t, ok)
+
+		_, err = provider.Render(t.Context(), nil, document.RenditionAuthorization{
+			RenditionRequestFingerprint: strings.Repeat("0", 64),
+		})
+		require.ErrorIs(t, err, document.ErrRenditionAuthorizationInvalid)
+	})
+
 	t.Run("missing credential mapping", func(t *testing.T) {
 		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
 		cfg.CredentialBindings = nil

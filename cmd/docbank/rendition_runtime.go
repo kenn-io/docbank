@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -29,6 +30,21 @@ type renditionProviderInputs struct {
 type registeredRenditionProvider struct {
 	provider document.RenditionProvider
 	inputs   renditionProviderInputs
+}
+
+type configuredRenditionProvider struct {
+	document.RenditionProvider
+	allowedRenditionRequests map[string]struct{}
+}
+
+func (provider *configuredRenditionProvider) Render(
+	ctx context.Context, upload document.AuthorizedUpload,
+	authorization document.RenditionAuthorization,
+) (document.RenditionResult, error) {
+	if _, ok := provider.allowedRenditionRequests[authorization.RenditionRequestFingerprint]; !ok {
+		return document.RenditionResult{}, document.ErrRenditionAuthorizationInvalid
+	}
+	return provider.RenditionProvider.Render(ctx, upload, authorization)
 }
 
 func configureRenditionProviders(cfg config.Config) (
@@ -87,6 +103,10 @@ func configureRenditionProviders(cfg config.Config) (
 			if configured.DisclosureFingerprint != expectedDisclosure {
 				return nil, nil, fmt.Errorf("configuring rendition runtime %q: disclosure fingerprint does not bind the runtime endpoint", name)
 			}
+			requestFingerprints, err := configuredRenditionRequestFingerprints(cfg, name)
+			if err != nil {
+				return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
+			}
 			secretBinding := strings.TrimPrefix(configured.CredentialBinding, "credential:")
 			environmentVariable, ok := secrets.variables[secretBinding]
 			if !ok {
@@ -110,6 +130,13 @@ func configureRenditionProviders(cfg config.Config) (
 				if !sameRenditionProviderInputs(existing.inputs, inputs) {
 					return nil, nil, fmt.Errorf("configuring rendition runtime %q conflicts with another profile's provider for the same descriptor", name)
 				}
+				bound, ok := existing.provider.(*configuredRenditionProvider)
+				if !ok {
+					return nil, nil, fmt.Errorf("configuring rendition runtime %q: registered provider has an invalid binding", name)
+				}
+				for fingerprint := range requestFingerprints {
+					bound.allowedRenditionRequests[fingerprint] = struct{}{}
+				}
 				providers[name] = existing.provider
 				disclosures[name] = disclosure
 				continue
@@ -126,8 +153,10 @@ func configureRenditionProviders(cfg config.Config) (
 				provider.Descriptor().TrustBoundary != descriptor.TrustBoundary {
 				return nil, nil, fmt.Errorf("configuring rendition runtime %q: provider descriptor differs from portable binding", name)
 			}
-			registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: provider, inputs: inputs}
-			providers[name] = provider
+			bound := &configuredRenditionProvider{RenditionProvider: provider,
+				allowedRenditionRequests: requestFingerprints}
+			registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
+			providers[name] = bound
 			disclosures[name] = disclosure
 			continue
 		}
@@ -146,6 +175,28 @@ func configureRenditionProviders(cfg config.Config) (
 		providers[name] = provider
 	}
 	return providers, disclosures, nil
+}
+
+func configuredRenditionRequestFingerprints(cfg config.Config, renditionName string) (map[string]struct{}, error) {
+	fingerprints := make(map[string]struct{})
+	for name, configured := range cfg.ProcessingProfiles {
+		if configured.Rendition != renditionName {
+			continue
+		}
+		resolved, err := cfg.ProcessingProfile(name)
+		if err != nil {
+			return nil, err
+		}
+		_, derived, err := document.CanonicalProfile(resolved.Document)
+		if err != nil {
+			return nil, fmt.Errorf("processing profile %q: %w", name, err)
+		}
+		fingerprints[derived.RenditionRequest] = struct{}{}
+	}
+	if len(fingerprints) == 0 {
+		return nil, errors.New("no processing profile selects the rendition")
+	}
+	return fingerprints, nil
 }
 
 func sameRenditionProviderInputs(left, right renditionProviderInputs) bool {
