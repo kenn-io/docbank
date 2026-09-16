@@ -71,7 +71,14 @@ func textProbeVariants(formatID string) ([]textProbeVariant, bool) {
 	variants := []textProbeVariant{{name: "fixture", content: primary}}
 	switch formatID {
 	case "json":
-		variants = append(variants, textProbeVariant{name: "pretty", content: []byte("{\n  \"items\": [1, 2, 3],\n  \"sentinel\": \"" + sentinel + "\"\n}\n")})
+		variants = append(variants,
+			textProbeVariant{name: "pretty", content: []byte("{\n  \"items\": [1, 2, 3],\n  \"sentinel\": \"" + sentinel + "\"\n}\n")},
+			textProbeVariant{name: "array", content: []byte("[\"" + sentinel + "\", 1, true, null]\n")},
+			textProbeVariant{name: "string", content: []byte("\"" + sentinel + "\"\n")},
+			textProbeVariant{name: "number", content: []byte("7319\n")},
+			textProbeVariant{name: "boolean", content: []byte("true\n")},
+			textProbeVariant{name: "null", content: []byte("null\n")},
+		)
 	case "eml":
 		variants = append(variants, textProbeVariant{name: "multipart", content: []byte("From: probe@example.test\r\nTo: archive@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic multipart\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=docbank\r\n\r\n--docbank\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + sentinel + "\r\n--docbank\r\nContent-Type: message/rfc822\r\n\r\nFrom: nested@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\n\r\nnested\r\n--docbank--\r\n")})
 	}
