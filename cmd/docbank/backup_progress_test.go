@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -67,22 +68,28 @@ func TestBackupProgressRendererBarRedrawsAndTerminates(t *testing.T) {
 }
 
 func TestBackupProgressRendererKeepsSilentBarAlive(t *testing.T) {
-	var out bytes.Buffer
-	renderer := newBackupProgressRenderer(&out, backupProgressBar)
-	renderer.interval = 5 * time.Millisecond
-	renderer.tick = time.Millisecond
-	defer renderer.finish()
-	renderer.handle(api.BackupProgress{Stage: "metadata", Total: 1})
-	renderer.mu.Lock()
-	renderer.stageStart = time.Now().Add(-10 * time.Second)
-	out.Reset()
-	renderer.mu.Unlock()
-
-	require.Eventually(t, func() bool {
+	synctest.Test(t, func(t *testing.T) {
+		var out bytes.Buffer
+		renderer := newBackupProgressRenderer(&out, backupProgressBar)
+		renderer.interval = 5 * time.Millisecond
+		renderer.tick = time.Millisecond
+		defer renderer.finish()
+		renderer.handle(api.BackupProgress{Stage: "metadata", Total: 1})
 		renderer.mu.Lock()
-		defer renderer.mu.Unlock()
-		return strings.Contains(out.String(), "10s")
-	}, time.Second, time.Millisecond)
+		renderer.stageStart = time.Now().Add(-10 * time.Second)
+		out.Reset()
+		renderer.mu.Unlock()
+
+		time.Sleep(renderer.interval + renderer.tick)
+		synctest.Wait()
+		renderer.mu.Lock()
+		text := out.String()
+		renderer.mu.Unlock()
+		require.Contains(t, text, "10s")
+
+		renderer.finish()
+		synctest.Wait()
+	})
 }
 
 func TestBackupProgressRendererFinishClosesOpenBar(t *testing.T) {
