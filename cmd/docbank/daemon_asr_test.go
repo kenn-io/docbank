@@ -386,6 +386,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			submitOperationID:    "00000000-0000-4000-8000-000000000701",
 			retryOperationID:     "00000000-0000-4000-8000-000000000702",
 			noConsentOperationID: "00000000-0000-4000-8000-000000000703",
+			freshOperationID:     "00000000-0000-4000-8000-000000000704",
 		},
 		{
 			name: "queued", state: "queued", filename: "restored-queued.mp3",
@@ -393,6 +394,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			submitOperationID:    "00000000-0000-4000-8000-000000000711",
 			retryOperationID:     "00000000-0000-4000-8000-000000000712",
 			noConsentOperationID: "00000000-0000-4000-8000-000000000713",
+			freshOperationID:     "00000000-0000-4000-8000-000000000714",
 		},
 		{
 			name: "retry_wait", state: "retry_wait", filename: "restored-retry.wav",
@@ -400,6 +402,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			submitOperationID:    "00000000-0000-4000-8000-000000000721",
 			retryOperationID:     "00000000-0000-4000-8000-000000000722",
 			noConsentOperationID: "00000000-0000-4000-8000-000000000723",
+			freshOperationID:     "00000000-0000-4000-8000-000000000724",
 		},
 	}
 	for index := range cases {
@@ -441,7 +444,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 	for index := range cases {
 		cases[index].jobID = jobByWaiter[cases[index].receipt.JobID]
 	}
-	restoredRoot := restoreDaemonASRMetadata(t, sourceRoot, mutatedMetadata, cases)
+	restoredRoot := restoreDaemonASRMetadata(t, mutatedMetadata, cases)
 
 	_, restored, _ := startDaemonASRTest(t, provider, daemonASRProviderKey, false, restoredRoot)
 	for index := range cases {
@@ -472,7 +475,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 		})
 		require.NoError(t, err)
 		retried, err := restored.RetryMedia(t.Context(), testCase.receipt.SourceID, api.MediaRetryBody{
-			OperationID: testCase.retryOperationID,
+			OperationID: testCase.freshOperationID,
 			Processing:  &api.MediaProcessingBody{Profile: "asr"},
 		})
 		require.NoError(t, err)
@@ -496,6 +499,7 @@ type daemonASRRestoreCase struct {
 	submitOperationID                string
 	retryOperationID                 string
 	noConsentOperationID             string
+	freshOperationID                 string
 	receipt                          api.MediaReceipt
 	selector                         api.ProcessingSelector
 	jobID                            string
@@ -612,7 +616,7 @@ func setDaemonASRMetadataValue(
 }
 
 func restoreDaemonASRMetadata(
-	t *testing.T, sourceRoot string, metadata []byte, cases []daemonASRRestoreCase,
+	t *testing.T, metadata []byte, cases []daemonASRRestoreCase,
 ) string {
 	t.Helper()
 	root := t.TempDir()
@@ -652,54 +656,28 @@ func restoreDaemonASRMetadata(
 			break
 		}
 	}
-	require.NoError(t, copyDaemonASRBlobTree(
-		filepath.Join(sourceRoot, "blobs"), layout.BlobsDir()))
 	restoredBlobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, restoredBlobs.Close())
-		require.NoError(t, catalog.Close())
+		_ = restoredBlobs.Close()
+		_ = catalog.Close()
 	}()
+	for _, testCase := range cases {
+		written, err := restoredBlobs.WriteDetailedContext(
+			t.Context(), bytes.NewReader(testCase.content))
+		require.NoError(t, err)
+		digest := sha256.Sum256(testCase.content)
+		require.Equal(t, hex.EncodeToString(digest[:]), written.Hash)
+		require.Equal(t, int64(len(testCase.content)), written.Size)
+	}
 	require.NoError(t, catalog.VerifyRenditionBlobBytes(t.Context(), restoredBlobs))
+	require.NoError(t, restoredBlobs.Close())
+	if err := os.Remove(filepath.Join(layout.BlobsDir(), ".packstore-owner.json")); err != nil {
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	require.NoError(t, catalog.Checkpoint(t.Context()))
+	require.NoError(t, catalog.Close())
 	return root
-}
-
-func copyDaemonASRBlobTree(source, target string) error {
-	entries, err := os.ReadDir(source)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.Name() == "tmp" || entry.Name() == ".packstore-owner.json" {
-			continue
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("blob restore source contains symlink %q", entry.Name())
-		}
-		sourcePath := filepath.Join(source, entry.Name())
-		targetPath := filepath.Join(target, entry.Name())
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if err := os.MkdirAll(targetPath, info.Mode().Perm()); err != nil {
-				return err
-			}
-			if err := copyDaemonASRBlobTree(sourcePath, targetPath); err != nil {
-				return err
-			}
-			continue
-		}
-		data, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(targetPath, data, info.Mode().Perm()); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type daemonDoclingTask struct {
