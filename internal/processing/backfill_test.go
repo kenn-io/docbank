@@ -95,7 +95,11 @@ func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
 		go func() { done <- backfill.Run(ctx) }()
 
 		synctest.Wait()
-		require.True(t, catalog.done["a"] && catalog.done["c"] && catalog.attempts["b"] == 1, "siblings progress while b is quarantined")
+		require.True(t, func() bool {
+			catalog.mu.Lock()
+			defer catalog.mu.Unlock()
+			return catalog.done["a"] && catalog.done["c"] && catalog.attempts["b"] == 1
+		}(), "siblings progress while b is quarantined")
 		now = now.Add(backfillFirstRetryDelay)
 		require.NoError(t, <-done, "the retry of b succeeds and the drain completes")
 		assert.True(t, catalog.done["b"])
@@ -168,7 +172,11 @@ func TestBackfillKeepsWatchingWhenNotDraining(t *testing.T) {
 		synctest.Wait()
 		time.Sleep(backfillBatchPause + backfill.IdleDelay)
 		synctest.Wait()
-		require.True(t, catalog.done["a"] && catalog.listed >= 3, "an empty scan is followed by another scan")
+		require.True(t, func() bool {
+			catalog.mu.Lock()
+			defer catalog.mu.Unlock()
+			return catalog.done["a"] && catalog.listed >= 3
+		}(), "an empty scan is followed by another scan")
 		cancel()
 		require.ErrorIs(t, <-done, context.Canceled)
 	})
