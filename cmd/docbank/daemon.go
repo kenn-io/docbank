@@ -559,6 +559,32 @@ func startProcessingJobs(
 	if err := supervisor.Start("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)
 	}
+	return startPackagePreflightMaintenance(supervisor, s, gate, logger)
+}
+
+func startPackagePreflightMaintenance(
+	supervisor *jobs.Supervisor, s *store.Store, gate *api.OperationGate, logger *slog.Logger,
+) error {
+	expirePackagePreflights := func(ctx context.Context) error {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			if err := gate.MutateContext(ctx, func() error {
+				_, err := s.ExpirePackagePreflights(ctx, "")
+				return err
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn("expiring package preflights", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+			}
+		}
+	}
+	if err := supervisor.Start("maintenance:package-preflights", expirePackagePreflights); err != nil {
+		return fmt.Errorf("starting package preflight expiry: %w", err)
+	}
 	return nil
 }
 

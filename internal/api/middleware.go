@@ -33,7 +33,7 @@ func browserSessionRequest(ctx context.Context) bool {
 // timeout-exempt: long-running maintenance, integrity reads, and bulk ingest.
 func timeoutExempt(path string) bool {
 	switch path {
-	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
+	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
@@ -169,8 +169,8 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 }
 
 // loopbackMiddleware fences endpoints that grant local-filesystem
-// capability (POST /api/v1/ingest and its preflight) to loopback peers, regardless of bind
-// address or key. See the spec's ingest addendum.
+// capability (ingest and package preflight) to loopback peers, regardless of
+// bind address or key.
 func loopbackMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && isServerPathIngestRoute(r.URL.Path) && !isLoopbackRemote(r.RemoteAddr) {
@@ -183,7 +183,7 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 }
 
 func isServerPathIngestRoute(path string) bool {
-	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight"
+	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" || path == "/api/v1/packages/preflights"
 }
 
 func isLoopbackRemote(remoteAddr string) bool {
