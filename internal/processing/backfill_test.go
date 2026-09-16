@@ -82,38 +82,39 @@ func TestBackfillDrainsEveryTargetAcrossPagesAndStops(t *testing.T) {
 }
 
 func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
-	catalog := newFakeBackfillCatalog("a", "b", "c")
-	catalog.failing["b"] = 1
-	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
-	backfill := newTestBackfill(catalog, 10, true)
-	backfill.Now = func() time.Time { return now }
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a", "b", "c")
+		catalog.failing["b"] = 1
+		now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+		backfill := newTestBackfill(catalog, 10, true)
+		backfill.Now = func() time.Time { return now }
 
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- backfill.Run(ctx) }()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
 
-	require.Eventually(t, func() bool {
-		catalog.mu.Lock()
-		defer catalog.mu.Unlock()
-		return catalog.done["a"] && catalog.done["c"] && catalog.attempts["b"] == 1
-	}, time.Second, 5*time.Millisecond, "siblings progress while b is quarantined")
-	now = now.Add(backfillFirstRetryDelay)
-	require.NoError(t, <-done, "the retry of b succeeds and the drain completes")
-	assert.True(t, catalog.done["b"])
-	assert.Equal(t, 2, catalog.attempts["b"])
+		synctest.Wait()
+		require.True(t, catalog.done["a"] && catalog.done["c"] && catalog.attempts["b"] == 1, "siblings progress while b is quarantined")
+		now = now.Add(backfillFirstRetryDelay)
+		require.NoError(t, <-done, "the retry of b succeeds and the drain completes")
+		assert.True(t, catalog.done["b"])
+		assert.Equal(t, 2, catalog.attempts["b"])
+	})
 }
 
 func TestBackfillRetriesAListingFailure(t *testing.T) {
-	catalog := newFakeBackfillCatalog("a")
-	catalog.listErrs = 1
-	backfill := newTestBackfill(catalog, 10, true)
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a")
+		catalog.listErrs = 1
+		backfill := newTestBackfill(catalog, 10, true)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	require.NoError(t, backfill.Run(ctx))
-	assert.True(t, catalog.done["a"])
-	assert.GreaterOrEqual(t, catalog.listed, 2)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		require.NoError(t, backfill.Run(ctx))
+		assert.True(t, catalog.done["a"])
+		assert.GreaterOrEqual(t, catalog.listed, 2)
+	})
 }
 
 func TestBackfillBoundsOnlyDrainRetries(t *testing.T) {
@@ -158,18 +159,19 @@ func TestBackfillBoundsOnlyDrainRetries(t *testing.T) {
 }
 
 func TestBackfillKeepsWatchingWhenNotDraining(t *testing.T) {
-	catalog := newFakeBackfillCatalog("a")
-	backfill := newTestBackfill(catalog, 10, false)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- backfill.Run(ctx) }()
-	require.Eventually(t, func() bool {
-		catalog.mu.Lock()
-		defer catalog.mu.Unlock()
-		return catalog.done["a"] && catalog.listed >= 3
-	}, time.Second, 5*time.Millisecond, "an empty scan is followed by another scan")
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a")
+		backfill := newTestBackfill(catalog, 10, false)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
+		synctest.Wait()
+		time.Sleep(backfillBatchPause + backfill.IdleDelay)
+		synctest.Wait()
+		require.True(t, catalog.done["a"] && catalog.listed >= 3, "an empty scan is followed by another scan")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }
 
 func TestBackfillRejectsIncompleteConfiguration(t *testing.T) {
