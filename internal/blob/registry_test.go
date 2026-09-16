@@ -471,13 +471,13 @@ func TestRegistryClosesBackendOpenedAfterProbeDeadline(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 		synctest.Wait()
 		registry := <-registryReady
-		require.Less(t, time.Since(startedAt), 5*time.Second,
-			"refresh must return on the caller deadline before the probe deadline")
-		assert.Equal(t, StoreUnavailable, registry.Observation(storeID).State)
 		t.Cleanup(func() {
 			releaseOnce.Do(func() { close(releaseProbe) })
 			require.NoError(t, registry.Close())
 		})
+		require.Less(t, time.Since(startedAt), 5*time.Second,
+			"refresh must return on the caller deadline before the probe deadline")
+		assert.Equal(t, StoreUnavailable, registry.Observation(storeID).State)
 		releaseOnce.Do(func() { close(releaseProbe) })
 		synctest.Wait()
 		assert.True(t, backend.closed.Load())
