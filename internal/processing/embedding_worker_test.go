@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -417,50 +418,57 @@ func TestEmbeddingWorkerRejectsCorruptOrPartiallyPersistedVectorSet(t *testing.T
 }
 
 func TestEmbeddingRuntimeRegistryAndRunLifecycle(t *testing.T) {
-	registry := NewEmbeddingRuntimeRegistry()
-	assert.False(t, registry.Ready())
-	fixture := newEmbeddingWorkerFixture(t)
-	work := fixture.work("registry", document.EmbeddingInputRenditionChunk, "semantic")
-	require.NoError(t, registry.Register(work.Descriptor.Fingerprint, fixture.runtime))
-	assert.True(t, registry.Ready())
-	fixture.catalog.enqueue(work)
-	fixture.runtimeRegistry = registry
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	worker := fixture.worker(t)
-	go func() { done <- worker.Run(ctx) }()
-	require.Eventually(t, func() bool { return fixture.catalog.headCount() == 1 }, time.Second, time.Millisecond)
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
+	synctest.Test(t, func(t *testing.T) {
+		registry := NewEmbeddingRuntimeRegistry()
+		assert.False(t, registry.Ready())
+		fixture := newEmbeddingWorkerFixture(t)
+		work := fixture.work("registry", document.EmbeddingInputRenditionChunk, "semantic")
+		require.NoError(t, registry.Register(work.Descriptor.Fingerprint, fixture.runtime))
+		assert.True(t, registry.Ready())
+		fixture.catalog.enqueue(work)
+		fixture.runtimeRegistry = registry
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		worker := fixture.worker(t)
+		worker.wait = waitEmbeddingWorker
+		go func() { done <- worker.Run(ctx) }()
+		synctest.Wait()
+		require.Equal(t, 1, fixture.catalog.headCount())
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }
 
 func TestEmbeddingWorkerClaimsOnlyAfterMutationGateAdmission(t *testing.T) {
-	fixture := newEmbeddingWorkerFixture(t)
-	work := fixture.work("gate-admission", document.EmbeddingInputRenditionChunk, "semantic")
-	fixture.catalog.enqueue(work)
-	held := make(chan struct{})
-	release := make(chan struct{})
-	maintenanceDone := make(chan error, 1)
-	go func() {
-		maintenanceDone <- fixture.gate.MaintainContext(t.Context(), func() error {
-			close(held)
-			<-release
-			return nil
-		})
-	}()
-	<-held
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	worker := fixture.worker(t)
-	go func() {
-		_, err := worker.ScanOnce(ctx)
-		done <- err
-	}()
-	require.Never(t, func() bool { return fixture.catalog.claimCount() != 0 }, 100*time.Millisecond, 5*time.Millisecond)
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
-	close(release)
-	require.NoError(t, <-maintenanceDone)
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newEmbeddingWorkerFixture(t)
+		work := fixture.work("gate-admission", document.EmbeddingInputRenditionChunk, "semantic")
+		fixture.catalog.enqueue(work)
+		held := make(chan struct{})
+		release := make(chan struct{})
+		maintenanceDone := make(chan error, 1)
+		go func() {
+			maintenanceDone <- fixture.gate.MaintainContext(t.Context(), func() error {
+				close(held)
+				<-release
+				return nil
+			})
+		}()
+		<-held
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		worker := fixture.worker(t)
+		go func() {
+			_, err := worker.ScanOnce(ctx)
+			done <- err
+		}()
+		synctest.Wait()
+		require.Zero(t, fixture.catalog.claimCount())
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		close(release)
+		require.NoError(t, <-maintenanceDone)
+	})
 }
 
 func TestEmbeddingWorkerReconcilesDurableAuthorityBeforeClaim(t *testing.T) {
@@ -1269,23 +1277,25 @@ func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, addi
 }
 
 func TestEmbeddingWorkerReleasesMaintenanceGateDuringProviderCall(t *testing.T) {
-	fixture := newEmbeddingWorkerFixture(t)
-	fixture.catalog.enqueue(fixture.work("maintenance", document.EmbeddingInputRenditionChunk, "semantic"))
-	started := make(chan struct{})
-	fixture.runtime.block = true
-	fixture.runtime.onBlock = func() { close(started) }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	worker := fixture.worker(t)
-	go func() { _, err := worker.ScanOnce(ctx); done <- err }()
-	<-started
-	maintenanceCtx, stop := context.WithTimeout(t.Context(), time.Second)
-	defer stop()
-	err := fixture.gate.MaintainContext(maintenanceCtx, func() error { return nil })
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
-	require.NoError(t, err, "maintenance must finish while the provider is still running")
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newEmbeddingWorkerFixture(t)
+		fixture.catalog.enqueue(fixture.work("maintenance", document.EmbeddingInputRenditionChunk, "semantic"))
+		started := make(chan struct{})
+		fixture.runtime.block = true
+		fixture.runtime.onBlock = func() { close(started) }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		worker := fixture.worker(t)
+		go func() { _, err := worker.ScanOnce(ctx); done <- err }()
+		<-started
+		maintenanceCtx, stop := context.WithTimeout(t.Context(), time.Second)
+		defer stop()
+		err := fixture.gate.MaintainContext(maintenanceCtx, func() error { return nil })
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		require.NoError(t, err, "maintenance must finish while the provider is still running")
+	})
 }
 
 type observedEmbeddingCatalog struct {
@@ -1453,21 +1463,23 @@ func (c *embeddingWorkerFakeCatalog) ReleaseEmbeddingWork(context.Context, Embed
 }
 
 func TestEmbeddingWorkerReleasesMaintenanceGateDuringRetryDelay(t *testing.T) {
-	fixture := newEmbeddingWorkerFixture(t)
-	work := fixture.work("retry-maintenance", document.EmbeddingInputRenditionChunk, "semantic")
-	fixture.catalog.enqueue(work)
-	fixture.runtime.failures[work.Binding.Name] = []error{embeddingTransientError{}}
-	worker := fixture.worker(t)
-	worker.wait = func(ctx context.Context, _ time.Duration) error {
-		maintenanceCtx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		return fixture.gate.MaintainContext(maintenanceCtx, func() error { return nil })
-	}
-	processed, err := worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 1, processed)
-	require.Equal(t, 2, fixture.runtime.calls())
-	require.Contains(t, fixture.catalog.heads, headKey(work))
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newEmbeddingWorkerFixture(t)
+		work := fixture.work("retry-maintenance", document.EmbeddingInputRenditionChunk, "semantic")
+		fixture.catalog.enqueue(work)
+		fixture.runtime.failures[work.Binding.Name] = []error{embeddingTransientError{}}
+		worker := fixture.worker(t)
+		worker.wait = func(ctx context.Context, _ time.Duration) error {
+			maintenanceCtx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			return fixture.gate.MaintainContext(maintenanceCtx, func() error { return nil })
+		}
+		processed, err := worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 1, processed)
+		require.Equal(t, 2, fixture.runtime.calls())
+		require.Contains(t, fixture.catalog.heads, headKey(work))
+	})
 }
 
 func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) {
@@ -1497,36 +1509,42 @@ func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) 
 	sibling.InputGeneration.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
 	_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), sibling)
 	require.NoError(t, err)
-	processed, err := worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 2, processed)
-	require.NoError(t, t.Context().Err())
-	require.Equal(t, 2, fake.runtime.calls())
-	var metadata bytes.Buffer
-	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
-	var published []string
-	for line := range bytes.SplitSeq(metadata.Bytes(), []byte{'\n'}) {
-		if len(line) == 0 {
-			continue
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Queued work keeps the timestamps assigned by the real fixture.
+		time.Sleep(time.Until(now))
+		synctest.Wait()
+		processed, err := worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 2, processed)
+		require.NoError(t, t.Context().Err())
+		require.Equal(t, 2, fake.runtime.calls())
+		var metadata bytes.Buffer
+		require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
+		var published []string
+		for line := range bytes.SplitSeq(metadata.Bytes(), []byte{'\n'}) {
+			if len(line) == 0 {
+				continue
+			}
+			var record struct {
+				Type             string `json:"type"`
+				ContentVersionID string `json:"content_version_id"`
+			}
+			require.NoError(t, json.Unmarshal(line, &record))
+			if record.Type == "embedding_head" {
+				published = append(published, record.ContentVersionID)
+			}
 		}
-		var record struct {
-			Type             string `json:"type"`
-			ContentVersionID string `json:"content_version_id"`
-		}
-		require.NoError(t, json.Unmarshal(line, &record))
-		if record.Type == "embedding_head" {
-			published = append(published, record.ContentVersionID)
-		}
-	}
-	require.Equal(t, []string{node.CurrentVersionID}, published)
-	processed, err = worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Zero(t, processed, "timed-out work must wait for its retry delay")
-	claim, retry, found, err := fixture.catalog.ClaimNextEmbeddingWork(t.Context(), "retry-worker", time.Now().Add(2*time.Minute), time.Minute, worker.descriptorFingerprints)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, request.ContentVersionID, retry.ContentVersionID)
-	require.Equal(t, int64(2), claim.Epoch)
+		require.Equal(t, []string{node.CurrentVersionID}, published)
+		processed, err = worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Zero(t, processed, "timed-out work must wait for its retry delay")
+		claim, retry, found, err := fixture.catalog.ClaimNextEmbeddingWork(t.Context(), "retry-worker", time.Now().Add(2*time.Minute), time.Minute, worker.descriptorFingerprints)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, request.ContentVersionID, retry.ContentVersionID)
+		require.Equal(t, int64(2), claim.Epoch)
+	})
 }
 
 type afterEmbeddingStageAuthority struct {
@@ -1934,28 +1952,30 @@ func TestEmbeddingWorkerRecordsClassifiedInvalidProviderResponse(t *testing.T) {
 }
 
 func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing.T) {
-	fixture := newEmbeddingWorkerFixture(t)
-	worker := fixture.worker(t)
-	now := time.Now().UTC()
-	worker.clock = func() time.Time { return now }
-	passes := 0
-	fixture.catalog.reconcileError = func() error {
-		passes++
-		// Discovery must not exclude exclusive maintenance.
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		defer cancel()
-		return fixture.gate.MaintainContext(ctx, func() error { return nil })
-	}
-	_, err := worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	fixture.catalog.enqueue(fixture.work("late-queued", document.EmbeddingInputOriginalFile, "direct"))
-	now = now.Add(time.Second)
-	processed, err := worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 1, processed)
-	require.Equal(t, 1, passes)
-	now = now.Add(time.Minute)
-	_, err = worker.ScanOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 2, passes)
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newEmbeddingWorkerFixture(t)
+		worker := fixture.worker(t)
+		now := time.Now().UTC()
+		worker.clock = func() time.Time { return now }
+		passes := 0
+		fixture.catalog.reconcileError = func() error {
+			passes++
+			// Discovery must not exclude exclusive maintenance.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			return fixture.gate.MaintainContext(ctx, func() error { return nil })
+		}
+		_, err := worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		fixture.catalog.enqueue(fixture.work("late-queued", document.EmbeddingInputOriginalFile, "direct"))
+		now = now.Add(time.Second)
+		processed, err := worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 1, processed)
+		require.Equal(t, 1, passes)
+		now = now.Add(time.Minute)
+		_, err = worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 2, passes)
+	})
 }

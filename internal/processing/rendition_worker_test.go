@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -114,51 +115,56 @@ func TestRenditionWorkerHonorsDaemonOperationGateAndCancellation(t *testing.T) {
 			grantWorkerConsent(t, fixture.catalog, request)
 			job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 			require.NoError(t, err)
-			gate := newTestOperationGate()
-			held := make(chan struct{})
-			release := make(chan struct{})
-			maintenanceDone := make(chan error, 1)
-			go func() {
-				maintenanceDone <- gate.MaintainContext(t.Context(), func() error {
-					close(held)
-					<-release
-					return nil
+			now := time.Now()
+			synctest.Test(t, func(t *testing.T) {
+				// Queued work keeps the timestamps assigned by the real fixture.
+				time.Sleep(time.Until(now))
+				synctest.Wait()
+				gate := newTestOperationGate()
+				held := make(chan struct{})
+				release := make(chan struct{})
+				maintenanceDone := make(chan error, 1)
+				go func() {
+					maintenanceDone <- gate.MaintainContext(t.Context(), func() error {
+						close(held)
+						<-release
+						return nil
+					})
+				}()
+				<-held
+				ctx, cancel := context.WithCancel(t.Context())
+				worker, err := NewRenditionWorker(RenditionWorkerConfig{
+					Catalog: fixture.catalog, Blobs: fixture.blobs,
+					Runtime: workerRuntime{provider: provider}, Gate: gate,
+					Owner: "rendition-worker-gate-test", LeaseDuration: time.Minute,
+					IdleDelay: time.Millisecond,
 				})
-			}()
-			<-held
-			ctx, cancel := context.WithCancel(t.Context())
-			worker, err := NewRenditionWorker(RenditionWorkerConfig{
-				Catalog: fixture.catalog, Blobs: fixture.blobs,
-				Runtime: workerRuntime{provider: provider}, Gate: gate,
-				Owner: "rendition-worker-gate-test", LeaseDuration: time.Minute,
-				IdleDelay: time.Millisecond,
-			})
-			require.NoError(t, err)
-			result := make(chan error, 1)
-			go func() {
-				_, runErr := worker.RunOne(ctx)
-				result <- runErr
-			}()
-			require.Never(t, func() bool {
-				return provider.calls != 0
-			}, 100*time.Millisecond, 5*time.Millisecond)
-			current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-			require.NoError(t, err)
-			assert.Equal(t, store.RenditionJobQueued, current.State)
-			assert.Zero(t, current.ClaimEpoch,
-				"claim and every later physical/catalog mutation stay behind the daemon gate")
+				require.NoError(t, err)
+				result := make(chan error, 1)
+				go func() {
+					_, runErr := worker.RunOne(ctx)
+					result <- runErr
+				}()
+				synctest.Wait()
+				require.Zero(t, provider.calls)
+				current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+				require.NoError(t, err)
+				assert.Equal(t, store.RenditionJobQueued, current.State)
+				assert.Zero(t, current.ClaimEpoch,
+					"claim and every later physical/catalog mutation stay behind the daemon gate")
 
-			if cancelWhileHeld {
-				cancel()
-				require.ErrorIs(t, <-result, context.Canceled)
-				close(release)
-			} else {
-				close(release)
-				require.NoError(t, <-result)
-				cancel()
-				assert.Equal(t, 1, provider.calls)
-			}
-			require.NoError(t, <-maintenanceDone)
+				if cancelWhileHeld {
+					cancel()
+					require.ErrorIs(t, <-result, context.Canceled)
+					close(release)
+				} else {
+					close(release)
+					require.NoError(t, <-result)
+					cancel()
+					assert.Equal(t, 1, provider.calls)
+				}
+				require.NoError(t, <-maintenanceDone)
+			})
 		})
 	}
 }
@@ -166,52 +172,60 @@ func TestRenditionWorkerHonorsDaemonOperationGateAndCancellation(t *testing.T) {
 func TestRenditionWorkerReleasesDaemonGateDuringProviderEgress(t *testing.T) {
 	fixture := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
-	provider.renderStarted = make(chan struct{})
-	provider.renderRelease = make(chan struct{}, 1)
-	t.Cleanup(func() {
-		select {
-		case provider.renderRelease <- struct{}{}:
-		default:
-		}
-	})
 	profile := workerProcessingProfile(t, provider.Descriptor())
 	fixture.profile = profile
 	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
 	grantWorkerConsent(t, fixture.catalog, request)
 	_, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
-	gate := newTestOperationGate()
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: gate,
-		Owner: "rendition-worker-provider-gate-test", LeaseDuration: time.Minute,
-		IdleDelay: time.Millisecond,
-	})
-	require.NoError(t, err)
-
-	workerDone := make(chan error, 1)
-	go func() {
-		_, runErr := worker.RunOne(t.Context())
-		workerDone <- runErr
-	}()
-	select {
-	case <-provider.renderStarted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider call did not start")
-	}
-
-	maintenanceDone := make(chan error, 1)
-	go func() {
-		maintenanceDone <- gate.MaintainContext(t.Context(), func() error { return nil })
-	}()
-	select {
-	case err := <-maintenanceDone:
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Queued work keeps the timestamps assigned by the real fixture.
+		time.Sleep(time.Until(now))
+		synctest.Wait()
+		provider.renderStarted = make(chan struct{})
+		provider.renderRelease = make(chan struct{}, 1)
+		t.Cleanup(func() {
+			select {
+			case provider.renderRelease <- struct{}{}:
+			default:
+			}
+		})
+		gate := newTestOperationGate()
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{
+			Catalog: fixture.catalog, Blobs: fixture.blobs,
+			Runtime: workerRuntime{provider: provider}, Gate: gate,
+			Owner: "rendition-worker-provider-gate-test", LeaseDuration: time.Minute,
+			IdleDelay: time.Millisecond,
+		})
 		require.NoError(t, err)
-	case <-time.After(time.Second):
-		require.FailNow(t, "maintenance remained blocked by provider egress")
-	}
-	provider.renderRelease <- struct{}{}
-	require.NoError(t, <-workerDone)
+
+		workerDone := make(chan error, 1)
+		go func() {
+			_, runErr := worker.RunOne(t.Context())
+			workerDone <- runErr
+		}()
+		synctest.Wait()
+		select {
+		case <-provider.renderStarted:
+		default:
+			require.FailNow(t, "provider call did not start")
+		}
+
+		maintenanceDone := make(chan error, 1)
+		go func() {
+			maintenanceDone <- gate.MaintainContext(t.Context(), func() error { return nil })
+		}()
+		synctest.Wait()
+		select {
+		case err := <-maintenanceDone:
+			require.NoError(t, err)
+		default:
+			require.FailNow(t, "maintenance remained blocked by provider egress")
+		}
+		provider.renderRelease <- struct{}{}
+		require.NoError(t, <-workerDone)
+	})
 }
 
 func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) {
@@ -359,50 +373,57 @@ func TestRenditionWorkerRetriesTransientCatalogFailuresWithinClaim(t *testing.T)
 
 func TestRenditionWorkerTransientCatalogRetryCancelsCleanly(t *testing.T) {
 	fixture := newPublicationFixture(t)
-	catalog := &transientRenditionCatalog{Store: fixture.catalog, failClaimsForever: true}
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: newTestOperationGate(),
-		Owner: "rendition-worker-transient-cancel", LeaseDuration: time.Minute,
-		IdleDelay: time.Millisecond,
+	synctest.Test(t, func(t *testing.T) {
+		catalog := &transientRenditionCatalog{Store: fixture.catalog, failClaimsForever: true}
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{
+			Catalog: catalog, Blobs: fixture.blobs,
+			Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: newTestOperationGate(),
+			Owner: "rendition-worker-transient-cancel", LeaseDuration: time.Minute,
+			IdleDelay: time.Millisecond,
+		})
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- worker.Run(ctx) }()
+		synctest.Wait()
+		time.Sleep(worker.idleDelay)
+		synctest.Wait()
+		require.GreaterOrEqual(t, catalog.claimAttempts.Load(), int32(2))
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
 	})
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- worker.Run(ctx) }()
-	require.Eventually(t, func() bool {
-		return catalog.claimAttempts.Load() >= 2
-	}, time.Second, time.Millisecond)
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
 }
 
 func TestRenditionWorkerStopsLeaseWhileRenewalRetries(t *testing.T) {
 	fixture := newPublicationFixture(t)
-	catalog := &transientRenditionCatalog{
-		Store: fixture.catalog, failRenewalsForever: true,
-	}
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: newTestOperationGate(),
-		Owner: "rendition-worker-lease-stop", LeaseDuration: 3 * time.Second,
-		IdleDelay: time.Millisecond,
-	})
-	require.NoError(t, err)
-	leaseCtx, stopLease := worker.keepLease(t.Context(), store.RenditionJobClaim{})
-	require.Eventually(t, func() bool {
-		return catalog.renewalAttempts.Load() >= 1
-	}, 2*time.Second, time.Millisecond)
-
-	done := make(chan error, 1)
-	go func() { done <- stopLease() }()
-	select {
-	case err := <-done:
+	synctest.Test(t, func(t *testing.T) {
+		catalog := &transientRenditionCatalog{
+			Store: fixture.catalog, failRenewalsForever: true,
+		}
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{
+			Catalog: catalog, Blobs: fixture.blobs,
+			Runtime: workerRuntime{provider: newWorkerProvider(t)}, Gate: newTestOperationGate(),
+			Owner: "rendition-worker-lease-stop", LeaseDuration: 3 * time.Second,
+			IdleDelay: time.Millisecond,
+		})
 		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("lease shutdown waited for a retry that only its own cancellation could stop")
-	}
-	require.ErrorIs(t, context.Cause(leaseCtx), errRenditionLeaseStopped)
+		leaseCtx, stopLease := worker.keepLease(t.Context(), store.RenditionJobClaim{})
+		synctest.Wait()
+		time.Sleep(worker.leaseDuration / 3)
+		synctest.Wait()
+		require.GreaterOrEqual(t, catalog.renewalAttempts.Load(), int32(1))
+
+		done := make(chan error, 1)
+		go func() { done <- stopLease() }()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		default:
+			t.Fatal("lease shutdown waited for a retry that only its own cancellation could stop")
+		}
+		require.ErrorIs(t, context.Cause(leaseCtx), errRenditionLeaseStopped)
+	})
 }
 
 func TestRenditionWorkerPostEgressCatalogRetryCancelsWithoutTombstone(t *testing.T) {
@@ -414,27 +435,34 @@ func TestRenditionWorkerPostEgressCatalogRetryCancelsWithoutTombstone(t *testing
 	grantWorkerConsent(t, fixture.catalog, request)
 	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
-	catalog := &transientRenditionCatalog{
-		Store: fixture.catalog, failRecordsForever: true,
-	}
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: catalog, Blobs: fixture.blobs,
-		Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(),
-		Owner: "rendition-worker-post-egress-cancel", LeaseDuration: time.Minute,
-		IdleDelay: time.Millisecond,
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Queued work keeps the timestamps assigned by the real fixture.
+		time.Sleep(time.Until(now))
+		synctest.Wait()
+		catalog := &transientRenditionCatalog{
+			Store: fixture.catalog, failRecordsForever: true,
+		}
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{
+			Catalog: catalog, Blobs: fixture.blobs,
+			Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(),
+			Owner: "rendition-worker-post-egress-cancel", LeaseDuration: time.Minute,
+			IdleDelay: time.Millisecond,
+		})
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			_, runErr := worker.RunOne(ctx)
+			done <- runErr
+		}()
+		synctest.Wait()
+		time.Sleep(3 * worker.idleDelay)
+		synctest.Wait()
+		require.Greater(t, catalog.recordAttempts.Load(), int32(3))
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
 	})
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, runErr := worker.RunOne(ctx)
-		done <- runErr
-	}()
-	require.Eventually(t, func() bool {
-		return catalog.recordAttempts.Load() > 3
-	}, 10*time.Second, time.Millisecond)
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
 	assert.Equal(t, 1, provider.calls)
 	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
@@ -1685,22 +1713,25 @@ func TestRenditionWorkerRejectsTypedNilRuntime(t *testing.T) {
 }
 
 func TestRenditionRuntimeRegistryStartsWorkerOnlyAfterRegistration(t *testing.T) {
-	registry := NewRenditionRuntimeRegistry()
-	assert.False(t, registry.Ready(),
-		"a restored queue must remain dormant until a provider adapter is available")
-	ready := make(chan error, 1)
-	go func() { ready <- registry.WaitReady(t.Context()) }()
-	select {
-	case err := <-ready:
-		require.FailNowf(t, "registry became ready before registration", "error: %v", err)
-	case <-time.After(25 * time.Millisecond):
-	}
+	synctest.Test(t, func(t *testing.T) {
+		registry := NewRenditionRuntimeRegistry()
+		assert.False(t, registry.Ready(),
+			"a restored queue must remain dormant until a provider adapter is available")
+		ready := make(chan error, 1)
+		go func() { ready <- registry.WaitReady(t.Context()) }()
+		synctest.Wait()
+		select {
+		case err := <-ready:
+			require.FailNowf(t, "registry became ready before registration", "error: %v", err)
+		default:
+		}
 
-	provider := newWorkerProvider(t)
-	require.NoError(t, registry.Register(
-		provider.Descriptor().Fingerprint, workerRuntime{provider: provider}))
-	assert.True(t, registry.Ready())
-	require.NoError(t, <-ready)
+		provider := newWorkerProvider(t)
+		require.NoError(t, registry.Register(
+			provider.Descriptor().Fingerprint, workerRuntime{provider: provider}))
+		assert.True(t, registry.Ready())
+		require.NoError(t, <-ready)
+	})
 }
 
 func TestRenditionProviderRetryDelayEscalatesAndCaps(t *testing.T) {

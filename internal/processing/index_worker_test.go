@@ -55,10 +55,12 @@ func TestVectorIndexRebuildWaitsForMaintenanceAdmission(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, gate.MaintainContext(t.Context(), func() error {
-		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-		defer cancel()
-		_, err := worker.Rebuild(ctx, spaces[0])
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+			defer cancel()
+			_, err := worker.Rebuild(ctx, spaces[0])
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+		})
 		_, err = fixture.catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
 		require.ErrorIs(t, err, store.ErrNotFound)
 		return nil
