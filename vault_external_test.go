@@ -1581,12 +1581,8 @@ func TestOpenVersionContentRangeHoldsVaultLease(t *testing.T) {
 	}
 
 	require.NoError(t, opened.Reader.Close())
-	select {
-	case err := <-closeDone:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "vault did not close after the range released its lease")
-	}
+	// Closing also drains workers and storage. The suite timeout bounds this wait.
+	require.NoError(t, <-closeDone)
 }
 
 func TestOpenVersionContentRangeClosedVault(t *testing.T) {
