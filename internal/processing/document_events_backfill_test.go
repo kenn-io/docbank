@@ -27,6 +27,36 @@ func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 	require.Empty(t, targets)
 }
 
+func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {
+	for _, address := range []string{"ÜSER@EXAMPLE.TEST", "USER@İ.example.test", `"Ada Lovelace"@example.test`, `"<Ada"@example.test`, `" Ada"@example.test`} {
+		t.Run(address, func(t *testing.T) {
+			catalog := openDocumentEventTestStore(t)
+			ctx := t.Context()
+			created, err := catalog.CreateFile(ctx, catalog.RootID(), "mail.eml", testDigest("unicode-email"), 8, "message/rfc822")
+			require.NoError(t, err)
+			publishDocumentEventTestMetadata(t, catalog, created.BlobHash, "email-metadata", []document.SourceMetadataFieldV1{
+				stringField("email.from", "From", false, address),
+			})
+			require.NoError(t, RebuildDocumentEvents(ctx, catalog))
+			view, err := catalog.DocumentEventsForVersion(ctx, created.CurrentVersionID)
+			require.NoError(t, err)
+			event := requireEventKind(t, view.Events.Events, "vault_recorded")
+			require.Len(t, event.Actors, 1)
+
+			person, err := catalog.CreatePerson(ctx, "Synthetic sender", "operator")
+			require.NoError(t, err)
+			_, err = catalog.AddPersonIdentity(ctx, person.PersonID, person.Revision, store.PersonIdentity{
+				Kind: "email", ValueDisplay: address, Origin: "operator", EvidenceKind: "operator_assertion",
+				EvidenceID: "sender-claim", Confidence: "operator_asserted",
+			})
+			require.NoError(t, err)
+			keys, err := catalog.ActorKeysForPerson(ctx, store.PersonActorKeysRequest{PersonID: person.PersonID})
+			require.NoError(t, err)
+			require.Equal(t, []string{event.Actors[0].ActorKey}, keys.Items)
+		})
+	}
+}
+
 func TestDocumentEventRestoreDrainIndexesEveryRetainedVersion(t *testing.T) {
 	catalog := openDocumentEventTestStore(t)
 	created, err := catalog.CreateFile(

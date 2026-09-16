@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,39 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 	"go.kenn.io/kit/packstore"
 )
+
+func TestMetadataExportRefusesUnexportedPersonAuthority(t *testing.T) {
+	for _, kind := range []string{"person", "external_alias", "unresolved_custodian"} {
+		t.Run(kind, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			file, err := s.CreateFile(ctx, s.RootID(), "source.txt", metadataHashCurrent, 9, "text/plain",
+				BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: true})
+			require.NoError(t, err)
+			require.NoError(t, s.ExportMetadata(ctx, io.Discard))
+			switch kind {
+			case "person":
+				_, err = s.CreatePerson(ctx, "Example Person", "operator")
+			case "external_alias":
+				err = s.RecordExternalUIDAliases(ctx, "msgvault", "example-archive", "current", []string{"retired"})
+			case "unresolved_custodian":
+				_, err = s.SetCustodian(ctx, CustodianRequest{
+					Scope:    CustodianScope{Kind: "document", NodeID: file.ID, ContentVersionID: file.CurrentVersionID},
+					RawLabel: "Example Person", Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1,
+				})
+			}
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			require.ErrorContains(t, s.ExportMetadata(ctx, &exported), "person authority")
+			require.Empty(t, exported.Bytes())
+			snapshot, err := s.BeginMetadataSnapshot(ctx)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, snapshot.Close()) })
+			require.ErrorContains(t, snapshot.ExportBackup(ctx, &exported), "person authority")
+			require.Empty(t, exported.Bytes())
+		})
+	}
+}
 
 const (
 	metadataHashCurrent    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
