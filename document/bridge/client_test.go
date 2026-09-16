@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -876,41 +877,49 @@ func TestBridgeContractClassifiesPerRequestTimeouts(t *testing.T) {
 
 func TestBridgeContractInterruptsBlockedUploadAfterRequestTimeout(t *testing.T) {
 	fixture := newBridgeFixture(t)
-	sourceReader, sourceWriter := io.Pipe()
-	t.Cleanup(func() { _ = sourceWriter.Close() })
-	upload := &testUpload{ReadCloser: sourceReader, metadata: fixture.metadata}
-	drainDone := make(chan struct{})
-	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
-		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			go func() {
-				_, _ = io.Copy(io.Discard, request.Body)
-				close(drainDone)
-			}()
-			<-request.Context().Done()
-			return nil, request.Context().Err()
-		})})
-	client.executor.RequestTimeout = 20 * time.Millisecond
-	done := make(chan error, 1)
-	go func() {
-		_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
-		done <- err
-	}()
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		sourceReader, sourceWriter := io.Pipe()
+		t.Cleanup(func() { _ = sourceWriter.Close() })
+		t.Cleanup(func() { _ = sourceReader.CloseWithError(errors.New("release blocked test upload")) })
+		upload := &testUpload{ReadCloser: sourceReader, metadata: fixture.metadata}
+		drainDone := make(chan struct{})
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				go func() {
+					_, _ = io.Copy(io.Discard, request.Body)
+					close(drainDone)
+				}()
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			})})
+		client.executor.RequestTimeout = 20 * time.Millisecond
+		done := make(chan error, 1)
+		go func() {
+			_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
+			done <- err
+		}()
 
-	select {
-	case err := <-done:
-		var providerError *document.RenditionProviderError
-		require.ErrorAs(t, err, &providerError)
-		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
-	case <-time.After(200 * time.Millisecond):
-		_ = sourceReader.CloseWithError(errors.New("release blocked test upload"))
-		<-done
-		t.Fatal("bridge request timeout did not interrupt the blocked upload")
-	}
-	select {
-	case <-drainDone:
-	case <-time.After(time.Second):
-		t.Fatal("HTTP request body reader did not stop")
-	}
+		synctest.Wait()
+		time.Sleep(client.executor.RequestTimeout)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			var providerError *document.RenditionProviderError
+			require.ErrorAs(t, err, &providerError)
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
+		default:
+			_ = sourceReader.CloseWithError(errors.New("release blocked test upload"))
+			<-done
+			t.Fatal("bridge request timeout did not interrupt the blocked upload")
+		}
+		select {
+		case <-drainDone:
+		default:
+			t.Fatal("HTTP request body reader did not stop")
+		}
+	})
 }
 
 func TestBridgeContractRejectsUnboundedOrExtendedStableErrors(t *testing.T) {
@@ -1112,39 +1121,43 @@ func TestBridgeContractClassifiesInternalTotalTimeout(t *testing.T) {
 
 func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {
 	fixture := newBridgeFixture(t)
-	var cleanupBudget atomic.Int64
-	client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
-		&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			switch request.Method {
-			case http.MethodPost:
-				_, err := io.Copy(io.Discard, request.Body)
-				require.NoError(t, err)
-				require.NoError(t, request.Body.Close())
-				return bridgeHTTPResponse(t, request, http.StatusAccepted,
-					pendingEnvelope(fixture, "job-cleanup-bound", JobQueued)), nil
-			case http.MethodGet:
-				<-request.Context().Done()
-				return nil, request.Context().Err()
-			case http.MethodDelete:
-				deadline, ok := request.Context().Deadline()
-				require.True(t, ok)
-				cleanupBudget.Store(int64(time.Until(deadline)))
-				return &http.Response{
-					StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request,
-				}, nil
-			default:
-				return nil, errors.New("unexpected bridge request")
-			}
-		})})
-	client.executor.RequestTimeout = maxBridgeTimeout
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		var cleanupBudget atomic.Int64
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				switch request.Method {
+				case http.MethodPost:
+					_, err := io.Copy(io.Discard, request.Body)
+					require.NoError(t, err)
+					require.NoError(t, request.Body.Close())
+					return bridgeHTTPResponse(t, request, http.StatusAccepted,
+						pendingEnvelope(fixture, "job-cleanup-bound", JobQueued)), nil
+				case http.MethodGet:
+					<-request.Context().Done()
+					return nil, request.Context().Err()
+				case http.MethodDelete:
+					deadline, ok := request.Context().Deadline()
+					require.True(t, ok)
+					cleanupBudget.Store(int64(time.Until(deadline)))
+					return &http.Response{
+						StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request,
+					}, nil
+				default:
+					return nil, errors.New("unexpected bridge request")
+				}
+			})})
+		client.executor.RequestTimeout = maxBridgeTimeout
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
 
-	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	budget := time.Duration(cleanupBudget.Load())
-	assert.Positive(t, budget)
-	assert.LessOrEqual(t, budget, 5*time.Second)
+		_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		budget := time.Duration(cleanupBudget.Load())
+		assert.Positive(t, budget)
+		assert.LessOrEqual(t, budget, 5*time.Second)
+	})
 }
 
 func TestBridgeContractCancelsAcceptedJobAfterEnvelopeValidationFailure(t *testing.T) {
