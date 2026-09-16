@@ -255,7 +255,9 @@ export class ActionJournal implements ActionJournalAccess {
     await this.#update(index, (header, batch, transaction) => {
       if (!header.checkpoint_verified) abort(transaction, "Select and verify the saved recovery file before mutation.");
       if (header.state === "paused" || header.state === "stale" || header.state === "complete") abort(transaction, "The action is not schedulable.");
-      if (batch.state !== "prepared" && batch.state !== "uncertain") abort(transaction, "The batch is not schedulable.");
+      // Another tab may have stopped before recording its receipt. Reusing the
+      // original operation ID lets the daemon return its saved receipt on retry.
+      if (batch.state !== "prepared" && batch.state !== "uncertain" && batch.state !== "sending") abort(transaction, "The batch is not schedulable.");
       batch.state = "sending";
       header.state = "sending";
     });

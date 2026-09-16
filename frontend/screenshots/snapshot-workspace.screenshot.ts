@@ -184,6 +184,77 @@ async function verifyCheckpoint(page: Page, checkpoint: string): Promise<void> {
   await expect(recovery.getByRole("status")).toHaveText("Recovery checkpoint verified.");
 }
 
+test("retries an interrupted send from an already-open recovery tab", async ({ page, context }) => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "docbank-snapshot-workspace-"));
+  const vault = path.join(workspace, "vault");
+  const source = path.join(workspace, "synthetic.txt");
+  const run = async (...args: string[]) => (await execFileAsync(binary, args, {
+    cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 60_000,
+  })).stdout.trim();
+  let release!: () => void;
+  const delayedResponse = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    await writeFile(source, "Synthetic interrupted-send document.\n");
+    await run("add", source, "--dest", "/");
+    await run("tag", "create", "Review");
+    const rawURL = await run("web", "--no-browser");
+    await page.goto(queryURL(rawURL, untaggedQuery));
+    await runSnapshot(page);
+    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
+    const actions = page.getByRole("dialog", { name: "Tag frozen snapshot" });
+    await actions.getByRole("combobox", { name: "Tag for snapshot action" }).click();
+    await page.getByRole("option", { name: "Review", exact: true }).click();
+    await actions.getByRole("button", { name: "Add tag to whole query", exact: true }).click();
+    await verifyCheckpoint(page, path.join(workspace, "checkpoint.json"));
+
+    // Both journals must be open before sending; opening one later already
+    // recovers an interrupted batch as uncertain.
+    const other = await context.newPage();
+    const retries: BatchRequest[] = [];
+    other.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/v1/batch/tags") retries.push(request.postDataJSON() as BatchRequest);
+    });
+    await other.goto(rawURL);
+    await other.getByRole("button", { name: "Snapshot actions", exact: true }).click();
+    await other.getByRole("button", { name: "Resume retained action", exact: true }).click();
+    const otherRecovery = other.getByRole("dialog", { name: "Recoverable snapshot action" });
+    await expect(otherRecovery).toBeVisible();
+
+    let responseReady!: () => void;
+    const committed = new Promise<void>((resolve) => { responseReady = resolve; });
+    let originalRequest!: BatchRequest;
+    let originalReceipt!: BatchReceipt;
+    await page.route("**/api/v1/batch/tags", async (route) => {
+      originalRequest = route.request().postDataJSON() as BatchRequest;
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      originalReceipt = await response.json() as BatchReceipt;
+      responseReady();
+      await delayedResponse;
+    });
+    const recovery = page.getByRole("dialog", { name: "Recoverable snapshot action" });
+    await recovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
+    await recovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
+    await committed;
+    await page.close();
+    release();
+    expect((await retainedAction(other)).batches[0].state).toBe("sending");
+
+    await otherRecovery.getByRole("checkbox", { name: /I confirm this vault/ }).check();
+    await otherRecovery.getByRole("button", { name: "Confirm and run action", exact: true }).click();
+    await expect(otherRecovery.getByText("Action complete. All batches have validated receipts.", { exact: true })).toBeVisible();
+    expect(retries).toEqual([originalRequest]);
+    expect((await retainedAction(other)).batches[0].receipt).toEqual(persistedReceipt(originalReceipt));
+    const tagged = await collectRows(rawURL, { ...untaggedQuery, filters: { tag_ids: [originalRequest.tag_id] } });
+    expect(tagged.rows.map((row) => row.revision)).toEqual(originalReceipt.nodes.map((node) => node.revision));
+  } finally {
+    release();
+    await run("daemon", "stop");
+    expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 for (const outcome of ["success", "response loss"] as const) {
   test(`keeps an action stale across tabs after a late ${outcome}`, async ({ page, context }) => {
     const workspace = await mkdtemp(path.join(tmpdir(), "docbank-snapshot-workspace-"));
