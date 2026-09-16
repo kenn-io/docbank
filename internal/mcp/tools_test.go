@@ -89,6 +89,11 @@ func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
 		got := wireTools[name]
 		require.NotNil(t, got, "tools/list omitted %s", name)
 		assertJSONValueEqual(t, want.InputSchema, got["inputSchema"], name+" input schema")
+		// Anthropic rejects these keywords at the root of a tool input schema.
+		input := objectField(t, got, "inputSchema")
+		for _, keyword := range []string{"oneOf", "allOf", "anyOf"} {
+			assert.NotContains(t, input, keyword, name)
+		}
 		assertJSONValueEqual(t, want.OutputSchema, got["outputSchema"], name+" output schema")
 		assertJSONValueEqual(t, want.Annotations, got["annotations"], name+" annotations")
 		assertJSONValueEqual(t, want.Meta, got["_meta"], name+" metadata")
@@ -199,6 +204,16 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 	search := tools["search_documents"]
 	assertSchemaAccepts(t, search.InputSchema, map[string]any{
 		"query": "synthetic", "profile": "local", "content_version_ids": []any{"00000000-0000-4000-8000-000000000007"},
+	})
+	assertSchemaAccepts(t, search.InputSchema, map[string]any{
+		"query": "synthetic", "profile": "local", "filters": map[string]any{},
+	})
+	assertSchemaRejects(t, search.InputSchema, map[string]any{
+		"query": "synthetic", "profile": "local",
+	})
+	assertSchemaRejects(t, search.InputSchema, map[string]any{
+		"query": "synthetic", "profile": "local", "filters": map[string]any{},
+		"content_version_ids": []any{"00000000-0000-4000-8000-000000000007"},
 	})
 	assertSchemaRejects(t, search.InputSchema, map[string]any{
 		"query": strings.Repeat("q", 8193), "profile": "local", "content_version_ids": []any{"00000000-0000-4000-8000-000000000007"},
