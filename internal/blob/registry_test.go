@@ -467,8 +467,11 @@ func TestRegistryClosesBackendOpenedAfterProbeDeadline(t *testing.T) {
 				})
 		}()
 		<-probeStarted
+		startedAt := time.Now()
 		time.Sleep(25 * time.Millisecond)
 		synctest.Wait()
+		require.Less(t, time.Since(startedAt), 5*time.Second,
+			"refresh must return on the caller deadline before the probe deadline")
 		registry := <-registryReady
 		assert.Equal(t, StoreUnavailable, registry.Observation(storeID).State)
 		t.Cleanup(func() {
@@ -496,6 +499,7 @@ func TestRegistryRefreshStoresRunsContextIgnoringProbesConcurrently(t *testing.T
 		backends := make(map[string]*contextIgnoringOwnershipBackend, len(storeIDs))
 		stores := make([]StoreSpec, 0, len(storeIDs))
 		releaseProbes := make(chan struct{})
+		var releaseOnce sync.Once
 		for i, storeID := range storeIDs {
 			bindingName := fmt.Sprintf("archive-%d", i)
 			bindings[bindingName] = config.StoreBindingConfig{
@@ -520,7 +524,11 @@ func TestRegistryRefreshStoresRunsContextIgnoringProbesConcurrently(t *testing.T
 		) (packstore.Backend, error) {
 			return backends[binding.Path], nil
 		})
-		t.Cleanup(func() { require.NoError(t, registry.Close()) })
+		t.Cleanup(func() {
+			releaseOnce.Do(func() { close(releaseProbes) })
+			synctest.Wait()
+			require.NoError(t, registry.Close())
+		})
 		synctest.Wait()
 
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -536,7 +544,7 @@ func TestRegistryRefreshStoresRunsContextIgnoringProbesConcurrently(t *testing.T
 				t.Fatalf("probe for store %s did not start concurrently", storeID)
 			}
 		}
-		close(releaseProbes)
+		releaseOnce.Do(func() { close(releaseProbes) })
 		synctest.Wait()
 		observations := <-refreshed
 		require.Len(t, observations, len(storeIDs))

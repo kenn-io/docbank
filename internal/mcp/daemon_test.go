@@ -458,6 +458,7 @@ func TestDaemonLeaseAcquisitionUsesBoundedLeaseContext(t *testing.T) {
 		)
 
 		done := make(chan error, 1)
+		startedAt := time.Now()
 		go func() {
 			_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
 				return struct{}{}, errors.New("timed-out acquisition must not run the request")
@@ -466,6 +467,8 @@ func TestDaemonLeaseAcquisitionUsesBoundedLeaseContext(t *testing.T) {
 		}()
 		time.Sleep(timeout)
 		synctest.Wait()
+		require.Less(t, time.Since(startedAt), time.Second,
+			"acquisition must return on its lease deadline")
 		err := <-done
 		require.ErrorIs(t, err, errDaemonUnavailable)
 		assert.Equal(t, errDaemonUnavailable.Error(), err.Error())

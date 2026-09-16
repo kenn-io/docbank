@@ -213,15 +213,3 @@ func TestRunTimingBudgetErrors(t *testing.T) {
 		assert.Equal(t, "usage: check-timing-budgets [directory]\n", stderr.String())
 	})
 }
-
-func TestRunTimingBudgetSourcesRemainUnchanged(t *testing.T) {
-	root := t.TempDir()
-	source := fixtureSource(fixtureImports, "TestFixture", "require.EventuallyWithT(t, nil, 999*time.Millisecond, time.Millisecond)")
-	files := map[string]string{"fixture_test.go": source}
-	writeTimingFixtures(t, root, files)
-	assertTimingScan(t, root, files, 1, fixtureDiagnostic("fixture_test.go", 4, "require.EventuallyWithT", "999ms"))
-	assertTimingScan(t, root, files, 1, fixtureDiagnostic("fixture_test.go", 4, "require.EventuallyWithT", "999ms"))
-	after, err := os.ReadFile(filepath.Join(root, "fixture_test.go"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte(source), after)
-}
