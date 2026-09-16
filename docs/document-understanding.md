@@ -191,12 +191,16 @@ Fixture generation creates 21 formats deterministically. Five legacy formats
 require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`, `numbers`,
 and `msg`. Fixture and staging directories must be private. The initial
 capability contract authorizes PDF through a provider-request bound. PPTX is
-eligible only when the authenticated probe records a local slide count and the
-provider reports the same number of processed units. Other formats may extract
-during a probe but remain unauthorized for production uploads.
+eligible when the authenticated probe records a local slide count and the
+provider reports the same number of processed units. JSON is counted as one
+complete top-level value, and EML as one outer RFC 822 message. Those local
+counts must match the provider's processed units before either format can be
+authorized. TXT, Markdown, CSV, JSONL, YAML, Go, Python, JavaScript, RST,
+LaTeX, XML, and MSG remain unauthorized until their own exact evidence exists.
 
-If manifest validation reports that PPTX "does not explain its unverified
-bound", rerun the authenticated capability probe to replace the manifest.
+If manifest validation reports that a registered format "does not explain its
+unverified bound", rerun the authenticated capability probe to replace the
+manifest.
 
 For each production document:
 
@@ -216,8 +220,11 @@ every success or failure path.
 
 The rendition adapter counts source units locally before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
-the listed PresentationML slides, rejects invalid slide references or over-limit decks before
-upload, and compares the provider's processed count with that local count. See
+the listed PresentationML slides, rejects invalid slide references or
+over-limit decks before upload, and compares the provider's processed count with
+that local count. For JSON it counts one complete top-level value. For EML it
+counts one outer RFC 822 message. It compares both results with the provider's
+processed count. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 

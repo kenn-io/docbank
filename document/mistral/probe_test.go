@@ -46,6 +46,14 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	assert.Equal(t, UnitBoundLocalExact, pptx.UnitBoundMethod)
 	assert.Equal(t, 1, pptx.LocalUnits)
 	t.Logf("pptx status=%q unit_bound_method=%q local_units=%d", pptx.Status, pptx.UnitBoundMethod, pptx.LocalUnits)
+	for _, formatID := range []string{"json", "eml"} {
+		result := findManifestResult(t, manifest, formatID)
+		assert.Equal(t, ProbeStatusPassed, result.Status)
+		assert.Equal(t, UnitBoundLocalExact, result.UnitBoundMethod)
+		assert.Equal(t, 1, result.LocalUnits)
+		_, err = policy.Authorize(manifest, formatID)
+		require.NoError(t, err)
+	}
 
 	authorization, err := policy.Authorize(manifest, "pdf")
 	require.NoError(t, err)
@@ -63,6 +71,20 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 		require.NoError(t, sentinelErr)
 		assert.NotContains(t, encoded.String(), sentinel)
 	}
+}
+
+func TestTextProbeMismatchLeavesAuthorityUnverified(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	fixtures, err := loadProbeFixtures(t.Context(), policy, generatedProbeFixtureConfig(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, releaseProbeFixtures(fixtures)) })
+	candidate, found := CandidateFormatByID("json")
+	require.True(t, found)
+	fixture := fixtures[candidate.ID]
+	result := CapabilityResult{UnitCount: 2, UnitsProcessed: 2, UnitBoundMethod: UnitBoundNone}
+	observeUnitBound(t.Context(), &Client{policy: policy}, fixture, candidate, &result)
+	assert.Equal(t, UnitBoundNone, result.UnitBoundMethod)
+	assert.Equal(t, reasonBoundUnitsMismatch, result.ReasonCode)
 }
 
 func TestRunCapabilityProbeRecordsUnverifiedProviderBoundWithoutAuthority(t *testing.T) {

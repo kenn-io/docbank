@@ -63,8 +63,10 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 			} else {
 				result.ReasonCode = reasonBoundUnitsMismatch
 			}
-		case "pptx":
-			result.ReasonCode = reasonBoundUnitsMismatch
+		default:
+			if expectedUnitBound(candidate.ID) == UnitBoundLocalExact {
+				result.ReasonCode = reasonBoundUnitsMismatch
+			}
 		}
 		manifest.Results = append(manifest.Results, result)
 	}

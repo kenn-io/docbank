@@ -283,6 +283,29 @@ func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
 	t.Logf("provider_mismatch local_units=3 provider_units=2 requests=%d error=%v", requests.Load(), err)
 }
 
+func TestRenditionClientCountsTextUnitsBeforeEgress(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	client := &RenditionClient{policy: policy}
+	for _, test := range []struct {
+		format  string
+		content []byte
+	}{
+		{format: "json", content: []byte(`{"value":"synthetic"}`)},
+		{format: "eml", content: []byte("From: sender@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic\r\n\r\nbody\r\n")},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			candidate, found := CandidateFormatByID(test.format)
+			require.True(t, found)
+			verified, localUnits, err := client.verifySource(test.content, document.AuthorizedUploadMetadata{
+				MediaFamily: candidate.Family, MediaType: candidate.MediaType,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, candidate, verified)
+			assert.Equal(t, int64(1), localUnits)
+		})
+	}
+}
+
 func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string

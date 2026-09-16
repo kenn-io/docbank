@@ -186,6 +186,37 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 	}
 }
 
+func TestTextManifestRequiresFreshLocalEvidence(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	_, err := policy.Authorize(manifest, "json")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+
+	for index := range manifest.Results {
+		if manifest.Results[index].FormatID == "json" {
+			manifest.Results[index].ReasonCode = ""
+			manifest.Results[index].UnitBoundMethod = UnitBoundLocalExact
+			manifest.Results[index].LocalUnits = 1
+		}
+	}
+	require.NoError(t, manifest.ValidateComplete())
+	_, err = policy.Authorize(manifest, "json")
+	require.NoError(t, err)
+
+	stale := manifest
+	for index := range stale.Results {
+		if stale.Results[index].FormatID == "json" {
+			stale.Results[index].UnitBoundMethod = UnitBoundNone
+			stale.Results[index].ReasonCode = reasonBoundUnitsMismatch
+			stale.Results[index].LocalUnits = 0
+		}
+	}
+	require.NoError(t, stale.ValidateComplete())
+	_, err = policy.Authorize(stale, "json")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+	t.Logf("stale_manifest_error=%v", err)
+}
+
 func TestPolicyRejectsIdentityBeyondManifestAuthority(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)
 	manifestPolicy := testPolicy(t, 1<<20, 9)

@@ -20,6 +20,13 @@ lists the checks contributors must preserve.
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
+The Mistral text lane currently grants local exact authority only to JSON and
+EML. JSON counts one complete top-level value. EML counts one outer RFC 822
+message. The authenticated capability probe must record the same count that
+Mistral reports before either format can be uploaded. Keep TXT, Markdown, CSV,
+JSONL, YAML, source code, RST, LaTeX, XML, and MSG out of both Mistral bound
+registries until exact provider evidence supports them.
+
 ## Common change paths
 
 ### Add a data operation
