@@ -59,9 +59,8 @@ func TestManagedProcessTreeWindowsErrorBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = windows.CloseHandle(job) })
-
 		tree := &managedProcessTree{job: job}
+		t.Cleanup(func() { _ = tree.close() })
 		if err := tree.close(); err != nil {
 			t.Fatalf("first close: %v", err)
 		}
