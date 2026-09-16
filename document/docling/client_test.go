@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -309,39 +310,47 @@ func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
 
 func TestClientTotalTimeoutInterruptsBlockedUpload(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "blocked.pdf", []byte("synthetic PDF bytes"))
-	entered := make(chan struct{})
-	released := make(chan struct{})
-	var releaseOnce sync.Once
-	upload := &testUpload{
-		Reader: readerFunc(func([]byte) (int, error) {
-			close(entered)
-			<-released
-			return 0, errors.New("synthetic interrupted read")
-		}),
-		metadata: fixture.metadata,
-		close: func() error {
-			releaseOnce.Do(func() { close(released) })
-			return nil
-		},
-	}
-	client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, http.DefaultClient)
-	client.totalTimeout = 10 * time.Millisecond
-	done := make(chan error, 1)
-	go func() {
-		_, err := client.Render(t.Context(), upload, fixture.authorization)
-		done <- err
-	}()
-	<-entered
-	select {
-	case err := <-done:
-		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-		require.True(t, ok)
-		assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
-	case <-time.After(250 * time.Millisecond):
-		require.NoError(t, upload.Close())
-		<-done
-		t.Fatal("Client.Render did not interrupt the blocked upload")
-	}
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		entered := make(chan struct{})
+		released := make(chan struct{})
+		var releaseOnce sync.Once
+		upload := &testUpload{
+			Reader: readerFunc(func([]byte) (int, error) {
+				close(entered)
+				<-released
+				return 0, errors.New("synthetic interrupted read")
+			}),
+			metadata: fixture.metadata,
+			close: func() error {
+				releaseOnce.Do(func() { close(released) })
+				return nil
+			},
+		}
+		client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, http.DefaultClient)
+		client.totalTimeout = 10 * time.Millisecond
+		t.Cleanup(func() { require.NoError(t, upload.Close()) })
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.Render(t.Context(), upload, fixture.authorization)
+			done <- err
+		}()
+		<-entered
+		synctest.Wait()
+		time.Sleep(client.totalTimeout)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
+		default:
+			require.NoError(t, upload.Close())
+			<-done
+			t.Fatal("Client.Render did not interrupt the blocked upload")
+		}
+	})
 }
 
 func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {
@@ -495,23 +504,27 @@ func TestClientTreatsInFlightSubmissionDeadlinesAsAmbiguous(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newFixture(t, "pdf", "application/pdf", "ambiguous.pdf", []byte("synthetic PDF bytes"))
-			client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-				_, err := io.Copy(io.Discard, request.Body)
-				require.NoError(t, err)
-				<-request.Context().Done()
-				return nil, request.Context().Err()
-			})})
-			if testCase.authorizationLimit {
-				fixture.authorization.ExpiresAt = time.Now().UTC().Add(25 * time.Millisecond).Format(providerutil.TimestampForm)
-			} else {
-				client.totalTimeout = 25 * time.Millisecond
-			}
+			now := time.Now()
+			synctest.Test(t, func(t *testing.T) {
+				time.Sleep(time.Until(now))
+				client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+					_, err := io.Copy(io.Discard, request.Body)
+					require.NoError(t, err)
+					<-request.Context().Done()
+					return nil, request.Context().Err()
+				})})
+				if testCase.authorizationLimit {
+					fixture.authorization.ExpiresAt = time.Now().UTC().Add(25 * time.Millisecond).Format(providerutil.TimestampForm)
+				} else {
+					client.totalTimeout = 25 * time.Millisecond
+				}
 
-			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-			require.Error(t, err)
-			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-			require.True(t, ok)
-			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+				_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+				require.Error(t, err)
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+			})
 		})
 	}
 }

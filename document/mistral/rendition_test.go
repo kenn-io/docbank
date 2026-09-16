@@ -401,40 +401,44 @@ func TestRenditionClientExpiryCancelsInFlightUpload(t *testing.T) {
 	manifest := syntheticManifest(t, policy, true)
 	descriptor := renditionDescriptor(t, policy, manifest, "pdf")
 	fixture := renditionFixture(t, descriptor, testPDF("slow-upload"))
-	expiresAt := time.Now().UTC().Add(150 * time.Millisecond)
-	fixture.authorization.ExpiresAt = expiresAt.Format("2006-01-02T15:04:05.000000000Z")
-	requestStarted := make(chan struct{})
-	client, err := NewRenditionProvider(Profile{
-		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
-		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-		MaxRetryDelay: time.Millisecond,
-	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		close(requestStarted)
-		buffer := make([]byte, 1)
-		for {
-			if _, readErr := request.Body.Read(buffer); readErr != nil {
-				return nil, readErr
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		expiresAt := time.Now().UTC().Add(150 * time.Millisecond)
+		fixture.authorization.ExpiresAt = expiresAt.Format("2006-01-02T15:04:05.000000000Z")
+		requestStarted := make(chan struct{})
+		client, err := NewRenditionProvider(Profile{
+			Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
+			SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
+			MaxRetryDelay: time.Millisecond,
+		}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			close(requestStarted)
+			buffer := make([]byte, 1)
+			for {
+				if _, readErr := request.Body.Read(buffer); readErr != nil {
+					return nil, readErr
+				}
+				timer := time.NewTimer(5 * time.Millisecond)
+				select {
+				case <-request.Context().Done():
+					timer.Stop()
+					return nil, request.Context().Err()
+				case <-timer.C:
+				}
 			}
-			timer := time.NewTimer(5 * time.Millisecond)
-			select {
-			case <-request.Context().Done():
-				timer.Stop()
-				return nil, request.Context().Err()
-			case <-timer.C:
-			}
+		})})
+		require.NoError(t, err)
+		callerCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		_, err = client.Render(callerCtx, fixture.upload(), fixture.authorization)
+		assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
+		require.ErrorContains(t, errors.Unwrap(err), "authorization expired")
+		select {
+		case <-requestStarted:
+		default:
+			t.Fatal("slow upload never reached the transport")
 		}
-	})})
-	require.NoError(t, err)
-	callerCtx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	_, err = client.Render(callerCtx, fixture.upload(), fixture.authorization)
-	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
-	require.ErrorContains(t, errors.Unwrap(err), "authorization expired")
-	select {
-	case <-requestStarted:
-	default:
-		t.Fatal("slow upload never reached the transport")
-	}
+	})
 }
 
 func TestRenditionClientRejectsPDFAboveCompleteUnitLimitBeforeEgress(t *testing.T) {
