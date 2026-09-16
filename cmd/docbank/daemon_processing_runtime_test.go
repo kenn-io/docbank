@@ -70,10 +70,12 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 	})
 
 	t.Run("identical settings share provider", func(t *testing.T) {
-		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		cfg, descriptor := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
 		cfg.RenditionProfiles["alternate"] = cfg.RenditionProfiles["asr"]
 		alternateProfile := cfg.RenditionProfiles["alternate"]
 		alternateProfile.DeploymentFingerprint = strings.Repeat("a", 64)
+		alternateProfile.DisclosureFingerprint = doclingASRDisclosureFingerprint(
+			descriptor, alternateProfile.Runtime.Endpoint, alternateProfile.DeploymentFingerprint)
 		cfg.RenditionProfiles["alternate"] = alternateProfile
 		cfg.ProcessingProfiles["alternate"] = cfg.ProcessingProfiles["asr"]
 		configured := cfg.ProcessingProfiles["alternate"]
@@ -87,6 +89,18 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 		assert.Equal(t, strings.Repeat("a", 64), profiles["alternate"].RenditionDisclosure.Deployment)
 	})
 
+	t.Run("disclosure binds endpoint", func(t *testing.T) {
+		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		profile := cfg.RenditionProfiles["asr"]
+		profile.Runtime = cloneRenditionRuntime(profile.Runtime)
+		profile.Runtime.Endpoint = "http://127.0.0.1:5002"
+		cfg.RenditionProfiles["asr"] = profile
+		require.NoError(t, cfg.Validate())
+
+		_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+		require.ErrorContains(t, err, "disclosure fingerprint does not bind the runtime endpoint")
+	})
+
 	t.Run("missing credential mapping", func(t *testing.T) {
 		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
 		cfg.CredentialBindings = nil
@@ -96,11 +110,13 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 	})
 
 	t.Run("effective policy conflict", func(t *testing.T) {
-		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		cfg, descriptor := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
 		cfg.RenditionProfiles["alternate"] = cfg.RenditionProfiles["asr"]
 		alternate := cfg.RenditionProfiles["alternate"]
 		alternate.Runtime = cloneRenditionRuntime(alternate.Runtime)
 		alternate.Runtime.Endpoint = "http://127.0.0.1:5002"
+		alternate.DisclosureFingerprint = doclingASRDisclosureFingerprint(
+			descriptor, alternate.Runtime.Endpoint, alternate.DeploymentFingerprint)
 		cfg.RenditionProfiles["alternate"] = alternate
 		cfg.ProcessingProfiles["alternate"] = cfg.ProcessingProfiles["asr"]
 		configured := cfg.ProcessingProfiles["alternate"]
@@ -152,7 +168,7 @@ func doclingASRProcessingConfig(t *testing.T, endpoint string) (config.Config, d
 		AdapterContract: config.DoclingASRAdapterContract, AuthorizationFingerprint: strings.Repeat("1", 64),
 		CredentialBinding: "credential:docling", DeploymentFingerprint: strings.Repeat("2", 64),
 		DescriptorID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
-		DisclosureFingerprint: strings.Repeat("3", 64), MaxDocumentBytes: 1 << 20,
+		DisclosureFingerprint: doclingASRDisclosureFingerprint(descriptor, endpoint, strings.Repeat("2", 64)), MaxDocumentBytes: 1 << 20,
 		MaxResponseBytes: 1 << 20, MaxUnits: 100,
 		RequestedArtifacts: []string{string(document.EvidenceArtifactTranscript)},
 		TrustBoundary:      string(document.RenditionTrustOperatorNetwork), UploadOptionsFingerprint: strings.Repeat("4", 64),

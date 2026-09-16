@@ -308,6 +308,10 @@ The transcript character limit comes from `max_document_chars` on the
 processing profiles that select this rendition. Those profiles must agree. A
 runtime with no selecting profile remains staged and isn't executable.
 
+For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
+deployment fingerprint. Recompute it when the endpoint or deployment changes;
+the daemon rejects a mismatched binding before it starts provider work.
+
 The daemon reads the credential from the named environment binding when the
 adapter sends a provider request. A missing secret fails that processing
 attempt but leaves supplied-media retention, plaintext processing, and the

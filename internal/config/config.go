@@ -582,7 +582,7 @@ func validateProcessingProfiles(c Config) error {
 		}
 	}
 	for name, profile := range c.RenditionProfiles {
-		if profile.AdapterContract != DoclingASRAdapterContract {
+		if profile.AdapterContract != DoclingASRAdapterContract || profile.Runtime == nil {
 			continue
 		}
 		if _, err := c.RenditionTranscriptChars(name); err != nil {

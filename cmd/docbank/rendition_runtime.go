@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -80,6 +82,11 @@ func configureRenditionProviders(cfg config.Config) (
 				string(descriptor.TrustBoundary) != configured.TrustBoundary {
 				return nil, nil, fmt.Errorf("configuring rendition runtime %q: descriptor differs from portable binding", name)
 			}
+			expectedDisclosure := doclingASRDisclosureFingerprint(descriptor, configured.Runtime.Endpoint,
+				configured.DeploymentFingerprint)
+			if configured.DisclosureFingerprint != expectedDisclosure {
+				return nil, nil, fmt.Errorf("configuring rendition runtime %q: disclosure fingerprint does not bind the runtime endpoint", name)
+			}
 			secretBinding := strings.TrimPrefix(configured.CredentialBinding, "credential:")
 			environmentVariable, ok := secrets.variables[secretBinding]
 			if !ok {
@@ -148,4 +155,11 @@ func sameRenditionProviderInputs(left, right renditionProviderInputs) bool {
 		left.egress.ProxyMode == right.egress.ProxyMode && left.egress.ConnectTimeout == right.egress.ConnectTimeout &&
 		left.egress.KeepAlive == right.egress.KeepAlive && left.egress.TLSHandshakeTimeout == right.egress.TLSHandshakeTimeout &&
 		slices.Equal(left.egress.TLS.SPKISHA256, right.egress.TLS.SPKISHA256)
+}
+
+func doclingASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
+	digest := sha256.Sum256([]byte(strings.Join([]string{
+		config.DoclingASRAdapterContract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment,
+	}, "\x00")))
+	return hex.EncodeToString(digest[:])
 }

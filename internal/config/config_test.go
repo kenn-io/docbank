@@ -541,6 +541,17 @@ func TestRenditionRuntimeAllowsUnselectedStagedProfile(t *testing.T) {
 	assert.Zero(t, bound)
 }
 
+func TestRenditionRuntimeAllowsConflictingStagedBounds(t *testing.T) {
+	cfg := validRenditionRuntimeConfig(t)
+	profile := cfg.RenditionProfiles["primary"]
+	profile.Runtime = nil
+	cfg.RenditionProfiles["primary"] = profile
+	second := cfg.ProcessingProfiles["archive"]
+	second.MaxDocumentChars = 99_999
+	cfg.ProcessingProfiles["second"] = second
+	require.NoError(t, cfg.Validate())
+}
+
 func validRenditionRuntimeConfig(t *testing.T) Config {
 	t.Helper()
 	policyFingerprint, err := docling.ASRPolicyFingerprint(100_000)
