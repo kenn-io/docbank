@@ -67,6 +67,8 @@ func (w *limitedStampWriter) Write(value []byte) (int, error) {
 
 // Stamp performs the qualified synchronous PDF transformation. Daemon and export
 // callers must run it in their bounded, supervised worker process.
+// Pages with annotations must be flattened before stamping: viewers draw their
+// appearances above page content, where they can cover the label.
 func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe Recipe, output io.Writer) (Result, error) {
 	var zero Result
 	if ctx == nil {
@@ -219,14 +221,49 @@ func applyWatermarks(ctx *model.Context, watermarks map[int]*model.Watermark) (e
 		// A Bates label must remain visible even if the source's first layer
 		// defaults OFF. Flatten only the new form, preserving source layers.
 		form.Delete("OC")
+		sourceName, err := isolateSourceContent(ctx, i+1, content[:start])
+		if err != nil {
+			return err
+		}
 		m := matrices[i]
-		prefix := fmt.Sprintf("%s q %f %f %f %f %f %f cm ", watermarkArtifact, m[0], m[1], m[2], m[3], m[4], m[5])
-		content = append(append(bytes.Clone(content[:start]), prefix...), content[start+len(watermarkArtifact)+3:]...)
+		prefix := fmt.Sprintf("q /%s Do Q %s q %f %f %f %f %f %f cm ", sourceName, watermarkArtifact, m[0], m[1], m[2], m[3], m[4], m[5])
+		content = append([]byte(prefix), content[start+len(watermarkArtifact)+3:]...)
 		if err := setPageContent(ctx, page, content); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// A form invocation has its own graphics-state stack. Merely surrounding source
+// operators with q/Q lets an unmatched source Q pop the stamp's saved state.
+func isolateSourceContent(ctx *model.Context, pageNumber int, content []byte) (string, error) {
+	_, _, attrs, err := ctx.PageDict(pageNumber, false)
+	if err != nil {
+		return "", fmt.Errorf("read source page %d resources: %w", pageNumber, err)
+	}
+	form, err := ctx.NewStreamDictForBuf(content)
+	if err != nil {
+		return "", fmt.Errorf("create source form: %w", err)
+	}
+	form.InsertName("Type", "XObject")
+	form.InsertName("Subtype", "Form")
+	form.Insert("BBox", attrs.MediaBox.Array())
+	form.Insert("Resources", attrs.Resources.Clone())
+	if err := form.Encode(); err != nil {
+		return "", fmt.Errorf("encode source form: %w", err)
+	}
+	ref, err := ctx.IndRefForNewObject(*form)
+	if err != nil {
+		return "", fmt.Errorf("store source form: %w", err)
+	}
+	xObjects, err := ctx.DereferenceDict(attrs.Resources["XObject"])
+	if err != nil {
+		return "", fmt.Errorf("read source XObjects: %w", err)
+	}
+	name := xObjects.NewIDForPrefix("Source", 0)
+	xObjects.Insert(name, *ref)
+	return name, nil
 }
 
 func setPageContent(ctx *model.Context, page types.Dict, content []byte) error {
@@ -357,6 +394,20 @@ func inspectSource(source io.ReadSeeker, allowRestamp bool) (*model.Context, []t
 	}
 	dimensions := make([]types.Dim, count)
 	for index, boundary := range boundaries {
+		page, _, _, err := pdfContext.PageDict(index+1, false)
+		if err != nil {
+			return nil, nil, stampFailure("inspect source annotations", err)
+		}
+		annotations, err := pdfContext.DereferenceArray(page["Annots"])
+		if err != nil {
+			return nil, nil, stampFailure("inspect source annotations", err)
+		}
+		// Viewers paint annotations after page content. Their appearance can
+		// cover a stamp regardless of its page graphics state or layer settings.
+		if len(annotations) != 0 {
+			return nil, nil, stampFailure("inspect source annotations",
+				fmt.Errorf("page %d contains annotations; flatten annotations before stamping", index+1))
+		}
 		cropBox := boundary.CropBox()
 		if cropBox == nil {
 			return nil, nil, stampFailure("read source page boundaries", fmt.Errorf("page %d has no effective CropBox", index+1))

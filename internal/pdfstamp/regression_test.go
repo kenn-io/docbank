@@ -323,3 +323,59 @@ func TestStampPreservesContentStreamBoundaries(t *testing.T) {
 	require.Equal(t, before.At(320, 730), after.At(320, 730), "preserve the source rectangle")
 	require.Equal(t, []string{"OUR000041"}, readVisibleLabels(t, output.Bytes()))
 }
+
+func TestStampIsolatesSourceGraphicsState(t *testing.T) {
+	requirePopplerQualification(t)
+	for name, operators := range map[string]string{
+		"clip":                "0 0 10 10 re W n",
+		"transform":           "1 0 0 1 1000 1000 cm",
+		"clip then save":      "0 0 10 10 re W n q",
+		"restore then clip":   "Q 0 0 10 10 re W n",
+		"transform then save": "1 0 0 1 1000 1000 cm q",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := rewritePDF(t, syntheticPDF(t, 1, "Letter"), func(ctx *model.Context, page types.Dict) {
+				require.NoError(t, setPageContent(ctx, page, []byte(operators)))
+			})
+			var output bytes.Buffer
+			_, err := Stamp(t.Context(), bytes.NewReader(source),
+				[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, validRecipe(t), &output)
+			require.NoError(t, err)
+			require.Equal(t, []string{"OUR000041"}, readVisibleLabels(t, output.Bytes()))
+			assertRenderedStampAt(t, output.Bytes(), "bottom-right", 24)
+		})
+	}
+}
+
+func TestStampRejectsAnnotationsBeforePublishing(t *testing.T) {
+	source := rewritePDF(t, syntheticPDF(t, 1, "Letter"), func(ctx *model.Context, page types.Dict) {
+		appearance, err := ctx.NewStreamDictForBuf([]byte("1 1 1 rg 0 0 612 792 re f"))
+		require.NoError(t, err)
+		appearance.InsertName("Type", "XObject")
+		appearance.InsertName("Subtype", "Form")
+		appearance.Insert("BBox", types.NewNumberArray(0, 0, 612, 792))
+		appearance.Insert("Resources", types.NewDict())
+		require.NoError(t, appearance.Encode())
+		ref, err := ctx.IndRefForNewObject(*appearance)
+		require.NoError(t, err)
+		annotation, err := ctx.IndRefForNewObject(types.Dict{
+			"Type": types.Name("Annot"), "Subtype": types.Name("Square"),
+			"Rect": types.NewNumberArray(0, 0, 612, 792), "F": types.Integer(4),
+			"AP": types.Dict{"N": *ref},
+		})
+		require.NoError(t, err)
+		page.Update("Annots", types.Array{*annotation})
+	})
+	for _, restamp := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restamp=%t", restamp), func(t *testing.T) {
+			recipe := validRecipe(t)
+			recipe.Restamp = restamp
+			var output bytes.Buffer
+			_, err := Stamp(t.Context(), bytes.NewReader(source),
+				[]PageLabel{{SourcePage: 1, Label: "OUR000041"}}, recipe, &output)
+			require.ErrorIs(t, err, ErrStampEngineFailure)
+			require.ErrorContains(t, err, "flatten annotations before stamping")
+			require.Zero(t, output.Len())
+		})
+	}
+}
