@@ -34,7 +34,6 @@ const (
 	MaxPersonExternalIdentities       = 64
 	MaxCustodianSourceRefBytes        = 512
 	MaxPersonMergeMovedBytes          = 262144
-	MaxPersonDirtyVersionsPerScan     = 10000
 	MaxPersonArchiveIDBytes           = 128
 	MaxPersonExternalUIDBytes         = 256
 	MaxPersonDisplayNameSnapshotBytes = 200

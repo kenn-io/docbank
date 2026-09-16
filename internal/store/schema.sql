@@ -1764,13 +1764,6 @@ CREATE TABLE IF NOT EXISTS document_people_state (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS document_people_dirty (
-    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
-    reason TEXT NOT NULL,
-    marked_at TEXT NOT NULL,
-    revision INTEGER NOT NULL DEFAULT 1
-);
-
 CREATE TABLE IF NOT EXISTS person_splits (
     operation_id TEXT PRIMARY KEY NOT NULL,
     request_sha256 TEXT NOT NULL,

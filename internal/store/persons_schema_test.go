@@ -15,7 +15,7 @@ func TestPersonsSchema(t *testing.T) {
 		"persons", "person_identities", "person_external_identities",
 		"person_external_uid_aliases", "person_aliases", "person_merges", "person_splits",
 		"custodian_assignments",
-		"document_people_state", "document_people_dirty",
+		"document_people_state",
 	} {
 		var count int
 		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&count))

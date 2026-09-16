@@ -1089,7 +1089,6 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM person_merges)
 		    + (SELECT COUNT(*) FROM person_splits)
 		    + (SELECT COUNT(*) FROM custodian_assignments)
-		    + (SELECT COUNT(*) FROM document_people_dirty)
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state
 		       WHERE singleton != 1 OR binding_epoch != 1)

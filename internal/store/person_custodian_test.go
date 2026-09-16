@@ -52,28 +52,33 @@ func TestCustodianAdditionalRejectsDuplicateClaim(t *testing.T) {
 	require.Len(t, rows, 2)
 }
 
-func TestCustodianCollectionMarksOnlyMembersDirty(t *testing.T) {
+func TestCustodianCollectionAppliesOnlyToMembers(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
-	seedPeopleVersion(t, s)
+	_, unrelatedVersion := seedPeopleVersion(t, s)
 	run, err := s.BeginIngest(ctx, "cli", "Synthetic custodian collection")
 	require.NoError(t, err)
+	var versions []string
 	for i := range 2 {
 		name := fmt.Sprintf("record-%d.txt", i)
-		_, _, err := s.IngestFile(ctx, run, s.RootID(), name, fakeHash(fmt.Sprintf("c%d", i)),
+		node, _, err := s.IngestFile(ctx, run, s.RootID(), name, fakeHash(fmt.Sprintf("c%d", i)),
 			4, "text/plain", "/synthetic/"+name, "")
 		require.NoError(t, err)
+		versions = append(versions, node.CurrentVersionID)
 	}
 	request := CustodianRequest{Scope: CustodianScope{Kind: "collection", IngestID: run.ID()},
 		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1}
-	_, err = s.SetCustodian(ctx, request)
+	assignment, err := s.SetCustodian(ctx, request)
 	require.NoError(t, err)
-	_, err = s.SetCustodian(ctx, request)
+	for _, version := range versions {
+		rows, err := s.CustodiansForVersion(ctx, version)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Equal(t, assignment.AssignmentID, rows[0].AssignmentID)
+	}
+	rows, err := s.CustodiansForVersion(ctx, unrelatedVersion)
 	require.NoError(t, err)
-	var count, revision int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*),MIN(revision) FROM document_people_dirty`).Scan(&count, &revision))
-	require.Equal(t, 2, count)
-	require.Equal(t, 2, revision)
+	require.Empty(t, rows)
 }
 
 func TestCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T) {
@@ -151,9 +156,7 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	rows, err := s.CustodiansForVersion(ctx, version)
 	require.NoError(t, err)
 	require.Empty(t, rows)
-	var dirty, epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM document_people_dirty WHERE content_version_id=?`, version).Scan(&dirty))
-	require.EqualValues(t, 1, dirty)
+	var epoch int64
 	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 	require.Equal(t, epochBefore+3, epoch)
 }

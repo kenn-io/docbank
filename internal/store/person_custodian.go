@@ -84,7 +84,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 				if changed != 1 {
 					return ErrStaleRevision
 				}
-				return markCustodianScopeDirtyTx(ctx, tx, request.Scope, "custodian_updated")
+				return advancePersonBindingEpochTx(ctx, tx)
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
 				return err
@@ -115,7 +115,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 		if err != nil {
 			return err
 		}
-		return markCustodianScopeDirtyTx(ctx, tx, request.Scope, "custodian_added")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return CustodianAssignment{}, err
@@ -180,27 +180,6 @@ func exactCustodianScopePredicate(scope CustodianScope) (string, []any) {
 	}
 }
 
-func markCustodianScopeDirtyTx(ctx context.Context, tx *sql.Tx, scope CustodianScope, reason string) error {
-	var query string
-	var args []any
-	switch scope.Kind {
-	case "document":
-		query, args = `SELECT version_id FROM content_versions WHERE version_id=? AND node_id=?`, []any{scope.ContentVersionID, scope.NodeID}
-	case "collection":
-		query, args = `WITH `+CollectionMembershipCTE+` SELECT DISTINCT n.current_version_id AS version_id FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=? AND n.current_version_id IS NOT NULL`, []any{scope.IngestID}
-	}
-	if query != "" {
-		args = append(args, document.MaxPersonDirtyVersionsPerScan+1, reason, nowRFC3339(), document.MaxPersonDirtyVersionsPerScan)
-		if _, err := tx.ExecContext(ctx, `WITH affected_versions AS (`+query+` LIMIT ?)
-			INSERT INTO document_people_dirty(content_version_id,reason,marked_at)
-			SELECT version_id,?,? FROM affected_versions WHERE (SELECT COUNT(*) FROM affected_versions)<=?
-			ON CONFLICT(content_version_id) DO UPDATE SET revision=revision+1,reason=excluded.reason,marked_at=excluded.marked_at`, args...); err != nil {
-			return err
-		}
-	}
-	return advancePersonBindingEpochTx(ctx, tx)
-}
-
 func (s *Store) RetireCustodian(ctx context.Context, assignmentID string, revision int64) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		assignment, err := custodianByIDTx(ctx, tx, assignmentID)
@@ -225,7 +204,7 @@ func (s *Store) RetireCustodian(ctx context.Context, assignmentID string, revisi
 		if changed != 1 {
 			return ErrStaleRevision
 		}
-		return markCustodianScopeDirtyTx(ctx, tx, custodianAssignmentScope(assignment), "custodian_retired")
+		return advancePersonBindingEpochTx(ctx, tx)
 	})
 }
 
@@ -256,20 +235,6 @@ func custodianByIDTx(ctx context.Context, tx *sql.Tx, assignmentID string) (Cust
 
 func (s *Store) custodianByID(ctx context.Context, assignmentID string) (CustodianAssignment, error) {
 	return scanCustodian(s.db.QueryRowContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE assignment_id=?`, assignmentID))
-}
-
-func custodianAssignmentScope(assignment CustodianAssignment) CustodianScope {
-	scope := CustodianScope{Kind: assignment.ScopeKind}
-	if assignment.IngestID != nil {
-		scope.IngestID = *assignment.IngestID
-	}
-	if assignment.NodeID != nil {
-		scope.NodeID = *assignment.NodeID
-	}
-	if assignment.ContentVersionID != nil {
-		scope.ContentVersionID = *assignment.ContentVersionID
-	}
-	return scope
 }
 
 func (s *Store) CustodiansForVersion(ctx context.Context, contentVersionID string) ([]CustodianAssignment, error) {
