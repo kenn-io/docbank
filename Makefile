@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v release-scripts-test frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v release-scripts-test check-timing-budgets frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -35,7 +35,7 @@ clean:
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	rm -rf frontend/dist
 
-test: release-scripts-test
+test: release-scripts-test check-timing-budgets
 	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
 test-v:
@@ -43,6 +43,9 @@ test-v:
 
 release-scripts-test:
 	bash scripts/release_scripts_test.sh
+
+check-timing-budgets:
+	go run -tags "$(BUILD_TAGS)" ./scripts/check-timing-budgets .
 
 frontend:
 	cd frontend && npm ci && npm run build
@@ -66,14 +69,14 @@ docs-screenshots:
 fmt:
 	go fmt ./...
 
-lint:
+lint: check-timing-budgets
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
 	golangci-lint run --fix ./...
 
-lint-ci:
+lint-ci: check-timing-budgets
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \

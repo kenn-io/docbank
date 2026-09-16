@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -1897,78 +1897,73 @@ func TestProcessingViewSelectsProfilesAndShowsRunStatusAndRendition(t *testing.T
 }
 
 func TestProcessingRunExposesDurableJobBeforeBlockedTerminalStatus(t *testing.T) {
-	backend := newFakeBackend()
-	terminalRelease := make(chan struct{})
-	backend.processingTerminalRelease = terminalRelease
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
-	model.cursor = 1
-	model, cmd := updateModel(t, model, runeKey('P'))
-	model = runModelCommand(t, model, cmd)
-	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
-	require.NotNil(t, model.processingPlan)
+	synctest.Test(t, func(t *testing.T) {
+		backend := newFakeBackend()
+		terminalRelease := make(chan struct{})
+		backend.processingTerminalRelease = terminalRelease
+		model, err := New(t.Context(), backend)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+		model.cursor = 1
+		model, cmd := updateModel(t, model, runeKey('P'))
+		model = runModelCommand(t, model, cmd)
+		model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+		require.NotNil(t, model.processingPlan)
 
-	start := model.beginProcessing(*model.processingPlan, model.processingRequestID, true)
-	started := make(chan tea.Msg, 1)
-	go func() {
-		started <- start()
-	}()
-	var startMsg tea.Msg
-	select {
-	case startMsg = <-started:
-	case <-time.After(250 * time.Millisecond):
+		start := model.beginProcessing(*model.processingPlan, model.processingRequestID, true)
+		started := make(chan tea.Msg, 1)
+		go func() {
+			started <- start()
+		}()
+		synctest.Wait()
+		startMsg := <-started
+		model, terminalCmd := updateModel(t, model, startMsg)
+		require.NotNil(t, model.processingJob)
+		assert.Equal(t, backend.processingJob.ID, model.processingJob.ID)
+		content := strings.Join(model.processingLines(100), "\n")
+		assert.Contains(t, content, "Processing job: "+backend.processingJob.ID)
+		assert.Contains(t, content, "Awaiting daemon status")
+		assert.NotContains(t, content, "Processing status:")
+		require.NotNil(t, terminalCmd)
+
 		close(terminalRelease)
-		<-started
-		t.Fatal("the TUI did not receive the durable job while terminal status was blocked")
-	}
-	model, terminalCmd := updateModel(t, model, startMsg)
-	require.NotNil(t, model.processingJob)
-	assert.Equal(t, backend.processingJob.ID, model.processingJob.ID)
-	content := strings.Join(model.processingLines(100), "\n")
-	assert.Contains(t, content, "Processing job: "+backend.processingJob.ID)
-	assert.Contains(t, content, "Awaiting daemon status")
-	assert.NotContains(t, content, "Processing status:")
-	require.NotNil(t, terminalCmd)
-
-	close(terminalRelease)
-	model = runModelCommand(t, model, terminalCmd)
-	require.NotNil(t, model.processingStatus)
-	assert.Equal(t, "completed", model.processingStatus.State)
-	assert.Equal(t, "published", model.processingStatus.Phase)
-	content = strings.Join(model.processingLines(100), "\n")
-	assert.Contains(t, content, "Processing status: completed · published")
-	assert.NotContains(t, content, "Awaiting daemon status")
+		model = runModelCommand(t, model, terminalCmd)
+		require.NotNil(t, model.processingStatus)
+		assert.Equal(t, "completed", model.processingStatus.State)
+		assert.Equal(t, "published", model.processingStatus.Phase)
+		content = strings.Join(model.processingLines(100), "\n")
+		assert.Contains(t, content, "Processing status: completed · published")
+		assert.NotContains(t, content, "Awaiting daemon status")
+	})
 }
 
 func TestClosingProcessingViewCancelsBlockedTerminalStatus(t *testing.T) {
-	backend := newFakeBackend()
-	backend.processingTerminalRelease = make(chan struct{})
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
-	model.cursor = 1
-	model, cmd := updateModel(t, model, runeKey('P'))
-	model = runModelCommand(t, model, cmd)
-	model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
-	require.NotNil(t, model.processingPlan)
+	synctest.Test(t, func(t *testing.T) {
+		backend := newFakeBackend()
+		backend.processingTerminalRelease = make(chan struct{})
+		model, err := New(t.Context(), backend)
+		require.NoError(t, err)
+		model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+		model.cursor = 1
+		model, cmd := updateModel(t, model, runeKey('P'))
+		model = runModelCommand(t, model, cmd)
+		model = runModelCommand(t, model, model.loadProcessingPlan("private", model.processingRequestID))
+		require.NotNil(t, model.processingPlan)
 
-	startMsg := model.beginProcessing(*model.processingPlan, model.processingRequestID, true)()
-	model, terminalCmd := updateModel(t, model, startMsg)
-	require.NotNil(t, model.processingJob)
-	require.NotNil(t, terminalCmd)
-	terminal := make(chan tea.Msg, 1)
-	go func() { terminal <- terminalCmd() }()
-	model, _ = updateModel(t, model, key(tea.KeyEscape))
-	assert.False(t, model.processingOpen)
-	select {
-	case msg := <-terminal:
+		startMsg := model.beginProcessing(*model.processingPlan, model.processingRequestID, true)()
+		model, terminalCmd := updateModel(t, model, startMsg)
+		require.NotNil(t, model.processingJob)
+		require.NotNil(t, terminalCmd)
+		terminal := make(chan tea.Msg, 1)
+		go func() { terminal <- terminalCmd() }()
+		model, _ = updateModel(t, model, key(tea.KeyEscape))
+		assert.False(t, model.processingOpen)
+		synctest.Wait()
+		msg := <-terminal
 		terminalMsg, ok := msg.(processingTerminalMsg)
 		require.True(t, ok)
 		require.ErrorIs(t, terminalMsg.err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("closing the processing view did not cancel its blocked status stream")
-	}
+	})
 }
 
 func TestProcessingBuildRequiresExplicitConsentConfirmation(t *testing.T) {

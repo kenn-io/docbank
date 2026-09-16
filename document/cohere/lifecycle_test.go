@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -139,61 +140,55 @@ func TestEmbedCancellationOrTimeoutClosesBlockedImageAndEveryEnrolledUploadOnce(
 		{name: "core timeout middle", blockIndex: 1, timeout: true, execute: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			data := tinyPNG(t)
-			sources := []*lifecycleUpload{
-				newLifecycleUpload(t, data, imageMetadata(t, data)),
-				newLifecycleUpload(t, data, imageMetadata(t, data)),
-				newLifecycleUpload(t, data, imageMetadata(t, data)),
-			}
-			blocked := sources[test.blockIndex]
-			blocked.block = true
-			defer blocked.releaseRead()
-			profile := testProfile(t, 256)
-			if test.timeout {
-				profile.RequestTimeout = 25 * time.Millisecond
-				profile.Descriptor = descriptorFor(t, profile)
-			}
-			secrets := &countingSecrets{value: "synthetic-key"}
-			client := testClient(t, profile, secrets, roundTripFunc(func(*http.Request) (*http.Response, error) {
-				return nil, errors.New("request must not run")
-			}))
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			result := make(chan error, 1)
-			go func() {
-				var err error
-				if test.execute {
-					_, err = document.ExecuteEmbedding(ctx, client, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
-				} else {
-					_, err = client.Embed(ctx, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
+			synctest.Test(t, func(t *testing.T) {
+				data := tinyPNG(t)
+				sources := []*lifecycleUpload{
+					newLifecycleUpload(t, data, imageMetadata(t, data)),
+					newLifecycleUpload(t, data, imageMetadata(t, data)),
+					newLifecycleUpload(t, data, imageMetadata(t, data)),
 				}
-				result <- err
-			}()
-			select {
-			case <-blocked.readStarted:
-			case <-time.After(time.Second):
-				t.Fatal("blocked image read did not start")
-			}
-			if !test.timeout {
-				cancel()
-			}
-			var err error
-			select {
-			case err = <-result:
-			case <-time.After(time.Second):
-				blocked.releaseRead()
-				<-result
-				t.Fatal("embedding did not return after cancellation")
-			}
-			if test.timeout {
-				require.ErrorIs(t, err, context.DeadlineExceeded)
-			} else {
-				require.ErrorIs(t, err, context.Canceled)
-			}
-			for _, source := range sources {
-				assert.Equal(t, int32(1), source.closeCalls.Load())
-			}
-			assert.Zero(t, secrets.calls.Load())
+				blocked := sources[test.blockIndex]
+				blocked.block = true
+				t.Cleanup(blocked.releaseRead)
+				profile := testProfile(t, 256)
+				if test.timeout {
+					profile.RequestTimeout = 25 * time.Millisecond
+					profile.Descriptor = descriptorFor(t, profile)
+				}
+				secrets := &countingSecrets{value: "synthetic-key"}
+				client := testClient(t, profile, secrets, roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return nil, errors.New("request must not run")
+				}))
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				result := make(chan error, 1)
+				go func() {
+					var err error
+					if test.execute {
+						_, err = document.ExecuteEmbedding(ctx, client, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
+					} else {
+						_, err = client.Embed(ctx, imageInputs(sources...), authorization(client.Descriptor(), len(sources)))
+					}
+					result <- err
+				}()
+				<-blocked.readStarted
+				if !test.timeout {
+					cancel()
+				} else {
+					time.Sleep(profile.RequestTimeout)
+				}
+				synctest.Wait()
+				err := <-result
+				if test.timeout {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+				} else {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+				for _, source := range sources {
+					assert.Equal(t, int32(1), source.closeCalls.Load())
+				}
+				assert.Zero(t, secrets.calls.Load())
+			})
 		})
 	}
 }

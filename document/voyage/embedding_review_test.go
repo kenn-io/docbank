@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	json "encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -235,15 +237,21 @@ func TestVoyageEmbeddingRetriesMalformedResponseOnce(t *testing.T) {
 }
 
 type blockingEmbeddingUpload struct {
-	*io.PipeReader
-
-	started chan struct{}
-	once    sync.Once
+	started   chan struct{}
+	released  chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
 }
 
-func (upload *blockingEmbeddingUpload) Read(p []byte) (int, error) {
-	upload.once.Do(func() { close(upload.started) })
-	return upload.PipeReader.Read(p)
+func (upload *blockingEmbeddingUpload) Read([]byte) (int, error) {
+	upload.startOnce.Do(func() { close(upload.started) })
+	<-upload.released
+	return 0, errors.New("synthetic source closed")
+}
+
+func (upload *blockingEmbeddingUpload) Close() error {
+	upload.closeOnce.Do(func() { close(upload.released) })
+	return nil
 }
 func (upload *blockingEmbeddingUpload) Metadata() document.AuthorizedUploadMetadata {
 	return document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/png", ByteLength: 5, SHA256: strings.Repeat("a", 64), CapabilityRecordChecksum: strings.Repeat("b", 64), ProviderMetadataChecksum: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile}
@@ -255,36 +263,30 @@ func TestDirectFileEmbeddingCancellationInterruptsUpload(t *testing.T) {
 			policy := testPolicy(t)
 			manifest, err := voyagetest.SyntheticManifest(policy)
 			require.NoError(t, err)
-			profile := voyageDirectFileProfile(t, policy, manifest)
-			provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "secret"}, failingEmbeddingResolver{})
-			require.NoError(t, err)
-			reader, writer := io.Pipe()
-			defer func() { _ = reader.Close() }()
-			defer func() { _ = writer.Close() }()
-			source := &blockingEmbeddingUpload{PipeReader: reader, started: make(chan struct{})}
-			inputs := []document.EmbeddingInput{{Key: "file", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				var err error
-				if core {
-					_, err = document.ExecuteEmbedding(ctx, provider, inputs, voyageAuthorization(profile.Descriptor))
-				} else {
-					_, err = provider.Embed(ctx, inputs, voyageAuthorization(profile.Descriptor))
-				}
-				done <- err
-			}()
-			<-source.started
-			cancel()
-			select {
-			case err := <-done:
-				require.ErrorIs(t, err, context.Canceled)
-			case <-time.After(time.Second):
-				_ = reader.Close()
-				<-done
-				t.Fatal("embedding did not interrupt its blocked upload after cancellation")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				manifest.ObservedOn = "2000-01-01"
+				profile := voyageDirectFileProfile(t, policy, manifest)
+				provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "secret"}, failingEmbeddingResolver{})
+				require.NoError(t, err)
+				source := &blockingEmbeddingUpload{started: make(chan struct{}), released: make(chan struct{})}
+				inputs := []document.EmbeddingInput{{Key: "file", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: source}}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					var err error
+					if core {
+						_, err = document.ExecuteEmbedding(ctx, provider, inputs, voyageAuthorization(profile.Descriptor))
+					} else {
+						_, err = provider.Embed(ctx, inputs, voyageAuthorization(profile.Descriptor))
+					}
+					done <- err
+				}()
+				<-source.started
+				cancel()
+				synctest.Wait()
+				require.ErrorIs(t, <-done, context.Canceled)
+			})
 		})
 	}
 }

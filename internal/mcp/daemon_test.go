@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -42,31 +43,34 @@ func TestDaemonLeaseEnsuresInitialClientOnce(t *testing.T) {
 }
 
 func TestDaemonLeaseRejectsForbiddenEffectiveKeyOnInitialAcquisitionWithoutLeak(t *testing.T) {
-	const forbidden = "synthetic-forbidden-mcp-bearer"
-	current := client.New("http://unused.invalid", forbidden)
-	closed := newClosedClients()
-	var ensures atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		ensures.Add(1)
-		return current, nil
-	}, closed.close)
-	require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
-	called := false
+	synctest.Test(t, func(t *testing.T) {
+		const forbidden = "synthetic-forbidden-mcp-bearer"
+		current := client.New("http://unused.invalid", forbidden)
+		closed := newClosedClients()
+		var ensures atomic.Int32
+		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			ensures.Add(1)
+			return current, nil
+		}, closed.close)
+		require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
+		called := false
 
-	_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
-		called = true
-		return struct{}{}, nil
+		_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+			called = true
+			return struct{}{}, nil
+		})
+
+		require.ErrorIs(t, err, errDaemonCredentialReuse)
+		assert.Equal(t, errDaemonCredentialReuse.Error(), err.Error())
+		assert.False(t, called)
+		assert.Equal(t, int32(1), ensures.Load())
+		synctest.Wait()
+		assert.Equal(t, 1, closed.count(current))
+		forbiddenHash := sha256.Sum256([]byte(forbidden))
+		formatted := fmt.Sprintf("%v | %+v | %#v | lease=%#v", err, err, err, lease)
+		assert.NotContains(t, formatted, forbidden)
+		assert.NotContains(t, formatted, hex.EncodeToString(forbiddenHash[:]))
 	})
-
-	require.ErrorIs(t, err, errDaemonCredentialReuse)
-	assert.Equal(t, errDaemonCredentialReuse.Error(), err.Error())
-	assert.False(t, called)
-	assert.Equal(t, int32(1), ensures.Load())
-	require.Eventually(t, func() bool { return closed.count(current) == 1 }, time.Second, time.Millisecond)
-	forbiddenHash := sha256.Sum256([]byte(forbidden))
-	formatted := fmt.Sprintf("%v | %+v | %#v | lease=%#v", err, err, err, lease)
-	assert.NotContains(t, formatted, forbidden)
-	assert.NotContains(t, formatted, hex.EncodeToString(forbiddenHash[:]))
 }
 
 func TestDaemonLeaseAllowsEffectiveKeyDifferentFromForbiddenBearer(t *testing.T) {
@@ -86,32 +90,33 @@ func TestDaemonLeaseAllowsEffectiveKeyDifferentFromForbiddenBearer(t *testing.T)
 }
 
 func TestDaemonLeaseRejectsForbiddenKeyAfterIdleReacquisition(t *testing.T) {
-	const forbidden = "synthetic-forbidden-mcp-bearer"
-	first := client.New("http://unused.invalid", "independent-daemon-key")
-	forbiddenReplacement := client.New("http://unused.invalid", forbidden)
-	clients := []*client.Client{first, forbiddenReplacement}
-	var ensures atomic.Int32
-	closed := newClosedClients()
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		index := int(ensures.Add(1) - 1)
-		require.Less(t, index, len(clients))
-		return clients[index], nil
-	}, closed.close)
-	require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
+	synctest.Test(t, func(t *testing.T) {
+		const forbidden = "synthetic-forbidden-mcp-bearer"
+		first := client.New("http://unused.invalid", "independent-daemon-key")
+		forbiddenReplacement := client.New("http://unused.invalid", forbidden)
+		clients := []*client.Client{first, forbiddenReplacement}
+		var ensures atomic.Int32
+		closed := newClosedClients()
+		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			index := int(ensures.Add(1) - 1)
+			require.Less(t, index, len(clients))
+			return clients[index], nil
+		}, closed.close)
+		require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
 
-	current, err := lease.acquire(t.Context())
-	require.NoError(t, err)
-	lease.discard(current) // Model an idle daemon connection becoming invalid.
-	_, err = daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
-		return struct{}{}, errors.New("forbidden replacement must not dispatch")
+		current, err := lease.acquire(t.Context())
+		require.NoError(t, err)
+		lease.discard(current) // Model an idle daemon connection becoming invalid.
+		_, err = daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+			return struct{}{}, errors.New("forbidden replacement must not dispatch")
+		})
+
+		require.ErrorIs(t, err, errDaemonCredentialReuse)
+		assert.Equal(t, int32(2), ensures.Load())
+		assert.Equal(t, 1, closed.count(first))
+		synctest.Wait()
+		assert.Equal(t, 1, closed.count(forbiddenReplacement))
 	})
-
-	require.ErrorIs(t, err, errDaemonCredentialReuse)
-	assert.Equal(t, int32(2), ensures.Load())
-	assert.Equal(t, 1, closed.count(first))
-	require.Eventually(t, func() bool {
-		return closed.count(forbiddenReplacement) == 1
-	}, time.Second, time.Millisecond)
 }
 
 func TestDaemonReadRejectsForbiddenKeyOnTransportReplacement(t *testing.T) {
@@ -346,131 +351,126 @@ func TestDaemonLeaseCancellationDoesNotReacquireOrReplay(t *testing.T) {
 }
 
 func TestDaemonLeaseCancellationPropagatesWhileAnotherCallerEnsures(t *testing.T) {
-	ensureStarted := make(chan struct{})
-	releaseEnsure := make(chan struct{})
-	var releaseOnce sync.Once
-	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseEnsure) }) })
-	current := client.New("http://unused.invalid", "synthetic-key")
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		close(ensureStarted)
-		<-releaseEnsure
-		return current, nil
-	}, func(*client.Client) error { return nil })
+	synctest.Test(t, func(t *testing.T) {
+		ensureStarted := make(chan struct{})
+		releaseEnsure := make(chan struct{})
+		var releaseOnce sync.Once
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseEnsure) }) })
+		current := client.New("http://unused.invalid", "synthetic-key")
+		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			close(ensureStarted)
+			<-releaseEnsure
+			return current, nil
+		}, func(*client.Client) error { return nil })
 
-	firstDone := make(chan error, 1)
-	go func() {
-		_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
-			return struct{}{}, nil
-		})
-		firstDone <- err
-	}()
-	<-ensureStarted
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+				return struct{}{}, nil
+			})
+			firstDone <- err
+		}()
+		<-ensureStarted
 
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer cancel()
-	secondDone := make(chan error, 1)
-	go func() {
-		_, err := daemonRead(ctx, lease, func(context.Context, *client.Client) (struct{}, error) {
-			return struct{}{}, errors.New("canceled caller must not run")
-		})
-		secondDone <- err
-	}()
+		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+		defer cancel()
+		secondDone := make(chan error, 1)
+		go func() {
+			_, err := daemonRead(ctx, lease, func(context.Context, *client.Client) (struct{}, error) {
+				return struct{}{}, errors.New("canceled caller must not run")
+			})
+			secondDone <- err
+		}()
 
-	select {
-	case err := <-secondDone:
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-	case <-time.After(250 * time.Millisecond):
+		time.Sleep(25 * time.Millisecond)
+		synctest.Wait()
+		require.ErrorIs(t, <-secondDone, context.DeadlineExceeded)
 		releaseOnce.Do(func() { close(releaseEnsure) })
-		<-firstDone
-		<-secondDone
-		t.Fatal("canceled caller remained blocked behind daemon acquisition")
-	}
-	releaseOnce.Do(func() { close(releaseEnsure) })
-	require.NoError(t, <-firstDone)
+		synctest.Wait()
+		require.NoError(t, <-firstDone)
+	})
 }
 
 func TestDaemonLeaseInitiatorCancellationDoesNotCancelSharedAcquisition(t *testing.T) {
-	ensureStarted := make(chan struct{})
-	releaseEnsure := make(chan struct{})
-	var releaseOnce sync.Once
-	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseEnsure) }) })
-	current := client.New("http://unused.invalid", "synthetic-key")
-	var ensures atomic.Int32
-	var startedOnce sync.Once
-	lease := newDaemonLeaseWith(func(ctx context.Context) (*client.Client, error) {
-		ensures.Add(1)
-		startedOnce.Do(func() { close(ensureStarted) })
-		select {
-		case <-releaseEnsure:
-			return current, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}, func(*client.Client) error { return nil })
+	synctest.Test(t, func(t *testing.T) {
+		ensureStarted := make(chan struct{})
+		releaseEnsure := make(chan struct{})
+		var releaseOnce sync.Once
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseEnsure) }) })
+		current := client.New("http://unused.invalid", "synthetic-key")
+		var ensures atomic.Int32
+		var startedOnce sync.Once
+		lease := newDaemonLeaseWith(func(ctx context.Context) (*client.Client, error) {
+			ensures.Add(1)
+			startedOnce.Do(func() { close(ensureStarted) })
+			select {
+			case <-releaseEnsure:
+				return current, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}, func(*client.Client) error { return nil })
 
-	initiatorCtx, cancelInitiator := context.WithCancel(t.Context())
-	initiatorDone := make(chan error, 1)
-	go func() {
-		_, err := daemonRead(initiatorCtx, lease, func(context.Context, *client.Client) (struct{}, error) {
-			return struct{}{}, errors.New("canceled initiator must not run")
-		})
-		initiatorDone <- err
-	}()
-	<-ensureStarted
+		initiatorCtx, cancelInitiator := context.WithCancel(t.Context())
+		initiatorDone := make(chan error, 1)
+		go func() {
+			_, err := daemonRead(initiatorCtx, lease, func(context.Context, *client.Client) (struct{}, error) {
+				return struct{}{}, errors.New("canceled initiator must not run")
+			})
+			initiatorDone <- err
+		}()
+		<-ensureStarted
 
-	waiterDone := make(chan error, 1)
-	go func() {
-		got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (*client.Client, error) {
-			return c, nil
-		})
-		if err == nil && got != current {
-			err = errors.New("healthy waiter received the wrong client")
-		}
-		waiterDone <- err
-	}()
-	cancelInitiator()
-
-	select {
-	case err := <-initiatorDone:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("canceled acquisition initiator did not return promptly")
-	}
-	releaseOnce.Do(func() { close(releaseEnsure) })
-	require.NoError(t, <-waiterDone)
-	assert.Equal(t, int32(1), ensures.Load(), "waiters must share one acquisition")
+		waiterDone := make(chan error, 1)
+		go func() {
+			got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (*client.Client, error) {
+				return c, nil
+			})
+			if err == nil && got != current {
+				err = errors.New("healthy waiter received the wrong client")
+			}
+			waiterDone <- err
+		}()
+		cancelInitiator()
+		synctest.Wait()
+		require.ErrorIs(t, <-initiatorDone, context.Canceled)
+		releaseOnce.Do(func() { close(releaseEnsure) })
+		synctest.Wait()
+		require.NoError(t, <-waiterDone)
+		assert.Equal(t, int32(1), ensures.Load(), "waiters must share one acquisition")
+	})
 }
 
 func TestDaemonLeaseAcquisitionUsesBoundedLeaseContext(t *testing.T) {
-	const timeout = 25 * time.Millisecond
-	var ensures atomic.Int32
-	lease := newDaemonLeaseWithAcquisitionContext(
-		func(ctx context.Context) (*client.Client, error) {
-			ensures.Add(1)
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
-		func(*client.Client) error { return nil },
-		func() (context.Context, context.CancelFunc) {
-			return context.WithTimeout(context.Background(), timeout)
-		},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		const timeout = 25 * time.Millisecond
+		var ensures atomic.Int32
+		lease := newDaemonLeaseWithAcquisitionContext(
+			func(ctx context.Context) (*client.Client, error) {
+				ensures.Add(1)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+			func(*client.Client) error { return nil },
+			func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), timeout)
+			},
+		)
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
-			return struct{}{}, errors.New("timed-out acquisition must not run the request")
-		})
-		done <- err
-	}()
-	select {
-	case err := <-done:
+		done := make(chan error, 1)
+		go func() {
+			_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+				return struct{}{}, errors.New("timed-out acquisition must not run the request")
+			})
+			done <- err
+		}()
+		time.Sleep(timeout)
+		synctest.Wait()
+		err := <-done
 		require.ErrorIs(t, err, errDaemonUnavailable)
 		assert.Equal(t, errDaemonUnavailable.Error(), err.Error())
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("daemon acquisition exceeded its lease-owned timeout")
-	}
-	assert.Equal(t, int32(1), ensures.Load())
+		assert.Equal(t, int32(1), ensures.Load())
+	})
 }
 
 func TestDaemonLeaseSharesAcquisitionFailure(t *testing.T) {

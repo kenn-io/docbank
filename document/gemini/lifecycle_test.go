@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1156,102 +1157,104 @@ func TestEmbedCancellationStopsBlockedReadUploadAndPolling(t *testing.T) {
 	data := geminiTinyPNG(t)
 
 	t.Run("blocked source read", func(t *testing.T) {
-		profile := geminiDirectTestProfile(t, TransportInline)
-		record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
-		source := newGeminiLifecycleUpload(data, record)
-		source.blockRead = true
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		result := make(chan error, 1)
-		client := newGeminiTestClient(t, profile, &countingSecrets{value: "synthetic-key"}, roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("request must not run")
-		}))
-		go func() {
-			_, err := client.Embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
-			result <- err
-		}()
-		select {
-		case <-source.readStarted:
-		case <-time.After(time.Second):
-			t.Fatal("source read did not start")
-		}
-		cancel()
-		require.ErrorIs(t, <-result, context.Canceled)
-		assert.Equal(t, int32(1), source.closeCalls.Load())
+		synctest.Test(t, func(t *testing.T) {
+			profile := geminiDirectTestProfile(t, TransportInline)
+			record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
+			source := newGeminiLifecycleUpload(data, record)
+			source.blockRead = true
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			result := make(chan error, 1)
+			client := newGeminiTestClient(t, profile, &countingSecrets{value: "synthetic-key"}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("request must not run")
+			}))
+			go func() {
+				_, err := client.Embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
+				result <- err
+			}()
+			<-source.readStarted
+			cancel()
+			synctest.Wait()
+			require.ErrorIs(t, <-result, context.Canceled)
+			assert.Equal(t, int32(1), source.closeCalls.Load())
+		})
 	})
 
 	t.Run("blocked upload", func(t *testing.T) {
-		profile := geminiDirectTestProfile(t, TransportFilesAPI)
-		record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
-		source := newGeminiLifecycleUpload(data, record)
-		uploadStarted := make(chan struct{})
-		ctx, cancel := context.WithCancel(t.Context())
-		client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			if request.Header.Get("X-Goog-Upload-Command") == "start" {
-				response := geminiJSONResponse(request, `{}`)
-				response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
-				return response, nil
-			}
-			close(uploadStarted)
-			<-request.Context().Done()
-			return nil, request.Context().Err()
-		}))
-		result := make(chan error, 1)
-		go func() {
-			_, err := client.Embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
-			result <- err
-		}()
-		<-uploadStarted
-		cancel()
-		require.ErrorIs(t, <-result, context.Canceled)
-		assert.Equal(t, int32(1), source.closeCalls.Load())
-	})
-
-	t.Run("poll wait", func(t *testing.T) {
-		profile := geminiDirectTestProfile(t, TransportFilesAPI)
-		profile.PollInterval = maximumPoll
-		profile = rebindGeminiProfile(t, profile)
-		record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
-		source := newGeminiLifecycleUpload(data, record)
-		fileName := "files/file-123"
-		fileURI := origin + "/v1beta/" + fileName
-		processing := geminiFileJSON(record, fileName, fileURI, "PROCESSING", newGeminiFileTimeline())
-		pollSeen := make(chan struct{})
-		var pollOnce sync.Once
-		ctx, cancel := context.WithCancel(t.Context())
-		client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			switch request.Method {
-			case http.MethodPost:
+		synctest.Test(t, func(t *testing.T) {
+			profile := geminiDirectTestProfile(t, TransportFilesAPI)
+			record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
+			source := newGeminiLifecycleUpload(data, record)
+			uploadStarted := make(chan struct{})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				if request.Header.Get("X-Goog-Upload-Command") == "start" {
 					response := geminiJSONResponse(request, `{}`)
 					response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
 					return response, nil
 				}
-				response := geminiJSONResponse(request, `{"file":`+processing+`}`)
-				response.Header.Set("X-Goog-Upload-Status", "final")
-				return response, nil
-			case http.MethodGet:
-				pollOnce.Do(func() { close(pollSeen) })
-				return geminiJSONResponse(request, processing), nil
-			case http.MethodDelete:
-				return geminiJSONResponse(request, `{}`), nil
-			default:
-				return nil, errors.New("unexpected request")
-			}
-		}))
-		result := make(chan error, 1)
-		go func() {
-			_, err := client.Embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
-			result <- err
-		}()
-		<-pollSeen
-		cancel()
-		select {
-		case err := <-result:
-			require.ErrorIs(t, err, context.Canceled)
-		case <-time.After(time.Second):
-			t.Fatal("polling did not stop after cancellation")
-		}
+				close(uploadStarted)
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}))
+			result := make(chan error, 1)
+			go func() {
+				_, err := client.Embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
+				result <- err
+			}()
+			<-uploadStarted
+			cancel()
+			synctest.Wait()
+			require.ErrorIs(t, <-result, context.Canceled)
+			assert.Equal(t, int32(1), source.closeCalls.Load())
+		})
+	})
+
+	t.Run("poll wait", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			profile := geminiDirectTestProfile(t, TransportFilesAPI)
+			profile.PollInterval = maximumPoll
+			profile = rebindGeminiProfile(t, profile)
+			record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
+			source := newGeminiLifecycleUpload(data, record)
+			fileName := "files/file-123"
+			fileURI := origin + "/v1beta/" + fileName
+			processing := geminiFileJSON(record, fileName, fileURI, "PROCESSING", newGeminiFileTimeline())
+			pollSeen := make(chan struct{})
+			var pollOnce sync.Once
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				switch request.Method {
+				case http.MethodPost:
+					if request.Header.Get("X-Goog-Upload-Command") == "start" {
+						response := geminiJSONResponse(request, `{}`)
+						response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
+						return response, nil
+					}
+					response := geminiJSONResponse(request, `{"file":`+processing+`}`)
+					response.Header.Set("X-Goog-Upload-Status", "final")
+					return response, nil
+				case http.MethodGet:
+					pollOnce.Do(func() { close(pollSeen) })
+					return geminiJSONResponse(request, processing), nil
+				case http.MethodDelete:
+					return geminiJSONResponse(request, `{}`), nil
+				default:
+					return nil, errors.New("unexpected request")
+				}
+			}))
+			result := make(chan error, 1)
+			go func() {
+				_, err := client.Embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
+				result <- err
+			}()
+			<-pollSeen
+			cancel()
+			synctest.Wait()
+			require.ErrorIs(t, <-result, context.Canceled)
+		})
 	})
 }
 
@@ -1467,40 +1470,36 @@ func (upload *geminiLifecycleUpload) CapabilityProof() document.UploadCapability
 var _ document.AuthorizedUpload = (*geminiLifecycleUpload)(nil)
 
 func TestExecuteEmbeddingTimeoutInterruptsBlockedUpload(t *testing.T) {
-	data := geminiTinyPNG(t)
-	profile := geminiDirectTestProfile(t, TransportInline)
-	profile.RequestTimeout = 25 * time.Millisecond
-	profile = rebindGeminiProfile(t, profile)
-	source := newGeminiLifecycleUpload(data, geminiCapability(t, profile, data, "synthetic.png", "image/png"))
-	source.blockRead = true
-	secrets := &countingSecrets{value: "synthetic-key"}
-	client := newGeminiTestClient(t, profile, secrets, roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, errors.New("request must not run")
-	}))
-	result := make(chan error, 1)
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		_, err := document.ExecuteEmbedding(t.Context(), client, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
-		result <- err
-	}()
-	defer func() {
-		source.releaseOnce.Do(func() { close(source.released) })
-		<-finished
-	}()
-	select {
-	case <-source.readStarted:
-	case <-time.After(time.Second):
-		t.Fatal("upload read did not start")
-	}
-	select {
-	case err := <-result:
+	synctest.Test(t, func(t *testing.T) {
+		data := geminiTinyPNG(t)
+		profile := geminiDirectTestProfile(t, TransportInline)
+		profile.RequestTimeout = 25 * time.Millisecond
+		profile = rebindGeminiProfile(t, profile)
+		source := newGeminiLifecycleUpload(data, geminiCapability(t, profile, data, "synthetic.png", "image/png"))
+		source.blockRead = true
+		secrets := &countingSecrets{value: "synthetic-key"}
+		client := newGeminiTestClient(t, profile, secrets, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("request must not run")
+		}))
+		result := make(chan error, 1)
+		finished := make(chan struct{})
+		t.Cleanup(func() {
+			source.releaseOnce.Do(func() { close(source.released) })
+			<-finished
+		})
+		go func() {
+			defer close(finished)
+			_, err := document.ExecuteEmbedding(t.Context(), client, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))))
+			result <- err
+		}()
+		<-source.readStarted
+		time.Sleep(profile.RequestTimeout)
+		synctest.Wait()
+		err := <-result
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-	case <-time.After(time.Second):
-		t.Fatal("adapter timeout did not interrupt the sealed upload")
-	}
-	assert.Equal(t, int32(1), source.closeCalls.Load())
-	assert.Zero(t, secrets.calls.Load())
+		assert.Equal(t, int32(1), source.closeCalls.Load())
+		assert.Zero(t, secrets.calls.Load())
+	})
 }
 
 func TestExecuteEmbeddingRejectsMissingOrMismatchedLocalProof(t *testing.T) {

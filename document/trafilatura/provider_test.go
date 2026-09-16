@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -255,10 +256,12 @@ func TestProviderEnforcesTimeoutCancellationAndExpiry(t *testing.T) {
 	t.Run("expired after child", func(t *testing.T) {
 		provider := newTestProvider(t, helperExecutable(t, "slow-complete"), time.Second, 1<<20)
 		upload := newTestUpload(testHTML, "article.html", "text/html")
-		authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
-		authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
-		_, err := provider.Render(t.Context(), upload, authorization)
-		assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
+		synctest.Test(t, func(t *testing.T) {
+			authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
+			authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
+			_, err := provider.Render(t.Context(), upload, authorization)
+			assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
+		})
 	})
 }
 
@@ -270,25 +273,31 @@ func TestProviderCancellationClosesBlockedAuthorizedUploadBeforeStartingRunner(t
 	provider, err := New(profile)
 	require.NoError(t, err)
 	base := newTestUpload(testHTML, "article.html", "text/html")
-	upload := &blockingUpload{metadata: base.metadata, started: make(chan struct{}), closed: make(chan struct{})}
-	ctx, cancel := context.WithCancel(t.Context())
-	result := make(chan error, 1)
-	go func() {
-		_, renderErr := provider.Render(ctx, upload,
-			testAuthorization(provider.Descriptor(), upload.Metadata()))
-		result <- renderErr
-	}()
-	<-upload.started
-	cancel()
-
-	select {
-	case err := <-result:
+	synctest.Test(t, func(t *testing.T) {
+		upload := &blockingUpload{metadata: base.metadata, started: make(chan struct{}), closed: make(chan struct{})}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		finished := make(chan struct{})
+		t.Cleanup(func() {
+			cancel()
+			_ = upload.Close()
+			<-finished
+		})
+		go func() {
+			defer close(finished)
+			_, renderErr := provider.Render(ctx, upload,
+				testAuthorization(provider.Descriptor(), upload.Metadata()))
+			result <- renderErr
+		}()
+		<-upload.started
+		cancel()
+		synctest.Wait()
+		err := <-result
 		assertProviderCode(t, err, document.RenditionErrorCanceled)
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("render remained blocked in the authorized upload read after cancellation")
-	}
-	assert.Nil(t, runner.request)
+		synctest.Wait()
+		assert.Nil(t, runner.request)
+	})
 }
 
 func TestNewPinsExecutableRuntimeIdentityAndBounds(t *testing.T) {

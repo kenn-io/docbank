@@ -1196,32 +1196,36 @@ func TestClientRechecksLifecycleAfterResponseBodiesAndBeforeReturn(t *testing.T)
 	})
 
 	t.Run("wall timeout after complete body", func(t *testing.T) {
-		fixture := newFixture(t, []byte("%PDF-1.7\nbody timeout\n%%EOF\n"))
-		fixture.profile.MaxWallTime = 20 * time.Millisecond
-		transport := resultBodyTransport(t, resultBody, func(request *http.Request) io.ReadCloser {
-			return &callbackReadCloser{reader: strings.NewReader(resultBody), before: func() { time.Sleep(40 * time.Millisecond) }}
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\nbody timeout\n%%EOF\n"))
+			fixture.profile.MaxWallTime = 20 * time.Millisecond
+			transport := resultBodyTransport(t, resultBody, func(request *http.Request) io.ReadCloser {
+				return &callbackReadCloser{reader: strings.NewReader(resultBody), before: func() { time.Sleep(40 * time.Millisecond) }}
+			})
+
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+
+			assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 		})
-
-		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
-
-		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 	})
 
 	t.Run("authorization expiry after complete body", func(t *testing.T) {
-		fixture := newFixture(t, []byte("%PDF-1.7\nbody expiry\n%%EOF\n"))
-		expiresAt := time.Now().UTC().Add(20 * time.Millisecond)
-		fixture.authorization.ExpiresAt = expiresAt.Format(timeForm)
-		transport := resultBodyTransport(t, resultBody, func(request *http.Request) io.ReadCloser {
-			return &callbackReadCloser{reader: strings.NewReader(resultBody), before: func() {
-				time.Sleep(time.Until(expiresAt) + 10*time.Millisecond)
-			}}
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\nbody expiry\n%%EOF\n"))
+			expiresAt := time.Now().UTC().Add(20 * time.Millisecond)
+			fixture.authorization.ExpiresAt = expiresAt.Format(timeForm)
+			transport := resultBodyTransport(t, resultBody, func(request *http.Request) io.ReadCloser {
+				return &callbackReadCloser{reader: strings.NewReader(resultBody), before: func() {
+					time.Sleep(time.Until(expiresAt) + 10*time.Millisecond)
+				}}
+			})
+
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+
+			assert.ErrorIs(t, err, document.ErrRenditionAuthorizationExpired)
 		})
-
-		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
-
-		assert.ErrorIs(t, err, document.ErrRenditionAuthorizationExpired)
 	})
 
 	t.Run("caller cancellation at final acceptance", func(t *testing.T) {

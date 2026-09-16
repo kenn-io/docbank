@@ -83,6 +83,20 @@ replaying them. Keep work, ordering, blockers, and acceptance state outside
 the design documentation; these pages carry resulting capability and durable
 rationale.
 
+### Timing checks
+
+Run `go run -tags fts5 ./scripts/check-timing-budgets .` to scan Go test files
+for package-qualified `Eventually`, `EventuallyWithT`, and `Never` calls with
+literal completion budgets below one second. Named expressions remain outside
+the check. The checker leaves the source unchanged.
+
+Use `testing/synctest` for channels, callbacks, timers, goroutines, and readers
+owned by a test. Keep waits for provider HTTP, managed commands, daemons,
+sockets, files, OS locks, SQLite, blob stores, process-global state, and held
+mutexes on the real clock. The checker has one finite allowance for the backup
+freeze observation in `vault_external_test.go`; it does not make that test
+bubble-safe.
+
 ## Verification contract
 
 Repository commands are defined in `AGENTS.md` and the Makefile. The important

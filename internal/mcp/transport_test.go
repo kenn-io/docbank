@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -130,87 +131,87 @@ type blockingTestParams struct{ sdkmcp.ParamsBase }
 type blockingTestResult struct{ sdkmcp.ResultBase }
 
 func TestStdioCancelledNotificationCancelsTheMatchingCall(t *testing.T) {
-	server := newTestServer()
-	started := make(chan struct{})
-	cancelled := make(chan struct{})
-	require.NoError(t, sdkmcp.AddReceivingCustomMethod(server.sdk, "synthetic/block",
-		func(ctx context.Context, _ *sdkmcp.ServerSession, _ *blockingTestParams) (*blockingTestResult, error) {
-			close(started)
-			<-ctx.Done()
-			close(cancelled)
-			return nil, ctx.Err()
-		}))
-	input, clientWriter := io.Pipe()
-	clientReader, output := io.Pipe()
-	done := make(chan error, 1)
-	go func() {
-		done <- ServeStdio(t.Context(), server, input, output, slog.New(slog.DiscardHandler))
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		server := newTestServer()
+		started := make(chan struct{})
+		cancelled := make(chan struct{})
+		require.NoError(t, sdkmcp.AddReceivingCustomMethod(server.sdk, "synthetic/block",
+			func(ctx context.Context, _ *sdkmcp.ServerSession, _ *blockingTestParams) (*blockingTestResult, error) {
+				close(started)
+				<-ctx.Done()
+				close(cancelled)
+				return nil, ctx.Err()
+			}))
+		input, clientWriter := io.Pipe()
+		clientReader, output := io.Pipe()
+		done := make(chan error, 1)
+		t.Cleanup(func() {
+			_ = clientWriter.Close()
+			_ = clientReader.Close()
+			_ = input.Close()
+			_ = output.Close()
+		})
+		go func() {
+			done <- ServeStdio(t.Context(), server, input, output, slog.New(slog.DiscardHandler))
+		}()
 
-	writeStdioJSON(t, clientWriter, map[string]any{
-		"jsonrpc": "2.0", "id": 73, "method": "synthetic/block",
-		"params": map[string]any{"_meta": testRequestMeta()},
+		writeStdioJSON(t, clientWriter, map[string]any{
+			"jsonrpc": "2.0", "id": 73, "method": "synthetic/block",
+			"params": map[string]any{"_meta": testRequestMeta()},
+		})
+		<-started
+		writeStdioJSON(t, clientWriter, map[string]any{
+			"jsonrpc": "2.0", "method": "notifications/cancelled",
+			"params": map[string]any{"requestId": 73, "reason": "caller stopped", "_meta": testRequestMeta()},
+		})
+		synctest.Wait()
+		<-cancelled
+		_, err := bufio.NewReader(clientReader).ReadBytes('\n')
+		require.NoError(t, err)
+		require.NoError(t, clientWriter.Close())
+		require.NoError(t, <-done)
+		require.NoError(t, clientReader.Close())
+		require.NoError(t, output.Close())
 	})
-	<-started
-	writeStdioJSON(t, clientWriter, map[string]any{
-		"jsonrpc": "2.0", "method": "notifications/cancelled",
-		"params": map[string]any{"requestId": 73, "reason": "caller stopped", "_meta": testRequestMeta()},
-	})
-	select {
-	case <-cancelled:
-	case <-time.After(time.Second):
-		t.Fatal("notifications/cancelled did not cancel the matching stdio call")
-	}
-	_, err := bufio.NewReader(clientReader).ReadBytes('\n')
-	require.NoError(t, err)
-	require.NoError(t, clientWriter.Close())
-	require.NoError(t, <-done)
-	require.NoError(t, clientReader.Close())
-	require.NoError(t, output.Close())
 }
 
 func TestStdioCancellationClosesBlockedIO(t *testing.T) {
+	discoverJSON := fixture(t, "discover.json")
 	for _, phase := range []string{"incomplete input", "blocked output"} {
 		t.Run(phase, func(t *testing.T) {
-			input, clientWriter := io.Pipe()
-			clientReader, output := io.Pipe()
-			ctx, cancel := context.WithCancel(t.Context())
-			done := make(chan error, 1)
-			t.Cleanup(func() {
+			synctest.Test(t, func(t *testing.T) {
+				input, clientWriter := io.Pipe()
+				clientReader, output := io.Pipe()
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				t.Cleanup(func() {
+					cancel()
+					_ = clientWriter.Close()
+					_ = clientReader.Close()
+					_ = input.Close()
+					_ = output.Close()
+				})
+				go func() { done <- ServeStdio(ctx, newTestServer(), input, output, nil) }()
+				if phase == "incomplete input" {
+					_, err := clientWriter.Write([]byte(`{"jsonrpc":`))
+					require.NoError(t, err)
+				} else {
+					var request map[string]any
+					require.NoError(t, json.Unmarshal(discoverJSON, &request))
+					writeStdioJSON(t, clientWriter, request)
+					_, err := clientReader.Read(make([]byte, 1))
+					require.NoError(t, err, "the response write must start before cancellation")
+				}
 				cancel()
-				_ = clientWriter.Close()
-				_ = clientReader.Close()
-				_ = input.Close()
-				_ = output.Close()
+				synctest.Wait()
+				require.ErrorIs(t, <-done, context.Canceled)
+				_, err := clientWriter.Write([]byte("x"))
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+				readDone := make(chan error, 1)
+				go func() { _, err := clientReader.Read(make([]byte, 1)); readDone <- err }()
+				synctest.Wait()
+				require.ErrorIs(t, <-readDone, io.EOF)
 			})
-			go func() { done <- ServeStdio(ctx, newTestServer(), input, output, nil) }()
-			if phase == "incomplete input" {
-				_, err := clientWriter.Write([]byte(`{"jsonrpc":`))
-				require.NoError(t, err)
-			} else {
-				var request map[string]any
-				require.NoError(t, json.Unmarshal(fixture(t, "discover.json"), &request))
-				writeStdioJSON(t, clientWriter, request)
-				_, err := clientReader.Read(make([]byte, 1))
-				require.NoError(t, err, "the response write must start before cancellation")
-			}
-			cancel()
-			select {
-			case err := <-done:
-				require.ErrorIs(t, err, context.Canceled)
-			case <-time.After(time.Second):
-				t.Fatal("cancellation did not stop the stdio connection")
-			}
-			_, err := clientWriter.Write([]byte("x"))
-			require.ErrorIs(t, err, io.ErrClosedPipe)
-			readDone := make(chan error, 1)
-			go func() { _, err := clientReader.Read(make([]byte, 1)); readDone <- err }()
-			select {
-			case err := <-readDone:
-				require.ErrorIs(t, err, io.EOF)
-			case <-time.After(time.Second):
-				t.Fatal("shutdown did not close stdio output")
-			}
 		})
 	}
 }
@@ -631,27 +632,27 @@ func TestHTTPTransportSocketDeadlinesInterruptSlowIOAndReleaseActivity(t *testin
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			handler, err := wrapHTTPTransport(test.inner, HTTPOptions{BearerToken: testMCPBearer,
-				limits: httpLimits{MaxConcurrentRequests: 1,
-					MaxResponseBytes: 64, RequestTimeout: 20 * time.Millisecond}})
-			require.NoError(t, err)
-			writer := newDeadlineResponseWriter(test.name == "slow response reader")
-			done := make(chan struct{})
-			go func() {
-				handler.ServeHTTP(writer, test.newRequest(writer))
-				close(done)
-			}()
-			select {
-			case <-done:
-			case <-time.After(time.Second):
-				t.Fatal("socket deadline did not interrupt blocked I/O")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				handler, err := wrapHTTPTransport(test.inner, HTTPOptions{BearerToken: testMCPBearer,
+					limits: httpLimits{MaxConcurrentRequests: 1,
+						MaxResponseBytes: 64, RequestTimeout: 20 * time.Millisecond}})
+				require.NoError(t, err)
+				writer := newDeadlineResponseWriter(test.name == "slow response reader")
+				done := make(chan struct{})
+				go func() {
+					handler.ServeHTTP(writer, test.newRequest(writer))
+					close(done)
+				}()
+				time.Sleep(20 * time.Millisecond)
+				synctest.Wait()
+				<-done
 
-			// The timed-out request must no longer hold either semaphore.
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
-			assert.NotEqual(t, http.StatusTooManyRequests, response.Code)
-			assert.True(t, writer.readDeadlineSet || writer.writeDeadlineSet)
+				// The timed-out request must no longer hold either semaphore.
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, authenticatedRequest("127.0.0.1:41001"))
+				assert.NotEqual(t, http.StatusTooManyRequests, response.Code)
+				assert.True(t, writer.readDeadlineSet || writer.writeDeadlineSet)
+			})
 		})
 	}
 }
@@ -769,40 +770,39 @@ func TestHTTPStartupFailsClosedWhenDaemonCannotBeEstablished(t *testing.T) {
 }
 
 func TestHTTPDisconnectPropagatesCancellationIntoSDKHandler(t *testing.T) {
-	server := newTestServer()
-	started := make(chan struct{})
-	cancelled := make(chan struct{})
-	require.NoError(t, sdkmcp.AddReceivingCustomMethod(server.sdk, "synthetic/block",
-		func(ctx context.Context, _ *sdkmcp.ServerSession, _ *blockingTestParams) (*blockingTestResult, error) {
-			close(started)
-			<-ctx.Done()
-			close(cancelled)
-			return nil, ctx.Err()
-		}))
-	handler, err := server.HTTPTransportHandler(HTTPOptions{BearerToken: testMCPBearer})
-	require.NoError(t, err)
-	body, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0", "id": 91, "method": "synthetic/block",
-		"params": map[string]any{"_meta": testRequestMeta()},
+	synctest.Test(t, func(t *testing.T) {
+		server := newTestServer()
+		started := make(chan struct{})
+		cancelled := make(chan struct{})
+		require.NoError(t, sdkmcp.AddReceivingCustomMethod(server.sdk, "synthetic/block",
+			func(ctx context.Context, _ *sdkmcp.ServerSession, _ *blockingTestParams) (*blockingTestResult, error) {
+				close(started)
+				<-ctx.Done()
+				close(cancelled)
+				return nil, ctx.Err()
+			}))
+		handler, err := server.HTTPTransportHandler(HTTPOptions{BearerToken: testMCPBearer})
+		require.NoError(t, err)
+		body, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 91, "method": "synthetic/block",
+			"params": map[string]any{"_meta": testRequestMeta()},
+		})
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(body)).WithContext(ctx)
+		request.Header = protocolHeaders("synthetic/block", "")
+		request.Header.Set("Authorization", "Bearer "+testMCPBearer)
+		done := make(chan struct{})
+		go func() {
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+			close(done)
+		}()
+		<-started
+		cancel()
+		synctest.Wait()
+		<-cancelled
+		<-done
 	})
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(body)).WithContext(ctx)
-	request.Header = protocolHeaders("synthetic/block", "")
-	request.Header.Set("Authorization", "Bearer "+testMCPBearer)
-	done := make(chan struct{})
-	go func() {
-		handler.ServeHTTP(httptest.NewRecorder(), request)
-		close(done)
-	}()
-	<-started
-	cancel()
-	select {
-	case <-cancelled:
-	case <-time.After(time.Second):
-		t.Fatal("closing the HTTP request did not cancel the SDK handler")
-	}
-	<-done
 }
 
 func newHTTPDiscoverRequest(t *testing.T) *http.Request {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -19,30 +20,35 @@ import (
 )
 
 func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
-	g := NewOperationGate()
-	freezer := &gateFreezer{gate: g}
-	require.NoError(t, freezer.Begin(t.Context()))
+	synctest.Test(t, func(t *testing.T) {
+		g := NewOperationGate()
+		freezer := &gateFreezer{gate: g}
+		require.NoError(t, freezer.Begin(t.Context()))
+		t.Cleanup(func() { _ = freezer.End(context.Background()) })
 
-	mutated := make(chan struct{})
-	go func() {
-		_ = g.mutate(func() error {
-			close(mutated)
-			return nil
-		})
-	}()
-	select {
-	case <-mutated:
-		t.Fatal("mutation passed while backup freeze was held")
-	case <-time.After(50 * time.Millisecond):
-	}
+		mutated := make(chan struct{})
+		go func() {
+			_ = g.mutate(func() error {
+				close(mutated)
+				return nil
+			})
+		}()
+		synctest.Wait()
+		select {
+		case <-mutated:
+			t.Fatal("mutation passed while backup freeze was held")
+		default:
+		}
 
-	require.NoError(t, freezer.End(context.Background()))
-	select {
-	case <-mutated:
-	case <-time.After(time.Second):
-		t.Fatal("mutation remained blocked after backup freeze ended")
-	}
-	require.Error(t, freezer.End(context.Background()))
+		require.NoError(t, freezer.End(context.Background()))
+		synctest.Wait()
+		select {
+		case <-mutated:
+		default:
+			t.Fatal("mutation remained blocked after backup freeze ended")
+		}
+		require.Error(t, freezer.End(context.Background()))
+	})
 }
 
 func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
@@ -83,90 +89,102 @@ func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
 }
 
 func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
-	g := NewOperationGate()
-	captureEntered := make(chan struct{})
-	releaseCapture := make(chan struct{})
-	var releaseOnce sync.Once
-	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
-	captureDone := make(chan error, 1)
-	go func() {
-		captureDone <- g.capture(func() error {
-			close(captureEntered)
-			<-releaseCapture
+	synctest.Test(t, func(t *testing.T) {
+		g := NewOperationGate()
+		captureEntered := make(chan struct{})
+		releaseCapture := make(chan struct{})
+		var releaseOnce sync.Once
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
+		captureDone := make(chan error, 1)
+		go func() {
+			captureDone <- g.capture(func() error {
+				close(captureEntered)
+				<-releaseCapture
+				return nil
+			})
+		}()
+		<-captureEntered
+
+		maintenanceDone := make(chan error, 1)
+		go func() {
+			maintenanceDone <- g.maintain(func() error { return nil })
+		}()
+		synctest.Wait()
+		g.admission.RLock()
+		maintenanceQueued := g.maintenance == 1
+		g.admission.RUnlock()
+		assert.True(t, maintenanceQueued)
+
+		err := g.mutate(func() error {
+			t.Fatal("route mutation ran while maintenance was queued")
 			return nil
 		})
-	}()
-	<-captureEntered
+		var apiErr *Error
+		require.ErrorAs(t, err, &apiErr)
+		assert.Equal(t, "maintenance_busy", apiErr.Code)
 
-	maintenanceDone := make(chan error, 1)
-	go func() {
-		maintenanceDone <- g.maintain(func() error { return nil })
-	}()
-	require.Eventually(t, func() bool {
-		g.admission.RLock()
-		defer g.admission.RUnlock()
-		return g.maintenance == 1
-	}, time.Second, time.Millisecond)
-
-	err := g.mutate(func() error {
-		t.Fatal("route mutation ran while maintenance was queued")
-		return nil
+		releaseOnce.Do(func() { close(releaseCapture) })
+		synctest.Wait()
+		require.NoError(t, <-captureDone)
+		require.NoError(t, <-maintenanceDone)
 	})
-	var apiErr *Error
-	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, "maintenance_busy", apiErr.Code)
-
-	releaseOnce.Do(func() { close(releaseCapture) })
-	require.NoError(t, <-captureDone)
-	require.NoError(t, <-maintenanceDone)
 }
 
 func TestDaemonLogicalMutationDoesNotFailCloseRouteMutations(t *testing.T) {
-	g := NewOperationGate()
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	done := make(chan error, 1)
-	go func() { done <- g.MutateContext(t.Context(), func() error { close(entered); <-release; return nil }) }()
-	<-entered
-	reached := false
-	require.NoError(t, g.mutate(func() error { reached = true; return nil }))
-	assert.True(t, reached)
-	close(release)
-	require.NoError(t, <-done)
+	synctest.Test(t, func(t *testing.T) {
+		g := NewOperationGate()
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		done := make(chan error, 1)
+		go func() { done <- g.MutateContext(t.Context(), func() error { close(entered); <-release; return nil }) }()
+		<-entered
+		reached := false
+		require.NoError(t, g.mutate(func() error { reached = true; return nil }))
+		assert.True(t, reached)
+		close(release)
+		synctest.Wait()
+		require.NoError(t, <-done)
+	})
 }
 
 func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
-	g := NewOperationGate()
-	captureEntered := make(chan struct{})
-	releaseCapture := make(chan struct{})
-	go func() {
-		_ = g.capture(func() error {
-			close(captureEntered)
-			<-releaseCapture
-			return nil
-		})
-	}()
-	<-captureEntered
-	t.Cleanup(func() { close(releaseCapture) })
+	synctest.Test(t, func(t *testing.T) {
+		g := NewOperationGate()
+		captureEntered := make(chan struct{})
+		releaseCapture := make(chan struct{})
+		var releaseOnce sync.Once
+		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
+		go func() {
+			_ = g.capture(func() error {
+				close(captureEntered)
+				<-releaseCapture
+				return nil
+			})
+		}()
+		<-captureEntered
 
-	ctx, cancel := context.WithCancel(t.Context())
-	maintenanceDone := make(chan error, 1)
-	go func() {
-		maintenanceDone <- g.maintainContext(ctx, func() error {
-			t.Error("canceled maintenance entered")
-			return nil
-		})
-	}()
-	require.Eventually(t, func() bool {
+		ctx, cancel := context.WithCancel(t.Context())
+		maintenanceDone := make(chan error, 1)
+		go func() {
+			maintenanceDone <- g.maintainContext(ctx, func() error {
+				t.Error("canceled maintenance entered")
+				return nil
+			})
+		}()
+		synctest.Wait()
 		g.admission.RLock()
-		defer g.admission.RUnlock()
-		return g.maintenance == 1
-	}, time.Second, time.Millisecond)
+		maintenanceQueued := g.maintenance == 1
+		g.admission.RUnlock()
+		assert.True(t, maintenanceQueued)
 
-	cancel()
-	require.ErrorIs(t, <-maintenanceDone, context.Canceled)
-	require.NoError(t, g.mutate(func() error { return nil }),
-		"canceled maintenance must stop rejecting mutations before backup completes")
+		cancel()
+		synctest.Wait()
+		require.ErrorIs(t, <-maintenanceDone, context.Canceled)
+		require.NoError(t, g.mutate(func() error { return nil }),
+			"canceled maintenance must stop rejecting mutations before backup completes")
+		releaseOnce.Do(func() { close(releaseCapture) })
+		synctest.Wait()
+	})
 }
 
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {

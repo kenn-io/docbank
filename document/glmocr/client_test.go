@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -247,27 +248,26 @@ func TestClientClassifiesBoundedAndMalformedResponses(t *testing.T) {
 }
 
 func TestClientCancellationClosesBlockedSource(t *testing.T) {
-	reader := &blockingReadCloser{entered: make(chan struct{}), closed: make(chan struct{})}
-	digest := sha256.Sum256(make([]byte, 512))
-	source, err := ocr.NewSource(reader, "image/png", 512, hex.EncodeToString(digest[:]))
-	require.NoError(t, err)
-	client := newTestClient(t, "http://127.0.0.1:30004/glmocr/parse", 1<<20, 1)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, processErr := client.Process(ctx, source)
-		done <- processErr
-	}()
-	<-reader.entered
-	cancel()
-	select {
-	case err := <-done:
+	synctest.Test(t, func(t *testing.T) {
+		reader := &blockingReadCloser{entered: make(chan struct{}), closed: make(chan struct{})}
+		digest := sha256.Sum256(make([]byte, 512))
+		source, err := ocr.NewSource(reader, "image/png", 512, hex.EncodeToString(digest[:]))
+		require.NoError(t, err)
+		client := newTestClient(t, "http://127.0.0.1:30004/glmocr/parse", 1<<20, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			_, processErr := client.Process(ctx, source)
+			done <- processErr
+		}()
+		<-reader.entered
+		cancel()
+		synctest.Wait()
+		err = <-done
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Empty(t, ocr.ErrorKindOf(err))
-	case <-time.After(time.Second):
-		t.Fatal("Process did not interrupt the blocked source read")
-	}
-	assert.Equal(t, int32(1), reader.closeCalls.Load())
+		assert.Equal(t, int32(1), reader.closeCalls.Load())
+	})
 }
 
 func TestClientPropagatesHTTPRequestCancellation(t *testing.T) {
