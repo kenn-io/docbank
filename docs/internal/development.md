@@ -67,6 +67,16 @@ concurrent starters, PID reuse, graceful stop, idle timeout, and both Windows
 architectures. Keep status/stop discovery permissive and all starter paths
 convergent.
 
+### Add a configured provider adapter
+
+Keep portable profile identity and deployment-local runtime inputs separate.
+Validate every runtime field in `internal/config`, construct the provider in
+`cmd/docbank`, and register it by descriptor fingerprint with the existing
+processing worker. Reuse one provider only when all effective endpoint,
+transport, credential, and adapter inputs match. Add a typed plan disclosure,
+an authenticated daemon test with synthetic provider responses, and focused
+tests for missing credentials, consent, retries, and restored work.
+
 ## Design and documentation updates
 
 For every material design change:

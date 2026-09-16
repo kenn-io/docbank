@@ -288,6 +288,41 @@ identity are preserved in portable metadata. The watcher does not pack content
 itself. Configure `[storage] pack_interval` when accumulated loose content
 should be packed automatically; GC and repack remain explicit.
 
+### Supplied audio transcription
+
+The daemon can transcribe supplied WAV and MP3 files through a configured
+Docling Serve deployment. The profile's descriptor, artifact policy, filename
+disclosure, and trust boundary remain portable; the endpoint, transport
+policy, and secret binding remain local to the daemon.
+
+Use `adapter_contract = "docbank-docling-asr/v1"` and set
+`credential_binding = "credential:<name>"` on the rendition profile. Its
+`runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
+`poll_interval`, `max_poll_attempts`, `allowed_cidrs`, `proxy_mode`, and the
+transport timeout fields. `spki_sha256` can pin the deployment certificate.
+The endpoint must be a root origin. `allowed_cidrs` must contain at least one
+network, and `proxy_mode` must be `"disabled"`. HTTP endpoints require the
+`operator_network` trust boundary. Redirects are not followed.
+
+The transcript character limit comes from `max_document_chars` on the
+processing profiles that select this rendition. Those profiles must agree. A
+runtime with no selecting profile remains staged and isn't executable.
+
+The daemon reads the credential from the named environment binding when the
+adapter sends a provider request. A missing secret fails that processing
+attempt but leaves supplied-media retention, plaintext processing, and the
+built-in supplied-transcript path available. Restart the daemon after changing
+the endpoint, transport policy, or environment binding.
+
+| Runtime field | Meaning |
+| --- | --- |
+| `endpoint` | Absolute root Docling Serve origin. |
+| `request_timeout`, `total_timeout` | Per-request and complete operation limits, each positive and at most 24 hours. |
+| `poll_interval`, `max_poll_attempts` | Delay and count bounds for polling. The interval cannot exceed `total_timeout`, and attempts range from 1 to 10,000. |
+| `allowed_cidrs`, `proxy_mode` | Non-empty DNS address allowlist and `proxy_mode = "disabled"`. |
+| `spki_sha256` | Optional lowercase SHA-256 SPKI pins for the provider certificate. |
+| `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Positive transport limits, each at most five minutes. |
+
 ### Embedding workers and credentials
 
 The daemon runs retained embedding jobs for its configured OpenAI-compatible

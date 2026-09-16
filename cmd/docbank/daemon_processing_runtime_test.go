@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/client"
@@ -35,6 +37,142 @@ func TestExecutableProcessingProfilesRegistersPlaintextRendition(t *testing.T) {
 	require.NotNil(t, profiles["private-text"].RenditionProvider)
 	assert.Equal(t, descriptor, profiles["private-text"].RenditionProvider.Descriptor())
 	assert.Empty(t, profiles["private-text"].EmbeddingProviders)
+}
+
+func TestExecutableProcessingProfilesRegistersDoclingASR(t *testing.T) {
+	cfg, descriptor := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+	require.NoError(t, cfg.Validate())
+
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	profile, ok := profiles["asr"]
+	require.True(t, ok)
+	require.NotNil(t, profile.RenditionProvider)
+	assert.Equal(t, descriptor, profile.RenditionProvider.Descriptor())
+	assert.Equal(t, config.DoclingASRAdapterContract, profile.RenditionDisclosure.ImmediateProcessor)
+	assert.Equal(t, descriptor.ID, profile.RenditionDisclosure.UltimateProcessor)
+	assert.Equal(t, "http://127.0.0.1:5001", profile.RenditionDisclosure.Endpoint)
+	assert.Equal(t, strings.Repeat("2", 64), profile.RenditionDisclosure.Deployment)
+	assert.Empty(t, profile.RenditionDisclosure.Model)
+	assert.Empty(t, profile.RenditionDisclosure.ModelRevision)
+}
+
+func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
+	t.Run("descriptor drift", func(t *testing.T) {
+		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		profile := cfg.RenditionProfiles["asr"]
+		profile.DescriptorFingerprint = strings.Repeat("0", 64)
+		cfg.RenditionProfiles["asr"] = profile
+		require.NoError(t, cfg.Validate())
+
+		_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+		require.ErrorContains(t, err, "descriptor differs from portable binding")
+	})
+
+	t.Run("identical settings share provider", func(t *testing.T) {
+		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		cfg.RenditionProfiles["alternate"] = cfg.RenditionProfiles["asr"]
+		alternateProfile := cfg.RenditionProfiles["alternate"]
+		alternateProfile.DeploymentFingerprint = strings.Repeat("a", 64)
+		cfg.RenditionProfiles["alternate"] = alternateProfile
+		cfg.ProcessingProfiles["alternate"] = cfg.ProcessingProfiles["asr"]
+		configured := cfg.ProcessingProfiles["alternate"]
+		configured.Rendition = "alternate"
+		cfg.ProcessingProfiles["alternate"] = configured
+		require.NoError(t, cfg.Validate())
+
+		profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+		require.NoError(t, err)
+		assert.Same(t, profiles["asr"].RenditionProvider, profiles["alternate"].RenditionProvider)
+		assert.Equal(t, strings.Repeat("a", 64), profiles["alternate"].RenditionDisclosure.Deployment)
+	})
+
+	t.Run("missing credential mapping", func(t *testing.T) {
+		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		cfg.CredentialBindings = nil
+
+		_, _, err := configureRenditionProviders(cfg)
+		require.ErrorContains(t, err, "credential binding is not configured")
+	})
+
+	t.Run("effective policy conflict", func(t *testing.T) {
+		cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+		cfg.RenditionProfiles["alternate"] = cfg.RenditionProfiles["asr"]
+		alternate := cfg.RenditionProfiles["alternate"]
+		alternate.Runtime = cloneRenditionRuntime(alternate.Runtime)
+		alternate.Runtime.Endpoint = "http://127.0.0.1:5002"
+		cfg.RenditionProfiles["alternate"] = alternate
+		cfg.ProcessingProfiles["alternate"] = cfg.ProcessingProfiles["asr"]
+		configured := cfg.ProcessingProfiles["alternate"]
+		configured.Rendition = "alternate"
+		cfg.ProcessingProfiles["alternate"] = configured
+		require.NoError(t, cfg.Validate())
+
+		_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+		require.ErrorContains(t, err, "conflicts with another profile's provider")
+	})
+}
+
+func TestExecutableProcessingProfilesAllowsUnselectedDoclingASRRuntime(t *testing.T) {
+	cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{}
+	require.NoError(t, cfg.Validate())
+
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	assert.Empty(t, profiles)
+}
+
+func cloneRenditionRuntime(runtime *config.RenditionRuntimeConfig) *config.RenditionRuntimeConfig {
+	cloned := *runtime
+	cloned.AllowedCIDRs = slices.Clone(runtime.AllowedCIDRs)
+	cloned.SPKISHA256 = slices.Clone(runtime.SPKISHA256)
+	return &cloned
+}
+
+func doclingASRProcessingConfig(t *testing.T, endpoint string) (config.Config, document.RenditionDescriptor) {
+	t.Helper()
+	const maxDocumentChars = 100_000
+	policyFingerprint, err := docling.ASRPolicyFingerprint(maxDocumentChars)
+	require.NoError(t, err)
+	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
+		PolicyFingerprint: policyFingerprint, TrustBoundary: document.RenditionTrustOperatorNetwork,
+		SupportedFormats: []document.RenditionFormatCapability{
+			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+		},
+		ReturnsStructured: true,
+		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
+	})
+	require.NoError(t, err)
+	cfg := config.Default()
+	cfg.CredentialBindings["docling"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_DOCLING_KEY"}
+	cfg.RenditionProfiles["asr"] = config.RenditionProfileConfig{
+		AdapterContract: config.DoclingASRAdapterContract, AuthorizationFingerprint: strings.Repeat("1", 64),
+		CredentialBinding: "credential:docling", DeploymentFingerprint: strings.Repeat("2", 64),
+		DescriptorID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
+		DisclosureFingerprint: strings.Repeat("3", 64), MaxDocumentBytes: 1 << 20,
+		MaxResponseBytes: 1 << 20, MaxUnits: 100,
+		RequestedArtifacts: []string{string(document.EvidenceArtifactTranscript)},
+		TrustBoundary:      string(document.RenditionTrustOperatorNetwork), UploadOptionsFingerprint: strings.Repeat("4", 64),
+		Runtime: &config.RenditionRuntimeConfig{
+			Endpoint: endpoint, RequestTimeout: config.Duration(time.Second), TotalTimeout: config.Duration(10 * time.Second),
+			PollInterval: config.Duration(time.Millisecond), MaxPollAttempts: 4,
+			AllowedCIDRs: []string{"127.0.0.0/8"}, ProxyMode: "disabled",
+			ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second),
+			TLSHandshakeTimeout: config.Duration(time.Second),
+		},
+	}
+	cfg.RetrievalProfiles["lexical"] = config.RetrievalProfileConfig{LexicalLimit: 20, VectorLimit: 20}
+	cfg.ProcessingProfiles["asr"] = config.ProcessingProfileConfig{
+		Rendition: "asr", Retrieval: "lexical", AttachmentPolicyFingerprint: strings.Repeat("5", 64),
+		CompletenessFingerprint: strings.Repeat("6", 64), ConsentFingerprint: strings.Repeat("7", 64),
+		LexicalSegmenterFingerprint: strings.Repeat("8", 64), MaxDocumentChars: maxDocumentChars,
+		MaxSegmentRunes: 2000, MaxUnitRunes: 100000, NormalizerFingerprint: strings.Repeat("9", 64),
+		RetainSanitizedMarkdown: true, RetainTypedArtifacts: true, SanitizerFingerprint: strings.Repeat("a", 64), TrustBoundary: "vault-primary",
+	}
+	return cfg, descriptor
 }
 
 func TestExecutableProcessingProfilesRejectsDriftedPlaintextDescriptor(t *testing.T) {

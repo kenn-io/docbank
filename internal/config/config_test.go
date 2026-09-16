@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 )
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -420,6 +421,169 @@ func TestEmbeddingRuntimeConfigIsExactBoundedAndPortable(t *testing.T) {
 			require.Error(t, changed.Validate())
 		})
 	}
+}
+
+func TestRenditionRuntimeConfigIsExactBoundedAndPortable(t *testing.T) {
+	cfg := validRenditionRuntimeConfig(t)
+	require.NoError(t, cfg.Validate())
+	portable, err := cfg.ProcessingProfile("archive")
+	require.NoError(t, err)
+
+	changed := cfg
+	changed.CredentialBindings = maps.Clone(cfg.CredentialBindings)
+	changed.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
+	profile := changed.RenditionProfiles["primary"]
+	profile.Runtime = cloneRenditionRuntime(profile.Runtime)
+	profile.Runtime.Endpoint = "https://another.example.invalid"
+	changed.RenditionProfiles["primary"] = profile
+	changed.CredentialBindings["ocr-primary"] = CredentialBindingConfig{EnvironmentVariable: "DOCBANK_OTHER_KEY"}
+	require.NoError(t, changed.Validate())
+	changedPortable, err := changed.ProcessingProfile("archive")
+	require.NoError(t, err)
+	assert.Equal(t, portable.Document, changedPortable.Document)
+}
+
+func TestRenditionRuntime(t *testing.T) {
+	t.Run("strict runtime keys", func(t *testing.T) {
+		dir := privateTestConfigDir(t)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
+[rendition_profiles.primary.runtime]
+unknown_runtime_key = "synthetic"
+`), 0o600))
+		_, err := Load(dir)
+		require.ErrorContains(t, err, "unknown_runtime_key")
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"missing credential binding", func(cfg *Config) { cfg.CredentialBindings = nil }, "runtime credential binding"},
+		{"zero request timeout", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.RequestTimeout = 0 }, "request and poll bounds"},
+		{"zero total timeout", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.TotalTimeout = 0 }, "request and poll bounds"},
+		{"zero poll interval", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.PollInterval = 0 }, "request and poll bounds"},
+		{"poll interval above total timeout", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.PollInterval = Duration(11 * time.Second)
+		}, "request and poll bounds"},
+		{"zero poll attempts", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.MaxPollAttempts = 0 }, "request and poll bounds"},
+		{"zero connect timeout", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.ConnectTimeout = 0 }, "transport time bounds"},
+		{"invalid endpoint path", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.Endpoint += "/v1" }, "absolute root origin"},
+		{"invalid endpoint credentials", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.Endpoint = "https://user@provider.example.invalid"
+		}, "absolute root origin"},
+		{"invalid allowed CIDR", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"not-a-cidr"}
+		}, "allowed CIDR"},
+		{"invalid SPKI pin", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.SPKISHA256 = []string{"ABC"}
+		}, "SPKI pin"},
+		{"ambient proxy", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.ProxyMode = "environment" }, "proxy-disabled"},
+		{"hosted HTTP", func(cfg *Config) {
+			profile := cfg.RenditionProfiles["primary"]
+			profile.TrustBoundary = string(document.RenditionTrustHostedProvider)
+			profile.Runtime = cloneRenditionRuntime(profile.Runtime)
+			profile.Runtime.Endpoint = "http://provider.example.invalid"
+			cfg.RenditionProfiles["primary"] = profile
+		}, "operator_network"},
+		{"local trust boundary", func(cfg *Config) {
+			profile := cfg.RenditionProfiles["primary"]
+			profile.TrustBoundary = string(document.RenditionTrustLocalProcess)
+			cfg.RenditionProfiles["primary"] = profile
+		}, "operator_network or hosted_provider"},
+		{"extra artifact role", func(cfg *Config) {
+			profile := cfg.RenditionProfiles["primary"]
+			profile.RequestedArtifacts = append(profile.RequestedArtifacts, string(document.EvidenceArtifactStructured))
+			cfg.RenditionProfiles["primary"] = profile
+		}, "exactly the transcript"},
+		{"runtime on plaintext", func(cfg *Config) {
+			profile := cfg.RenditionProfiles["primary"]
+			profile.AdapterContract = "docbank-plaintext-rendition/v1"
+			cfg.RenditionProfiles["primary"] = profile
+		}, "supported only for"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validRenditionRuntimeConfig(t)
+			test.mutate(&cfg)
+			require.ErrorContains(t, cfg.Validate(), test.want)
+		})
+	}
+}
+
+func TestRenditionRuntimeTranscriptBounds(t *testing.T) {
+	cfg := validRenditionRuntimeConfig(t)
+	bound, err := cfg.RenditionTranscriptChars("primary")
+	require.NoError(t, err)
+	assert.Equal(t, 100_000, bound)
+
+	second := cfg.ProcessingProfiles["archive"]
+	second.Rendition = "primary"
+	second.MaxDocumentChars = 100_000
+	cfg.ProcessingProfiles["second"] = second
+	bound, err = cfg.RenditionTranscriptChars("primary")
+	require.NoError(t, err)
+	assert.Equal(t, 100_000, bound)
+	require.NoError(t, cfg.Validate())
+
+	second.MaxDocumentChars = 99_999
+	cfg.ProcessingProfiles["second"] = second
+	_, err = cfg.RenditionTranscriptChars("primary")
+	require.ErrorContains(t, err, "conflicting")
+	require.ErrorContains(t, cfg.Validate(), "conflicting")
+}
+
+func TestRenditionRuntimeAllowsUnselectedStagedProfile(t *testing.T) {
+	cfg := validRenditionRuntimeConfig(t)
+	cfg.ProcessingProfiles = map[string]ProcessingProfileConfig{}
+	require.NoError(t, cfg.Validate())
+	bound, err := cfg.RenditionTranscriptChars("primary")
+	require.NoError(t, err)
+	assert.Zero(t, bound)
+}
+
+func validRenditionRuntimeConfig(t *testing.T) Config {
+	t.Helper()
+	policyFingerprint, err := docling.ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
+		PolicyFingerprint: policyFingerprint, TrustBoundary: document.RenditionTrustOperatorNetwork,
+		SupportedFormats: []document.RenditionFormatCapability{
+			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+		},
+		ReturnsStructured: true,
+		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
+	})
+	require.NoError(t, err)
+	cfg := validProcessingConfig()
+	cfg.CredentialBindings = map[string]CredentialBindingConfig{
+		"ocr-primary": {EnvironmentVariable: "DOCBANK_OCR_PRIMARY_KEY"},
+	}
+	cfg.RenditionProfiles["primary"] = RenditionProfileConfig{
+		AdapterContract: DoclingASRAdapterContract, AuthorizationFingerprint: strings.Repeat("1", 64),
+		CredentialBinding: "credential:ocr-primary", DeploymentFingerprint: strings.Repeat("2", 64),
+		DescriptorID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
+		DisclosureFingerprint: strings.Repeat("4", 64), MaxDocumentBytes: 1 << 20,
+		MaxResponseBytes: 1 << 20, MaxUnits: 100,
+		RequestedArtifacts: []string{string(document.EvidenceArtifactTranscript)},
+		TrustBoundary:      string(document.RenditionTrustOperatorNetwork), UploadOptionsFingerprint: strings.Repeat("5", 64),
+		Runtime: &RenditionRuntimeConfig{
+			Endpoint: "https://provider.example.invalid", RequestTimeout: Duration(time.Second),
+			TotalTimeout: Duration(10 * time.Second), PollInterval: Duration(time.Second), MaxPollAttempts: 4,
+			AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled",
+			ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second),
+			TLSHandshakeTimeout: Duration(time.Second),
+		},
+	}
+	return cfg
+}
+
+func cloneRenditionRuntime(runtime *RenditionRuntimeConfig) *RenditionRuntimeConfig {
+	cloned := *runtime
+	cloned.AllowedCIDRs = append([]string(nil), runtime.AllowedCIDRs...)
+	cloned.SPKISHA256 = append([]string(nil), runtime.SPKISHA256...)
+	return &cloned
 }
 
 func validProcessingConfig() Config {

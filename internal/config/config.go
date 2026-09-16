@@ -117,20 +117,21 @@ type WatchConfig struct {
 // descriptor. CredentialBinding is resolved only by the eventual provider
 // adapter, never while loading config.toml.
 type RenditionProfileConfig struct {
-	AdapterContract          string   `toml:"adapter_contract"`
-	AuthorizationFingerprint string   `toml:"authorization_fingerprint"`
-	CredentialBinding        string   `toml:"credential_binding"`
-	DeploymentFingerprint    string   `toml:"deployment_fingerprint"`
-	DescriptorID             string   `toml:"descriptor_id"`
-	DescriptorFingerprint    string   `toml:"descriptor_fingerprint"`
-	DiscloseFilename         bool     `toml:"disclose_filename"`
-	DisclosureFingerprint    string   `toml:"disclosure_fingerprint"`
-	MaxDocumentBytes         int64    `toml:"max_document_bytes"`
-	MaxResponseBytes         int64    `toml:"max_response_bytes"`
-	MaxUnits                 int      `toml:"max_units"`
-	RequestedArtifacts       []string `toml:"requested_artifacts"`
-	TrustBoundary            string   `toml:"trust_boundary"`
-	UploadOptionsFingerprint string   `toml:"upload_options_fingerprint"`
+	AdapterContract          string                  `toml:"adapter_contract"`
+	AuthorizationFingerprint string                  `toml:"authorization_fingerprint"`
+	CredentialBinding        string                  `toml:"credential_binding"`
+	DeploymentFingerprint    string                  `toml:"deployment_fingerprint"`
+	DescriptorID             string                  `toml:"descriptor_id"`
+	DescriptorFingerprint    string                  `toml:"descriptor_fingerprint"`
+	DiscloseFilename         bool                    `toml:"disclose_filename"`
+	DisclosureFingerprint    string                  `toml:"disclosure_fingerprint"`
+	MaxDocumentBytes         int64                   `toml:"max_document_bytes"`
+	MaxResponseBytes         int64                   `toml:"max_response_bytes"`
+	MaxUnits                 int                     `toml:"max_units"`
+	RequestedArtifacts       []string                `toml:"requested_artifacts"`
+	TrustBoundary            string                  `toml:"trust_boundary"`
+	UploadOptionsFingerprint string                  `toml:"upload_options_fingerprint"`
+	Runtime                  *RenditionRuntimeConfig `toml:"runtime"`
 }
 
 // EmbeddingChunkConfig pins rendition-chunk input generation.
@@ -172,6 +173,22 @@ type EmbeddingRuntimeConfig struct {
 	ConnectTimeout         Duration `toml:"connect_timeout"`
 	KeepAlive              Duration `toml:"keep_alive"`
 	TLSHandshakeTimeout    Duration `toml:"tls_handshake_timeout"`
+}
+
+// RenditionRuntimeConfig contains deployment-local settings for one external
+// rendition provider.
+type RenditionRuntimeConfig struct {
+	Endpoint            string   `toml:"endpoint"`
+	RequestTimeout      Duration `toml:"request_timeout"`
+	TotalTimeout        Duration `toml:"total_timeout"`
+	PollInterval        Duration `toml:"poll_interval"`
+	MaxPollAttempts     int      `toml:"max_poll_attempts"`
+	AllowedCIDRs        []string `toml:"allowed_cidrs"`
+	SPKISHA256          []string `toml:"spki_sha256"`
+	ProxyMode           string   `toml:"proxy_mode"`
+	ConnectTimeout      Duration `toml:"connect_timeout"`
+	KeepAlive           Duration `toml:"keep_alive"`
+	TLSHandshakeTimeout Duration `toml:"tls_handshake_timeout"`
 }
 
 type CredentialBindingConfig struct {
@@ -501,6 +518,8 @@ var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]{0,62}$`)
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+const DoclingASRAdapterContract = "docbank-docling-asr/v1"
+
 func validateProcessingProfiles(c Config) error {
 	for name, binding := range c.CredentialBindings {
 		if err := validateProfileName(name, fmt.Sprintf("[credential_bindings.%s]", name)); err != nil {
@@ -517,6 +536,12 @@ func validateProcessingProfiles(c Config) error {
 		}
 		if err := validateRenditionProfileConfig(profile, prefix); err != nil {
 			return err
+		}
+		if profile.Runtime != nil {
+			credentialName := strings.TrimPrefix(profile.CredentialBinding, "credential:")
+			if _, ok := c.CredentialBindings[credentialName]; !ok {
+				return fmt.Errorf("%s runtime credential binding %q is not defined", prefix, profile.CredentialBinding)
+			}
 		}
 	}
 	for name, profile := range c.EmbeddingProfiles {
@@ -554,6 +579,14 @@ func validateProcessingProfiles(c Config) error {
 		}
 		if _, _, err := document.CanonicalProfile(assembled.Document); err != nil {
 			return fmt.Errorf("%s is invalid: %w", prefix, err)
+		}
+	}
+	for name, profile := range c.RenditionProfiles {
+		if profile.AdapterContract != DoclingASRAdapterContract {
+			continue
+		}
+		if _, err := c.RenditionTranscriptChars(name); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -614,6 +647,54 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 			return fmt.Errorf("%s requested artifact role %q is duplicated", prefix, role)
 		}
 		seenArtifacts[role] = struct{}{}
+	}
+	if profile.Runtime != nil {
+		runtime := profile.Runtime
+		if profile.AdapterContract != DoclingASRAdapterContract {
+			return fmt.Errorf("%s runtime is supported only for %s", prefix, DoclingASRAdapterContract)
+		}
+		if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
+			profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
+			return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
+		}
+		if len(profile.RequestedArtifacts) != 1 ||
+			profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
+			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
+		}
+		parsed, err := url.Parse(runtime.Endpoint)
+		if err != nil || runtime.Endpoint != strings.TrimSpace(runtime.Endpoint) ||
+			parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" ||
+			parsed.User != nil || parsed.Opaque != "" || parsed.ForceQuery || parsed.RawQuery != "" ||
+			parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+			return fmt.Errorf("%s runtime endpoint must be an absolute root origin", prefix)
+		}
+		if parsed.Scheme == "http" && profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) {
+			return fmt.Errorf("%s runtime HTTP endpoint requires operator_network", prefix)
+		}
+		if runtime.ProxyMode != "disabled" || len(runtime.AllowedCIDRs) == 0 {
+			return fmt.Errorf("%s runtime egress must be proxy-disabled with allowed CIDRs", prefix)
+		}
+		for _, value := range runtime.AllowedCIDRs {
+			if _, err := netip.ParsePrefix(value); err != nil {
+				return fmt.Errorf("%s runtime allowed CIDR %q is invalid", prefix, value)
+			}
+		}
+		for _, value := range runtime.SPKISHA256 {
+			if !lowercaseSHA256Pattern.MatchString(value) {
+				return fmt.Errorf("%s runtime SPKI pin must be lowercase SHA-256", prefix)
+			}
+		}
+		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
+			runtime.TotalTimeout.Std() <= 0 || runtime.TotalTimeout.Std() > 24*time.Hour ||
+			runtime.PollInterval.Std() <= 0 || runtime.PollInterval.Std() > runtime.TotalTimeout.Std() ||
+			runtime.MaxPollAttempts <= 0 || runtime.MaxPollAttempts > 10_000 {
+			return fmt.Errorf("%s runtime request and poll bounds are invalid", prefix)
+		}
+		if runtime.ConnectTimeout.Std() <= 0 || runtime.ConnectTimeout.Std() > 5*time.Minute ||
+			runtime.KeepAlive.Std() <= 0 || runtime.KeepAlive.Std() > 5*time.Minute ||
+			runtime.TLSHandshakeTimeout.Std() <= 0 || runtime.TLSHandshakeTimeout.Std() > 5*time.Minute {
+			return fmt.Errorf("%s runtime transport time bounds are invalid", prefix)
+		}
 	}
 	return nil
 }
@@ -766,6 +847,27 @@ func (c Config) ProcessingProfile(name string) (ResolvedProcessingProfile, error
 	}
 	profile.Document = canonical
 	return profile, nil
+}
+
+// RenditionTranscriptChars returns the one transcript bound selected by all
+// processing profiles for a rendition, or zero when none selects it.
+func (c Config) RenditionTranscriptChars(name string) (int, error) {
+	var bound int
+	selected := false
+	for _, profile := range c.ProcessingProfiles {
+		if profile.Rendition != name {
+			continue
+		}
+		if selected && profile.MaxDocumentChars != bound {
+			return 0, fmt.Errorf("rendition %q has conflicting max_document_chars values", name)
+		}
+		bound = profile.MaxDocumentChars
+		selected = true
+	}
+	if !selected {
+		return 0, nil
+	}
+	return bound, nil
 }
 
 func (c Config) assembleProcessingProfile(name string) (ResolvedProcessingProfile, error) {
