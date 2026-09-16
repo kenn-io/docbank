@@ -27,7 +27,7 @@ validation, revision checks, and maintenance rules as the CLI.
 |---------|------------|----------|
 | CLI | Human-directed work, shell scripts, and inspecting behavior | Readable output; machine modes where documented |
 | HTTP API | Independent applications and long-running agent workflows | Authenticated JSON, revisions, pagination, structured errors |
-| OpenAPI | Client generation and capability discovery | `docbank openapi --json`, `/openapi.json`, `/openapi.yaml` |
+| OpenAPI | Client generation and capability discovery | `docbank openapi`, `/openapi.yaml` |
 | Markdown docs | Context retrieval without HTML scraping | Every public `/foo/` page is also published at `/foo.md` |
 
 The detailed [Agent Integration Guide](agents/integration.md) covers endpoint
@@ -66,7 +66,7 @@ non-goals.
 
 ## Start integrating
 
-1. Generate the current contract with `docbank openapi --json`.
+1. Generate the current contract with `docbank openapi`.
 2. Configure a stable loopback port and strong API key.
 3. Follow the [integration guide](agents/integration.md) through health,
    authentication, bounded reads, and a revision-aware filing loop.

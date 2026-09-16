@@ -19,7 +19,7 @@ func init() { huma.DefaultArrayNullable = false }
 // NewOfflineServer builds a Server for offline document generation only: it
 // never binds a socket or serves a request, so its API key is a fixed
 // placeholder rather than anything meaningful. NewServer refuses an empty
-// key, so every offline caller (OpenAPIYAML, `docbank openapi --json`) must
+// key, so every offline caller (OpenAPIYAML, `docbank openapi`) must
 // go through here instead of reintroducing a keyless Deps of its own.
 func NewOfflineServer() *Server {
 	cfg := config.Default()
