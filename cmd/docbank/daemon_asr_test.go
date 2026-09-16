@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -25,7 +24,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
@@ -420,6 +418,7 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, "queued", queued.OperationState)
+		testCase.receipt = queued
 		if index == 0 {
 			select {
 			case <-provider.resultStarted:
@@ -428,9 +427,9 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			}
 		}
 	}
+	closeProviderResultGate(provider)
 	stop()
 	waitForDaemonStop(t, sourceRoot)
-	closeProviderResultGate(provider)
 	beforeRestore := provider.requests.Load()
 
 	var sourceMetadata bytes.Buffer
@@ -671,7 +670,7 @@ func copyDaemonASRBlobTree(source, target string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() == "tmp" {
+		if entry.Name() == "tmp" || entry.Name() == ".packstore-owner.json" {
 			continue
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -930,56 +929,11 @@ func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret stri
 	require.NoError(t, writeDaemonASRConfig(root, cfg))
 	t.Setenv("DOCBANK_TEST_DOCLING_KEY", secret)
 	t.Setenv("DOCBANK_HOME", root)
-	stop, done := startASRServe(t)
-	record := waitForASRDaemon(t, root, done)
+	stop := startServe(t)
+	record := waitForDaemon(t, root)
 	daemon := client.New("http://"+record.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
 	return root, daemon, stop
-}
-
-func startASRServe(t *testing.T) (func(), chan error) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
-	stop := sync.OnceFunc(func() {
-		cancel()
-		select {
-		case err := <-done:
-			require.NoError(t, err)
-		case <-time.After(daemonShutdownTimeout):
-			require.Fail(t, "daemon did not shut down")
-		}
-	})
-	t.Cleanup(stop)
-	return stop, done
-}
-
-func waitForASRDaemon(t *testing.T, root string, done chan error) kitdaemon.RuntimeRecord {
-	t.Helper()
-	healthClient := &http.Client{Timeout: time.Second}
-	var record kitdaemon.RuntimeRecord
-	require.Eventually(t, func() bool {
-		select {
-		case err := <-done:
-			done <- err
-			require.NoError(t, err)
-			return false
-		default:
-		}
-		records, err := client.RuntimeStore(root).List()
-		if err != nil || len(records) != 1 {
-			return false
-		}
-		record = records[0]
-		response, err := healthClient.Get("http://" + record.Address + "/health")
-		if err != nil {
-			return false
-		}
-		_ = response.Body.Close()
-		return response.StatusCode == http.StatusOK
-	}, daemonStartTimeout, 50*time.Millisecond)
-	return record
 }
 
 func plaintextProviderForDaemonTest() (string, error) {
