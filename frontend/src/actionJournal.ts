@@ -124,21 +124,22 @@ export class ActionJournal implements ActionJournalAccess {
       abort(transaction, "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.");
     }
     const { batches, ...preparedHeader } = normalized;
+    // File receipts are unauthenticated. Only a daemon response recorded by
+    // recordReceipt can complete a newly prepared batch.
     actions.add({
       ...preparedHeader,
-      state: batches.every((batch) => batch.receipt !== undefined) ? "complete" : "prepared",
+      state: "prepared",
       checkpoint_verified: false,
       batch_count: batches.length,
-      completed_batches: batches.filter((batch) => batch.receipt !== undefined).length,
+      completed_batches: 0,
     } satisfies StoredHeader);
     const batchRecords = transaction.objectStore(batchStore);
-    for (const batch of batches) batchRecords.add({
+    for (const { receipt: _receipt, ...batch } of batches) batchRecords.add({
       ...batch,
       members: batch.members.map((member) => ({ ...member })),
       request: { ...batch.request, nodes: batch.request.nodes.map((node) => ({ ...node })) },
-      ...(batch.receipt ? { receipt: { ...batch.receipt, nodes: batch.receipt.nodes.map((node) => ({ ...node })) } } : {}),
       vault_id: this.vaultID,
-      state: batch.receipt ? "complete" : "prepared",
+      state: "prepared",
     } satisfies StoredBatch);
     const cancel = () => {
       try { transaction.abort(); } catch { /* A completed transaction cannot be cancelled. */ }

@@ -70,11 +70,11 @@ describe("recoverable action runner", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("publishes revision evidence only for receipts returned by the daemon", async () => {
+  it("publishes new daemon receipts without replaying completed journal batches", async () => {
     const base = await persisted(1_001);
-    const imported = receipt(base, 0);
+    const retained = receipt(base, 0);
     const action: PersistedAction = { ...base, batches: base.batches.map((batch) => batch.index === 0
-      ? { ...batch, state: "complete", receipt: imported } : batch) };
+      ? { ...batch, state: "complete", receipt: retained } : batch) };
     const journal = new MemoryJournal(action);
     const confirmed = receipt(base, 1);
     const observed: BatchTagReceipt[] = [];

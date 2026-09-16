@@ -50,6 +50,7 @@ type RecoveryAction = {
   tag_id: string;
   batches: {
     index: number;
+    request_digest: string;
     request: BatchRequest;
     members: { node_id: number; revision: number }[];
     receipt?: BatchReceipt;
@@ -495,6 +496,28 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     expect(saved.total).toBe(1001);
     expect(saved.batches).toHaveLength(2);
 
+    // The file creator can claim completion without contacting the daemon.
+    // These structurally valid receipts must not skip either original request.
+    await writeFile(checkpoint, JSON.stringify({ ...saved, batches: saved.batches.map((batch) => ({
+      ...batch,
+      receipt: {
+        version: 1, operation_id: batch.request.operation_id, request_digest: batch.request_digest,
+        tag_id: saved.tag_id, assign: true, tag_revision: saved.total + 1, assignment_count: saved.total,
+        completed_at: "2026-09-11T00:00:00.000000000Z",
+        nodes: batch.request.nodes.map((node) => ({ node_id: node.node_id,
+          expected_revision: node.revision, revision: node.revision + 1, changed: true })),
+      },
+    })) }));
+    await recovery.getByRole("button", { name: "Abandon action…", exact: true }).click();
+    await recovery.getByRole("button", { name: "Abandon action without rollback", exact: true }).click();
+    await page.getByRole("button", { name: "Tag or recover", exact: true }).click();
+    await actions.getByLabel("Import action recovery file", { exact: true }).setInputFiles(checkpoint);
+    await expect(recovery.getByText("0 completed · 2 remaining batches", { exact: true })).toBeVisible();
+    const importedClaims = await retainedAction(page);
+    expect(importedClaims.batches.map((batch) => batch.state)).toEqual(["prepared", "prepared"]);
+    expect(importedClaims.batches.every((batch) => batch.receipt === undefined)).toBe(true);
+    expect(importedClaims.batches.map((batch) => batch.request)).toEqual(saved.batches.map((batch) => batch.request));
+
     // A different real vault rejects the same checkpoint before staging it.
     const wrongSource = path.join(workspace, "wrong.txt");
     await writeFile(wrongSource, "Synthetic wrong-vault document.\n", { mode: 0o600 });
@@ -591,8 +614,12 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
       expect(row.revision).toBe((originalRevisions.get(row.node_id) ?? -1) + 1);
     }
 
+    // Even genuine exported receipts must be confirmed by the current daemon.
+    await writeFile(checkpoint, JSON.stringify({ ...saved, batches: saved.batches.map((batch, index) => ({
+      ...batch, receipt: completed.batches[index].receipt,
+    })) }));
     // Restarting the same vault rotates origin and session. Importing the
-    // original checkpoint replays retained server receipts with no new change.
+    // completed checkpoint replays retained server receipts with no new change.
     await run("daemon", "stop");
     mainRunning = false;
     expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);

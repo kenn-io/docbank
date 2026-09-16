@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
 import { APIError } from "./api.js";
 import { type PersistedAction } from "./actionJournal.js";
-import { encodeRecovery } from "./actionRecovery.js";
+import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { snapshotMemberHash, type SnapshotMember, type SnapshotPage } from "./snapshots.js";
 
@@ -314,4 +314,18 @@ it("does not expire the session from a replaced view's pending error reload", as
   await reloading;
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onauthfailure).not.toHaveBeenCalled();
+});
+
+it("rejects an oversized checkpoint before reading or verifying it", async () => {
+  const action = await prepared();
+  const journal = new MemoryJournal(action);
+  render(ActionRecoveryModal, { session: "session", sessionVaultID: vaultID,
+    journal, initialAction: action, tag, onprogress: vi.fn(), onclose: vi.fn(), onauthfailure: vi.fn() });
+  const file = new File(["{}"], "oversized-checkpoint.json", { type: "application/json" });
+  Object.defineProperty(file, "size", { value: ACTION_MAX_BYTES + 1 });
+  const read = vi.spyOn(file, "arrayBuffer");
+  await fireEvent.change(screen.getByLabelText("Select the saved recovery checkpoint"), { target: { files: [file] } });
+  expect(read).not.toHaveBeenCalled();
+  expect(journal.checkpointReads).toBe(0);
+  expect(screen.getByRole("alert").textContent).toContain("128 MiB");
 });

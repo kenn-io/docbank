@@ -11,6 +11,7 @@
   import { onDestroy } from "svelte";
   import { Button, Modal, SelectDropdown, type SelectDropdownOption } from "@kenn-io/kit-ui";
   import type { Tag } from "./api.js";
+  import { ACTION_MAX_BYTES } from "./actionRecovery.js";
 
   interface Props {
     selectedCount: number;
@@ -64,6 +65,7 @@
     reading = true;
     failure = "";
     try {
+      if (file.size > ACTION_MAX_BYTES) throw new Error("The action recovery file exceeds 128 MiB.");
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (active) onimport(bytes);
     } catch (cause) {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import SnapshotActions from "./SnapshotActions.svelte";
+import { ACTION_MAX_BYTES } from "./actionRecovery.js";
 
 const catalog = [{
   id: "22222222-2222-4222-8222-222222222222",
@@ -110,4 +111,17 @@ it("discards a recovery file whose read finishes after the dialog closes", async
   await reading;
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onimport).not.toHaveBeenCalled();
+});
+
+it("rejects an oversized recovery file before reading it", async () => {
+  const onimport = vi.fn();
+  render(SnapshotActions, { selectedCount: 0, total: 1, catalog, catalogTotal: 1,
+    disabled: false, onstart: vi.fn(), onimport, onresume: vi.fn(), onabandon: vi.fn(), onclose: vi.fn() });
+  const file = new File(["{}"], "oversized-action.json", { type: "application/json" });
+  Object.defineProperty(file, "size", { value: ACTION_MAX_BYTES + 1 });
+  const read = vi.spyOn(file, "arrayBuffer");
+  await fireEvent.change(screen.getByLabelText("Import action recovery file"), { target: { files: [file] } });
+  expect(read).not.toHaveBeenCalled();
+  expect(onimport).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toContain("128 MiB");
 });

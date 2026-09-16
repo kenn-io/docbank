@@ -13,7 +13,7 @@
   import { onDestroy, untrack } from "svelte";
   import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError, type Tag } from "./api.js";
-  import { encodeRecovery } from "./actionRecovery.js";
+  import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
 
   interface Props {
@@ -97,6 +97,7 @@
     failure = "";
     notice = "";
     try {
+      if (file.size > ACTION_MAX_BYTES) throw new Error("The action recovery file exceeds 128 MiB.");
       await journal.verifyCheckpoint(new Uint8Array(await file.arrayBuffer()));
       await reload();
       notice = "Recovery checkpoint verified.";
