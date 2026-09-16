@@ -15,6 +15,7 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 
 	first, err := s.BeginIngest(ctx, "cli", "First synthetic import")
 	require.NoError(t, err)
+	first.record.StartedAt = "2026-01-01T00:00:00.000000000Z"
 	firstNode, added, err := s.IngestFile(ctx, first, s.RootID(), "b.txt", fakeHash("a1"),
 		4, "text/plain", "/synthetic/b.txt", "")
 	require.NoError(t, err)
@@ -26,6 +27,7 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 
 	second, err := s.BeginIngest(ctx, "watch", "Second synthetic import")
 	require.NoError(t, err)
+	second.record.StartedAt = "2026-01-01T00:00:01.000000000Z"
 	thirdNode, err := s.IngestFileExact(ctx, second, s.RootID(), "c.txt", fakeHash("c3"),
 		8, "text/plain", "c.txt", "")
 	require.NoError(t, err)
@@ -76,6 +78,36 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.CollectionMembers(ctx, embedded.ID(), 10, 0)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestCollectionsOrderEqualStartTimesByID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	ids := []string{
+		"00000000-0000-4000-8000-000000000001",
+		"00000000-0000-4000-8000-000000000002",
+	}
+
+	// Insert the larger ID first so insertion order opposes ID order.
+	// SQLite's query plan may coincidentally return ascending IDs even
+	// without the ORDER BY tie-breaker; this test documents the contract.
+	for _, id := range []string{ids[1], ids[0]} {
+		run, err := s.BeginIngest(ctx, "cli", "Synthetic import")
+		require.NoError(t, err)
+		run.record.ID = id
+		run.record.StartedAt = "2026-01-01T00:00:00.000000000Z"
+		_, _, err = s.IngestFile(ctx, run, s.RootID(), id+".txt", fakeHash("a1"),
+			4, "text/plain", "/synthetic/"+id+".txt", "")
+		require.NoError(t, err)
+	}
+
+	for offset, id := range ids {
+		collections, total, err := s.Collections(ctx, 1, offset)
+		require.NoError(t, err)
+		require.Equal(t, 2, total)
+		require.Len(t, collections, 1)
+		assert.Equal(t, id, collections[0].ID)
+	}
 }
 
 func TestCollectionMembershipFollowsSupersessionAndTrash(t *testing.T) {
