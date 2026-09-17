@@ -21,7 +21,10 @@ const (
 var ErrLoadfileLimit = errors.New("package_limit: bounded load-file page exceeded")
 
 func ScanDAT(source io.Reader, profile Profile, emit func(Record) error) ([]Diagnostic, error) {
-	if err := validateDATProfile(profile, emit); err != nil {
+	if emit == nil {
+		return nil, ErrInvalidProfile
+	}
+	if err := validateDATProfile(profile); err != nil {
 		return nil, err
 	}
 	decoder, err := Decoder(profile.Encoding)
@@ -325,8 +328,12 @@ func readDATRow(reader *bufio.Reader, profile Profile) ([]string, bool, error) {
 	}
 }
 
-func validateDATProfile(profile Profile, emit func(Record) error) error {
-	if emit == nil || profile.Field == 0 || profile.Qualifier == 0 || profile.Field == profile.Qualifier || profile.Qualifier == '\n' || profile.Field == '\n' {
+func validateDATProfile(profile Profile) error {
+	if profile.Field == 0 || profile.Qualifier == 0 || profile.Field == profile.Qualifier || profile.Qualifier == '\n' || profile.Field == '\n' {
+		return ErrInvalidProfile
+	}
+	if !utf8.ValidRune(profile.Field) || !utf8.ValidRune(profile.Qualifier) || !utf8.ValidRune(profile.NewlineInField) ||
+		profile.NewlineInField == profile.Field || profile.NewlineInField == profile.Qualifier {
 		return ErrInvalidProfile
 	}
 	if !profile.HeaderRow && len(profile.Columns) == 0 {
