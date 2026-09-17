@@ -7,24 +7,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
 const (
-	MaxExecutableBytes = int64(256 << 20)
-	MaxResponseBytes   = int64(256 << 20)
-	MaxControlBytes    = int64(64 << 10)
-	MaxWorkBytes       = int64(512 << 20)
+	MaxExecutableBytes         = int64(256 << 20)
+	MaxResponseBytes           = int64(256 << 20)
+	MaxExecControlBytes        = int64(64 << 10)
+	MaxPrivateRootControlBytes = int64(8 << 20)
+	MaxControlBytes            = MaxExecControlBytes
+	MaxWorkBytes               = int64(512 << 20)
+	MaxRuntimeEntries          = 250_000
+	MaxRuntimeDepth            = 64
+	MaxRuntimeBytes            = int64(4 << 30)
 )
 
 var (
-	ErrUnavailable          = errors.New("sandbox policy unavailable")
-	ErrCanceledBeforeLaunch = errors.New("sandbox canceled before launch")
-	ErrOutputTooLarge       = errors.New("sandbox output exceeds limit")
-	ErrChildFailed          = errors.New("sandbox child failed")
-	ErrNormalRestart        = errors.New("sandbox child requested normal restart")
+	ErrUnavailable             = errors.New("sandbox policy unavailable")
+	ErrPrivateRootUnavailable  = errors.New("sandbox private root unavailable")
+	ErrRuntimeSpecialFile      = errors.New("sandbox runtime contains a special file")
+	ErrRuntimeIdentityMismatch = errors.New("sandbox runtime identity mismatch")
+	ErrCanceledBeforeLaunch    = errors.New("sandbox canceled before launch")
+	ErrOutputTooLarge          = errors.New("sandbox output exceeds limit")
+	ErrChildFailed             = errors.New("sandbox child failed")
 )
 
 // Mode selects the process contract used by a request.
@@ -35,37 +43,43 @@ const (
 	SupervisedFileMode Mode = "supervised-file"
 )
 
-// WorkDirectory names the two files exposed by a supervised request.
-type WorkDirectory struct {
-	InputName  string `json:"input_name,omitempty"`
-	OutputName string `json:"output_name,omitempty"`
+// RuntimeFile identifies one regular file attached to a private root.
+type RuntimeFile struct {
+	SourcePath string `json:"source_path"`
+	GuestPath  string `json:"guest_path"`
+	SHA256     string `json:"sha256"`
+	Executable bool   `json:"executable"`
 }
 
-// Supervision describes optional file transport for one request.
-type Supervision struct {
-	Mode           Mode          `json:"mode,omitempty"`
-	InputName      string        `json:"input_name,omitempty"`
-	OutputName     string        `json:"output_name,omitempty"`
-	Work           WorkDirectory `json:"work"`
-	WorkBytes      int64         `json:"work_bytes,omitempty"`
-	MaxOutputBytes int64         `json:"max_output_bytes,omitempty"`
+// RuntimeSymlink identifies one relative link created inside a private root.
+type RuntimeSymlink struct {
+	GuestPath string `json:"guest_path"`
+	Target    string `json:"target"`
+}
+
+// PrivateRoot describes the complete supervised filesystem authority.
+type PrivateRoot struct {
+	Runtime         []RuntimeFile    `json:"runtime"`
+	Symlinks        []RuntimeSymlink `json:"symlinks,omitempty"`
+	RuntimeIdentity string           `json:"runtime_identity"`
+	WorkBytes       int64            `json:"work_bytes"`
+	InputName       string           `json:"input_name"`
+	OutputName      string           `json:"output_name"`
+	MaxOutputBytes  int64            `json:"max_output_bytes"`
+	UnixIPC         bool             `json:"unix_ipc"`
 }
 
 // Policy is the complete fixed authority supplied to the launcher.
 type Policy struct {
-	Executable       string      `json:"executable"`
-	ExecutableSHA256 string      `json:"executable_sha256"`
-	Arguments        []string    `json:"arguments"`
-	Environment      []string    `json:"environment"`
-	Directory        string      `json:"directory"`
-	ReadOnlyPaths    []string    `json:"read_only_paths,omitempty"`
-	AllowLocalIPC    bool        `json:"allow_local_ipc,omitempty"`
-	WorkBytes        int64       `json:"work_bytes,omitempty"`
-	MaxStdinBytes    int64       `json:"max_stdin_bytes,omitempty"`
-	MaxStdoutBytes   int64       `json:"max_stdout_bytes"`
-	InputName        string      `json:"input_name,omitempty"`
-	OutputName       string      `json:"output_name,omitempty"`
-	Supervision      Supervision `json:"supervision"`
+	Mode             Mode         `json:"mode"`
+	Executable       string       `json:"executable"`
+	ExecutableSHA256 string       `json:"executable_sha256"`
+	Arguments        []string     `json:"arguments"`
+	Environment      []string     `json:"environment"`
+	Directory        string       `json:"directory"`
+	PrivateRoot      *PrivateRoot `json:"private_root,omitempty"`
+	MaxStdinBytes    int64        `json:"max_stdin_bytes"`
+	MaxStdoutBytes   int64        `json:"max_stdout_bytes"`
 }
 
 // Request carries one bounded input and its authenticated policy identity.
@@ -90,7 +104,10 @@ type Attestation struct {
 	ProcessTreeContained bool
 	DigestVerifiedLaunch bool
 	FilesystemIsolated   bool
-	LocalIPCAllowed      bool
+	FilesystemMode       string
+	PrivateRootInstalled bool
+	RuntimeIdentity      string
+	UnixIPCAllowed       bool
 }
 
 // Result owns the bounded bytes returned by a sandbox run.
@@ -108,13 +125,17 @@ type launchControl struct {
 
 // Validate checks the portable parts of a launch policy in the parent.
 func (policy Policy) Validate() error {
+	if policy.Mode != ExecMode && policy.Mode != SupervisedFileMode {
+		return errors.New("sandbox mode is invalid")
+	}
 	if !filepath.IsAbs(policy.Executable) || filepath.Clean(policy.Executable) != policy.Executable {
 		return errors.New("sandbox executable must be an absolute clean path")
 	}
 	if err := validateSHA256(policy.ExecutableSHA256, "sandbox executable SHA-256"); err != nil {
 		return err
 	}
-	if policy.Directory != "" && (!filepath.IsAbs(policy.Directory) || filepath.Clean(policy.Directory) != policy.Directory) {
+	if policy.Directory != "" &&
+		(!filepath.IsAbs(policy.Directory) || filepath.Clean(policy.Directory) != policy.Directory) {
 		return errors.New("sandbox directory must be an absolute clean path")
 	}
 	if len(policy.Arguments) == 0 {
@@ -130,78 +151,147 @@ func (policy Policy) Validate() error {
 			return errors.New("sandbox environment entry is invalid")
 		}
 	}
-	for _, value := range policy.ReadOnlyPaths {
-		if !filepath.IsAbs(value) || filepath.Clean(value) != value || strings.ContainsRune(value, '\x00') {
-			return errors.New("sandbox read-only path is invalid")
-		}
-	}
-	if policy.WorkBytes < 0 || policy.WorkBytes > MaxWorkBytes ||
-		policy.MaxStdinBytes <= 0 || policy.MaxStdinBytes > MaxResponseBytes ||
+	if policy.MaxStdinBytes <= 0 || policy.MaxStdinBytes > MaxResponseBytes ||
 		policy.MaxStdoutBytes <= 0 || policy.MaxStdoutBytes > MaxResponseBytes {
 		return errors.New("sandbox byte limits are outside the supported bounds")
 	}
-	supervision := policy.supervision()
-	if supervision.Mode != ExecMode && supervision.Mode != SupervisedFileMode {
-		return errors.New("sandbox mode is invalid")
+	if policy.Mode == ExecMode {
+		if policy.PrivateRoot != nil {
+			return errors.New("sandbox private root is only valid for supervised mode")
+		}
+		return nil
 	}
-	if policy.AllowLocalIPC && supervision.Mode != SupervisedFileMode {
-		return errors.New("sandbox local IPC is available only for supervised file mode")
+	if policy.PrivateRoot == nil {
+		return errors.New("sandbox supervised mode requires a private root")
 	}
-	if supervision.Mode == SupervisedFileMode {
-		if err := validateWorkName(supervision.InputName, "input"); err != nil {
+	root := policy.PrivateRoot
+	if err := validateRuntime(root); err != nil {
+		return err
+	}
+	if root.WorkBytes <= 0 || root.WorkBytes > MaxWorkBytes {
+		return errors.New("sandbox supervised work limit is outside the supported bounds")
+	}
+	if root.MaxOutputBytes <= 0 || root.MaxOutputBytes > policy.MaxStdoutBytes {
+		return errors.New("sandbox supervised output limit is outside the supported bounds")
+	}
+	if err := validateWorkName(root.InputName, "input"); err != nil {
+		return err
+	}
+	if err := validateWorkName(root.OutputName, "output"); err != nil {
+		return err
+	}
+	if root.InputName == root.OutputName {
+		return errors.New("sandbox supervised input and output names must differ")
+	}
+	return nil
+}
+
+func validateRuntime(root *PrivateRoot) error {
+	if err := validateRuntimeIdentity(root.RuntimeIdentity); err != nil {
+		return err
+	}
+	if len(root.Runtime)+len(root.Symlinks) > MaxRuntimeEntries {
+		return errors.New("sandbox runtime entry count exceeds limit")
+	}
+	seen := make(map[string]struct{}, len(root.Runtime)+len(root.Symlinks))
+	for _, file := range root.Runtime {
+		if err := validateRuntimePath(file.SourcePath, true); err != nil {
 			return err
 		}
-		if err := validateWorkName(supervision.OutputName, "output"); err != nil {
+		if err := validateRuntimePath(file.GuestPath, false); err != nil {
 			return err
 		}
-		if supervision.WorkBytes <= 0 || supervision.WorkBytes > MaxWorkBytes {
-			return errors.New("sandbox supervised work limit is outside the supported bounds")
+		if err := validateSHA256(file.SHA256, "sandbox runtime SHA-256"); err != nil {
+			return err
 		}
-		if supervision.MaxOutputBytes <= 0 || supervision.MaxOutputBytes > policy.MaxStdoutBytes {
-			return errors.New("sandbox supervised output limit is outside the supported bounds")
+		if runtimePathDepth(file.GuestPath) > MaxRuntimeDepth {
+			return errors.New("sandbox runtime path depth exceeds limit")
+		}
+		if _, ok := seen[file.GuestPath]; ok {
+			return errors.New("sandbox runtime guest paths must be unique")
+		}
+		seen[file.GuestPath] = struct{}{}
+	}
+	for _, link := range root.Symlinks {
+		if err := validateRuntimePath(link.GuestPath, false); err != nil {
+			return err
+		}
+		if err := validateSymlinkTarget(link.Target); err != nil {
+			return err
+		}
+		if runtimePathDepth(link.GuestPath) > MaxRuntimeDepth {
+			return errors.New("sandbox runtime path depth exceeds limit")
+		}
+		if _, ok := seen[link.GuestPath]; ok {
+			return errors.New("sandbox runtime guest paths must be unique")
+		}
+		seen[link.GuestPath] = struct{}{}
+	}
+	for index := 1; index < len(root.Runtime); index++ {
+		if root.Runtime[index-1].GuestPath > root.Runtime[index].GuestPath {
+			return errors.New("sandbox runtime files must be sorted by guest path")
+		}
+	}
+	for index := 1; index < len(root.Symlinks); index++ {
+		if root.Symlinks[index-1].GuestPath > root.Symlinks[index].GuestPath {
+			return errors.New("sandbox runtime symlinks must be sorted by guest path")
 		}
 	}
 	return nil
 }
 
-func (policy Policy) supervision() Supervision {
-	value := policy.Supervision
-	if value.Mode == "" {
-		if policy.InputName != "" || policy.OutputName != "" || value.InputName != "" ||
-			value.OutputName != "" || value.Work.InputName != "" || value.Work.OutputName != "" {
-			value.Mode = SupervisedFileMode
-		} else {
-			value.Mode = ExecMode
+func runtimePathDepth(value string) int {
+	trimmed := strings.Trim(value, "/")
+	if trimmed == "" {
+		return 0
+	}
+	return strings.Count(trimmed, "/")
+}
+
+func validateRuntimePath(path string, source bool) error {
+	var absolute bool
+	var clean string
+	if source {
+		absolute = filepath.IsAbs(path)
+		clean = filepath.Clean(path)
+	} else {
+		absolute = pathpkg.IsAbs(path)
+		clean = pathpkg.Clean(path)
+	}
+	if path == "" || !absolute || clean != path ||
+		strings.ContainsRune(path, '\x00') {
+		if source {
+			return errors.New("sandbox runtime source path must be absolute and clean")
 		}
+		return errors.New("sandbox runtime guest path must be absolute and clean")
 	}
-	if value.InputName == "" {
-		value.InputName = policy.InputName
+	return nil
+}
+
+func validateSymlinkTarget(target string) error {
+	if target == "" || pathpkg.IsAbs(target) || pathpkg.Clean(target) != target ||
+		strings.ContainsRune(target, '\x00') {
+		return errors.New("sandbox runtime symlink target must be relative and clean")
 	}
-	if value.OutputName == "" {
-		value.OutputName = policy.OutputName
+	if slices.Contains(strings.FieldsFunc(target, func(r rune) bool { return r == '/' || r == '\\' }), "..") {
+		return errors.New("sandbox runtime symlink target escapes its root")
 	}
-	if value.Work.InputName == "" {
-		value.Work.InputName = value.InputName
+	return nil
+}
+
+func validateRuntimeIdentity(value string) error {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+sha256.Size*2 {
+		return errors.New("sandbox runtime identity must be an immutable sha256 identity")
 	}
-	if value.Work.OutputName == "" {
-		value.Work.OutputName = value.OutputName
+	return validateSHA256(strings.TrimPrefix(value, "sha256:"), "sandbox runtime identity")
+}
+
+func validateWorkName(name, subject string) error {
+	if name == "" || filepath.IsAbs(name) || filepath.Clean(name) != name ||
+		name == "." || strings.ContainsAny(name, "/\\:\x00") || strings.HasPrefix(name, "-") {
+		return fmt.Errorf("sandbox %s name is invalid", subject)
 	}
-	if value.InputName == "" {
-		value.InputName = value.Work.InputName
-	}
-	if value.OutputName == "" {
-		value.OutputName = value.Work.OutputName
-	}
-	if value.WorkBytes == 0 {
-		value.WorkBytes = policy.WorkBytes
-	}
-	if value.MaxOutputBytes == 0 {
-		value.MaxOutputBytes = policy.MaxStdoutBytes
-	}
-	if value.Mode == SupervisedFileMode && value.WorkBytes == 0 {
-		value.WorkBytes = MaxWorkBytes
-	}
-	return value
+	return nil
 }
 
 func (request Request) validate() error {
@@ -226,19 +316,26 @@ func (control launchControl) validate() error {
 	return validateSHA256(control.StdinSHA256, "sandbox input SHA-256")
 }
 
+func controlLimit(mode Mode) int64 {
+	if mode == SupervisedFileMode {
+		return MaxPrivateRootControlBytes
+	}
+	return MaxExecControlBytes
+}
+
 func encodeControl(control launchControl) ([]byte, error) {
 	encoded, err := json.Marshal(control)
 	if err != nil {
 		return nil, fmt.Errorf("encode sandbox control: %w", err)
 	}
-	if len(encoded) == 0 || int64(len(encoded)) > MaxControlBytes {
+	if len(encoded) == 0 || int64(len(encoded)) > controlLimit(control.Policy.Mode) {
 		return nil, errors.New("sandbox control exceeds its byte limit")
 	}
 	return encoded, nil
 }
 
 func decodeControl(encoded []byte) (launchControl, error) {
-	if len(encoded) == 0 || int64(len(encoded)) > MaxControlBytes {
+	if len(encoded) == 0 || int64(len(encoded)) > MaxPrivateRootControlBytes {
 		return launchControl{}, errors.New("sandbox control exceeds its byte limit")
 	}
 	var control launchControl
@@ -247,21 +344,19 @@ func decodeControl(encoded []byte) (launchControl, error) {
 	if err := decoder.Decode(&control); err != nil {
 		return launchControl{}, errors.New("sandbox control is malformed")
 	}
+	if int64(len(encoded)) > controlLimit(control.Policy.Mode) {
+		return launchControl{}, errors.New("sandbox control exceeds its mode byte limit")
+	}
 	if err := control.validate(); err != nil {
 		return launchControl{}, err
 	}
 	control.Policy.Arguments = slices.Clone(control.Policy.Arguments)
 	control.Policy.Environment = slices.Clone(control.Policy.Environment)
-	control.Policy.ReadOnlyPaths = slices.Clone(control.Policy.ReadOnlyPaths)
-	return control, nil
-}
-
-func validateWorkName(name, subject string) error {
-	if name == "" || filepath.IsAbs(name) || filepath.Clean(name) != name ||
-		name == "." || strings.ContainsAny(name, "/\\:\x00") || strings.HasPrefix(name, "-") {
-		return fmt.Errorf("sandbox %s name is invalid", subject)
+	if control.Policy.PrivateRoot != nil {
+		control.Policy.PrivateRoot.Runtime = slices.Clone(control.Policy.PrivateRoot.Runtime)
+		control.Policy.PrivateRoot.Symlinks = slices.Clone(control.Policy.PrivateRoot.Symlinks)
 	}
-	return nil
+	return control, nil
 }
 
 func validateSHA256(value, subject string) error {

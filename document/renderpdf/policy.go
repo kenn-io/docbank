@@ -2,7 +2,6 @@ package renderpdf
 
 import (
 	"crypto/sha256"
-	"debug/elf"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,16 +21,15 @@ const (
 	MaxExecutableBytes = sandbox.MaxExecutableBytes
 )
 
-// Renderer identifies the operator-installed LibreOffice executable.
 type Renderer struct {
 	Executable       string
 	ExecutableSHA256 string
+	Runtime          []RuntimeFile
+	RuntimeSymlinks  []RuntimeSymlink
 	RuntimeIdentity  string
-	ReadOnlyPaths    []string
 	Runner           Runner
 }
 
-// Limits bounds every resource consumed by one conversion.
 type Limits struct {
 	MaxSourceBytes     int64         `json:"max_source_bytes"`
 	MaxNormalizedBytes int64         `json:"max_normalized_bytes"`
@@ -40,20 +38,19 @@ type Limits struct {
 	MaxXMLElements     int           `json:"max_xml_elements"`
 	MaxXMLDepth        int           `json:"max_xml_depth"`
 	MaxPages           int           `json:"max_pages"`
+	MaxRuntimeEntries  int           `json:"max_runtime_entries"`
 	Timeout            time.Duration `json:"timeout_ns"`
 }
 
-// DefaultLimits returns the hard ceilings for a conversion.
 func DefaultLimits() Limits {
 	return Limits{
 		MaxSourceBytes: 50 << 20, MaxNormalizedBytes: 200 << 20,
 		MaxPDFBytes: 50 << 20, MaxWorkBytes: 512 << 20,
 		MaxXMLElements: 2_000_000, MaxXMLDepth: 256, MaxPages: 1_000,
-		Timeout: 600 * time.Second,
+		MaxRuntimeEntries: sandbox.MaxRuntimeEntries, Timeout: 600 * time.Second,
 	}
 }
 
-// Policy captures an immutable renderer and conversion contract.
 type Policy struct {
 	renderer    Renderer
 	limits      Limits
@@ -62,7 +59,6 @@ type Policy struct {
 	fingerprint string
 }
 
-// NewPolicy validates the renderer, runner and complete conversion contract.
 func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 	if !filepath.IsAbs(renderer.Executable) || filepath.Clean(renderer.Executable) != renderer.Executable {
 		return Policy{}, errors.New("render PDF executable must be an absolute clean path")
@@ -73,10 +69,8 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 	if err := validateImmutableIdentity(renderer.RuntimeIdentity, "renderer runtime identity"); err != nil {
 		return Policy{}, err
 	}
-	for _, path := range renderer.ReadOnlyPaths {
-		if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, '\x00') {
-			return Policy{}, errors.New("render PDF read-only runtime path is invalid")
-		}
+	if err := validateRuntimeEntries(renderer); err != nil {
+		return Policy{}, err
 	}
 	if err := validateLimits(limits); err != nil {
 		return Policy{}, err
@@ -86,11 +80,6 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		if runtime.GOOS != "linux" {
 			return Policy{}, sandbox.ErrUnavailable
 		}
-		executable, err := elf.Open(renderer.Executable)
-		if err != nil {
-			return Policy{}, errors.New("render PDF native runner requires an ELF executable")
-		}
-		_ = executable.Close()
 		native, err := newNativeRunner(renderer)
 		if err != nil {
 			return Policy{}, err
@@ -100,19 +89,20 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 	if err := validateImmutableIdentity(runner.Identity(), "runner identity"); err != nil {
 		return Policy{}, err
 	}
-	renderer.ReadOnlyPaths = slices.Clone(renderer.ReadOnlyPaths)
+	renderer.Runtime = slices.Clone(renderer.Runtime)
+	renderer.RuntimeSymlinks = slices.Clone(renderer.RuntimeSymlinks)
 	encoded, err := canonical.Marshal(struct {
-		Version          string   `json:"version"`
-		Executable       string   `json:"executable"`
-		ExecutableSHA256 string   `json:"executable_sha256"`
-		RuntimeIdentity  string   `json:"runtime_identity"`
-		RunnerIdentity   string   `json:"runner_identity"`
-		Arguments        []string `json:"arguments"`
-		Environment      []string `json:"environment"`
-		Profiles         []string `json:"profiles"`
-		RuntimePaths     []string `json:"runtime_paths"`
-		PrivateProfile   string   `json:"private_profile"`
-		AllowLocalIPC    bool     `json:"allow_local_ipc"`
+		Version          string           `json:"version"`
+		Executable       string           `json:"executable"`
+		ExecutableSHA256 string           `json:"executable_sha256"`
+		RuntimeIdentity  string           `json:"runtime_identity"`
+		RunnerIdentity   string           `json:"runner_identity"`
+		Runtime          []RuntimeFile    `json:"runtime"`
+		RuntimeSymlinks  []RuntimeSymlink `json:"runtime_symlinks"`
+		Arguments        []string         `json:"arguments"`
+		Environment      []string         `json:"environment"`
+		Profiles         []string         `json:"profiles"`
+		PrivateRoot      bool             `json:"private_root"`
 		Limits           struct {
 			MaxSourceBytes     int64 `json:"max_source_bytes"`
 			MaxNormalizedBytes int64 `json:"max_normalized_bytes"`
@@ -121,17 +111,17 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 			MaxXMLElements     int   `json:"max_xml_elements"`
 			MaxXMLDepth        int   `json:"max_xml_depth"`
 			MaxPages           int   `json:"max_pages"`
+			MaxRuntimeEntries  int   `json:"max_runtime_entries"`
 			Timeout            int64 `json:"timeout_ns"`
 		} `json:"limits"`
 	}{
 		Version: ConverterVersion, Executable: renderer.Executable,
 		ExecutableSHA256: renderer.ExecutableSHA256, RuntimeIdentity: renderer.RuntimeIdentity,
-		RunnerIdentity: runner.Identity(), Arguments: []string{
+		RunnerIdentity: runner.Identity(), Runtime: renderer.Runtime,
+		RuntimeSymlinks: renderer.RuntimeSymlinks, Arguments: []string{
 			"--headless", "--norestore", "--nolockcheck", "--nodefault", "--nofirststartwizard",
-		}, Environment: libreOfficeEnvironment(),
-		Profiles: []string{"docx->fodt", "xlsx->fods"}, RuntimePaths: renderer.ReadOnlyPaths,
-		PrivateProfile: "file:///tmp/work/profile",
-		AllowLocalIPC:  true,
+		}, Environment: libreOfficeEnvironment(), Profiles: []string{"docx->fodt"},
+		PrivateRoot: true,
 		Limits: struct {
 			MaxSourceBytes     int64 `json:"max_source_bytes"`
 			MaxNormalizedBytes int64 `json:"max_normalized_bytes"`
@@ -140,18 +130,51 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 			MaxXMLElements     int   `json:"max_xml_elements"`
 			MaxXMLDepth        int   `json:"max_xml_depth"`
 			MaxPages           int   `json:"max_pages"`
+			MaxRuntimeEntries  int   `json:"max_runtime_entries"`
 			Timeout            int64 `json:"timeout_ns"`
 		}{
 			MaxSourceBytes: limits.MaxSourceBytes, MaxNormalizedBytes: limits.MaxNormalizedBytes,
 			MaxPDFBytes: limits.MaxPDFBytes, MaxWorkBytes: limits.MaxWorkBytes,
 			MaxXMLElements: limits.MaxXMLElements, MaxXMLDepth: limits.MaxXMLDepth,
-			MaxPages: limits.MaxPages, Timeout: int64(limits.Timeout),
+			MaxPages: limits.MaxPages, MaxRuntimeEntries: limits.MaxRuntimeEntries,
+			Timeout: int64(limits.Timeout),
 		},
 	})
 	if err != nil {
 		return Policy{}, err
 	}
-	return Policy{renderer: renderer, limits: limits, runner: runner, runnerID: runner.Identity(), fingerprint: digest(encoded)}, nil
+	return Policy{renderer: renderer, limits: limits, runner: runner,
+		runnerID: runner.Identity(), fingerprint: digest(encoded)}, nil
+}
+
+func validateRuntimeEntries(renderer Renderer) error {
+	if len(renderer.Runtime)+len(renderer.RuntimeSymlinks) == 0 {
+		return errors.New("renderer runtime is required")
+	}
+	if len(renderer.Runtime)+len(renderer.RuntimeSymlinks) > sandbox.MaxRuntimeEntries {
+		return errors.New("renderer runtime exceeds entry limit")
+	}
+	if err := (sandbox.Policy{
+		Mode:       sandbox.SupervisedFileMode,
+		Executable: renderer.Executable, ExecutableSHA256: renderer.ExecutableSHA256,
+		Arguments: []string{"runtime"}, Environment: []string{"LANG=C"},
+		MaxStdinBytes: 1, MaxStdoutBytes: 1,
+		PrivateRoot: &sandbox.PrivateRoot{
+			Runtime: renderer.Runtime, Symlinks: renderer.RuntimeSymlinks,
+			RuntimeIdentity: renderer.RuntimeIdentity, WorkBytes: 1,
+			InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		},
+	}).Validate(); err != nil {
+		return fmt.Errorf("renderer runtime is invalid: %w", err)
+	}
+	want, err := runtimeIdentityForManifest(renderer.Runtime, renderer.RuntimeSymlinks)
+	if err != nil {
+		return err
+	}
+	if want != renderer.RuntimeIdentity {
+		return sandbox.ErrRuntimeIdentityMismatch
+	}
+	return nil
 }
 
 func validateLimits(limits Limits) error {
@@ -163,22 +186,16 @@ func validateLimits(limits Limits) error {
 		limits.MaxXMLElements <= 0 || limits.MaxXMLElements > ceiling.MaxXMLElements ||
 		limits.MaxXMLDepth <= 0 || limits.MaxXMLDepth > ceiling.MaxXMLDepth ||
 		limits.MaxPages <= 0 || limits.MaxPages > ceiling.MaxPages ||
+		limits.MaxRuntimeEntries <= 0 || limits.MaxRuntimeEntries > ceiling.MaxRuntimeEntries ||
 		limits.Timeout <= 0 || limits.Timeout > ceiling.Timeout {
 		return errors.New("render PDF limits must be positive and within DefaultLimits")
 	}
 	return nil
 }
 
-// Fingerprint returns the complete conversion identity; an invalid policy returns empty.
-func (policy Policy) Fingerprint() string { return policy.fingerprint }
-
-// Limits returns the immutable limits selected by the policy.
-func (policy Policy) Limits() Limits { return policy.limits }
-
-// RunnerIdentity returns the runner identity selected by the policy.
-func (policy Policy) RunnerIdentity() string {
-	return policy.runnerID
-}
+func (policy Policy) Fingerprint() string    { return policy.fingerprint }
+func (policy Policy) Limits() Limits         { return policy.limits }
+func (policy Policy) RunnerIdentity() string { return policy.runnerID }
 
 func validateImmutableIdentity(value, subject string) error {
 	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+sha256.Size*2 {

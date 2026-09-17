@@ -22,8 +22,8 @@ contributor guidance and is excluded from the public Zensical site.
   current.
 - [CSV to PDF conversion](csv-pdf.md) — bounded local conversion, receipts,
   and the separate upload-authorization boundary.
-- [Render documents to PDF](render-pdf.md) — isolated DOCX and XLSX
-  normalization, admission, PDF conversion, and receipt provenance.
+- [Render documents to PDF](render-pdf.md) — isolated DOCX normalization,
+  admission, PDF conversion, and receipt provenance.
 - [Scan evidence assessment](scan-evidence-assessment.md) — synthetic scan
   corpus and the boundaries of the existing PDF evidence APIs.
 

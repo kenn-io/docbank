@@ -78,17 +78,6 @@ func TestConvertSafeDOCXAndReceiptSource(t *testing.T) {
 	assert.NotEqual(t, pdf[0], result.PDF()[0])
 }
 
-func TestConvertSafeXLSXAndLocalFormula(t *testing.T) {
-	runner := &recordingRunner{identity: testRunnerIdentity, output: flatODF(FlatSpreadsheetKind,
-		"<table:table xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\"><table:table-cell table:formula=\"of:=SUM([.A1:.A2])\"/></table:table>")}
-	policy := testPolicy(t, runner)
-	original := zipDocument(t, "xlsx")
-	result, err := Convert(t.Context(), testSource(t, original, xlsxMediaType), "xlsx", policy)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Len(t, runner.calls, 2)
-}
-
 func TestConvertRejectsUnsafeNormalizedOutputBeforePDFStage(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -96,7 +85,7 @@ func TestConvertRejectsUnsafeNormalizedOutputBeforePDFStage(t *testing.T) {
 	}{
 		{name: "external href", normalized: string(flatODF(FlatTextKind,
 			"<draw:image xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xlink:href=\"https://example.test/pixel.png\"/>"))},
-		{name: "linked field", normalized: string(flatODF(FlatSpreadsheetKind,
+		{name: "linked field", normalized: string(flatODF(FlatTextKind,
 			"<f>WEBSERVICE(\"https://example.test\")</f>"))},
 		{name: "opaque object", normalized: string(flatODF(FlatTextKind,
 			"<draw:object xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\"/>"))},
@@ -105,13 +94,7 @@ func TestConvertRejectsUnsafeNormalizedOutputBeforePDFStage(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			runner := &recordingRunner{identity: testRunnerIdentity, output: []byte(testCase.normalized)}
 			policy := testPolicy(t, runner)
-			format := "docx"
-			mediaType := docxMediaType
-			if strings.Contains(testCase.normalized, "WEBSERVICE") {
-				format = "xlsx"
-				mediaType = xlsxMediaType
-			}
-			_, err := Convert(t.Context(), testSource(t, zipDocument(t, format), mediaType), format, policy)
+			_, err := Convert(t.Context(), testSource(t, zipDocument(t, "docx"), docxMediaType), "docx", policy)
 			require.Error(t, err)
 			assert.Len(t, runner.calls, 1)
 		})
@@ -166,14 +149,18 @@ func testPolicy(t *testing.T, runner Runner) Policy {
 	require.NoError(t, err)
 	content, err := os.ReadFile(executable)
 	require.NoError(t, err)
+	runtimeFile := RuntimeFile{SourcePath: executable, GuestPath: "/usr/bin/test-runner", SHA256: digest(content), Executable: true}
+	runtimeIdentity, err := runtimeIdentityForManifest([]RuntimeFile{runtimeFile}, nil)
+	require.NoError(t, err)
 	policy, err := NewPolicy(Renderer{
 		Executable: executable, ExecutableSHA256: digest(content),
-		RuntimeIdentity: testRunnerIdentity, Runner: runner,
+		Runtime: []RuntimeFile{runtimeFile}, RuntimeIdentity: runtimeIdentity, Runner: runner,
 	}, DefaultLimits())
 	require.NoError(t, err)
 	return policy
 }
 
+//nolint:unparam // the helper keeps the source contract explicit for future profiles.
 func testSource(t *testing.T, content []byte, mediaType string) ocr.Source {
 	t.Helper()
 	source, err := ocr.NewSource(io.NopCloser(bytes.NewReader(content)), mediaType,
@@ -190,22 +177,20 @@ func stageResult(request Request, output []byte) StageResult {
 			ExecutableSHA256: request.ExecutableSHA256, InputSHA256: request.InputSHA256,
 			OutputSHA256: digest(output), NetworkDisabled: true,
 			ProcessTreeContained: true, DigestVerifiedLaunch: true, FilesystemIsolated: true,
-			LocalIPCAllowed: request.AllowLocalIPC,
+			FilesystemMode: "private-root-v1", PrivateRootInstalled: true,
+			RuntimeIdentity: request.RuntimeIdentity, UnixIPCAllowed: true,
 		},
 	}
 }
 
+//nolint:unparam // the helper retains the format argument for fixture readability.
 func zipDocument(t *testing.T, format string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
-	if format == "docx" {
-		require.NoError(t, writeZip(archive, "[Content_Types].xml", `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`))
-		require.NoError(t, writeZip(archive, "word/document.xml", `<document/>`))
-	} else {
-		require.NoError(t, writeZip(archive, "[Content_Types].xml", `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`))
-		require.NoError(t, writeZip(archive, "xl/workbook.xml", `<workbook/>`))
-	}
+	_ = format
+	require.NoError(t, writeZip(archive, "[Content_Types].xml", `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`))
+	require.NoError(t, writeZip(archive, "word/document.xml", `<document/>`))
 	require.NoError(t, archive.Close())
 	return buffer.Bytes()
 }
@@ -219,11 +204,10 @@ func writeZip(archive *zip.Writer, name, content string) error {
 	return err
 }
 
+//nolint:unparam // the helper retains the profile argument for fixture readability.
 func flatODF(kind, body string) []byte {
+	_ = kind
 	mimeType := "application/vnd.oasis.opendocument.text"
-	if kind == FlatSpreadsheetKind {
-		mimeType = "application/vnd.oasis.opendocument.spreadsheet"
-	}
 	return []byte(`<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:mimetype="` + mimeType + `"><office:body>` + body + `</office:body></office:document>`)
 }
 

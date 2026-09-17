@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document/internal/formatdetect"
@@ -19,7 +19,6 @@ import (
 
 const (
 	docxMediaType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	xlsxMediaType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
 type formatProfile struct {
@@ -152,8 +151,6 @@ func profileFor(id string) (formatProfile, bool) {
 	switch id {
 	case "docx":
 		return formatProfile{ID: "docx", kind: FlatTextKind, inputName: "source.docx", outputName: "source.fodt", normalizeMime: "OpenDocument Text Flat XML", pdfFilter: "writer_pdf_Export"}, true
-	case "xlsx":
-		return formatProfile{ID: "xlsx", kind: FlatSpreadsheetKind, inputName: "source.xlsx", outputName: "source.fods", normalizeMime: "OpenDocument Spreadsheet Flat XML", pdfFilter: "calc_pdf_Export"}, true
 	default:
 		return formatProfile{}, false
 	}
@@ -178,16 +175,17 @@ func stageRequest(policy Policy, profile formatProfile, stage string, input []by
 		Environment:      libreOfficeEnvironment(), Directory: filepath.Dir(policy.renderer.Executable),
 		InputName: inputName, OutputName: outputName, Input: bytes.Clone(input), InputSHA256: stdinDigest,
 		MaxOutputBytes: stageOutputLimit(policy.limits, stage), MaxWorkBytes: policy.limits.MaxWorkBytes,
-		PolicyFingerprint: policy.fingerprint, AllowLocalIPC: true,
+		PolicyFingerprint: policy.fingerprint, Runtime: slices.Clone(policy.renderer.Runtime),
+		RuntimeSymlinks: slices.Clone(policy.renderer.RuntimeSymlinks), RuntimeIdentity: policy.renderer.RuntimeIdentity,
 	}
 }
 
 func libreOfficeArguments(inputName, outputName, filter string) []string {
 	return []string{
 		"--headless", "--norestore", "--nolockcheck", "--nodefault", "--nofirststartwizard",
-		"-env:UserInstallation=" + profileURL("/tmp/work/profile"),
+		"-env:UserInstallation=file:///work/profile",
 		"--convert-to", extensionForFilter(outputName) + ":" + filter,
-		"--outdir", "/tmp/work", "/tmp/work/" + inputName,
+		"--outdir", "/work", "/work/" + inputName,
 	}
 }
 
@@ -198,17 +196,10 @@ func extensionForFilter(outputName string) string {
 func libreOfficeEnvironment() []string {
 	return []string{
 		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC",
-		"HOME=/tmp/work/home", "TMPDIR=/tmp/work/tmp", "PATH=/usr/bin:/bin",
+		"HOME=/work/home", "TMPDIR=/tmp", "XDG_CACHE_HOME=/work/home/cache",
+		"PATH=/usr/bin:/bin",
 		"LD_LIBRARY_PATH=/usr/lib/libreoffice/program",
 	}
-}
-
-func profileURL(directory string) string {
-	p := filepath.ToSlash(directory)
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
 func stageOutputLimit(limits Limits, stage string) int64 {
@@ -225,17 +216,14 @@ func verifyRenderer(policy Policy) error {
 	if _, err := providerutil.LoadPinnedExecutable(policy.renderer.Executable, policy.renderer.ExecutableSHA256, MaxExecutableBytes); err != nil {
 		return errors.New("render PDF renderer identity changed")
 	}
+	identity, err := runtimeIdentityForManifest(policy.renderer.Runtime, policy.renderer.RuntimeSymlinks)
+	if err != nil || identity != policy.renderer.RuntimeIdentity {
+		return sandbox.ErrRuntimeIdentityMismatch
+	}
 	return nil
 }
 
 func runStage(ctx context.Context, policy Policy, request Request) (StageResult, error) {
-	result, err := policy.runner.Run(ctx, request)
-	if !errors.Is(err, sandbox.ErrNormalRestart) || ctx.Err() != nil {
-		return result, err
-	}
-	if err := verifyRenderer(policy); err != nil {
-		return StageResult{}, err
-	}
 	return policy.runner.Run(ctx, request)
 }
 
@@ -255,7 +243,8 @@ func validateStageResult(request Request, result StageResult, runnerIdentity str
 		attestation.ExecutableSHA256 != request.ExecutableSHA256 || attestation.InputSHA256 != request.InputSHA256 ||
 		attestation.OutputSHA256 != digest(output) || !attestation.NetworkDisabled ||
 		!attestation.ProcessTreeContained || !attestation.DigestVerifiedLaunch || !attestation.FilesystemIsolated ||
-		attestation.LocalIPCAllowed != request.AllowLocalIPC {
+		!attestation.PrivateRootInstalled || attestation.FilesystemMode != "private-root-v1" ||
+		attestation.RuntimeIdentity != request.RuntimeIdentity || !attestation.UnixIPCAllowed {
 		return nil, errors.New("stage did not attest exact policy and bytes")
 	}
 	return bytes.Clone(output), nil
@@ -298,6 +287,3 @@ func (reader contextReader) Read(value []byte) (int, error) {
 	}
 	return n, err
 }
-
-var _ = docxMediaType
-var _ = xlsxMediaType

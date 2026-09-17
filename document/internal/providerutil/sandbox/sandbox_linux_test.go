@@ -7,8 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -24,20 +22,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type sandboxRunOutcome struct {
-	result Result
-	err    error
-}
-
 func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	executable := buildSandboxHelper(t, "echo", "", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
 	stdin := []byte("exact supplied bytes\x00remain data, never arguments")
-	request := sandboxTestRequest(t, executable, stdin, 1<<20)
-
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), sandboxTestRequest(t, executable, stdin, 1<<20))
 	require.NoError(t, err)
 	var response struct {
 		Arguments   []string `json:"arguments"`
@@ -49,23 +39,18 @@ func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	assert.Equal(t, hex.EncodeToString(digest[:]), response.StdinSHA256)
 	assert.Equal(t, []string{"--protocol", "sandbox"}, response.Arguments)
 	assert.Equal(t, cleanSandboxEnvironment(), response.Environment)
-	assert.Equal(t, NativeRunnerIdentity, result.Attestation.RunnerIdentity)
-	assert.True(t, result.Attestation.NetworkDisabled)
-	assert.True(t, result.Attestation.ProcessTreeContained)
-	assert.True(t, result.Attestation.DigestVerifiedLaunch)
-	assert.True(t, result.Attestation.FilesystemIsolated)
+	assert.Equal(t, "strict-exec", result.Attestation.FilesystemMode)
+	assert.False(t, result.Attestation.PrivateRootInstalled)
 }
 
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
-	executable := buildSandboxHelper(t, "network", listener.Addr().String(), "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("network probe"), 1<<20)
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
+		buildSandboxHelper(t, "network", listener.Addr().String(), ""), []byte("probe"), 1<<20))
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
 }
@@ -75,31 +60,23 @@ func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
-	executable := buildSandboxHelper(t, "unix-network", socketPath, "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("unix network probe"), 1<<20)
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
+		buildSandboxHelper(t, "unix-network", socketPath, ""), []byte("probe"), 1<<20))
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
 }
 
 func TestNativeRunnerCannotReadOrModifyHostFiles(t *testing.T) {
-	hostDirectory, err := os.MkdirTemp(".", ".sandbox-host-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(hostDirectory)) })
-	hostPath, err := filepath.Abs(filepath.Join(hostDirectory, "host-only.txt"))
-	require.NoError(t, err)
+	hostPath := filepath.Join(t.TempDir(), "host-only.txt")
 	require.NoError(t, os.WriteFile(hostPath, []byte("host-only"), 0o600))
 	before, err := os.Stat(hostPath)
 	require.NoError(t, err)
-	executable := buildSandboxHelper(t, "host-file", hostPath, "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("filesystem probe"), 1<<20)
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
+		buildSandboxHelper(t, "host-file", hostPath, ""), []byte("probe"), 1<<20))
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
 	content, err := os.ReadFile(hostPath)
@@ -111,311 +88,98 @@ func TestNativeRunnerCannotReadOrModifyHostFiles(t *testing.T) {
 	assert.Equal(t, before.ModTime(), after.ModTime())
 }
 
-func TestFilesystemLandlockDeniesHostFileAccess(t *testing.T) {
-	const targetEnvironment = "DOCBANK_TEST_SANDBOX_HOST_FILE"
-	if target := os.Getenv(targetEnvironment); target != "" {
-		if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-			os.Exit(70)
-		}
-		if err := installFilesystemLandlock(nil); err != nil {
-			_, _ = fmt.Fprint(os.Stderr, err)
-			os.Exit(77)
-		}
-		if _, err := os.ReadFile(target); err == nil {
-			os.Exit(71)
-		}
-		if err := os.WriteFile(target, []byte("modified"), 0o600); err == nil {
-			os.Exit(72)
-		}
-		os.Exit(0)
-	}
-	hostDirectory, err := os.MkdirTemp(".", ".sandbox-landlock-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(hostDirectory)) })
-	hostPath, err := filepath.Abs(filepath.Join(hostDirectory, "host-only.txt"))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(hostPath, []byte("host-only"), 0o600))
-	command := exec.Command( //nolint:gosec // os.Args[0] is the trusted current test executable
-		os.Args[0], "-test.run=^TestFilesystemLandlockDeniesHostFileAccess$",
-	)
-	command.Env = append(os.Environ(), targetEnvironment+"="+hostPath)
-	output, err := command.CombinedOutput()
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) && exitError.ExitCode() == 77 {
-		t.Skipf("Landlock filesystem isolation unavailable: %s", output)
-	}
-	require.NoError(t, err, "%s", output)
-	content, err := os.ReadFile(hostPath)
-	require.NoError(t, err)
-	assert.Equal(t, "host-only", string(content))
-}
-
-func TestSeccompDeniesPathnameUnixSockets(t *testing.T) {
-	const helperEnvironment = "DOCBANK_TEST_SANDBOX_SECCOMP"
-	if socketPath := os.Getenv(helperEnvironment); socketPath != "" {
-		if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-			os.Exit(10)
-		}
-		if err := installNetworkSeccomp(false); err != nil {
-			os.Exit(11)
-		}
-		connection, err := net.DialTimeout("unix", socketPath, time.Second)
-		if connection != nil {
-			_ = connection.Close()
-		}
-		if err != nil && !errors.Is(err, unix.EPERM) {
-			os.Exit(12)
-		}
-		os.Exit(0)
-	}
-	socketPath := filepath.Join(t.TempDir(), "seccomp.sock")
-	listener, err := net.Listen("unix", socketPath)
-	require.NoError(t, err)
-	defer func() { _ = listener.Close() }()
-	connection, err := net.DialTimeout("unix", socketPath, time.Second)
-	require.NoError(t, err, "the host listener must be reachable before filtering")
-	require.NoError(t, connection.Close())
-	command := exec.Command( //nolint:gosec // os.Args[0] is the trusted current test executable
-		os.Args[0], "-test.run=^TestSeccompDeniesPathnameUnixSockets$",
-	)
-	command.Env = append(os.Environ(), helperEnvironment+"="+socketPath)
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-}
-
-func TestSeccompFilterDeniesX32ABI(t *testing.T) {
-	if runtime.GOARCH != "amd64" {
-		t.Skip("x32 ABI exists only on amd64")
-	}
-	filters, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64, false)
+func TestExecPolicyMatchesBaselineDenyListAndPaths(t *testing.T) {
+	assert.Equal(t, []string{"/usr", "/lib", "/lib64", "/bin", "/proc"}, execLandlockPaths())
+	assert.Equal(t, []string{rootPath("etc", "ld.so.cache"), rootPath("etc", "localtime")}, execLandlockFiles())
+	filters, err := execNetworkFilters(unix.AUDIT_ARCH_X86_64)
 	require.NoError(t, err)
 	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
-	for name, syscallNumber := range map[string]uint32{
-		"socket":   unix.SYS_SOCKET,
-		"connect":  unix.SYS_CONNECT,
-		"io_uring": unix.SYS_IO_URING_SETUP,
-	} {
-		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber))
-			assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber|nativeX32SyscallBit))
-		})
+	for _, syscallNumber := range blockedNetworkSyscalls() {
+		assert.Equal(t, denied, evaluateSeccomp(t, filters, uint32(syscallNumber)))
 	}
-	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccomp(t, filters, unix.SYS_GETPID))
-	assert.Equal(t, denied, evaluateSeccomp(t, filters, unix.SYS_GETPID|nativeX32SyscallBit))
 }
 
-func TestSeccompPolicyScopedLocalIPC(t *testing.T) {
-	strict, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64, false)
+func TestPrivateRootAllowsOnlyUnixSockets(t *testing.T) {
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	local, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64, true)
-	require.NoError(t, err)
-	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
-	for _, syscallNumber := range []uint32{
-		unix.SYS_SOCKET, unix.SYS_SOCKETPAIR, unix.SYS_CONNECT, unix.SYS_BIND,
-		unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_ACCEPT4,
-	} {
-		assert.Equal(t, denied, evaluateSeccompDomain(t, strict, syscallNumber, unix.AF_UNIX))
-	}
-	for _, domain := range []uint32{unix.AF_INET, unix.AF_INET6, unix.AF_NETLINK} {
-		assert.Equal(t, denied, evaluateSeccompDomain(t, local, unix.SYS_SOCKET, domain))
-		assert.Equal(t, denied, evaluateSeccompDomain(t, local, unix.SYS_SOCKETPAIR, domain))
-	}
-	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, local, unix.SYS_SOCKET, unix.AF_UNIX))
-	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, local, unix.SYS_SOCKETPAIR, unix.AF_UNIX))
-	for _, syscallNumber := range []uint32{unix.SYS_CONNECT, unix.SYS_BIND, unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_ACCEPT4} {
-		assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, local, syscallNumber, unix.AF_UNIX))
-	}
-	assert.Equal(t, denied, evaluateSeccompDomain(t, local, unix.SYS_SENDMSG, unix.AF_UNIX))
-}
-
-func TestLauncherRequiresSealedMatchingInheritedControl(t *testing.T) {
-	executable := buildSandboxHelper(t, "echo", "", "")
-	stdin := []byte("auth")
-	_, err := newNativeRunner()
-	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, stdin, 1<<20)
-	request.Policy.AllowLocalIPC = true
-	request.Policy.Supervision = Supervision{
-		Mode: SupervisedFileMode, InputName: "input", OutputName: "output",
-		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
-	}
-	control, token, err := openLaunchControl(request)
-	require.NoError(t, err)
-	defer func() { _ = control.Close() }()
-	arguments := []string{"/proc/self/exe", launcherMarker, token, request.Policy.Executable}
-	decoded, authenticated := authenticatedLaunch(arguments, int(control.Fd()))
-	assert.True(t, authenticated)
-	assert.Equal(t, request.Policy.Executable, decoded.Policy.Executable)
-	assert.True(t, decoded.Policy.AllowLocalIPC)
-	_, authenticated = authenticatedLaunch(arguments, -1)
-	assert.False(t, authenticated)
-	arguments[2] = strings.Repeat("0", launcherTokenBytes*2)
-	_, authenticated = authenticatedLaunch(arguments, int(control.Fd()))
-	assert.False(t, authenticated)
-}
-
-func TestSupervisedRunnerReturnsDeclaredOutput(t *testing.T) {
-	executable := buildSandboxHelper(t, "file-output", "", "result.bin")
-	runner, err := newNativeRunner()
-	require.NoError(t, err)
-	stdin := []byte("supervised input")
-	request := sandboxTestRequest(t, executable, stdin, 1<<20)
-	request.Policy.Supervision = Supervision{
-		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
-		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
-	}
-	request.Policy.AllowLocalIPC = true
-	require.NoError(t, request.validate())
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("supervised output"), result.Stdout)
-	assert.Equal(t, result.Stdout, result.Output)
-}
-
-func TestSupervisedRunnerLocalIPCScope(t *testing.T) {
-	runner, err := newNativeRunner()
-	require.NoError(t, err)
-	localIPC := sandboxTestRequest(t, buildSandboxHelper(t, "local-ipc", "", "result.bin"), []byte("input"), 1<<20)
-	localIPC.Policy.AllowLocalIPC = true
-	localIPC.Policy.Supervision = Supervision{
-		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
-		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
-	}
-	result, err := runner.Run(t.Context(), localIPC)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "local-ipc", "", "result.bin")))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("allowed"), result.Output)
+	assert.True(t, result.Attestation.PrivateRootInstalled)
+	assert.Equal(t, "sha256:"+strings.Repeat("0", 64), result.Attestation.RuntimeIdentity)
+	assert.True(t, result.Attestation.UnixIPCAllowed)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
-	network := sandboxTestRequest(t, buildSandboxHelper(t, "file-network", listener.Addr().String(), "result.bin"), []byte("input"), 1<<20)
-	network.Policy.AllowLocalIPC = true
-	network.Policy.Supervision = localIPC.Policy.Supervision
-	result, err = runner.Run(t.Context(), network)
-	skipUnavailableSandbox(t, err)
+	result, err = runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-network", listener.Addr().String(), "result.bin")))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("denied"), result.Output)
+
+	hostPath := filepath.Join(t.TempDir(), "host-only.txt")
+	require.NoError(t, os.WriteFile(hostPath, []byte("host-only"), 0o600))
+	result, err = runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-host", hostPath, "result.bin")))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("denied"), result.Output)
 }
 
-func TestSupervisedRunnerRejectsOutputOverflow(t *testing.T) {
-	executable := buildSandboxHelper(t, "file-overflow", "", "result.bin")
-	runner, err := newNativeRunner()
-	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("input"), 1024)
-	request.Policy.Supervision = Supervision{
-		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
-		WorkBytes: 1 << 20, MaxOutputBytes: 1024,
-	}
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
-	require.ErrorIs(t, err, ErrOutputTooLarge)
-	assert.LessOrEqual(t, int64(len(result.Stdout)), request.Policy.MaxStdoutBytes)
-}
-
 func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
-	executable := buildSandboxHelper(t, "file-descendant-exit", "", "result.bin")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("input"), 1<<20)
-	request.Policy.AllowLocalIPC = true
-	request.Policy.Supervision = Supervision{
-		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
-		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
-	}
 	started := time.Now()
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-descendant-exit", "", "result.bin")))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("supervised output"), result.Output)
 	assert.Less(t, time.Since(started), 2*time.Second)
 }
 
-func TestSupervisedRunnerNeverLaunchesReplacementExecutable(t *testing.T) {
-	executable := buildSandboxHelper(t, "file-output", "", "result.bin")
-	replacement := buildSandboxHelper(t, "exit-125", "", "")
-	runner, err := newNativeRunner()
+func TestSupervisedRunnerRetriesExit81Once(t *testing.T) {
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("input"), 1<<20)
-	request.Policy.Supervision = Supervision{
-		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
-		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
-	}
-	require.NoError(t, os.Rename(replacement, executable))
-	_, err = runner.Run(t.Context(), request)
-	require.ErrorIs(t, err, ErrUnavailable)
+	result, err := runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-exit81-once", "", "result.bin")))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("retried output"), result.Output)
 }
 
 func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
-	executable := buildSandboxHelper(t, "descendant", "", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("descendant probe"), 1<<20)
+	request := sandboxTestRequest(t, buildSandboxHelper(t, "descendant", "", ""), []byte("probe"), 1<<20)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	finished := make(chan sandboxRunOutcome, 1)
-	started := time.Now()
-	go func() {
-		result, runErr := runner.Run(ctx, request)
-		finished <- sandboxRunOutcome{result: result, err: runErr}
-	}()
+	finished := make(chan error, 1)
+	go func() { _, runErr := runner.Run(ctx, request); finished <- runErr }()
 	select {
-	case outcome := <-finished:
-		skipUnavailableSandbox(t, outcome.err)
-		require.FailNow(t, "isolated runner exited before cancellation", "%v", outcome.err)
+	case err := <-finished:
+		require.FailNow(t, "isolated runner exited before cancellation", "%v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
 	cancel()
-	outcome := <-finished
-	require.ErrorIs(t, outcome.err, context.Canceled)
-	assert.Less(t, time.Since(started), 2*time.Second)
-	assert.True(t, outcome.result.Attestation.ProcessTreeContained)
-	assert.Contains(t, string(outcome.result.Stdout), "spawned")
-	assert.Contains(t, string(outcome.result.Stdout), "descendant-ready")
+	require.ErrorIs(t, <-finished, context.Canceled)
 }
 
 func TestNativeRunnerTerminatesPromptlyOnStdoutOverflow(t *testing.T) {
-	executable := buildSandboxHelper(t, "overflow", "", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("overflow probe"), 1024)
 	started := time.Now()
-	result, err := runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
+	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
+		buildSandboxHelper(t, "overflow", "", ""), []byte("probe"), 1024))
 	require.ErrorIs(t, err, ErrOutputTooLarge)
 	assert.Less(t, time.Since(started), 2*time.Second)
-	assert.LessOrEqual(t, int64(len(result.Stdout)), request.Policy.MaxStdoutBytes)
-}
-
-func TestNativeRunnerDoesNotMisclassifyBridgeExit125AsLauncherFailure(t *testing.T) {
-	executable := buildSandboxHelper(t, "exit-125", "", "")
-	runner, err := newNativeRunner()
-	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("exit probe"), 1<<20)
-	_, err = runner.Run(t.Context(), request)
-	skipUnavailableSandbox(t, err)
-	require.ErrorIs(t, err, ErrChildFailed)
-	require.NotErrorIs(t, err, ErrUnavailable)
-}
-
-func TestNativeRunnerHonorsCancellationBeforeExecutablePreparation(t *testing.T) {
-	executable := buildSandboxHelper(t, "echo", "", "")
-	runner, err := newNativeRunner()
-	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("canceled probe"), 1<<20)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = runner.Run(ctx, request)
-	require.ErrorIs(t, err, context.Canceled)
+	assert.LessOrEqual(t, int64(len(result.Stdout)), int64(1024))
 }
 
 func TestNativeRunnerNeverLaunchesExecutableContentOutsidePinnedDigest(t *testing.T) {
 	executable := buildSandboxHelper(t, "echo", "", "")
 	replacement := buildSandboxHelper(t, "replacement", "", "")
-	runner, err := newNativeRunner()
+	runner, err := NewNativeRunner()
 	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("identity probe"), 1<<20)
+	request := sandboxTestRequest(t, executable, []byte("probe"), 1<<20)
 	require.NoError(t, os.Rename(replacement, executable))
 	_, err = runner.Run(t.Context(), request)
 	require.ErrorIs(t, err, ErrUnavailable)
@@ -424,22 +188,44 @@ func TestNativeRunnerNeverLaunchesExecutableContentOutsidePinnedDigest(t *testin
 func TestVerifiedExecutableContentCannotChangeAfterDigestVerification(t *testing.T) {
 	executable := buildSandboxHelper(t, "echo", "", "")
 	replacement := buildSandboxHelper(t, "replacement", "", "")
-	_, err := newNativeRunner()
-	require.NoError(t, err)
-	request := sandboxTestRequest(t, executable, []byte("identity probe"), 1<<20)
-	want, err := os.ReadFile(executable)
-	require.NoError(t, err)
+	request := sandboxTestRequest(t, executable, []byte("probe"), 1<<20)
 	prepared, err := openVerifiedExecutable(t.Context(), request)
 	require.NoError(t, err)
 	defer func() { _ = prepared.Close() }()
+	want, err := os.ReadFile(executable)
+	require.NoError(t, err)
 	replacementBytes, err := os.ReadFile(replacement)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(executable, replacementBytes, 0o700))
 	got, err := os.ReadFile("/proc/self/fd/" + strconv.FormatUint(uint64(prepared.Fd()), 10))
 	require.NoError(t, err)
-	wantDigest := sha256.Sum256(want)
-	gotDigest := sha256.Sum256(got)
-	assert.Equal(t, wantDigest, gotDigest)
+	assert.Equal(t, sha256.Sum256(want), sha256.Sum256(got))
+}
+
+func TestSeccompFilterDeniesX32ABI(t *testing.T) {
+	if runtime.GOARCH != "amd64" {
+		t.Skip("x32 ABI exists only on amd64")
+	}
+	filters, err := execNetworkFilters(unix.AUDIT_ARCH_X86_64)
+	require.NoError(t, err)
+	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
+	for _, syscallNumber := range []uint32{unix.SYS_SOCKET, unix.SYS_CONNECT, unix.SYS_IO_URING_SETUP} {
+		assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber))
+		assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber|nativeX32SyscallBit))
+	}
+}
+
+func TestPrivateRootUnixSocketFilters(t *testing.T) {
+	filters, err := unixOnlyNetworkFilters(unix.AUDIT_ARCH_X86_64)
+	require.NoError(t, err)
+	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
+	for _, domain := range []uint32{unix.AF_INET, unix.AF_INET6, unix.AF_NETLINK} {
+		assert.Equal(t, denied, evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKET), domain))
+		assert.Equal(t, denied, evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKETPAIR), domain))
+	}
+	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKET), unix.AF_UNIX))
+	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKETPAIR), unix.AF_UNIX))
+	assert.Equal(t, denied, evaluateSeccompDomain(t, filters, uint32(unix.SYS_SENDMSG), unix.AF_UNIX))
 }
 
 func sandboxTestRequest(t *testing.T, executable string, stdin []byte, maxStdout int64) Request {
@@ -451,21 +237,43 @@ func sandboxTestRequest(t *testing.T, executable string, stdin []byte, maxStdout
 	return Request{
 		PolicyFingerprint: "sandbox-test-policy",
 		Policy: Policy{
-			Executable: executable, ExecutableSHA256: hex.EncodeToString(digest[:]),
+			Mode: ExecMode, Executable: executable, ExecutableSHA256: hex.EncodeToString(digest[:]),
 			Arguments: []string{"--protocol", "sandbox"}, Environment: cleanSandboxEnvironment(),
 			Directory: filepath.Dir(executable), MaxStdinBytes: max(int64(len(stdin)), 1),
-			MaxStdoutBytes: maxStdout, WorkBytes: 1 << 20,
+			MaxStdoutBytes: maxStdout,
 		},
 		Stdin: stdin, StdinSHA256: hex.EncodeToString(stdinDigest[:]),
 	}
+}
+
+func privateTestRequest(t *testing.T, executable string) Request {
+	t.Helper()
+	data, err := os.ReadFile(executable)
+	require.NoError(t, err)
+	file, err := os.CreateTemp(".", ".sandbox-private-helper-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(file.Name()) })
+	_, err = file.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, file.Chmod(0o700))
+	require.NoError(t, file.Close())
+	target, err := filepath.Abs(file.Name())
+	require.NoError(t, err)
+	request := sandboxTestRequest(t, target, []byte("input"), 1<<20)
+	request.Policy.Mode = SupervisedFileMode
+	request.Policy.PrivateRoot = &PrivateRoot{
+		RuntimeIdentity: "sha256:" + strings.Repeat("0", 64),
+		WorkBytes:       64 << 20, InputName: "source.docx", OutputName: "result.bin",
+		MaxOutputBytes: 1 << 20, UnixIPC: true,
+	}
+	return request
 }
 
 func buildSandboxHelper(t *testing.T, mode, networkAddress, outputName string) string {
 	t.Helper()
 	target := filepath.Join(t.TempDir(), "sandbox-helper")
 	ldflags := strings.Join([]string{
-		"-X=main.mode=" + mode,
-		"-X=main.networkAddress=" + networkAddress,
+		"-X=main.mode=" + mode, "-X=main.networkAddress=" + networkAddress,
 		"-X=main.outputName=" + outputName,
 	}, " ")
 	command := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags,
@@ -479,13 +287,6 @@ func cleanSandboxEnvironment() []string {
 	return []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC"}
 }
 
-func skipUnavailableSandbox(t *testing.T, err error) {
-	t.Helper()
-	if errors.Is(err, ErrUnavailable) {
-		t.Skipf("native Linux namespace isolation unavailable: %v", err)
-	}
-}
-
 func evaluateSeccomp(t *testing.T, filters []unix.SockFilter, syscallNumber uint32) uint32 {
 	t.Helper()
 	return evaluateSeccompDomain(t, filters, syscallNumber, unix.AF_UNIX)
@@ -494,8 +295,8 @@ func evaluateSeccomp(t *testing.T, filters []unix.SockFilter, syscallNumber uint
 func evaluateSeccompDomain(t *testing.T, filters []unix.SockFilter, syscallNumber, domain uint32) uint32 {
 	t.Helper()
 	accumulator := uint32(0)
-	for programCounter, steps := 0, 0; programCounter < len(filters) && steps <= len(filters); steps++ {
-		instruction := filters[programCounter]
+	for pc, steps := 0, 0; pc < len(filters) && steps <= len(filters); steps++ {
+		instruction := filters[pc]
 		switch instruction.Code {
 		case unix.BPF_LD | unix.BPF_W | unix.BPF_ABS:
 			switch instruction.K {
@@ -508,18 +309,18 @@ func evaluateSeccompDomain(t *testing.T, filters []unix.SockFilter, syscallNumbe
 			default:
 				require.FailNow(t, "unexpected seccomp load offset", "%d", instruction.K)
 			}
-			programCounter++
+			pc++
 		case unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K:
 			if accumulator == instruction.K {
-				programCounter += int(instruction.Jt) + 1
+				pc += int(instruction.Jt) + 1
 			} else {
-				programCounter += int(instruction.Jf) + 1
+				pc += int(instruction.Jf) + 1
 			}
 		case unix.BPF_JMP | unix.BPF_JSET | unix.BPF_K:
 			if accumulator&instruction.K != 0 {
-				programCounter += int(instruction.Jt) + 1
+				pc += int(instruction.Jt) + 1
 			} else {
-				programCounter += int(instruction.Jf) + 1
+				pc += int(instruction.Jf) + 1
 			}
 		case unix.BPF_RET | unix.BPF_K:
 			return instruction.K

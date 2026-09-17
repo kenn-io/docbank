@@ -27,7 +27,7 @@ canonical evidence is the validated text and source locations behind it.
 | Stage exact bytes for an authorized provider upload | `document/upload` |
 | Bind outbound connections to a declared destination | `document/providerhttp` |
 | Convert CSV locally for PDF OCR | `document/csvpdf` |
-| Convert DOCX or XLSX locally to a bounded PDF | `document/renderpdf` |
+| Convert DOCX locally to a bounded PDF | `document/renderpdf` |
 
 These are reusable Go contracts. Vault-owned publication, consent, backup, and
 search are described in [Document processing](architecture/document-processing.md).

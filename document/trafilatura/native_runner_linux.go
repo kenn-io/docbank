@@ -54,10 +54,11 @@ func (runner nativeRunner) Run(
 	sandboxRequest := sandbox.Request{
 		PolicyFingerprint: request.PolicyFingerprint,
 		Policy: sandbox.Policy{
+			Mode:       sandbox.ExecMode,
 			Executable: request.Executable, ExecutableSHA256: request.ExecutableSHA256,
 			Arguments: slices.Clone(request.Arguments), Environment: slices.Clone(request.Environment),
 			Directory: request.Directory, MaxStdinBytes: max(int64(len(request.Stdin)), 1),
-			MaxStdoutBytes: request.MaxStdoutBytes, WorkBytes: 256 << 20,
+			MaxStdoutBytes: request.MaxStdoutBytes,
 		},
 		Stdin: slices.Clone(request.Stdin), StdinSHA256: request.StdinSHA256,
 	}

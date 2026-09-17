@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	FlatTextKind        = "fodt"
-	FlatSpreadsheetKind = "fods"
-	maxXMLTokenBytes    = 1 << 20
-	maxXMLAttributes    = 128
+	FlatTextKind     = "fodt"
+	maxXMLTokenBytes = 1 << 20
+	maxXMLAttributes = 128
 )
 
 // Admission records the bounded normalized document accepted by the scanner.
@@ -29,7 +28,7 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 	if int64(len(data)) <= 0 || int64(len(data)) > limits.MaxNormalizedBytes {
 		return Admission{}, errors.New("normalized ODF exceeds byte limit")
 	}
-	if expectedKind != FlatTextKind && expectedKind != FlatSpreadsheetKind {
+	if expectedKind != FlatTextKind {
 		return Admission{}, errors.New("normalized ODF kind is unsupported")
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(data))
@@ -65,7 +64,7 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 					return Admission{}, errors.New("normalized ODF document root is invalid")
 				}
 				rootSeen = true
-				if !hasExpectedMimeType(value.Attr, expectedKind) {
+				if !hasExpectedMimeType(value.Attr) {
 					return Admission{}, errors.New("normalized ODF document kind does not match profile")
 				}
 			}
@@ -116,7 +115,7 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 			if len(value) > maxXMLTokenBytes {
 				return Admission{}, errors.New("normalized ODF character data exceeds limit")
 			}
-			if len(stack) > 0 && unsafeFormulaElement(stack[len(stack)-1]) && hasUnsafeFormula(string(value)) {
+			if len(stack) > 0 && formulaElement(stack[len(stack)-1]) && hasUnsafeFormula(string(value)) {
 				return Admission{}, errors.New("normalized ODF contains an external or linked formula")
 			}
 			if scriptDepth > 0 && depth >= scriptDepth && len(bytes.TrimSpace(value)) != 0 {
@@ -132,16 +131,8 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 	}
 }
 
-// Admit is a shorthand for Scan when callers only need the admission result.
-func Admit(data []byte, expectedKind string, limits Limits) (Admission, error) {
-	return Scan(data, expectedKind, limits)
-}
-
-func hasExpectedMimeType(attributes []xml.Attr, kind string) bool {
+func hasExpectedMimeType(attributes []xml.Attr) bool {
 	want := "application/vnd.oasis.opendocument.text"
-	if kind == FlatSpreadsheetKind {
-		want = "application/vnd.oasis.opendocument.spreadsheet"
-	}
 	for _, attr := range attributes {
 		if attr.Name.Local == "mimetype" && attr.Name.Space == "urn:oasis:names:tc:opendocument:xmlns:office:1.0" {
 			return attr.Value == want
@@ -215,7 +206,7 @@ func allowedInternalLink(value string) bool {
 	return err == nil && parsed.Scheme == "data"
 }
 
-func unsafeFormulaElement(element xml.Name) bool {
+func formulaElement(element xml.Name) bool {
 	local := strings.ToLower(element.Local)
 	return local == "f" || local == "formula" || local == "expression"
 }
@@ -226,16 +217,12 @@ func hasUnsafeFormula(value string) bool {
 		return false
 	}
 	for _, marker := range []string{
-		"webservice", "dde", "external", "http:", "https:", "file:",
+		"webservice", "dde", "http:", "https:", "file:", "ftp:",
 		"vnd.sun.star.script:",
 	} {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
-	if !strings.Contains(lower, "[") || !strings.Contains(lower, "]") {
-		return false
-	}
-	index := strings.IndexByte(lower, '[')
-	return index < 0 || !strings.HasPrefix(lower[index:], "[.")
+	return false
 }

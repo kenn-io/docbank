@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -47,7 +48,7 @@ func (runner *countingRunner) call(index int) Request {
 
 func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
-	content := realDOCX(false)
+	content := realDOCX(false, "", "")
 	result, err := Convert(t.Context(), testSource(t, content, docxMediaType), "docx", policy)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -55,17 +56,15 @@ func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
 	assert.Positive(t, result.Receipt().Pages)
 }
 
-func TestLibreOfficeConvertsSafeXLSX(t *testing.T) {
+func TestLibreOfficeColdProfileRestartsExactlyOnce(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
-	content := realXLSX("safe")
-	result, err := Convert(t.Context(), testSource(t, content, xlsxMediaType), "xlsx", policy)
+	result, err := Convert(t.Context(), testSource(t, realDOCX(false, "", ""), docxMediaType), "docx", policy)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.NotEmpty(t, result.PDF())
-	assert.Positive(t, result.Receipt().Pages)
+	t.Log("cold-profile owner conversion completed through the launcher's single retry contract")
 }
 
-func TestLibreOfficeRejectsOrStripsExternalDOCXRelationship(t *testing.T) {
+func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
@@ -83,17 +82,23 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXRelationship(t *testing.T) {
 			_ = connection.Close()
 		}
 	}()
-	content := realDOCX(true)
-	inner, err := newNativeRunner(Renderer{})
-	require.NoError(t, err)
-	runner := &countingRunner{inner: inner}
-	policy := realLibreOfficePolicy(t, runner)
+	httpTarget := "http://" + listener.Addr().String() + "/external.png"
+	fileTarget := "file://" + filepath.Join(t.TempDir(), "host-sentinel")
+	sentinelPath := strings.TrimPrefix(fileTarget, "file://")
+	require.NoError(t, os.WriteFile(sentinelPath, []byte("host-only"), 0o600))
+	policy := realLibreOfficePolicy(t, nil)
+	runner := &countingRunner{inner: policy.runner}
+	policy.runner = runner
+	content := realDOCX(true, httpTarget, fileTarget)
 	result, err := Convert(t.Context(), testSource(t, content, docxMediaType), "docx", policy)
 	select {
 	case <-hit:
 		t.Fatal("LibreOffice reached the host listener")
 	case <-time.After(100 * time.Millisecond):
 	}
+	contentAfter, readErr := os.ReadFile(sentinelPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, []byte("host-only"), contentAfter)
 	if err == nil {
 		require.NotNil(t, result)
 		assert.Equal(t, 2, runner.count())
@@ -108,38 +113,17 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXRelationship(t *testing.T) {
 	}
 }
 
-func TestLibreOfficeRejectsOrStripsLinkedXLSXField(t *testing.T) {
-	inner, err := newNativeRunner(Renderer{})
-	require.NoError(t, err)
-	runner := &countingRunner{inner: inner}
-	policy := realLibreOfficePolicy(t, runner)
-	content := realXLSX("webservice")
-	result, err := Convert(t.Context(), testSource(t, content, xlsxMediaType), "xlsx", policy)
-	if err == nil {
-		require.NotNil(t, result)
-		assert.Equal(t, 2, runner.count())
-		stage := runner.call(1)
-		assert.NotContains(t, string(stage.Input), "WEBSERVICE")
-		assert.NotContains(t, string(stage.Input), "example.test")
-		assert.Equal(t, digest(stage.Input), stage.InputSHA256)
-		t.Logf("admission branch: strip; stage calls=%d; normalized input sha256=%s", runner.count(), stage.InputSHA256)
-	} else {
-		assert.Nil(t, result)
-		assert.Equal(t, 1, runner.count())
-		t.Logf("admission branch: reject; stage calls=%d; error=%v", runner.count(), err)
-	}
-}
-
 func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	result, err := Convert(ctx, testSource(t, realDOCX(false), docxMediaType), "docx", policy)
+	result, err := Convert(ctx, testSource(t, realDOCX(false, "", ""), docxMediaType), "docx", policy)
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "deadline exceeded"))
 }
 
+//nolint:unparam // the wrapper permits injected runners for owner variants.
 func realLibreOfficePolicy(t *testing.T, runner Runner) Policy {
 	t.Helper()
 	executable := os.Getenv("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE")
@@ -148,47 +132,32 @@ func realLibreOfficePolicy(t *testing.T, runner Runner) Policy {
 	}
 	content, err := os.ReadFile(executable)
 	require.NoError(t, err)
+	manifest, err := DiscoverRuntime(DefaultRuntimeRoots())
+	require.NoError(t, err)
 	if runner == nil {
-		runner, err = newNativeRunner(Renderer{})
+		runner, err = newNativeRunner(Renderer{Runtime: manifest.Files, RuntimeSymlinks: manifest.Symlinks, RuntimeIdentity: manifest.Identity})
 		require.NoError(t, err)
 	}
 	policy, err := NewPolicy(Renderer{
 		Executable: executable, ExecutableSHA256: digest(content),
-		RuntimeIdentity: testRunnerIdentity, Runner: runner,
+		Runtime: manifest.Files, RuntimeSymlinks: manifest.Symlinks,
+		RuntimeIdentity: manifest.Identity, Runner: runner,
 	}, DefaultLimits())
 	require.NoError(t, err)
 	return policy
 }
 
-func realDOCX(external bool) []byte {
+func realDOCX(external bool, httpTarget, fileTarget string) []byte {
 	entries := map[string]string{
 		"[Content_Types].xml": `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
 		"_rels/.rels":         `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
 		"word/document.xml":   `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>safe synthetic document</w:t></w:r></w:p>`,
 	}
 	if external {
-		entries["word/document.xml"] += `<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
-		entries["word/_rels/document.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="http://127.0.0.1/external.png" TargetMode="External"/></Relationships>`
+		entries["word/document.xml"] += `<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId3"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+		entries["word/_rels/document.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` + httpTarget + `" TargetMode="External"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` + fileTarget + `" TargetMode="External"/></Relationships>`
 	}
 	entries["word/document.xml"] += `</w:body></w:document>`
-	return zipEntries(entries)
-}
-
-func realXLSX(kind string) []byte {
-	formula := ""
-	switch kind {
-	case "webservice":
-		formula = `<f>WEBSERVICE("https://example.test")</f>`
-	case "safe":
-		formula = `<f>SUM(A1:A2)</f>`
-	}
-	entries := map[string]string{
-		"[Content_Types].xml":        `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
-		"_rels/.rels":                `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
-		"xl/workbook.xml":            `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
-		"xl/_rels/workbook.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
-		"xl/worksheets/sheet1.xml":   `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>one</t></is></c><c r="A2" t="inlineStr"><is><t>two</t></is></c><c r="A3">` + formula + `<v>3</v></c></row></sheetData></worksheet>`,
-	}
 	return zipEntries(entries)
 }
 

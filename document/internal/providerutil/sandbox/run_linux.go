@@ -34,8 +34,6 @@ const (
 	launcherOutputExitCode  = 124
 	launcherReadyStatus     = byte(1)
 	launcherFailureStatus   = byte(2)
-	nativeX32SyscallBit     = uint32(0x40000000)
-	minimumLandlockABI      = uintptr(3)
 	childDrainWindow        = 250 * time.Millisecond
 )
 
@@ -46,8 +44,6 @@ type Runner interface {
 }
 
 type nativeRunner struct{}
-
-func newNativeRunner() (Runner, error) { return NewNativeRunner() }
 
 // NewNativeRunner returns the enforcing runner for the current platform.
 func NewNativeRunner() (Runner, error) {
@@ -80,6 +76,18 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 		return Result{}, ErrUnavailable
 	}
 	defer func() { _ = executable.Close() }()
+	var runtimeFiles []*os.File
+	if request.Policy.Mode == SupervisedFileMode {
+		runtimeFiles, err = prepareRuntimeFiles(ctx, request.Policy.PrivateRoot)
+		if err != nil {
+			return Result{}, ErrUnavailable
+		}
+		defer func() {
+			for _, file := range runtimeFiles {
+				_ = file.Close()
+			}
+		}()
+	}
 	control, launchToken, err := openLaunchControl(request)
 	if err != nil {
 		return Result{}, ErrUnavailable
@@ -109,7 +117,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 	command.Stdin = bytes.NewReader(request.Stdin)
 	command.Stdout = output
 	command.Stderr = io.Discard
-	command.ExtraFiles = []*os.File{executable, control, statusWriter}
+	command.ExtraFiles = append([]*os.File{executable, control, statusWriter}, runtimeFiles...)
 	command.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET |
 			syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
@@ -142,7 +150,10 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 			RunnerIdentity: NativeRunnerIdentity, PolicyFingerprint: request.PolicyFingerprint,
 			ExecutableSHA256: request.Policy.ExecutableSHA256, StdinSHA256: request.StdinSHA256,
 			NetworkDisabled: true, ProcessTreeContained: true, DigestVerifiedLaunch: true,
-			FilesystemIsolated: true, LocalIPCAllowed: request.Policy.AllowLocalIPC,
+			FilesystemIsolated: true, FilesystemMode: filesystemMode(request.Policy.Mode),
+			PrivateRootInstalled: request.Policy.Mode == SupervisedFileMode,
+			RuntimeIdentity:      runtimeIdentity(request.Policy),
+			UnixIPCAllowed:       request.Policy.Mode == SupervisedFileMode && request.Policy.PrivateRoot.UnixIPC,
 		},
 	}
 	result.Output = slices.Clone(result.Stdout)
@@ -156,14 +167,9 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 		return result, ErrUnavailable
 	}
 	if runErr != nil {
-		if request.Policy.supervision().Mode == SupervisedFileMode {
-			var exitError *exec.ExitError
-			if errors.As(runErr, &exitError) && exitError.ExitCode() == launcherOutputExitCode {
-				return result, ErrOutputTooLarge
-			}
-			if errors.As(runErr, &exitError) && exitError.ExitCode() == 81 {
-				return result, errors.Join(ErrChildFailed, ErrNormalRestart)
-			}
+		var exitError *exec.ExitError
+		if errors.As(runErr, &exitError) && exitError.ExitCode() == launcherOutputExitCode {
+			return result, ErrOutputTooLarge
 		}
 		return result, ErrChildFailed
 	}
@@ -174,6 +180,20 @@ func launcherReadyStatusRead(reader io.Reader) bool {
 	status := []byte{0}
 	_, err := io.ReadFull(reader, status)
 	return err == nil && status[0] == launcherReadyStatus
+}
+
+func runtimeIdentity(policy Policy) string {
+	if policy.PrivateRoot == nil {
+		return ""
+	}
+	return policy.PrivateRoot.RuntimeIdentity
+}
+
+func filesystemMode(mode Mode) string {
+	if mode == SupervisedFileMode {
+		return "private-root-v1"
+	}
+	return "strict-exec"
 }
 
 func openLaunchControl(request Request) (*os.File, string, error) {
@@ -228,7 +248,7 @@ func authenticatedLaunch(arguments []string, controlFD int) (launchControl, bool
 	var stat unix.Stat_t
 	if err := unix.Fstat(controlFD, &stat); err != nil ||
 		stat.Mode&unix.S_IFMT != unix.S_IFREG ||
-		stat.Size < launcherTokenBytes || stat.Size > launcherTokenBytes+MaxControlBytes {
+		stat.Size < launcherTokenBytes || stat.Size > launcherTokenBytes+MaxPrivateRootControlBytes {
 		return launchControl{}, false
 	}
 	seals := unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL

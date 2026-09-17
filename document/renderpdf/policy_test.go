@@ -15,10 +15,13 @@ func TestNewPolicyValidatesIdentityAndTighteningLimits(t *testing.T) {
 	content, err := os.ReadFile(executable)
 	require.NoError(t, err)
 	runner := &recordingRunner{identity: testRunnerIdentity}
+	runtimeFile := RuntimeFile{SourcePath: executable, GuestPath: "/usr/bin/test-runner", SHA256: digest(content), Executable: true}
+	runtimeIdentity, err := runtimeIdentityForManifest([]RuntimeFile{runtimeFile}, nil)
+	require.NoError(t, err)
 	limits := DefaultLimits()
 	limits.MaxSourceBytes = 1 << 20
 	policy, err := NewPolicy(Renderer{
-		Executable: executable, ExecutableSHA256: digest(content), RuntimeIdentity: testRunnerIdentity,
+		Executable: executable, ExecutableSHA256: digest(content), Runtime: []RuntimeFile{runtimeFile}, RuntimeIdentity: runtimeIdentity,
 		Runner: runner,
 	}, limits)
 	require.NoError(t, err)
@@ -33,9 +36,14 @@ func TestNewPolicyRejectsInvalidIdentitiesAndLimits(t *testing.T) {
 	content, err := os.ReadFile(executable)
 	require.NoError(t, err)
 	base := Renderer{
-		Executable: executable, ExecutableSHA256: digest(content), RuntimeIdentity: testRunnerIdentity,
+		Executable: executable, ExecutableSHA256: digest(content),
 		Runner: &recordingRunner{identity: testRunnerIdentity},
 	}
+	runtimeFile := RuntimeFile{SourcePath: executable, GuestPath: "/usr/bin/test-runner", SHA256: digest(content), Executable: true}
+	runtimeIdentity, err := runtimeIdentityForManifest([]RuntimeFile{runtimeFile}, nil)
+	require.NoError(t, err)
+	base.Runtime = []RuntimeFile{runtimeFile}
+	base.RuntimeIdentity = runtimeIdentity
 	for _, testCase := range []struct {
 		name string
 		edit func(*Renderer, *Limits)

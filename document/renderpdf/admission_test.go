@@ -9,10 +9,10 @@ import (
 )
 
 func TestAdmissionAllowsLocalLinksFormulasAndRasterData(t *testing.T) {
-	data := flatODF(FlatSpreadsheetKind, `<table:table xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" table:formula="of:=SUM([.A1:.A2])"><text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><xlink:a xlink:href="#sheet1"/><draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xlink:href="data:image/png;base64,AA=="/></text:p></table:table>`)
-	admission, err := Scan(data, FlatSpreadsheetKind, DefaultLimits())
+	data := flatODF(FlatTextKind, `<office:body xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><xlink:a xlink:href="#local"/><draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xlink:href="data:image/png;base64,AA=="/></text:p><text:p><f>SUM([.A1:.A2])</f></text:p></office:body>`)
+	admission, err := Scan(data, FlatTextKind, DefaultLimits())
 	require.NoError(t, err)
-	assert.Equal(t, FlatSpreadsheetKind, admission.Kind)
+	assert.Equal(t, FlatTextKind, admission.Kind)
 	assert.Positive(t, admission.Elements)
 }
 
@@ -50,8 +50,6 @@ func TestAdmissionEnforcesBoundsAndKind(t *testing.T) {
 	limits.MaxXMLElements = 1
 	_, err = Scan(flatODF(FlatTextKind, `<office:body/>`), FlatTextKind, limits)
 	require.ErrorContains(t, err, "element")
-	_, err = Scan(flatODF(FlatTextKind, `<office:body/>`), FlatSpreadsheetKind, DefaultLimits())
-	require.Error(t, err)
 	_, err = Scan([]byte(strings.Repeat("x", 8)), FlatTextKind, DefaultLimits())
 	require.Error(t, err)
 }
