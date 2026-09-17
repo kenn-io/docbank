@@ -3,10 +3,10 @@ package llamaparse
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"mime"
 	"net/http"
@@ -609,8 +609,8 @@ func (client *Client) retainsImages(authorization document.RenditionAuthorizatio
 		providerutil.AllowsArtifact(authorization, document.EvidenceArtifactImage)
 }
 
-func (client *Client) validateJobMetadata(raw json.RawMessage) (int, error) {
-	var metadata map[string]json.RawMessage
+func (client *Client) validateJobMetadata(raw jsontext.Value) (int, error) {
+	var metadata map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return 0, err
 	}
@@ -712,40 +712,40 @@ type jobResponse struct {
 }
 
 type jsonResult struct {
-	Pages       json.RawMessage `json:"pages"`
-	JobMetadata json.RawMessage `json:"job_metadata"`
+	Pages       jsontext.Value `json:"pages"`
+	JobMetadata jsontext.Value `json:"job_metadata"`
 }
 
 type markdownResult struct {
-	Markdown    string          `json:"markdown"`
-	JobMetadata json.RawMessage `json:"job_metadata"`
+	Markdown    string         `json:"markdown"`
+	JobMetadata jsontext.Value `json:"job_metadata"`
 }
 
 type resultPage struct {
-	Page                *int            `json:"page"`
-	Text                *string         `json:"text,omitempty"`
-	Markdown            *string         `json:"md,omitempty"`
-	Images              []resultImage   `json:"images"`
-	Charts              json.RawMessage `json:"charts"`
-	Tables              json.RawMessage `json:"tables"`
-	Layout              json.RawMessage `json:"layout"`
-	Items               json.RawMessage `json:"items"`
-	Status              *string         `json:"status,omitempty"`
-	Links               json.RawMessage `json:"links"`
-	Width               *float64        `json:"width,omitempty"`
-	Height              *float64        `json:"height,omitempty"`
-	TriggeredAutoMode   *bool           `json:"triggeredAutoMode,omitempty"`
-	ParsingMode         string          `json:"parsingMode"`
-	StructuredData      json.RawMessage `json:"structuredData,omitempty"`
-	NoStructuredContent bool            `json:"noStructuredContent"`
-	NoTextContent       *bool           `json:"noTextContent"`
-	IsAudioTranscript   bool            `json:"isAudioTranscript,omitempty"`
-	DurationInSeconds   *float64        `json:"durationInSeconds,omitempty"`
-	SlideSpeakerNotes   *string         `json:"slideSpeakerNotes,omitempty"`
-	Confidence          *float64        `json:"confidence,omitempty"`
-	PrintedPageNumber   *string         `json:"printedPageNumber,omitempty"`
-	PageHeaderMarkdown  *string         `json:"pageHeaderMarkdown,omitempty"`
-	PageFooterMarkdown  *string         `json:"pageFooterMarkdown,omitempty"`
+	Page                *int           `json:"page"`
+	Text                *string        `json:"text,omitempty"`
+	Markdown            *string        `json:"md,omitempty"`
+	Images              []resultImage  `json:"images"`
+	Charts              jsontext.Value `json:"charts"`
+	Tables              jsontext.Value `json:"tables"`
+	Layout              jsontext.Value `json:"layout"`
+	Items               jsontext.Value `json:"items"`
+	Status              *string        `json:"status,omitempty"`
+	Links               jsontext.Value `json:"links"`
+	Width               *float64       `json:"width,omitempty"`
+	Height              *float64       `json:"height,omitempty"`
+	TriggeredAutoMode   *bool          `json:"triggeredAutoMode,omitempty"`
+	ParsingMode         string         `json:"parsingMode"`
+	StructuredData      jsontext.Value `json:"structuredData,omitempty"`
+	NoStructuredContent bool           `json:"noStructuredContent"`
+	NoTextContent       *bool          `json:"noTextContent"`
+	IsAudioTranscript   bool           `json:"isAudioTranscript,omitempty"`
+	DurationInSeconds   *float64       `json:"durationInSeconds,omitempty"`
+	SlideSpeakerNotes   *string        `json:"slideSpeakerNotes,omitempty"`
+	Confidence          *float64       `json:"confidence,omitempty"`
+	PrintedPageNumber   *string        `json:"printedPageNumber,omitempty"`
+	PageHeaderMarkdown  *string        `json:"pageHeaderMarkdown,omitempty"`
+	PageFooterMarkdown  *string        `json:"pageFooterMarkdown,omitempty"`
 }
 
 type resultImage struct {
@@ -922,22 +922,10 @@ func validateArtifactName(name string) error {
 }
 
 func strictJSON(raw []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if decoder.More() {
-		return errors.New("JSON response has trailing values")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("JSON response has trailing data")
-	}
-	return nil
+	return json.Unmarshal(raw, target, json.RejectUnknownMembers(true))
 }
 
-func jsonObject(raw json.RawMessage) bool {
+func jsonObject(raw jsontext.Value) bool {
 	trimmed := bytes.TrimSpace(raw)
-	return len(trimmed) >= 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' && json.Valid(trimmed)
+	return len(trimmed) >= 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' && jsontext.Value(trimmed).IsValid()
 }

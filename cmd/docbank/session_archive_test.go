@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
@@ -42,7 +42,7 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 			"minimum_age = \"24h\"\nscan_interval = \"10ms\"\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
-	t.Setenv(client.EnvBackgroundDaemon, "1")
+	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
 
 	virtualPath := "/archives/agents/codex/project-alpha/2026-07/session-01.jsonl"
@@ -107,7 +107,7 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	var snapshot api.BackupSnapshot
 	require.Eventually(t, func() bool {
 		out, createErr := runCLI(t, "backup", "create", "--tag", "agent-sessions", "--json")
-		if errors.Is(createErr, client.ErrMaintenanceBusy) {
+		if errors.Is(createErr, daemonconn.ErrMaintenanceBusy) {
 			return false
 		}
 		if createErr != nil {

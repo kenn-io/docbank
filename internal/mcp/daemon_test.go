@@ -20,20 +20,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
 func TestDaemonLeaseEnsuresInitialClientOnce(t *testing.T) {
-	want := client.New("http://unused.invalid", "synthetic-key")
+	want := daemonconn.New("http://unused.invalid", "synthetic-key")
 	var ensures atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		ensures.Add(1)
 		return want, nil
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 
 	for range 2 {
-		got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (*client.Client, error) {
+		got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *daemonconn.Connection) (*daemonconn.Connection, error) {
 			return c, nil
 		})
 		require.NoError(t, err)
@@ -45,17 +46,17 @@ func TestDaemonLeaseEnsuresInitialClientOnce(t *testing.T) {
 func TestDaemonLeaseRejectsForbiddenEffectiveKeyOnInitialAcquisitionWithoutLeak(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const forbidden = "synthetic-forbidden-mcp-bearer"
-		current := client.New("http://unused.invalid", forbidden)
+		current := daemonconn.New("http://unused.invalid", forbidden)
 		closed := newClosedClients()
 		var ensures atomic.Int32
-		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 			ensures.Add(1)
 			return current, nil
 		}, closed.close)
-		require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
+		require.NoError(t, lease.bindAPIKeyExclusion(daemonconn.NewAPIKeyExclusionPolicy(forbidden)))
 		called := false
 
-		_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+		_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 			called = true
 			return struct{}{}, nil
 		})
@@ -74,14 +75,14 @@ func TestDaemonLeaseRejectsForbiddenEffectiveKeyOnInitialAcquisitionWithoutLeak(
 }
 
 func TestDaemonLeaseAllowsEffectiveKeyDifferentFromForbiddenBearer(t *testing.T) {
-	want := client.New("http://unused.invalid", "independent-daemon-key")
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	want := daemonconn.New("http://unused.invalid", "independent-daemon-key")
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return want, nil
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 	require.NoError(t, lease.bindAPIKeyExclusion(
-		client.NewAPIKeyExclusionPolicy("synthetic-mcp-bearer")))
+		daemonconn.NewAPIKeyExclusionPolicy("synthetic-mcp-bearer")))
 
-	got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (*client.Client, error) {
+	got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *daemonconn.Connection) (*daemonconn.Connection, error) {
 		return c, nil
 	})
 
@@ -92,22 +93,22 @@ func TestDaemonLeaseAllowsEffectiveKeyDifferentFromForbiddenBearer(t *testing.T)
 func TestDaemonLeaseRejectsForbiddenKeyAfterIdleReacquisition(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const forbidden = "synthetic-forbidden-mcp-bearer"
-		first := client.New("http://unused.invalid", "independent-daemon-key")
-		forbiddenReplacement := client.New("http://unused.invalid", forbidden)
-		clients := []*client.Client{first, forbiddenReplacement}
+		first := daemonconn.New("http://unused.invalid", "independent-daemon-key")
+		forbiddenReplacement := daemonconn.New("http://unused.invalid", forbidden)
+		clients := []*daemonconn.Connection{first, forbiddenReplacement}
 		var ensures atomic.Int32
 		closed := newClosedClients()
-		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 			index := int(ensures.Add(1) - 1)
 			require.Less(t, index, len(clients))
 			return clients[index], nil
 		}, closed.close)
-		require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
+		require.NoError(t, lease.bindAPIKeyExclusion(daemonconn.NewAPIKeyExclusionPolicy(forbidden)))
 
 		current, err := lease.acquire(t.Context())
 		require.NoError(t, err)
 		lease.discard(current) // Model an idle daemon connection becoming invalid.
-		_, err = daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+		_, err = daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 			return struct{}{}, errors.New("forbidden replacement must not dispatch")
 		})
 
@@ -122,21 +123,22 @@ func TestDaemonLeaseRejectsForbiddenKeyAfterIdleReacquisition(t *testing.T) {
 func TestDaemonReadRejectsForbiddenKeyOnTransportReplacement(t *testing.T) {
 	const forbidden = "synthetic-forbidden-mcp-bearer"
 	old := disconnectedDaemonClient(t)
-	forbiddenReplacement := client.New("http://unused.invalid", forbidden)
-	clients := []*client.Client{old, forbiddenReplacement}
+	forbiddenReplacement := daemonconn.New("http://unused.invalid", forbidden)
+	clients := []*daemonconn.Connection{old, forbiddenReplacement}
 	var ensures atomic.Int32
 	closed := newClosedClients()
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		index := int(ensures.Add(1) - 1)
 		require.Less(t, index, len(clients))
 		return clients[index], nil
 	}, closed.close)
-	require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
+	require.NoError(t, lease.bindAPIKeyExclusion(daemonconn.NewAPIKeyExclusionPolicy(forbidden)))
 	calls := 0
 
-	_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (string, error) {
+	_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (string, error) {
 		calls++
-		return "", c.Health(ctx)
+		_, err := c.API().Health(ctx)
+		return "", err
 	})
 
 	require.ErrorIs(t, err, errDaemonCredentialReuse)
@@ -154,17 +156,17 @@ func TestDaemonLeaseSharesForbiddenKeyAcquisitionFailureAcrossWaiters(t *testing
 		forbidden = "synthetic-forbidden-mcp-bearer"
 	)
 	old := disconnectedDaemonClient(t)
-	forbiddenReplacement := client.New("http://unused.invalid", forbidden)
-	clients := []*client.Client{old, forbiddenReplacement}
+	forbiddenReplacement := daemonconn.New("http://unused.invalid", forbidden)
+	clients := []*daemonconn.Connection{old, forbiddenReplacement}
 	closed := newClosedClients()
 	var ensures atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		index := int(ensures.Add(1) - 1)
 		require.Less(t, index, len(clients))
 		return clients[index], nil
 	}, closed.close)
-	require.NoError(t, lease.bindAPIKeyExclusion(client.NewAPIKeyExclusionPolicy(forbidden)))
-	_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+	require.NoError(t, lease.bindAPIKeyExclusion(daemonconn.NewAPIKeyExclusionPolicy(forbidden)))
+	_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 		return struct{}{}, nil
 	})
 	require.NoError(t, err)
@@ -175,7 +177,7 @@ func TestDaemonLeaseSharesForbiddenKeyAcquisitionFailureAcrossWaiters(t *testing
 	errorsByWorker := make(chan error, workers)
 	for range workers {
 		go func() {
-			_, readErr := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (struct{}, error) {
+			_, readErr := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
 				if c != old {
 					return struct{}{}, errors.New("forbidden replacement reached dispatch")
 				}
@@ -183,7 +185,8 @@ func TestDaemonLeaseSharesForbiddenKeyAcquisitionFailureAcrossWaiters(t *testing
 					releaseOnce.Do(func() { close(release) })
 				}
 				<-release
-				return struct{}{}, c.Health(ctx)
+				_, err := c.API().Health(ctx)
+				return struct{}{}, err
 			})
 			errorsByWorker <- readErr
 		}()
@@ -201,18 +204,18 @@ func TestDaemonLeaseSharesForbiddenKeyAcquisitionFailureAcrossWaiters(t *testing
 }
 
 func TestDaemonLeaseRecoversFromStaleRuntimeOnNextSafeCall(t *testing.T) {
-	want := client.New("http://unused.invalid", "synthetic-key")
+	want := daemonconn.New("http://unused.invalid", "synthetic-key")
 	var ensures atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		if ensures.Add(1) == 1 {
 			return nil, fmt.Errorf("stale /private/vault/runtime with key synthetic-secret: %w",
-				client.ErrTransientDaemonAcquisition)
+				daemonconn.ErrTransientDaemonAcquisition)
 		}
 		return want, nil
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 
 	called := false
-	_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (string, error) {
+	_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (string, error) {
 		called = true
 		return "", nil
 	})
@@ -222,7 +225,7 @@ func TestDaemonLeaseRecoversFromStaleRuntimeOnNextSafeCall(t *testing.T) {
 	assert.NotContains(t, err.Error(), "/private/vault")
 	assert.False(t, called)
 
-	got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (*client.Client, error) {
+	got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *daemonconn.Connection) (*daemonconn.Connection, error) {
 		return c, nil
 	})
 	require.NoError(t, err)
@@ -234,21 +237,22 @@ func TestDaemonLeaseRecoversSafeReadsAfterDaemonLoss(t *testing.T) {
 	for _, cause := range []string{"daemon restart", "idle shutdown"} {
 		t.Run(cause, func(t *testing.T) {
 			old := disconnectedDaemonClient(t)
-			replacement := client.New("http://unused.invalid", "replacement-key")
-			clients := []*client.Client{old, replacement}
+			replacement := daemonconn.New("http://unused.invalid", "replacement-key")
+			clients := []*daemonconn.Connection{old, replacement}
 			var ensures atomic.Int32
 			closed := newClosedClients()
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				index := int(ensures.Add(1) - 1)
 				require.Less(t, index, len(clients))
 				return clients[index], nil
 			}, closed.close)
 
 			calls := 0
-			got, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (string, error) {
+			got, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (string, error) {
 				calls++
 				if c == old {
-					return "", c.Health(ctx)
+					_, err := c.API().Health(ctx)
+					return "", err
 				}
 				return "recovered", nil
 			})
@@ -265,17 +269,17 @@ func TestDaemonLeaseRecoversSafeReadsAfterDaemonLoss(t *testing.T) {
 func TestDaemonLeaseConcurrentFailuresCreateOneReplacement(t *testing.T) {
 	const workers = 16
 	old := disconnectedDaemonClient(t)
-	replacement := client.New("http://unused.invalid", "replacement-key")
+	replacement := daemonconn.New("http://unused.invalid", "replacement-key")
 	var ensures atomic.Int32
 	closed := newClosedClients()
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		if ensures.Add(1) == 1 {
 			return old, nil
 		}
 		return replacement, nil
 	}, closed.close)
 
-	_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+	_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 		return struct{}{}, nil
 	})
 	require.NoError(t, err)
@@ -287,14 +291,15 @@ func TestDaemonLeaseConcurrentFailuresCreateOneReplacement(t *testing.T) {
 	errorsByWorker := make(chan error, workers)
 	for range workers {
 		go func() {
-			_, readErr := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (string, error) {
+			_, readErr := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (string, error) {
 				calls.Add(1)
 				if c == old {
 					if arrived.Add(1) == workers {
 						releaseOnce.Do(func() { close(release) })
 					}
 					<-release
-					return "", c.Health(ctx)
+					_, err := c.API().Health(ctx)
+					return "", err
 				}
 				return "recovered", nil
 			})
@@ -315,12 +320,12 @@ func TestDaemonLeaseCancellationDoesNotReacquireOrReplay(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		var ensures atomic.Int32
-		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 			ensures.Add(1)
 			return nil, errors.New("must not be called")
-		}, func(*client.Client) error { return nil })
+		}, func(*daemonconn.Connection) error { return nil })
 
-		_, err := daemonRead(ctx, lease, func(context.Context, *client.Client) (struct{}, error) {
+		_, err := daemonRead(ctx, lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 			return struct{}{}, errors.New("must not be called")
 		})
 		require.ErrorIs(t, err, context.Canceled)
@@ -329,19 +334,20 @@ func TestDaemonLeaseCancellationDoesNotReacquireOrReplay(t *testing.T) {
 
 	t.Run("during request", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
-		current := client.New("http://unused.invalid", "synthetic-key")
+		current := daemonconn.New("http://unused.invalid", "synthetic-key")
 		var ensures atomic.Int32
 		closed := newClosedClients()
-		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 			ensures.Add(1)
 			return current, nil
 		}, closed.close)
 
 		calls := 0
-		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (struct{}, error) {
+		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
 			calls++
 			cancel()
-			return struct{}{}, c.Health(ctx)
+			_, err := c.API().Health(ctx)
+			return struct{}{}, err
 		})
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Equal(t, 1, calls)
@@ -356,16 +362,16 @@ func TestDaemonLeaseCancellationPropagatesWhileAnotherCallerEnsures(t *testing.T
 		releaseEnsure := make(chan struct{})
 		var releaseOnce sync.Once
 		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseEnsure) }) })
-		current := client.New("http://unused.invalid", "synthetic-key")
-		lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+		current := daemonconn.New("http://unused.invalid", "synthetic-key")
+		lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 			close(ensureStarted)
 			<-releaseEnsure
 			return current, nil
-		}, func(*client.Client) error { return nil })
+		}, func(*daemonconn.Connection) error { return nil })
 
 		firstDone := make(chan error, 1)
 		go func() {
-			_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+			_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 				return struct{}{}, nil
 			})
 			firstDone <- err
@@ -376,7 +382,7 @@ func TestDaemonLeaseCancellationPropagatesWhileAnotherCallerEnsures(t *testing.T
 		defer cancel()
 		secondDone := make(chan error, 1)
 		go func() {
-			_, err := daemonRead(ctx, lease, func(context.Context, *client.Client) (struct{}, error) {
+			_, err := daemonRead(ctx, lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 				return struct{}{}, errors.New("canceled caller must not run")
 			})
 			secondDone <- err
@@ -397,10 +403,10 @@ func TestDaemonLeaseInitiatorCancellationDoesNotCancelSharedAcquisition(t *testi
 		releaseEnsure := make(chan struct{})
 		var releaseOnce sync.Once
 		t.Cleanup(func() { releaseOnce.Do(func() { close(releaseEnsure) }) })
-		current := client.New("http://unused.invalid", "synthetic-key")
+		current := daemonconn.New("http://unused.invalid", "synthetic-key")
 		var ensures atomic.Int32
 		var startedOnce sync.Once
-		lease := newDaemonLeaseWith(func(ctx context.Context) (*client.Client, error) {
+		lease := newDaemonLeaseWith(func(ctx context.Context) (*daemonconn.Connection, error) {
 			ensures.Add(1)
 			startedOnce.Do(func() { close(ensureStarted) })
 			select {
@@ -409,12 +415,12 @@ func TestDaemonLeaseInitiatorCancellationDoesNotCancelSharedAcquisition(t *testi
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-		}, func(*client.Client) error { return nil })
+		}, func(*daemonconn.Connection) error { return nil })
 
 		initiatorCtx, cancelInitiator := context.WithCancel(t.Context())
 		initiatorDone := make(chan error, 1)
 		go func() {
-			_, err := daemonRead(initiatorCtx, lease, func(context.Context, *client.Client) (struct{}, error) {
+			_, err := daemonRead(initiatorCtx, lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 				return struct{}{}, errors.New("canceled initiator must not run")
 			})
 			initiatorDone <- err
@@ -423,7 +429,7 @@ func TestDaemonLeaseInitiatorCancellationDoesNotCancelSharedAcquisition(t *testi
 
 		waiterDone := make(chan error, 1)
 		go func() {
-			got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (*client.Client, error) {
+			got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *daemonconn.Connection) (*daemonconn.Connection, error) {
 				return c, nil
 			})
 			if err == nil && got != current {
@@ -446,12 +452,12 @@ func TestDaemonLeaseAcquisitionUsesBoundedLeaseContext(t *testing.T) {
 		const timeout = 25 * time.Millisecond
 		var ensures atomic.Int32
 		lease := newDaemonLeaseWithAcquisitionContext(
-			func(ctx context.Context) (*client.Client, error) {
+			func(ctx context.Context) (*daemonconn.Connection, error) {
 				ensures.Add(1)
 				<-ctx.Done()
 				return nil, ctx.Err()
 			},
-			func(*client.Client) error { return nil },
+			func(*daemonconn.Connection) error { return nil },
 			func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), timeout)
 			},
@@ -460,7 +466,7 @@ func TestDaemonLeaseAcquisitionUsesBoundedLeaseContext(t *testing.T) {
 		done := make(chan error, 1)
 		startedAt := time.Now()
 		go func() {
-			_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+			_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 				return struct{}{}, errors.New("timed-out acquisition must not run the request")
 			})
 			done <- err
@@ -480,16 +486,16 @@ func TestDaemonLeaseSharesAcquisitionFailure(t *testing.T) {
 	ensureStarted := make(chan struct{})
 	releaseEnsure := make(chan struct{})
 	var ensures atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		ensures.Add(1)
 		close(ensureStarted)
 		<-releaseEnsure
 		return nil, errors.New("synthetic acquisition failure")
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 
 	initiatorDone := make(chan error, 1)
 	go func() {
-		_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+		_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 			return struct{}{}, errors.New("failed acquisition must not run the request")
 		})
 		initiatorDone <- err
@@ -516,20 +522,21 @@ func TestDaemonLeaseSharesAcquisitionFailure(t *testing.T) {
 func TestDaemonReadRetriesAtMostOnce(t *testing.T) {
 	first := disconnectedDaemonClient(t)
 	second := disconnectedDaemonClient(t)
-	recovered := client.New("http://unused.invalid", "recovered-key")
-	clients := []*client.Client{first, second, recovered}
+	recovered := daemonconn.New("http://unused.invalid", "recovered-key")
+	clients := []*daemonconn.Connection{first, second, recovered}
 	var ensures atomic.Int32
 	closed := newClosedClients()
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		index := int(ensures.Add(1) - 1)
 		require.Less(t, index, len(clients))
 		return clients[index], nil
 	}, closed.close)
 
 	calls := 0
-	_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (string, error) {
+	_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (string, error) {
 		calls++
-		return "", c.Health(ctx)
+		_, err := c.API().Health(ctx)
+		return "", err
 	})
 	require.ErrorIs(t, err, errDaemonRequestFailed)
 	assert.Equal(t, errDaemonRequestFailed.Error(), err.Error())
@@ -538,7 +545,7 @@ func TestDaemonReadRetriesAtMostOnce(t *testing.T) {
 	assert.Equal(t, 1, closed.count(first))
 	assert.Equal(t, 1, closed.count(second))
 
-	got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *client.Client) (string, error) {
+	got, err := daemonRead(t.Context(), lease, func(_ context.Context, c *daemonconn.Connection) (string, error) {
 		assert.Same(t, recovered, c)
 		return "recovered later", nil
 	})
@@ -550,17 +557,17 @@ func TestDaemonReadRetriesAtMostOnce(t *testing.T) {
 func TestDaemonReadNeverRetriesAfterResponse(t *testing.T) {
 	tests := []struct {
 		name      string
-		newClient func(*testing.T) *client.Client
-		read      func(context.Context, *client.Client) error
+		newClient func(*testing.T) *daemonconn.Connection
+		read      func(context.Context, *daemonconn.Connection) error
 		check     func(*testing.T, error)
 	}{
 		{
 			name: "domain response",
-			newClient: func(t *testing.T) *client.Client {
+			newClient: func(t *testing.T) *daemonconn.Connection {
 				t.Helper()
 				return problemDaemonClient(t, "not_found", "synthetic private document data")
 			},
-			read: func(ctx context.Context, c *client.Client) error { return c.Health(ctx) },
+			read: func(ctx context.Context, c *daemonconn.Connection) error { _, err := c.API().Health(ctx); return err },
 			check: func(t *testing.T, err error) {
 				t.Helper()
 				facts, ok := daemonProblemFacts(err)
@@ -571,22 +578,23 @@ func TestDaemonReadNeverRetriesAfterResponse(t *testing.T) {
 		},
 		{
 			name: "partial successful response",
-			newClient: func(t *testing.T) *client.Client {
+			newClient: func(t *testing.T) *daemonconn.Connection {
 				t.Helper()
 				server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 					response.Header().Set("Content-Type", "application/json")
 					_, _ = response.Write([]byte(`{"id":`))
 				}))
 				t.Cleanup(server.Close)
-				return client.New(server.URL, "synthetic-key")
+				return daemonconn.New(server.URL, "synthetic-key")
 			},
-			read: func(ctx context.Context, c *client.Client) error {
-				_, err := c.Node(ctx, 1)
+			read: func(ctx context.Context, c *daemonconn.Connection) error {
+				_, err := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: 1}})
+
 				return err
 			},
 			check: func(t *testing.T, err error) {
 				t.Helper()
-				assert.False(t, client.IsResponseDecodeError(err), "raw response errors must not cross MCP")
+				assert.False(t, daemonconn.IsResponseDecodeError(err), "raw response errors must not cross MCP")
 				assert.NoError(t, errors.Unwrap(err))
 			},
 		},
@@ -596,13 +604,13 @@ func TestDaemonReadNeverRetriesAfterResponse(t *testing.T) {
 			current := testCase.newClient(t)
 			var ensures atomic.Int32
 			closed := newClosedClients()
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				ensures.Add(1)
 				return current, nil
 			}, closed.close)
 			calls := 0
 
-			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (struct{}, error) {
+			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
 				calls++
 				return struct{}{}, testCase.read(ctx, c)
 			})
@@ -635,12 +643,13 @@ func TestDaemonBoundaryCopiesSafeProblemFactsWithoutRawCause(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			current := problemDaemonClientWithObserved(t, testCase.code,
 				"synthetic-secret /private/vault private-document", testCase.observed)
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				return current, nil
-			}, func(*client.Client) error { return nil })
+			}, func(*daemonconn.Connection) error { return nil })
 
-			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (struct{}, error) {
-				return struct{}{}, c.Health(ctx)
+			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
+				_, err := c.API().Health(ctx)
+				return struct{}{}, err
 			})
 			require.ErrorIs(t, err, errDaemonRequestFailed)
 			facts, ok := daemonProblemFacts(err)
@@ -656,9 +665,9 @@ func TestDaemonBoundaryCopiesSafeProblemFactsWithoutRawCause(t *testing.T) {
 				assert.Same(t, testCase.mapped, facts.MappedError)
 				require.NoError(t, errors.Unwrap(errors.Unwrap(err)))
 			}
-			var rawOverflow *client.SourceFenceScopeTooLargeError
+			var rawOverflow *daemonconn.SourceFenceScopeTooLargeError
 			assert.NotErrorAs(t, err, &rawOverflow, "raw detailed client errors must not cross MCP")
-			_, rawProblemVisible := client.ProblemCode(err)
+			_, rawProblemVisible := daemonconn.ProblemCode(err)
 			assert.False(t, rawProblemVisible, "client problem wrappers must not cross MCP")
 			assertSafeDaemonFormatting(t, err)
 		})
@@ -685,19 +694,20 @@ func TestDaemonBoundaryDropsUnsafeProblemCodes(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			current := problemDaemonClientWithObserved(t, testCase.code,
 				"synthetic-secret /private/vault private-document", 4097)
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				return current, nil
-			}, func(*client.Client) error { return nil })
+			}, func(*daemonconn.Connection) error { return nil })
 
-			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *client.Client) (struct{}, error) {
-				return struct{}{}, c.Health(ctx)
+			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
+				_, err := c.API().Health(ctx)
+				return struct{}{}, err
 			})
 			require.ErrorIs(t, err, errDaemonRequestFailed)
 			facts, ok := daemonProblemFacts(err)
 			assert.False(t, ok)
-			assert.Equal(t, client.ProblemFacts{}, facts)
+			assert.Equal(t, daemonconn.ProblemFacts{}, facts)
 			require.NoError(t, errors.Unwrap(err))
-			_, rawProblemVisible := client.ProblemCode(err)
+			_, rawProblemVisible := daemonconn.ProblemCode(err)
 			assert.False(t, rawProblemVisible)
 			assertSafeDaemonFormatting(t, err)
 			if testCase.marker != "" {
@@ -714,11 +724,11 @@ type sensitiveDaemonFailureError struct{ detail string }
 func (failure *sensitiveDaemonFailureError) Error() string { return failure.detail }
 
 func TestDaemonBoundaryDropsRawAcquisitionCause(t *testing.T) {
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return nil, &sensitiveDaemonFailureError{detail: "synthetic-secret /private/vault private-document"}
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 
-	_, err := daemonRead(t.Context(), lease, func(context.Context, *client.Client) (struct{}, error) {
+	_, err := daemonRead(t.Context(), lease, func(context.Context, *daemonconn.Connection) (struct{}, error) {
 		return struct{}{}, errors.New("failed acquisition must not run the request")
 	})
 	require.ErrorIs(t, err, errDaemonUnavailable)
@@ -742,17 +752,17 @@ func assertSafeDaemonFormatting(t *testing.T, err error) {
 func TestDaemonProcessingStartNeverReplaysAmbiguousOutcome(t *testing.T) {
 	tests := []struct {
 		name      string
-		newClient func(*testing.T) *client.Client
+		newClient func(*testing.T) *daemonconn.Connection
 	}{
 		{name: "failure before response", newClient: disconnectedDaemonClient},
-		{name: "truncated response", newClient: func(t *testing.T) *client.Client {
+		{name: "truncated response", newClient: func(t *testing.T) *daemonconn.Connection {
 			t.Helper()
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 				response.Header().Set("Content-Type", "application/x-ndjson")
 				_, _ = response.Write([]byte(`{"sequence":1`))
 			}))
 			t.Cleanup(server.Close)
-			return client.New(server.URL, "synthetic-key")
+			return daemonconn.New(server.URL, "synthetic-key")
 		}},
 	}
 	for _, testCase := range tests {
@@ -760,15 +770,15 @@ func TestDaemonProcessingStartNeverReplaysAmbiguousOutcome(t *testing.T) {
 			current := testCase.newClient(t)
 			var ensures atomic.Int32
 			closed := newClosedClients()
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				ensures.Add(1)
 				return current, nil
 			}, closed.close)
 			require.NoError(t, lease.bindAPIKeyExclusion(
-				client.NewAPIKeyExclusionPolicy("independent-mcp-bearer")))
+				daemonconn.NewAPIKeyExclusionPolicy("independent-mcp-bearer")))
 			calls := 0
 
-			_, err := daemonProcessingStart(t.Context(), lease, func(c *client.Client) (api.ProcessingJob, error) {
+			_, err := daemonProcessingStart(t.Context(), lease, func(c *daemonconn.Connection) (api.ProcessingJob, error) {
 				calls++
 				return c.StartProcessing(t.Context(), api.StartProcessingRequest{}, strings.Repeat("b", 64))
 			})
@@ -785,13 +795,13 @@ func TestDaemonProcessingStartPreservesDefiniteDomainResponse(t *testing.T) {
 	current := problemDaemonClient(t, "processing_consent_required", "synthetic consent detail")
 	var ensures atomic.Int32
 	closed := newClosedClients()
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		ensures.Add(1)
 		return current, nil
 	}, closed.close)
 	calls := 0
 
-	_, err := daemonProcessingStart(t.Context(), lease, func(c *client.Client) (api.ProcessingJob, error) {
+	_, err := daemonProcessingStart(t.Context(), lease, func(c *daemonconn.Connection) (api.ProcessingJob, error) {
 		calls++
 		return c.StartProcessing(t.Context(), api.StartProcessingRequest{}, strings.Repeat("b", 64))
 	})
@@ -805,7 +815,7 @@ func TestDaemonProcessingStartPreservesDefiniteDomainResponse(t *testing.T) {
 	assert.Zero(t, closed.count(current))
 }
 
-func disconnectedDaemonClient(t *testing.T) *client.Client {
+func disconnectedDaemonClient(t *testing.T) *daemonconn.Connection {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		hijacker, ok := response.(http.Hijacker)
@@ -821,15 +831,15 @@ func disconnectedDaemonClient(t *testing.T) *client.Client {
 		_ = connection.Close()
 	}))
 	t.Cleanup(server.Close)
-	return client.New(server.URL, "synthetic-key")
+	return daemonconn.New(server.URL, "synthetic-key")
 }
 
-func problemDaemonClient(t *testing.T, code, detail string) *client.Client {
+func problemDaemonClient(t *testing.T, code, detail string) *daemonconn.Connection {
 	t.Helper()
 	return problemDaemonClientWithObserved(t, code, detail, 0)
 }
 
-func problemDaemonClientWithObserved(t *testing.T, code, detail string, observed int) *client.Client {
+func problemDaemonClientWithObserved(t *testing.T, code, detail string, observed int) *daemonconn.Connection {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/problem+json")
@@ -841,26 +851,26 @@ func problemDaemonClientWithObserved(t *testing.T, code, detail string, observed
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	return client.New(server.URL, "synthetic-key")
+	return daemonconn.New(server.URL, "synthetic-key")
 }
 
 type closedClients struct {
 	mu     sync.Mutex
-	counts map[*client.Client]int
+	counts map[*daemonconn.Connection]int
 }
 
 func newClosedClients() *closedClients {
-	return &closedClients{counts: make(map[*client.Client]int)}
+	return &closedClients{counts: make(map[*daemonconn.Connection]int)}
 }
 
-func (closed *closedClients) close(c *client.Client) error {
+func (closed *closedClients) close(c *daemonconn.Connection) error {
 	closed.mu.Lock()
 	defer closed.mu.Unlock()
 	closed.counts[c]++
 	return nil
 }
 
-func (closed *closedClients) count(c *client.Client) int {
+func (closed *closedClients) count(c *daemonconn.Connection) int {
 	closed.mu.Lock()
 	defer closed.mu.Unlock()
 	return closed.counts[c]

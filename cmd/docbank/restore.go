@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var restoreJSON bool
@@ -19,15 +21,17 @@ var restoreCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		n, err := c.Node(cmd.Context(), id)
+		n, err := c.API().GetNode(cmd.Context(), &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: id}})
+
 		if err != nil {
 			return err
 		}
-		restored, err := c.Restore(cmd.Context(), id, n.Revision)
+		restored, err := c.API().RestoreNode(cmd.Context(), &apiclient.RestoreNodeRequestOptions{PathParams: &apiclient.RestoreNodePath{ID: id}, Header: &apiclient.RestoreNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(n.Revision, 10))}})
+
 		if err != nil {
 			return err
 		}

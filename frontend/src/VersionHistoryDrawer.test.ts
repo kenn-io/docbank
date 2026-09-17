@@ -6,7 +6,7 @@ import {
   screen,
 } from "@testing-library/svelte";
 import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
-import type { ContentVersion, Node } from "./api.js";
+import type { ContentVersion, Node } from "./generated/docbank.js";
 
 const currentVersionID = "33333333-3333-4333-8333-333333333333";
 const replacedVersionID = "22222222-2222-4222-8222-222222222222";

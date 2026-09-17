@@ -17,3 +17,11 @@ name = "forbid-superpowers-artifacts"
 language = "fail"
 entry = ".superpowers is temporary workspace output; inspect make docs-screenshots output and publish the complete set to docs-assets instead"
 files = "^\\.superpowers/"
+
+[[repos.hooks]]
+id = "huma-check"
+name = "huma-check"
+language = "system"
+entry = "go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./..."
+pass_filenames = false
+always_run = true

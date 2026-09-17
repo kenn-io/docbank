@@ -13,7 +13,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
@@ -90,7 +90,7 @@ func TestServeRecoversAbandonedEmailSpoolBeforeBlobCleanup(t *testing.T) {
 		}
 	})
 	require.Eventually(t, func() bool {
-		_, _, ok, findErr := client.Find(ctx, root)
+		_, _, ok, findErr := daemonconn.Find(ctx, root)
 		return findErr == nil && ok
 	}, 30*time.Second, 25*time.Millisecond)
 	entries, err := os.ReadDir(layout.BlobTmpDir())

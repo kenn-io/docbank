@@ -10,7 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -40,7 +41,7 @@ var processingProfilesCmd = &cobra.Command{
 	Short: "List processing profiles this daemon can execute",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -56,7 +57,7 @@ var processingPlanCmd = &cobra.Command{
 		if processingPlanProfile == "" {
 			return usageError(errors.New("--profile is required"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -78,7 +79,7 @@ var processingBuildCmd = &cobra.Command{
 		if processingBuildJSON && processingBuildNDJSON {
 			return usageError(errors.New("--json and --ndjson are mutually exclusive"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -95,7 +96,7 @@ var processingStatusCmd = &cobra.Command{
 		if !canonicalSHA256(args[0]) {
 			return usageError(errors.New("job ID must be lowercase SHA-256"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -103,15 +104,16 @@ var processingStatusCmd = &cobra.Command{
 	},
 }
 
-func runProcessingProfiles(cmd *cobra.Command, c *client.Client, jsonOutput bool) error {
-	profiles, err := c.ProcessingProfiles(cmd.Context())
+func runProcessingProfiles(cmd *cobra.Command, c *daemonconn.Connection, jsonOutput bool) error {
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+
 	if err != nil {
 		return err
 	}
 	if jsonOutput {
 		return writeCLIJSON(cmd.OutOrStdout(), profiles)
 	}
-	if len(profiles) == 0 {
+	if len(*profiles) == 0 {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no executable processing profiles")
 		if err != nil {
 			return fmt.Errorf("writing empty processing profile list: %w", err)
@@ -120,7 +122,7 @@ func runProcessingProfiles(cmd *cobra.Command, c *client.Client, jsonOutput bool
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "PROFILE\tRENDITION\tEMBEDDINGS\tFINGERPRINT")
-	for _, profile := range profiles {
+	for _, profile := range *profiles {
 		rendition := "-"
 		if profile.Rendition {
 			rendition = "rendition"
@@ -138,19 +140,20 @@ func runProcessingProfiles(cmd *cobra.Command, c *client.Client, jsonOutput bool
 	return nil
 }
 
-func runProcessingPlan(cmd *cobra.Command, c *client.Client, rawSelector, profile string, jsonOutput bool) error {
+func runProcessingPlan(cmd *cobra.Command, c *daemonconn.Connection, rawSelector, profile string, jsonOutput bool) error {
 	selector, err := resolveProcessingSelector(cmd, c, rawSelector, profile)
 	if err != nil {
 		return err
 	}
-	plan, err := c.PlanProcessing(cmd.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(cmd.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	if err != nil {
 		return err
 	}
 	if jsonOutput {
 		return writeCLIJSON(cmd.OutOrStdout(), plan)
 	}
-	return writeProcessingPlan(cmd, plan)
+	return writeProcessingPlan(cmd, *plan)
 }
 
 func writeProcessingPlan(cmd *cobra.Command, plan api.ProcessingPlan) error {
@@ -206,7 +209,7 @@ func processingModelIdentity(model, revision string) string {
 	return model + "@" + revision
 }
 
-func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profile, fingerprint string,
+func runProcessingBuild(cmd *cobra.Command, c *daemonconn.Connection, rawSelector, profile, fingerprint string,
 	consent, jsonOutput, ndjsonOutput bool,
 ) error {
 	if err := validateProcessingBuild(fingerprint, consent); err != nil {
@@ -216,12 +219,13 @@ func runProcessingBuild(cmd *cobra.Command, c *client.Client, rawSelector, profi
 	if err != nil {
 		return err
 	}
-	plan, err := c.PlanProcessing(cmd.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := c.API().PlanDocumentProcessing(cmd.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+
 	if err != nil {
 		return err
 	}
 	if plan.Selector != selector || plan.Fingerprint != fingerprint {
-		return client.ErrProcessingPlanChanged
+		return daemonconn.ErrProcessingPlanChanged
 	}
 	stream, err := c.StartProcessingStream(cmd.Context(), api.StartProcessingRequest{
 		Selector: selector, PlanFingerprint: fingerprint, Consent: true,
@@ -272,7 +276,7 @@ func validateProcessingBuild(fingerprint string, consent bool) error {
 	return nil
 }
 
-func runProcessingStatus(cmd *cobra.Command, c *client.Client, jobID string, jsonOutput bool) error {
+func runProcessingStatus(cmd *cobra.Command, c *daemonconn.Connection, jobID string, jsonOutput bool) error {
 	status, err := c.ProcessingStatus(cmd.Context(), jobID)
 	if err != nil {
 		return err
@@ -299,7 +303,7 @@ func writeProcessingStatus(cmd *cobra.Command, status api.ProcessingStatus) erro
 	return nil
 }
 
-func resolveProcessingSelector(cmd *cobra.Command, c *client.Client, rawSelector, profile string) (api.ProcessingSelector, error) {
+func resolveProcessingSelector(cmd *cobra.Command, c *daemonconn.Connection, rawSelector, profile string) (api.ProcessingSelector, error) {
 	selector, err := parseNodeSelector(rawSelector)
 	if err != nil {
 		return api.ProcessingSelector{}, err

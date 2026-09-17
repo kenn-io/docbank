@@ -6,7 +6,7 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -50,7 +50,7 @@ func commandExitCode(err error, started bool) int {
 	if classified, ok := errors.AsType[*exitError](err); ok {
 		return classified.code
 	}
-	if errors.Is(err, client.ErrIntegrity) {
+	if errors.Is(err, daemonconn.ErrIntegrity) {
 		return exitIntegrity
 	}
 	if errors.Is(err, store.ErrNotFound) {
@@ -61,7 +61,7 @@ func commandExitCode(err error, started bool) int {
 	}
 	if errors.Is(err, home.ErrVaultLocked) || errors.Is(err, backup.ErrRepoLocked) ||
 		errors.Is(err, packstore.ErrPackRetirementDeferred) ||
-		errors.Is(err, client.ErrMaintenanceBusy) {
+		errors.Is(err, daemonconn.ErrMaintenanceBusy) {
 		return exitBusy
 	}
 	if errors.Is(err, store.ErrInvalidName) || errors.Is(err, store.ErrInvalidTag) ||
@@ -71,7 +71,7 @@ func commandExitCode(err error, started bool) int {
 		errors.Is(err, store.ErrInvalidAuditCursor) {
 		return exitUsage
 	}
-	if code, ok := client.ProblemCode(err); ok &&
+	if code, ok := daemonconn.ProblemCode(err); ok &&
 		(code == "validation" || code == "audit_acknowledgment_required") {
 		return exitUsage
 	}

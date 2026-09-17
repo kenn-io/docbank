@@ -13,21 +13,15 @@ Key assumptions reviewers MUST account for:
    focused test only for a named unresolved risk, in an isolated checkout at
    the exact target HEAD, and remove that checkout afterward. Never probe,
    mutate, or test the live implementation worktree, index, or branch. Do not
-   repeat package or full suites without a named unresolved risk. If code
-   looks syntactically impossible, verify against the go.mod language version
-   before flagging (see 2), and prefer flagging logic over legality.
+   repeat package or full suites without a named unresolved risk.
 
-2. GO VERSION: go.mod pins Go 1.27+. Go 1.26 added value-form `new(v)`,
-   which returns `*T` pointing to v — e.g. `new("clean")` is valid and
-   yields a `*string`. DO NOT flag value-form `new` calls as "new
-   requires a type" compile errors; that was true through 1.25 only.
-   Go 1.27 permits methods to declare type parameters, promoted field
-   selectors as struct-literal keys, and generic function inference in
-   every assignment context. Accept those forms when reviewing this tree.
-   Likewise, `go build -o dist/docbank` creates missing parent
-   directories on this toolchain (verified on the Go 1.27 line;
-   CI pins that line via go-version-file) — do not flag a missing
-   `mkdir -p dist` in the release workflow.
+2. COMPILATION BELONGS TO THE COMPILER. Review agents must not assess
+   compilability or raise compilation findings. Syntax validity, type checking,
+   import resolution, and symbol availability belong to compiler and CI checks.
+   Do not infer build failures from unfamiliar code or remembered language and
+   standard-library versions, and do not run builds to act as a compilation
+   reviewer. Review behavior, contracts, and logic instead. Implementing agents
+   still run the required build and test checks and fix actual tool failures.
 
 3. BUILD TAGS: supported Go builds and tests use `-tags fts5` in both CGO
    mode (mattn SQLite) and `CGO_ENABLED=0` mode (modernc SQLite). A failure

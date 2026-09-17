@@ -1,10 +1,10 @@
 <script module lang="ts">
   export type TagDefinitionChange =
-    | { kind: "created"; tag: import("./api.js").Tag }
-    | { kind: "renamed"; tag: import("./api.js").Tag }
+    | { kind: "created"; tag: import("./generated/docbank.js").Tag }
+    | { kind: "renamed"; tag: import("./generated/docbank.js").Tag }
     | {
         kind: "deleted";
-        tag: import("./api.js").Tag;
+        tag: import("./generated/docbank.js").Tag;
         removedAssignments: number;
       };
 </script>
@@ -23,13 +23,9 @@
     Spinner,
     TextInput,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    createTag,
-    deleteTag,
-    renameTag,
-    type Tag,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { createTag, deleteTag, renameTag } from "./receipts.js";
+  import { type Tag } from "./generated/docbank.js";
   import TagLabel from "./TagLabel.svelte";
   import { groupTags, sortTags } from "./tagPresentation.js";
 

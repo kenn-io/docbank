@@ -1,29 +1,9 @@
+
+import * as generated from "./generated/docbank.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  APIError,
-  auditHistory,
-  auditStatusForNode,
-  backupSnapshots,
-  changeNodeTag,
-  contentVersions,
-  createTag,
-  deleteTag,
-  listJobs,
-  liveTaggedNodes,
-  nodeTags,
-  requestJSON,
-  renameTag,
-  restoreNode,
-  revokeSession,
-  search,
-  storageStatus,
-  tagByID,
-  taggedNodes,
-  tags,
-  takeFragmentSession,
-  trashNode,
-  trashRoots,
-} from "./api.js";
+import { APIError } from "./api-transport.js";
+import { changeNodeTag, createTag, deleteTag, renameTag, restoreNode, trashNode } from "./receipts.js";
+import { takeFragmentSession } from "./browser-session.js";
 
 describe("browser authentication", () => {
   beforeEach(() => {
@@ -56,7 +36,7 @@ describe("browser authentication", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    await expect(requestJSON<{ id: number }>("/api/v1/path", "secret")).resolves.toEqual({
+    await expect(generated.resolvePath({ path: "/" }, { session: "secret" })).resolves.toEqual({
       id: 1,
     });
     const request = fetchMock.mock.calls[0]?.[1];
@@ -69,7 +49,7 @@ describe("browser authentication", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 204 }),
     );
-    await revokeSession("short-lived");
+    await generated.revokeWebSession({ session: "short-lived" });
     const [path, request] = fetchMock.mock.calls[0] ?? [];
     expect(path).toBe("/api/daemon/web-session");
     expect(request?.method).toBe("DELETE");
@@ -89,7 +69,7 @@ describe("browser authentication", () => {
         { status: 401, headers: { "Content-Type": "application/problem+json" } },
       ),
     );
-    await expect(requestJSON("/api/v1/path", "bad")).rejects.toEqual(
+    await expect(generated.resolvePath({ path: "/" }, { session: "bad" })).rejects.toEqual(
       new APIError("missing or invalid API key", 401, "unauthorized"),
     );
   });
@@ -108,7 +88,7 @@ describe("browser authentication", () => {
       ),
     );
 
-    await expect(requestJSON("/api/v1/queries/parse", "session")).rejects.toMatchObject({
+    await expect(generated.parseQuery({}, { session: "session" })).rejects.toMatchObject({
       message: "expected an expression",
       status: 422,
       code: "invalid_query",
@@ -123,8 +103,8 @@ describe("browser authentication", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    await auditStatusForNode("session", 42);
-    await auditHistory("session", 42, "cursor +/=");
+    await generated.auditStatus({ node_id: 42 }, { session: "session" });
+    await generated.auditNodeHistory({ node_id: 42, limit: 50, cursor: "cursor +/=" }, { session: "session" });
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/audit/status?node_id=42");
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
@@ -140,7 +120,7 @@ describe("browser authentication", () => {
       }),
     );
 
-    await expect(listJobs("session")).resolves.toEqual([]);
+    await expect(generated.listJobs({ session: "session" }).then((result) => result.items)).resolves.toEqual([]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
   });
 
@@ -152,7 +132,7 @@ describe("browser authentication", () => {
       }),
     );
 
-    await storageStatus("session", true);
+    await generated.storageStatus((true) ? { refresh: true } : undefined, { session: "session" });
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
   });
 
@@ -164,7 +144,7 @@ describe("browser authentication", () => {
       ),
     );
 
-    await backupSnapshots("session");
+    await generated.listBackupSnapshots(undefined, { session: "session" });
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/backup/snapshots");
   });
 
@@ -176,7 +156,7 @@ describe("browser authentication", () => {
       }),
     );
 
-    await contentVersions("session", 42);
+    await generated.listContentVersions(42, { limit: 1000, offset: 0 }, { session: "session" });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "/api/v1/nodes/42/versions?limit=1000&offset=0",
     );
@@ -190,12 +170,12 @@ describe("browser authentication", () => {
       ),
     );
 
-    await tags("session");
-    await tagByID("session", "11111111-1111-4111-8111-111111111111");
-    await taggedNodes("session", "11111111-1111-4111-8111-111111111111");
-    await liveTaggedNodes("session", "11111111-1111-4111-8111-111111111111");
-    await nodeTags("session", 42);
-    await search("session", "quarterly report", "11111111-1111-4111-8111-111111111111");
+    await generated.listTags({ limit: 1000, offset: 0 }, { session: "session" });
+    await generated.getTag(("11111111-1111-4111-8111-111111111111"), { session: "session" });
+    await generated.listTagNodes(("11111111-1111-4111-8111-111111111111"), { limit: 1000, offset: 0 }, { session: "session" });
+    await generated.listTagNodes(("11111111-1111-4111-8111-111111111111"), { limit: 1000, offset: 0, live_only: true }, { session: "session" });
+    await generated.listNodeTags(42, { limit: 1000, offset: 0 }, { session: "session" });
+    await generated.search({ q: "quarterly report", limit: 1000, tag_id: "11111111-1111-4111-8111-111111111111" }, { session: "session" });
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/v1/tags?limit=1000&offset=0",
@@ -323,7 +303,7 @@ describe("browser authentication", () => {
       ),
     );
 
-    await expect(trashRoots("session")).resolves.toMatchObject({
+    await expect(generated.listTrash({ limit: 1000, offset: 0 }, { session: "session" })).resolves.toMatchObject({
       total: 0,
       limit: 1000,
     });

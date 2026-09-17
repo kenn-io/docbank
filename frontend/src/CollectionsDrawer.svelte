@@ -13,7 +13,8 @@
     Spinner,
     TextInput,
   } from "@kenn-io/kit-ui";
-  import { APIError, type Node } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type Node } from "./generated/docbank.js";
   import {
     collectionMembers,
     collectionLabel,

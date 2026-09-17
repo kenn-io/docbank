@@ -11,7 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -30,16 +31,17 @@ var storageStatusCmd = &cobra.Command{
 	Short: "Report loose and packed storage usage",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
 		if len(args) == 1 {
-			stores, err := c.BlobStores(cmd.Context(), storageStatusRefresh)
+			stores, err := c.API().ListBlobStores(cmd.Context(), &apiclient.ListBlobStoresRequestOptions{Query: &apiclient.ListBlobStoresQuery{Refresh: new(storageStatusRefresh)}})
+
 			if err != nil {
 				return err
 			}
-			selected, err := selectBlobStore(stores, args[0])
+			selected, err := selectBlobStore(*stores, args[0])
 			if err != nil {
 				return err
 			}
@@ -48,7 +50,8 @@ var storageStatusCmd = &cobra.Command{
 			}
 			return writeBlobStore(cmd, selected)
 		}
-		status, err := c.StorageStatus(cmd.Context(), storageStatusRefresh)
+		status, err := c.API().StorageStatus(cmd.Context(), &apiclient.StorageStatusRequestOptions{Query: &apiclient.StorageStatusQuery{Refresh: new(storageStatusRefresh)}})
+
 		if err != nil {
 			return err
 		}
@@ -97,11 +100,12 @@ var storageAddCmd = &cobra.Command{
 				return usageError(errors.New(
 					"storage add --run requires --token from a fresh preview"))
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			result, err := c.RegisterBlobStore(cmd.Context(), storageAddToken)
+			result, err := c.API().RegisterBlobStore(cmd.Context(), &apiclient.RegisterBlobStoreRequestOptions{Body: &apiclient.RegisterBlobStoreBody{PreviewToken: storageAddToken}})
+
 			if err != nil {
 				return err
 			}
@@ -120,13 +124,12 @@ var storageAddCmd = &cobra.Command{
 			return usageError(errors.New(
 				"storage add preview requires a name and --binding"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		preview, err := c.PreviewBlobStore(
-			cmd.Context(), args[0], storageAddBinding, storageAddTakeover,
-		)
+		preview, err := c.API().PreviewBlobStoreRegistration(cmd.Context(), &apiclient.PreviewBlobStoreRegistrationRequestOptions{Body: &apiclient.PreviewBlobStoreRegistrationBody{Name: args[0], Binding: storageAddBinding, Takeover: new(storageAddTakeover)}})
+
 		if err != nil {
 			return err
 		}
@@ -159,18 +162,19 @@ var storageListCmd = &cobra.Command{
 	Short: "List primary and secondary physical stores",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		stores, err := c.BlobStores(cmd.Context(), storageListRefresh)
+		stores, err := c.API().ListBlobStores(cmd.Context(), &apiclient.ListBlobStoresRequestOptions{Query: &apiclient.ListBlobStoresQuery{Refresh: new(storageListRefresh)}})
+
 		if err != nil {
 			return err
 		}
 		if storageListJSON {
 			return writeStorageJSON(cmd, stores)
 		}
-		for _, item := range stores {
+		for _, item := range *stores {
 			if err := writeBlobStore(cmd, item); err != nil {
 				return err
 			}
@@ -186,11 +190,12 @@ var storageDetachCmd = &cobra.Command{
 	Short: "Detach one empty secondary store",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		item, err := c.DetachBlobStore(cmd.Context(), args[0])
+		item, err := c.API().DetachBlobStore(cmd.Context(), &apiclient.DetachBlobStoreRequestOptions{PathParams: &apiclient.DetachBlobStorePath{StoreID: args[0]}})
+
 		if err != nil {
 			return err
 		}
@@ -207,11 +212,11 @@ var storageUnregisterCmd = &cobra.Command{
 	Short: "Forget one detached and empty secondary store",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		if err := c.UnregisterBlobStore(cmd.Context(), args[0]); err != nil {
+		if _, err := c.API().UnregisterBlobStore(cmd.Context(), &apiclient.UnregisterBlobStoreRequestOptions{PathParams: &apiclient.UnregisterBlobStorePath{StoreID: args[0]}}); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unregistered store %q\n", args[0])
@@ -244,11 +249,12 @@ var storagePlaceCmd = &cobra.Command{
 				return usageError(errors.New(
 					"storage place --run requires --token from a fresh preview"))
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			operation, err := c.StartStoragePlacement(cmd.Context(), storagePlaceToken)
+			operation, err := c.API().StartStoragePlacement(cmd.Context(), &apiclient.StartStoragePlacementRequestOptions{Body: &apiclient.StartStoragePlacementBody{PreviewToken: storagePlaceToken}})
+
 			if err != nil {
 				return err
 			}
@@ -271,7 +277,7 @@ var storagePlaceCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -279,13 +285,8 @@ var storagePlaceCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		preview, err := c.PreviewStoragePlacement(
-			cmd.Context(), client.StoragePlacementOptions{
-				NodeID: node.ID, Source: storagePlaceFrom, Destination: storagePlaceTo,
-				RetireSource:           storagePlaceMove,
-				AllowAuditedRemoteOnly: storagePlaceAllowAuditedRemoteOnly,
-			},
-		)
+		preview, err := c.API().PreviewStoragePlacement(cmd.Context(), &apiclient.PreviewStoragePlacementRequestOptions{Body: &apiclient.PreviewStoragePlacementBody{NodeID: node.ID, Source: new(storagePlaceFrom), Destination: storagePlaceTo, RetireSource: new(storagePlaceMove), AllowAuditedRemoteOnly: new(storagePlaceAllowAuditedRemoteOnly)}})
+
 		if err != nil {
 			return err
 		}
@@ -342,13 +343,12 @@ var storageEvacuateCmd = &cobra.Command{
 				return usageError(errors.New(
 					"storage evacuate --run requires --token from a fresh preview"))
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			operation, err := c.StartStorageEvacuation(
-				cmd.Context(), storageEvacuateToken,
-			)
+			operation, err := c.API().StartStorageEvacuation(cmd.Context(), &apiclient.StartStorageEvacuationRequestOptions{Body: &apiclient.StartStorageEvacuationBody{PreviewToken: storageEvacuateToken}})
+
 			if err != nil {
 				return err
 			}
@@ -367,11 +367,12 @@ var storageEvacuateCmd = &cobra.Command{
 			return usageError(errors.New(
 				"storage evacuate preview requires one secondary store"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		preview, err := c.PreviewStorageEvacuation(cmd.Context(), args[0])
+		preview, err := c.API().PreviewStorageEvacuation(cmd.Context(), &apiclient.PreviewStorageEvacuationRequestOptions{Body: &apiclient.PreviewStorageEvacuationBody{Store: args[0]}})
+
 		if err != nil {
 			return err
 		}
@@ -431,13 +432,16 @@ func newStorageRecoveryCommand(
 						"storage %s --run requires --token from a fresh preview", kind,
 					))
 				}
-				c, err := client.Ensure(cmd.Context())
+				c, err := daemonconn.Ensure(cmd.Context())
 				if err != nil {
 					return err
 				}
-				operation, err := c.StartStorageRecovery(
-					cmd.Context(), kind, flags.token,
-				)
+				var operation *api.StorageOperation
+				if kind == "repair" {
+					operation, err = c.API().StartStorageRepair(cmd.Context(), &apiclient.StartStorageRepairRequestOptions{Body: &apiclient.StartStorageRepairBody{PreviewToken: flags.token}})
+				} else {
+					operation, err = c.API().StartStorageSalvage(cmd.Context(), &apiclient.StartStorageSalvageRequestOptions{Body: &apiclient.StartStorageSalvageBody{PreviewToken: flags.token}})
+				}
 				if err != nil {
 					return err
 				}
@@ -460,13 +464,16 @@ func newStorageRecoveryCommand(
 			if _, err := packstore.ParseHash(args[0]); err != nil {
 				return usageError(errors.New("blob hash must be canonical lowercase SHA-256"))
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			preview, err := c.PreviewStorageRecovery(
-				cmd.Context(), kind, args[0], flags.store,
-			)
+			var preview *api.StorageRecoveryPreview
+			if kind == "repair" {
+				preview, err = c.API().PreviewStorageRepair(cmd.Context(), &apiclient.PreviewStorageRepairRequestOptions{Body: &apiclient.PreviewStorageRepairBody{Hash: args[0], Store: flags.store}})
+			} else {
+				preview, err = c.API().PreviewStorageSalvage(cmd.Context(), &apiclient.PreviewStorageSalvageRequestOptions{Body: &apiclient.PreviewStorageSalvageBody{Hash: args[0], Store: flags.store}})
+			}
 			if err != nil {
 				return err
 			}
@@ -509,11 +516,12 @@ var storagePackCmd = &cobra.Command{
 	Short: "Pack authorized loose blobs into immutable pack files",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		report, err := c.StoragePack(cmd.Context(), storagePackMaxBytes)
+		report, err := c.API().StoragePack(cmd.Context(), &apiclient.StoragePackRequestOptions{Body: &apiclient.StoragePackBody{MaxBytes: new(storagePackMaxBytes)}})
+
 		if err != nil {
 			return err
 		}
@@ -565,12 +573,12 @@ var storageRepackCmd = &cobra.Command{
 	Short: "Rewrite sparse packs and retire dead pack files",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		report, err := c.StorageRepack(cmd.Context(), storageRepackMaxBytes,
-			storageRepackMinAge, storageRepackMinDeadBytes)
+		report, err := c.API().StorageRepack(cmd.Context(), &apiclient.StorageRepackRequestOptions{Body: &apiclient.StorageRepackBody{MaxBytes: new(storageRepackMaxBytes), MinAge: new(storageRepackMinAge.String()), MinDeadBytes: new(storageRepackMinDeadBytes)}})
+
 		if err != nil {
 			return err
 		}
@@ -674,7 +682,7 @@ func writeBlobStore(cmd *cobra.Command, item api.BlobStore) error {
 }
 
 func selectBlobStore(stores []api.BlobStore, selector string) (api.BlobStore, error) {
-	idSelector := client.IsCanonicalUUIDv4(selector)
+	idSelector := daemonconn.IsCanonicalUUIDv4(selector)
 	for _, item := range stores {
 		if (idSelector && item.ID == selector) || (!idSelector && item.Name == selector) {
 			return item, nil

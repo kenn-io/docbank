@@ -14,7 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
@@ -22,9 +23,10 @@ func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
 	initial := writeSourceFile(t, "notes.txt", "initial text")
 	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
 	require.NoError(t, err)
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	initialNode, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	initialNode, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes.txt"}})
+
 	require.NoError(t, err)
 	initialVersion := initialNode.CurrentVersionID
 
@@ -110,7 +112,7 @@ func TestEditStagePatternUsesOnlySafeBoundedExtensions(t *testing.T) {
 
 func TestEditAuthorityMismatchIsIntegrityFailure(t *testing.T) {
 	node := api.Node{BlobHash: strings.Repeat("a", 64), Size: 12}
-	stream := &client.ContentStream{BlobHash: strings.Repeat("b", 64), Size: node.Size}
+	stream := &daemonconn.ContentStream{BlobHash: strings.Repeat("b", 64), Size: node.Size}
 	err := validateEditStreamAuthority(stream, node)
 	require.Error(t, err)
 	assert.Equal(t, exitIntegrity, commandExitCode(err, true))
@@ -153,9 +155,10 @@ func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
 		return statErr == nil
 	}, 10*time.Second, 20*time.Millisecond)
 
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	node, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes.txt"}})
+
 	require.NoError(t, err)
 	concurrent := []byte("concurrent replacement")
 	sum := sha256.Sum256(concurrent)
@@ -196,9 +199,10 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 		return statErr == nil
 	}, 10*time.Second, 20*time.Millisecond)
 
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	node, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes.txt"}})
+
 	require.NoError(t, err)
 	concurrent := []byte("concurrent replacement")
 	sum := sha256.Sum256(concurrent)

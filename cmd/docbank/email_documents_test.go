@@ -5,20 +5,23 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	setupVaultHome(t)
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	root, err := c.Stat(t.Context(), "/")
+	root, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/"}})
+
 	require.NoError(t, err)
 	var message strings.Builder
 	message.WriteString("Content-Type: multipart/mixed; boundary=m\r\n\r\n" +
@@ -36,7 +39,8 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, err)
 	view, err := c.EnsureEmailMetadata(t.Context(), uploaded.Node.CurrentVersionID)
 	require.NoError(t, err)
-	root, err = c.Stat(t.Context(), "/")
+	root, err = c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/"}})
+
 	require.NoError(t, err)
 	receipt, err := c.PublishEmailDocuments(t.Context(), document.EmailDocumentPublicationRequest{
 		OperationID: "cli-receipt", GenerationID: view.GenerationID, AttachmentID: view.AttachmentID,
@@ -56,7 +60,8 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &relations))
 	require.Len(t, relations.Items, attachments)
 	require.Equal(t, receipt.OperationID, relations.Items[0].Relation.OperationID)
-	_, err = c.Trash(t.Context(), uploaded.Node.ID, uploaded.Node.Revision)
+	_, err = c.API().TrashNode(t.Context(), &apiclient.TrashNodeRequestOptions{PathParams: &apiclient.TrashNodePath{ID: uploaded.Node.ID}, Header: &apiclient.TrashNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(uploaded.Node.Revision, 10))}})
+
 	require.NoError(t, err)
 	_, err = runCLI(t, "trash", "empty", "--run")
 	require.ErrorContains(t, err, receipt.OperationID)
@@ -65,7 +70,8 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, err)
 	_, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
-	child, err := c.Node(t.Context(), receipt.Relations[0].Child.NodeID)
+	child, err := c.API().GetNode(t.Context(), &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: receipt.Relations[0].Child.NodeID}})
+
 	require.NoError(t, err)
 	require.Empty(t, child.TrashedAt)
 }

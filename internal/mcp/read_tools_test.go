@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -43,9 +43,9 @@ var (
 
 func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T) {
 	daemon := newReadToolDaemon(t)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, "synthetic-key"), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	schemas := catalogMap(toolCatalog(false))
 
 	tests := []struct {
@@ -131,9 +131,9 @@ func TestReadToolCancellationPropagatesToDaemon(t *testing.T) {
 		close(canceled)
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -161,12 +161,12 @@ func TestListDocumentsDoesNotReplayPageAfterDaemonStops(t *testing.T) {
 	}))
 	t.Cleanup(daemon.Close)
 	var ensures atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		if ensures.Add(1) == 1 {
-			return client.New(daemon.URL, "synthetic-key"), nil
+			return daemonconn.New(daemon.URL, "synthetic-key"), nil
 		}
-		return client.New(fixture.URL, "synthetic-key"), nil
-	}, func(c *client.Client) error { return c.Close() })
+		return daemonconn.New(fixture.URL, "synthetic-key"), nil
+	}, func(c *daemonconn.Connection) error { return c.Close() })
 
 	_, err := invokeReadTool(t.Context(), lease, "list_documents", map[string]any{"page_size": 1})
 	require.ErrorIs(t, err, errDaemonRequestFailed)
@@ -189,9 +189,9 @@ func TestReadToolResultCapFailsClosed(t *testing.T) {
 		http.NotFound(response, request)
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	_, err := invokeReadTool(t.Context(), lease, "get_processing_plan", map[string]any{
 		"node_id": 7, "content_version_id": testVersionID, "profile": "local",
 	})
@@ -201,9 +201,9 @@ func TestReadToolResultCapFailsClosed(t *testing.T) {
 
 func TestServerCapsCompleteToolResultIncludingServerMetadata(t *testing.T) {
 	daemon := newReadToolDaemon(t)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, "synthetic-key"), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	implementation := testImplementation()
 	implementation.Description = strings.Repeat("x", maxToolResponseBytes)
 	server := newServerWithOptionsAndDaemon(implementation, ServerOptions{}, lease)
@@ -239,9 +239,9 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 				})
 			}))
 			t.Cleanup(daemon.Close)
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-				return client.New(daemon.URL, ""), nil
-			}, func(*client.Client) error { return nil })
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, ""), nil
+			}, func(*daemonconn.Connection) error { return nil })
 			result, err := invokeReadTool(t.Context(), lease, test.tool, test.arguments)
 			require.NoError(t, err)
 			require.True(t, result.IsError)
@@ -256,9 +256,9 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 
 func TestUnavailableDaemonReturnsDomainErrorAndSafeDiagnostics(t *testing.T) {
 	var logs bytes.Buffer
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return nil, errors.New("private /synthetic/path key=secret raw-provider-response")
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{
 		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	}, lease)
@@ -284,9 +284,9 @@ func TestReadToolRejectsDaemonOutputOutsidePublishedSchema(t *testing.T) {
 			VaultPath: "/synthetic/private/vault"})
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	result, err := invokeReadTool(t.Context(), lease, "get_vault_info", map[string]any{})
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -329,9 +329,9 @@ func TestReadToolsRejectMismatchedDaemonAuthority(t *testing.T) {
 				writeDaemonJSON(t, response, test.response)
 			}))
 			t.Cleanup(daemon.Close)
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-				return client.New(daemon.URL, ""), nil
-			}, func(*client.Client) error { return nil })
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, ""), nil
+			}, func(*daemonconn.Connection) error { return nil })
 			result, err := invokeReadTool(t.Context(), lease, test.tool, test.arguments)
 			require.Error(t, err)
 			assert.Nil(t, result)
@@ -361,9 +361,9 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 		}
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
@@ -421,9 +421,9 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 				}
 			}))
 			t.Cleanup(daemon.Close)
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-				return client.New(daemon.URL, ""), nil
-			}, func(*client.Client) error { return nil })
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, ""), nil
+			}, func(*daemonconn.Connection) error { return nil })
 
 			result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
@@ -467,9 +467,9 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 		}
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
@@ -552,9 +552,9 @@ func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *
 		}
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 
 	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
 		"query": "synthetic", "mode": "lexical", "limit": resultCount, "profile": "local",
@@ -706,4 +706,22 @@ func invokeReadTool(
 		return domain, nil
 	}
 	return result, err
+}
+
+func TestGetDocumentReturnsVaultInfoFailure(t *testing.T) {
+	fixture := newReadToolDaemon(t)
+	t.Cleanup(fixture.Close)
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/info" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		fixture.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	_, _, err := getDocument(t.Context(), lease, []byte(`{"node_id":7,"content_version_id":"`+testVersionID+`"}`))
+	require.Error(t, err)
 }

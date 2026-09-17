@@ -1,4 +1,4 @@
-import { requestJSON } from "./api.js";
+import * as generated from "./generated/docbank.js";
 import { readCollection, type Collection } from "./collections.js";
 import { parseQuery, type Query } from "./query.js";
 
@@ -41,9 +41,7 @@ export function readCoverage(value:unknown,total:number):ProcessingCoverage {
 
 export async function collectionQuality(session:string,id:string,profile:string,signal:AbortSignal):Promise<CollectionQuality>{
   check(uuid.test(id));
-  const params=new URLSearchParams();if(profile)params.set("profile",profile);
-  const suffix=params.size?`?${params}`:"";
-  const raw=object(await requestJSON<unknown>(`/api/v1/collections/${id}/quality${suffix}`,session,{signal}));
+  const raw=object(await generated.getCollectionQuality(id, profile ? { profile } : undefined, { session, signal }));
   const collection=readCollection(raw.collection);
   check(collection.id===id);
   const coverage=readCoverage(object(raw.collection).coverage,collection.file_count);

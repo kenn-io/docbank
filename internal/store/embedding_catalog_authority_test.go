@@ -113,7 +113,7 @@ func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T)
 	changedChunk := *binding.Chunk
 	changedChunk.OverlapTokens = 1
 	changedBinding.Chunk = &changedChunk
-	contextSnapshot, err := document.NewAttachmentContextSnapshot("Synthetic title", "Synthetic context")
+	contextSnapshot, err := document.NewAttachmentContextSnapshot("Synthetic <title> &", "Synthetic context\u2028\u2029")
 	require.NoError(t, err)
 	policy, err := document.NewInputPolicy(changedBinding, embeddingCatalogTokenizer{}, fingerprints.EvidenceLexical, &contextSnapshot)
 	require.NoError(t, err)

@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var (
@@ -39,7 +39,7 @@ var mediaSubmitCmd = &cobra.Command{Use: "submit", Short: "Retain supplied recor
 		if err := requireMediaMutationFlags(); err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ var mediaSubmitCmd = &cobra.Command{Use: "submit", Short: "Retain supplied recor
 
 var mediaListCmd = &cobra.Command{Use: "list", Short: "List caller-visible recording sources",
 	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ var mediaListCmd = &cobra.Command{Use: "list", Short: "List caller-visible recor
 
 var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show current recording status",
 	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ var mediaRetryCmd = &cobra.Command{Use: "retry <source-id>", Short: "Retry expli
 		if mediaOperationID == "" || mediaProfile == "" {
 			return usageError(errors.New("--operation-id and --processing-profile are required"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -123,7 +123,7 @@ var mediaImportCmd = &cobra.Command{Use: "import-artifact <source-id>", Short: "
 			return err
 		}
 		defer func() { _ = file.Close() }()
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -143,11 +143,11 @@ var mediaOccurrencesCmd = &cobra.Command{Use: "occurrences", Short: "Inspect or 
 
 var mediaOccurrencesListCmd = &cobra.Command{Use: "list", Short: "List caller-visible occurrences",
 	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		page, err := c.MediaOccurrences(cmd.Context(), client.MediaOccurrenceOptions{
+		page, err := c.MediaOccurrences(cmd.Context(), daemonconn.MediaOccurrenceOptions{
 			Cursor: mediaCursor, Limit: mediaLimit, SourceID: mediaSourceID})
 		if err != nil {
 			return err
@@ -160,7 +160,7 @@ var mediaOccurrencesDeclareCmd = &cobra.Command{Use: "declare <source-id>", Shor
 		if err := requireMediaMutationFlags(); err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ var mediaOccurrencesRevokeCmd = &cobra.Command{Use: "revoke <occurrence-id>", Sh
 		if mediaOperationID == "" || mediaOccurrenceRevision == "" {
 			return usageError(errors.New("--operation-id and --revision are required"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -191,7 +191,7 @@ var mediaOccurrencesRevokeCmd = &cobra.Command{Use: "revoke <occurrence-id>", Sh
 
 var mediaOriginsCmd = &cobra.Command{Use: "origins", Short: "List registered acquisition origins", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -211,7 +211,7 @@ var mediaAcquisitionPlanCmd = &cobra.Command{Use: "acquisition-plan", Short: "Re
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -238,7 +238,7 @@ var mediaConsentGrantCmd = &cobra.Command{Use: "grant", Short: "Grant one exact 
 		if err := json.Unmarshal(data, &plan, json.RejectUnknownMembers(true)); err != nil || plan.PlanToken == "" {
 			return usageError(errors.New("plan file is not a media acquisition plan"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -255,7 +255,7 @@ var mediaConsentRevokeCmd = &cobra.Command{Use: "revoke", Short: "Revoke acquisi
 		if mediaOperationID == "" || mediaOrigin == "" {
 			return usageError(errors.New("--operation-id and --origin are required"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

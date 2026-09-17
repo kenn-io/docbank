@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var (
@@ -26,7 +26,7 @@ var formatsCmd = &cobra.Command{
 		if formatsFormat != "" && formatsExtension != "" {
 			return usageError(errors.New("exactly one of --format or --extension may be set"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

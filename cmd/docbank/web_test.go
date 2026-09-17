@@ -17,16 +17,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func webSessionClient(t *testing.T, token string) (*client.Client, string) {
+func webSessionClient(t *testing.T, token string) (*daemonconn.Connection, string) {
 	t.Helper()
 	const webOrigin = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43211"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/daemon/web-session", r.URL.Path)
 		assert.Equal(t, "private key", r.Header.Get("X-Api-Key"))
+		w.WriteHeader(http.StatusCreated)
 		_ = json.MarshalWrite(w, map[string]string{
 			"token":         token,
 			"upload_secret": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -34,7 +35,7 @@ func webSessionClient(t *testing.T, token string) (*client.Client, string) {
 		})
 	}))
 	t.Cleanup(ts.Close)
-	return client.New(ts.URL, "private key"), webOrigin
+	return daemonconn.New(ts.URL, "private key"), webOrigin
 }
 
 func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
@@ -92,7 +93,7 @@ func TestValidateWebLaunchURLRejectsCredentialsAndRemoteURLs(t *testing.T) {
 }
 
 func TestRunWebRejectsNonLoopbackClientBeforeOpeningOrPrinting(t *testing.T) {
-	c := client.New("http://example.com:43210", "private")
+	c := daemonconn.New("http://example.com:43210", "private")
 	var out bytes.Buffer
 	called := false
 	err := runWeb(t.Context(), &out, t.TempDir(), c, false, func(context.Context, string) error {

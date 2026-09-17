@@ -4,10 +4,9 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
-	"io"
 
 	"go.kenn.io/docbank/document"
 )
@@ -255,21 +254,11 @@ func validateDocumentEventDiagnostics(raw []byte) ([]byte, error) {
 	if len(raw) > maxDocumentEventDiagnosticBytes {
 		return nil, fmt.Errorf("document event diagnostics exceed %d bytes", maxDocumentEventDiagnosticBytes)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, errors.New("document event diagnostics must be canonical JSON")
-	}
-	if _, ok := value.([]any); !ok {
+	canonical := jsontext.Value(raw).Clone()
+	if canonical.Kind() != '[' {
 		return nil, errors.New("document event diagnostics must be a JSON array")
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return nil, errors.New("document event diagnostics must contain one JSON value")
-	}
-	canonical, err := json.Marshal(value)
-	if err != nil || !bytes.Equal(canonical, raw) {
+	if err := canonical.Format(jsontext.ReorderRawObjects(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true)); err != nil || !bytes.Equal(canonical, raw) {
 		return nil, errors.New("document event diagnostics must be canonical JSON")
 	}
 	return canonical, nil

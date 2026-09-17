@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -101,7 +102,7 @@ func NewIdentity(provider, model, revision string) (Identity, error) {
 		Model    string `json:"model"`
 		Revision string `json:"revision"`
 	}{Version: identityVersion, Provider: provider, Model: model, Revision: revision}
-	encoded, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return Identity{}, fmt.Errorf("encode OCR model identity: %w", err)
 	}

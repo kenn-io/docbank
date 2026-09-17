@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	"io"
 	"net/http"
@@ -90,7 +90,7 @@ func TestEmailDocumentProcessingRejectsInvalidJob(t *testing.T) {
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	ts, s := newTestServer(t, configureProcessingTestServiceWithProvider(t, provider))
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nbody\r\n--m\r\nContent-Type: text/csv\r\nContent-Disposition: attachment; filename=table.csv\r\n\r\nitem,count\nsynthetic,1\r\n--m--\r\n"
 	uploaded, err := c.Upload(t.Context(), s.RootID(), "processing.eml", "message/rfc822", testHash(raw), int64(len(raw)), strings.NewReader(raw))
 	require.NoError(t, err)

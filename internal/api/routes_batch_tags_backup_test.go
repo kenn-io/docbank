@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,8 +20,8 @@ func TestBatchTagReceiptSurvivesPhysicalBackupRestore(t *testing.T) {
 			require.NoError(t, err)
 			tag, err := live.CreateTag(t.Context(), "Review")
 			require.NoError(t, err)
-			c := client.New(ts.URL, testAPIKey)
-			preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: live.RootID(), AgentLabel: "batch-tag-backup-test"})
+			c := daemonconn.New(ts.URL, testAPIKey)
+			preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: live.RootID(), AgentLabel: "batch-tag-backup-test"})
 			require.NoError(t, err)
 			_, err = c.EnableAudit(t.Context(), preview.PreviewToken, true)
 			require.NoError(t, err)

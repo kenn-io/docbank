@@ -1,7 +1,9 @@
 <script lang="ts">
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import { Button, Modal, Spinner } from "@kenn-io/kit-ui";
-  import { APIError, restoreNode, type Node } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { restoreNode } from "./receipts.js";
+  import { type Node } from "./generated/docbank.js";
   import { formatDate } from "./format.js";
 
   let {

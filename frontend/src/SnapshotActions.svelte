@@ -10,7 +10,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { Button, Modal, SelectDropdown, type SelectDropdownOption } from "@kenn-io/kit-ui";
-  import type { Tag } from "./api.js";
+  import type { Tag } from "./generated/docbank.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
 
   interface Props {

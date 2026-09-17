@@ -1294,11 +1294,11 @@ The command refuses a release without a published SHA256 checksum.
 ## docbank openapi
 
 ```
-docbank openapi [--json]
+docbank openapi
 ```
 
-Prints the HTTP API's OpenAPI document — YAML by default, `--json` for
-JSON. Needs no running daemon and no vault: routes are registered
+Prints the HTTP API's OpenAPI document as YAML. Needs no running daemon
+and no vault: routes are registered
 against an offline server instance and never invoked. For agents and
 API client generation; see [HTTP API](architecture/http-api.md).
 

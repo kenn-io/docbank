@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Node } from "./api.js";
+import type { Node } from "./generated/docbank.js";
 import { orderRows, reconcileSearchView } from "./rows.js";
 
 function node(id: number, name: string, kind: Node["kind"] = "file"): Node {

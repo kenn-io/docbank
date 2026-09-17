@@ -7,7 +7,7 @@
     floatingPopoverStyle,
   } from "@kenn-io/kit-ui";
   import { tick } from "svelte";
-  import type { Tag } from "./api.js";
+  import type { Tag } from "./generated/docbank.js";
   import { groupTags } from "./tagPresentation.js";
 
   interface PickerOption {

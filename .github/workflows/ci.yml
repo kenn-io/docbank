@@ -99,6 +99,9 @@ jobs:
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
+      - name: Check Huma API contract
+        run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
+
       - name: Vet
         run: go vet -tags fts5 ./...
 

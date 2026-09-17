@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
-import * as processingAPI from "./api.js";
+import * as processingAPI from "./receipts.js";
 
 afterEach(() => {
   cleanup();

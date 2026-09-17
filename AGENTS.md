@@ -126,7 +126,7 @@ Instructions for autonomous coding agents working in this repository.
 ## Design Invariants
 
 - Standalone CLI operation is daemon-first: CLI commands are HTTP clients
-  (`client.Ensure`) and never open a vault directly. Go applications may use
+  (`daemonconn.Ensure`) and never open a vault directly. Go applications may use
   the public embedded API to own separately rooted vaults in-process. Embedded
   and daemon ownership share the same exclusive hierarchy lock; never create a
   privileged path into a daemon-owned vault.

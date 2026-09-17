@@ -1,16 +1,11 @@
-import contract from "../../internal/client/testdata/processing_responses.json";
+
+import * as generated from "./generated/docbank.js";
+import contract from "../../internal/daemonconn/testdata/processing_responses.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import {
-  documentCoverage,
-  documentSearch,
-  processingPlan,
-  processingProfiles,
-  renditionArtifact,
-  startProcessing,
-  type ProcessingJob,
-} from "./api.js";
+import { documentSearch, renditionArtifact, startProcessing } from "./receipts.js";
+import { type ProcessingJob } from "./generated/docbank.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -142,10 +137,10 @@ describe("document processing browser API", () => {
       },
     );
 
-    await expect(processingProfiles("session")).resolves.toHaveLength(1);
-    await expect(processingPlan("session", { node_id: 42, content_version_id: versionID, profile: "private" })).resolves.toMatchObject({ fingerprint });
+    await expect(generated.listDocumentProcessingProfiles({ session: "session" })).resolves.toHaveLength(1);
+    await expect(generated.planDocumentProcessing({ selector: ({ node_id: 42, content_version_id: versionID, profile: "private" }) }, { session: "session" })).resolves.toMatchObject({ fingerprint });
     await expect(startProcessing("session", { node_id: 42, content_version_id: versionID, profile: "private" }, "c".repeat(64), fingerprint, true)).resolves.toMatchObject({ status: { state: "completed" }, job: { embedding_job_ids: [fingerprint] } });
-    await expect(documentCoverage("session", "private", versionID, [versionID])).resolves.toMatchObject({ state: "complete" });
+    await expect(generated.getDocumentProcessingCoverage({ profile: "private", vault_uid: versionID, content_version_id: [versionID] }, { session: "session" })).resolves.toMatchObject({ state: "complete" });
     await expect(documentSearch("session", { query: "synthetic", mode: "auto", limit: 20, profile: "private", fence: { vault_uid: versionID, content_version_ids: [versionID] }, explain: true })).resolves.toMatchObject({ actual_mode: "lexical" });
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });

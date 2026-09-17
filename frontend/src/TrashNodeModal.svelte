@@ -1,7 +1,9 @@
 <script lang="ts">
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import { Button, Modal, Spinner } from "@kenn-io/kit-ui";
-  import { APIError, trashNode, type Node } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { trashNode } from "./receipts.js";
+  import { type Node } from "./generated/docbank.js";
 
   let {
     session,

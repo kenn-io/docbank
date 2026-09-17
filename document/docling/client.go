@@ -4,7 +4,8 @@ package docling
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"mime"
 	"net/http"
@@ -210,10 +211,10 @@ type taskResponse struct{ id, status string }
 
 type doclingResult struct {
 	markdown []byte
-	document json.RawMessage
+	document jsontext.Value
 	filename string
 	status   string
-	errors   []json.RawMessage
+	errors   []jsontext.Value
 }
 
 func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, error) {
@@ -407,9 +408,9 @@ func (client *Client) result(run *rendering, taskID string) (doclingResult, erro
 
 func parseResult(body []byte) (doclingResult, error) {
 	var wire struct {
-		Status   string            `json:"status"`
-		Document json.RawMessage   `json:"document"`
-		Errors   []json.RawMessage `json:"errors"`
+		Status   string           `json:"status"`
+		Document jsontext.Value   `json:"document"`
+		Errors   []jsontext.Value `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return doclingResult{}, provider.Malformed("Docling result JSON is invalid", err)
@@ -418,9 +419,9 @@ func parseResult(body []byte) (doclingResult, error) {
 		return doclingResult{}, taskStatusError(wire.Status)
 	}
 	var documentWire struct {
-		Filename    string          `json:"filename"`
-		Markdown    string          `json:"md_content"`
-		JSONContent json.RawMessage `json:"json_content"`
+		Filename    string         `json:"filename"`
+		Markdown    string         `json:"md_content"`
+		JSONContent jsontext.Value `json:"json_content"`
 	}
 	if len(wire.Document) == 0 || json.Unmarshal(wire.Document, &documentWire) != nil || documentWire.Filename == "" {
 		return doclingResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
@@ -440,7 +441,7 @@ func parseResult(body []byte) (doclingResult, error) {
 	}
 	return doclingResult{markdown: []byte(documentWire.Markdown),
 		document: append([]byte(nil), documentWire.JSONContent...), filename: documentWire.Filename,
-		status: wire.Status, errors: append([]json.RawMessage(nil), wire.Errors...)}, nil
+		status: wire.Status, errors: append([]jsontext.Value(nil), wire.Errors...)}, nil
 }
 
 func parseTask(body []byte) (taskResponse, error) {
@@ -464,8 +465,8 @@ func parseTask(body []byte) (taskResponse, error) {
 	return taskResponse{id: wire.ID, status: wire.Status}, nil
 }
 
-func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1, []byte, bool) {
-	var topLevel map[string]json.RawMessage
+func mapEvidence(raw jsontext.Value, family string) (document.SourceEvidenceV1, []byte, bool) {
+	var topLevel map[string]jsontext.Value
 	if json.Unmarshal(raw, &topLevel) != nil {
 		return document.SourceEvidenceV1{}, nil, false
 	}
@@ -482,16 +483,16 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 		}
 	}
 	var wire struct {
-		SchemaName    string                     `json:"schema_name"`
-		Version       string                     `json:"version"`
-		Texts         []doclingText              `json:"texts"`
-		Pages         map[string]json.RawMessage `json:"pages"`
-		Tables        []json.RawMessage          `json:"tables"`
-		Pictures      []json.RawMessage          `json:"pictures"`
-		KeyValueItems []json.RawMessage          `json:"key_value_items"`
-		FormItems     []json.RawMessage          `json:"form_items"`
-		FieldRegions  []json.RawMessage          `json:"field_regions"`
-		FieldItems    []json.RawMessage          `json:"field_items"`
+		SchemaName    string                    `json:"schema_name"`
+		Version       string                    `json:"version"`
+		Texts         []doclingText             `json:"texts"`
+		Pages         map[string]jsontext.Value `json:"pages"`
+		Tables        []jsontext.Value          `json:"tables"`
+		Pictures      []jsontext.Value          `json:"pictures"`
+		KeyValueItems []jsontext.Value          `json:"key_value_items"`
+		FormItems     []jsontext.Value          `json:"form_items"`
+		FieldRegions  []jsontext.Value          `json:"field_regions"`
+		FieldItems    []jsontext.Value          `json:"field_items"`
 	}
 	if len(raw) == 0 || json.Unmarshal(raw, &wire) != nil || wire.SchemaName != "DoclingDocument" ||
 		!supportedDoclingMajor(wire.Version) || len(wire.Pages) == 0 || family != "pdf" {
@@ -517,7 +518,7 @@ func mapEvidence(raw json.RawMessage, family string) (document.SourceEvidenceV1,
 	}
 	for _, field := range []struct {
 		name   string
-		values []json.RawMessage
+		values []jsontext.Value
 	}{
 		{name: "tables", values: wire.Tables},
 		{name: "pictures", values: wire.Pictures},
@@ -549,7 +550,7 @@ type doclingText struct {
 // doclingPageTexts builds the contiguous one-based page registry and assigns
 // every non-blank text to the single page its provenance names.
 func doclingPageTexts(
-	rawPages map[string]json.RawMessage, texts []doclingText,
+	rawPages map[string]jsontext.Value, texts []doclingText,
 ) ([]int64, map[int64][]string, bool) {
 	pages := make(map[int64][]string, len(rawPages))
 	for key := range rawPages {
@@ -620,7 +621,7 @@ func officialTaskStatus(status string) bool {
 	}
 }
 
-func parsePartialPages(raw []json.RawMessage) ([]int64, error) {
+func parsePartialPages(raw []jsontext.Value) ([]int64, error) {
 	if len(raw) == 0 {
 		return nil, provider.Malformed("Docling partial result has no page omissions", nil)
 	}

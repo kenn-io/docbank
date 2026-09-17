@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestTimelineRebuildRejectsNonCanonicalUUIDv4BeforeStore(t *testing.T) {
@@ -106,16 +106,17 @@ func TestTimelineRebuildIsIdempotentByOperationID(t *testing.T) {
 		coverage.Pending+coverage.Indexed+coverage.Failed+coverage.Unavailable)
 	assert.NotContains(t, body, "processing_coverage")
 
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	clientBuild, err := c.TimelineRebuild(t.Context(), operationID)
 	require.NoError(t, err)
 	assert.Equal(t, first.StartedAt, clientBuild.StartedAt)
 	clientStatus, err := c.TimelineRebuildStatus(t.Context(), operationID)
 	require.NoError(t, err)
 	assert.Equal(t, clientBuild, clientStatus)
-	clientCoverage, err := c.TimelineCoverage(t.Context())
+	clientCoverage, err := c.API().ReadTimelineCoverage(t.Context())
+
 	require.NoError(t, err)
-	assert.Equal(t, coverage, clientCoverage)
+	assert.Equal(t, coverage, *clientCoverage)
 }
 
 func TestTimelineCoverageRouteDoesNotInitializeState(t *testing.T) {
@@ -140,7 +141,7 @@ func TestTimelineClientRejectsMismatchedOperationID(t *testing.T) {
 			`"started_at":"2026-09-12T00:00:00Z","updated_at":"2026-09-12T00:00:00Z"}`))
 	}))
 	t.Cleanup(ts.Close)
-	c := client.New(ts.URL, "")
+	c := daemonconn.New(ts.URL, "")
 
 	_, err := c.TimelineRebuild(t.Context(), requested)
 	require.ErrorContains(t, err, "operation ID")

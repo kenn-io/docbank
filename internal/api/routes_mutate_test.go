@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -176,7 +176,7 @@ func TestBatchMoveSwapsCoordinatesThroughTypedClient(t *testing.T) {
 	second, err := s.CreateFile(t.Context(), right.ID, "second.txt", testHash("second"), 6, "text/plain")
 	require.NoError(t, err)
 
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	report, err := c.BatchMove(t.Context(), []api.BatchMoveItem{
 		{SourcePath: "/left/first.txt", DestinationPath: "/right/second.txt"},
 		{NodeID: second.ID, Revision: second.Revision, DestinationPath: "/left/first.txt"},

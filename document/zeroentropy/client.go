@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
-	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -44,7 +44,7 @@ type wireResponse struct {
 }
 
 type wireResult struct {
-	Embedding jsonv1.RawMessage `json:"embedding"`
+	Embedding jsontext.Value `json:"embedding"`
 }
 
 type wireUsage struct {
@@ -255,7 +255,7 @@ func (client *Client) execute(ctx, requestCtx context.Context, payload []byte, e
 	return vectors, *decoded.Usage, nil
 }
 
-func (client *Client) decodeVector(raw jsonv1.RawMessage) ([]float32, error) {
+func (client *Client) decodeVector(raw jsontext.Value) ([]float32, error) {
 	var values []float32
 	if client.profile.EncodingFormat == EncodingFloat {
 		if err := json.Unmarshal(raw, &values, json.RejectUnknownMembers(true),

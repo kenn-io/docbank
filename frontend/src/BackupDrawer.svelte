@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -13,12 +14,8 @@
     IconButton,
     Spinner,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    backupSnapshots,
-    type BackupSnapshot,
-    type BackupSnapshotList,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type BackupSnapshot, type BackupSnapshotList } from "./generated/docbank.js";
   import { formatBytes, formatDate } from "./format.js";
 
   interface Props {
@@ -56,7 +53,7 @@
     error = "";
     unconfigured = false;
     try {
-      const next = await backupSnapshots(session);
+      const next = await generated.listBackupSnapshots(undefined, { session });
       if (request !== generation) return;
       report = next;
     } catch (cause) {
@@ -135,7 +132,7 @@
         <p role="alert">{error}</p>
         <Button size="sm" onclick={() => void refresh()}>Try again</Button>
       </div>
-    {:else if report}
+    {:else if report?.repository}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <section class="repository" aria-label="Backup repository identity">
         <div>

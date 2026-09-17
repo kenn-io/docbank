@@ -63,7 +63,7 @@ it("preserves an unrelated unsaved editor when deleting a definition", async () 
 it.each(["Save as new", "Save changes"])("reloads committed NFC-divergent names after %s before another save", async (action) => {
   let current = record;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
-    if (request?.method) {
+    if (request?.method && request.method !== "GET") {
       current = { ...record, name: "\u1ea0", revision: action === "Save as new" ? 1 : 3 };
       return json(current, current.revision);
     }
@@ -85,7 +85,7 @@ it.each(["Save as new", "Save changes"])("reloads committed NFC-divergent names 
 
 it("keeps stale rename and named revision-bound deletion failures visible", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
-    if (request?.method) return new Response(JSON.stringify({ detail: "Changed elsewhere; reload the definition", code: "stale_revision" }), { status: 412 });
+    if (request?.method && request.method !== "GET") return new Response(JSON.stringify({ detail: "Changed elsewhere; reload the definition", code: "stale_revision" }), { status: 412 });
     return json({ items: [record], total: 1, limit: 100, offset: 0 });
   });
   open();
@@ -98,7 +98,7 @@ it("keeps stale rename and named revision-bound deletion failures visible", asyn
   await fireEvent.click(screen.getByRole("button", { name: "Confirm deletion" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Changed elsewhere");
   expect(screen.queryByText(/^Deleted /)).toBeNull();
-  const mutations = fetch.mock.calls.filter(([, request]) => request?.method);
+  const mutations = fetch.mock.calls.filter(([, request]) => request?.method && request.method !== "GET");
   expect(mutations).toHaveLength(2);
   expect(new Headers(mutations[1][1]?.headers).get("If-Match")).toBe('"2"');
 });

@@ -8,13 +8,9 @@
     Modal,
     Spinner,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    changeNodeTag,
-    type Node,
-    type Tag,
-    type TagAssignmentReceipt,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { changeNodeTag } from "./receipts.js";
+  import { type Node, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import TagLabel from "./TagLabel.svelte";
   import TagPicker from "./TagPicker.svelte";
   import { groupTags, sortTags } from "./tagPresentation.js";

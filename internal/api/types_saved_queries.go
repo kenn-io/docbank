@@ -2,7 +2,7 @@ package api
 
 import (
 	"bytes"
-	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"reflect"
 
@@ -18,7 +18,7 @@ const maxSavedQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 // SavedQueryPayload carries one complete query or literal highlight set as
 // structured JSON. Numeric lexemes reach the strict canonical codec unchanged;
 // the HTTP decoder rejects duplicate member names before invoking the codec.
-type SavedQueryPayload jsonv1.RawMessage
+type SavedQueryPayload jsontext.Value
 
 func (p SavedQueryPayload) MarshalJSON() ([]byte, error) {
 	if len(p) == 0 {

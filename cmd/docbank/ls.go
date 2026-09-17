@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var lsJSON bool
@@ -30,7 +30,7 @@ var lsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

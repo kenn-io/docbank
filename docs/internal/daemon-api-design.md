@@ -21,7 +21,7 @@ The lifetime lock proves startup cleanup cannot race another writer. A second
 daemon fails immediately because waiting on a lock held for another daemon's
 entire lifetime would only hang.
 
-Data commands call `client.Ensure` and never import store-opening code. Status
+Data commands call `daemonconn.Ensure` and never import store-opening code. Status
 and stop are discovery-only so they can find an incompatible daemon without
 starting a replacement. Start, restart, and auto-start share one convergence
 path under an external per-user launch lock; they replace a daemon whose
@@ -146,7 +146,7 @@ branch on the code, not human detail. Adding a store error normally requires:
 
 1. defining or preserving a typed sentinel;
 2. mapping it in `internal/api/errors.go`;
-3. mapping it in `internal/client` when the CLI needs typed behavior;
+3. mapping it in `internal/daemonconn` when the CLI needs typed behavior;
 4. documenting the public code; and
 5. testing the non-2xx response envelope.
 

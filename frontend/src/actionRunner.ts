@@ -1,4 +1,5 @@
-import { APIError, requestJSON } from "./api.js";
+import { APIError } from "./api-transport.js";
+import { auditStatus } from "./generated/docbank.js";
 import { changeBatchTags, type BatchTagReceipt } from "./batch-tags.js";
 import type { ActionJournalAccess, PersistedAction } from "./actionJournal.js";
 
@@ -16,7 +17,7 @@ function publish(onProgress: ActionProgress, action: PersistedAction, confirmedR
 
 export async function readActionVaultID(session: string): Promise<string> {
   if (typeof session !== "string" || session.length === 0) throw new Error("A fresh authenticated browser session is required.");
-  const value: unknown = await requestJSON<unknown>("/api/v1/audit/status", session);
+  const value: unknown = await auditStatus(undefined, { session });
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("The daemon returned an invalid vault identity.");
   const vaultID = (value as Record<string, unknown>).vault_id;
   if (typeof vaultID !== "string" || !uuidV4.test(vaultID)) throw new Error("The daemon returned an invalid vault identity.");

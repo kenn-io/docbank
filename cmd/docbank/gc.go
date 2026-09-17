@@ -5,7 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var gcRun bool
@@ -18,11 +19,12 @@ var gcCmd = &cobra.Command{
 		"requires a separate storage repack to reclaim physical pack space.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		rep, err := c.GC(cmd.Context(), gcRun)
+		rep, err := c.API().Gc(cmd.Context(), &apiclient.GcRequestOptions{Body: &apiclient.GcBody{Run: gcRun}})
+
 		if err != nil {
 			return err
 		}

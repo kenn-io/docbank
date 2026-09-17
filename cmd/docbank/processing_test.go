@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const processingTestVersionID = "123e4567-e89b-42d3-a456-426614174000"
@@ -78,7 +78,7 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	c := client.New(server.URL, "test-key")
+	c := daemonconn.New(server.URL, "test-key")
 
 	profilesCommand, profilesOutput := processingTestCommand()
 	require.NoError(t, runProcessingProfiles(profilesCommand, c, false))
@@ -166,7 +166,7 @@ func TestProcessingCLINDJSONFlushesDurableJobBeforeTerminalStatus(t *testing.T) 
 		}
 	}))
 	t.Cleanup(server.Close)
-	c := client.New(server.URL, "test-key")
+	c := daemonconn.New(server.URL, "test-key")
 	command := &cobra.Command{}
 	command.SetContext(t.Context())
 	output := &synchronizedBuffer{}
@@ -188,11 +188,11 @@ func TestProcessingCLINDJSONFlushesDurableJobBeforeTerminalStatus(t *testing.T) 
 
 func TestProcessingCLIBuildRequiresReviewedFingerprintAndConsent(t *testing.T) {
 	command, _ := processingTestCommand()
-	err := runProcessingBuild(command, client.New("http://127.0.0.1:1", "test-key"),
+	err := runProcessingBuild(command, daemonconn.New("http://127.0.0.1:1", "test-key"),
 		"id:42", "private", "", true, false, false)
 	require.ErrorContains(t, err, "plan fingerprint")
 
-	err = runProcessingBuild(command, client.New("http://127.0.0.1:1", "test-key"),
+	err = runProcessingBuild(command, daemonconn.New("http://127.0.0.1:1", "test-key"),
 		"id:42", "private", strings.Repeat("a", 64), false, false, false)
 	require.ErrorContains(t, err, "--consent")
 }
@@ -229,7 +229,7 @@ func TestProcessingCLIBuildFailureIncludesDurableJobID(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			command, _ := processingTestCommand()
-			err := runProcessingBuild(command, client.New(server.URL, "test-key"),
+			err := runProcessingBuild(command, daemonconn.New(server.URL, "test-key"),
 				"id:42", "private", strings.Repeat("b", 64), true, false, false)
 			require.ErrorContains(t, err, jobID)
 			assert.Equal(t, exitGeneral, commandExitCode(err, true))
@@ -308,9 +308,9 @@ func TestProcessingCLIBuildRejectsChangedPlanBeforeStarting(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			command, _ := processingTestCommand()
-			err := runProcessingBuild(command, client.New(server.URL, "test-key"),
+			err := runProcessingBuild(command, daemonconn.New(server.URL, "test-key"),
 				"id:42", "private", strings.Repeat("b", 64), true, false, false)
-			require.ErrorIs(t, err, client.ErrProcessingPlanChanged)
+			require.ErrorIs(t, err, daemonconn.ErrProcessingPlanChanged)
 		})
 	}
 }

@@ -1,4 +1,5 @@
-import { requestResponse, type ContentVersion, type Node } from "./api.js";
+import * as generated from "./generated/docbank.js";
+import { type ContentVersion, type Node } from "./generated/docbank.js";
 
 export interface DownloadProgress {
   received: number;
@@ -101,21 +102,7 @@ async function prepareDownload(
   signal: AbortSignal,
   onprogress: (progress: DownloadProgress) => void,
 ): Promise<PreparedDownload> {
-  const response = await requestResponse("/api/daemon/web-download", session, {
-    method: "POST",
-    headers: {
-      Accept: "application/x-ndjson",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      node_id: authority.nodeID,
-      revision: authority.revision,
-      version_id: authority.versionID,
-      blob_hash: authority.blobHash,
-      size: authority.size,
-    }),
-    signal,
-  });
+  const response = await generated.prepareWebDownload({ node_id: authority.nodeID, revision: authority.revision, version_id: authority.versionID, blob_hash: authority.blobHash, size: authority.size }, { session, signal, headers: { Accept: "application/x-ndjson" } });
   if (!response.body) throw new Error("The download response did not contain a progress stream.");
 
   const reader = response.body.getReader();

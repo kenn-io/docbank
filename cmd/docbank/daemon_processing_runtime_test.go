@@ -19,8 +19,8 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -386,7 +386,7 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", root)
 	startServe(t)
 	runtime := waitForDaemon(t, root)
-	c := client.New("http://"+runtime.Address, cfg.Server.APIKey)
+	c := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	out, err := runCLI(t, "formats", "--json")
 	require.NoError(t, err)
@@ -396,9 +396,10 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 	assert.Len(t, coverage.GeneratedBy.BoundProviders, 2)
 	assert.Contains(t, coverage.GeneratedBy.BoundProviders, provider.Descriptor().Fingerprint)
 
-	jobs, err := c.Jobs(t.Context())
+	jobs, err := c.API().ListJobs(t.Context())
+
 	require.NoError(t, err)
-	for _, job := range jobs {
+	for _, job := range jobs.Items {
 		if job.Name == "process:renditions" {
 			require.Equal(t, "running", job.Status)
 			return

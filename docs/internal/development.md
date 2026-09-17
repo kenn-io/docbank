@@ -13,7 +13,7 @@ lists the checks contributors must preserve.
 | `internal/backupapp` | frozen logical enumeration, fidelity stats, restore paths, mixed backup reads, packed restore policy | repository orchestration or CLI policy |
 | `internal/ingest` | source traversal and bytes-before-reference pipeline | daemon discovery or UI behavior |
 | `internal/api` | wire contract, auth, middleware, gate classification, error mapping | direct CLI output policy |
-| `internal/client` | typed HTTP calls and daemon convergence | opening SQLite or blobs |
+| `internal/daemonconn` | daemon convergence and receipt validation for the generated client | opening SQLite or blobs |
 | `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
 | `document/mistral` | Mistral OCR integration, capability evidence, and per-document unit limits | generic format detection or storage authority |

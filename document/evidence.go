@@ -206,7 +206,7 @@ type SourceEvidenceOmissionV1 struct {
 	Locator   *SourceEvidenceLocatorV1 `json:"locator,omitempty"`
 	Range     *EvidenceTextRangeV1     `json:"range,omitempty"`
 	Reason    string                   `json:"reason"`
-	UnitOrder int                      `json:"unit_order,omitempty"`
+	UnitOrder int                      `json:"unit_order,omitzero"`
 }
 
 // SourceEvidenceRegionV1 contains one provider-local structural region.
@@ -315,7 +315,7 @@ type EvidenceOmissionV1 struct {
 	Locator   *EvidenceLocatorV1   `json:"locator,omitempty"`
 	Range     *EvidenceTextRangeV1 `json:"range,omitempty"`
 	Reason    string               `json:"reason"`
-	UnitOrder int                  `json:"unit_order,omitempty"`
+	UnitOrder int                  `json:"unit_order,omitzero"`
 }
 
 // NormalizedEvidenceRegionV1 is one canonical structural region.
