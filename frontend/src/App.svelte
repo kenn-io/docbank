@@ -235,11 +235,13 @@
   const currentInspectorPath = $derived(
     currentInspectorNode?.path ?? (!snapshotActive ? selected?.path : undefined) ?? "",
   );
-  const liveContentChanged = $derived(
-    selectedSource?.kind === "live" && currentInspectorNode != null && (
-      selectedSource.versionID !== currentInspectorNode.current_version_id ||
-      selectedSource.blobHash !== currentInspectorNode.blob_hash ||
-      selectedSource.size !== currentInspectorNode.size
+  const liveSelectionNeedsRefresh = $derived(
+    selectedSource?.kind === "live" && (
+      selectedTagsError !== "" || (currentInspectorNode != null && (
+        selectedSource.versionID !== currentInspectorNode.current_version_id ||
+        selectedSource.blobHash !== currentInspectorNode.blob_hash ||
+        selectedSource.size !== currentInspectorNode.size
+      ))
     ),
   );
   const selectedSnapshotOverlay = $derived(selectedSnapshot ? snapshotOverlay(selectedSnapshot) : undefined);
@@ -504,7 +506,7 @@
       shortcutNotice = "Inspect a file before using a tag shortcut.";
       return;
     }
-    if (liveContentChanged) {
+    if (liveSelectionNeedsRefresh) {
       shortcutNotice = "Refresh the current view before using tag shortcuts on this document.";
       return;
     }
@@ -2353,7 +2355,7 @@
                       size="sm"
                       tone="info"
                       surface="soft"
-                      disabled={loading || selectedTagsLoading || selectedTagsError !== "" || pendingTagHotkey !== "" || liveContentChanged}
+                      disabled={loading || selectedTagsLoading || selectedTagsError !== "" || pendingTagHotkey !== "" || liveSelectionNeedsRefresh}
                       onclick={() => {
                         if (!loading && selected) manageTagsTarget = selected;
                       }}
@@ -2390,7 +2392,7 @@
                     size="sm"
                     tone="info"
                     surface="soft"
-                    disabled={liveContentChanged}
+                    disabled={liveSelectionNeedsRefresh}
                     onclick={() => {
                       historyOpen = false;
                       provenanceOpen = false;
@@ -2428,7 +2430,7 @@
                     size="sm"
                     tone="info"
                     surface="soft"
-                    disabled={!selected.node.current_version_id || liveContentChanged}
+                    disabled={!selected.node.current_version_id || liveSelectionNeedsRefresh}
                     onclick={() => {
                       historyOpen = false;
                       versionsOpen = false;
@@ -2450,7 +2452,7 @@
                     size="sm"
                     tone="danger"
                     surface="soft"
-                    disabled={liveContentChanged}
+                    disabled={liveSelectionNeedsRefresh}
                     onclick={() => {
                       historyOpen = false;
                       versionsOpen = false;
@@ -2469,8 +2471,8 @@
                   </Button>
                 </div>
                 {#if selectedSource && currentInspectorNode?.id === selectedSource.nodeID}
-                  {#if liveContentChanged}
-                    <p role="status">This document changed. Refresh the current view before using document actions.</p>
+                  {#if liveSelectionNeedsRefresh}
+                    <p role="status">Refresh the current view before using document actions.</p>
                   {:else}
                     <VerifiedPreview
                       session={webSession}

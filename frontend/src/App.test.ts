@@ -1134,7 +1134,7 @@ it("uses refreshed live metadata for the selected row and tag actions", async ()
   expect(revisions).toEqual(["2"]);
 });
 
-it("blocks stale live content and document actions until the selected row is refreshed", async () => {
+it.each(["before", "during"])("blocks document actions when content changes %s live metadata loading until the view is refreshed", async (timing) => {
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();
   const backend = fetchMock.getMockImplementation()!;
@@ -1146,6 +1146,7 @@ it("blocks stale live content and document actions until the selected row is ref
     blob_hash: createHash("sha256").update(bytes).digest("hex"),
   };
   let folderReads = 0;
+  let liveRevision = replacement.revision;
   const requests: { revision: number; version_id: string }[] = [];
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { "Content-Type": "application/json" },
@@ -1156,7 +1157,10 @@ it("blocks stale live content and document actions until the selected row is ref
       return json({ directory: selectionNode(1, "", "dir", undefined),
         items: [++folderReads === 1 ? original : replacement], total: 1, limit: 1000, offset: 0 });
     }
-    if (url === "/api/v1/nodes/3") return json(replacement);
+    if (url === "/api/v1/nodes/3") return json({
+      ...replacement,
+      revision: timing === "during" && folderReads === 1 ? liveRevision++ : replacement.revision,
+    });
     if (url === "/api/daemon/web-download") {
       const request = JSON.parse(String(init?.body));
       requests.push(request);
@@ -1179,7 +1183,10 @@ it("blocks stale live content and document actions until the selected row is ref
   });
   render(App);
 
-  await screen.findByText(/^This document changed\./);
+  if (timing === "during") {
+    await screen.findByText("The selected node changed while tags were loading; refresh and try again.");
+  }
+  await screen.findByText(/Refresh the current view before using document actions\./);
   const actions = ["Manage", "Version history", "Process and retrieve", "Move to trash"];
   for (const name of actions) {
     expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
@@ -1934,7 +1941,7 @@ it("blocks tag shortcuts when inspected live content has changed", async () => {
     return originalFetch(input, init);
   });
   render(App);
-  await screen.findByText(/^This document changed\./);
+  await screen.findByText(/Refresh the current view before using document actions\./);
   await fireEvent.keyDown(window, { key: "1" });
   expect(backend.writes).toEqual([]);
   await screen.findByText("Refresh the current view before using tag shortcuts on this document.");
