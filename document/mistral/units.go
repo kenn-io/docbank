@@ -17,21 +17,7 @@ type localUnitCounter func(io.ReaderAt, int64) (int, error)
 
 // localUnitCounters is the Mistral-owned source-unit counter registry.
 var localUnitCounters = map[string]localUnitCounter{
-	"pptx":       countPPTXSlides,
-	"txt":        countTextLines,
-	"markdown":   countTextLines,
-	"csv":        countCSVRecords,
-	"json":       countJSONValues,
-	"jsonl":      countJSONLines,
-	"yaml":       countYAMLDocuments,
-	"go":         countTextLines,
-	"python":     countTextLines,
-	"javascript": countTextLines,
-	"rst":        countTextLines,
-	"latex":      countTextLines,
-	"xml":        countXMLDocument,
-	"eml":        countMailMessages,
-	"msg":        countMSGMessages,
+	"pptx": countPPTXSlides,
 }
 
 type pptxNamespaceFamily uint8

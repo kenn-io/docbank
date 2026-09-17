@@ -18,9 +18,9 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-// TestLiveCapabilityProbeBoundsTextFormats records sanitized provider outcomes
+// TestLiveCapabilityProbeTextFormats records sanitized provider outcomes
 // for synthetic variants. The observations never change production authority.
-func TestLiveCapabilityProbeBoundsTextFormats(t *testing.T) {
+func TestLiveCapabilityProbeTextFormats(t *testing.T) {
 	apiKey := os.Getenv("MISTRAL_API_KEY")
 	if apiKey == "" {
 		t.Skip("MISTRAL_API_KEY is not configured")
@@ -42,13 +42,13 @@ func TestLiveCapabilityProbeBoundsTextFormats(t *testing.T) {
 	require.NoError(t, err)
 
 	msgFixture := loadOptionalMSGFixture(t)
-	for _, formatID := range textProbeFormatIDs() {
+	for _, formatID := range textFormatIDs() {
 		candidate, ok := CandidateFormatByID(formatID)
 		if !ok {
 			continue
 		}
 		if formatID == "msg" && len(msgFixture) == 0 {
-			t.Logf("format=%s variant=fixture outcome=skip local=0 provider=0", formatID)
+			t.Logf("format=%s variant=fixture outcome=skip provider=0", formatID)
 			continue
 		}
 		variants, ok := textProbeVariants(formatID, msgFixture)
@@ -56,8 +56,9 @@ func TestLiveCapabilityProbeBoundsTextFormats(t *testing.T) {
 			continue
 		}
 		for _, variant := range variants {
-			localUnits, providerUnits, outcome := runTextProbeVariant(t, client, policy, candidate, variant)
-			t.Logf("format=%s variant=%s outcome=%s local=%d provider=%d", candidate.ID, variant.name, outcome, localUnits, providerUnits)
+			providerUnits, outcome := runTextProbeVariant(t, client, policy, candidate, variant)
+			t.Logf("format=%s variant=%s outcome=%s provider=%d",
+				candidate.ID, variant.name, outcome, providerUnits)
 		}
 	}
 }
@@ -65,10 +66,6 @@ func TestLiveCapabilityProbeBoundsTextFormats(t *testing.T) {
 type textProbeVariant struct {
 	name    string
 	content []byte
-}
-
-func textProbeFormatIDs() []string {
-	return []string{"txt", "markdown", "csv", "json", "jsonl", "yaml", "go", "python", "javascript", "rst", "latex", "xml", "eml", "msg"}
 }
 
 func textProbeVariants(formatID string, msgFixture []byte) ([]textProbeVariant, bool) {
@@ -89,12 +86,7 @@ func textProbeVariants(formatID string, msgFixture []byte) ([]textProbeVariant, 
 	variants := []textProbeVariant{{name: "fixture", content: primary}}
 	sentinel, _ := ProbeFixtureSentinel(formatID)
 	switch formatID {
-	case "txt", "markdown", "go", "python", "javascript", "rst":
-		variants = append(variants,
-			textProbeVariant{name: "terminated", content: lineVariant(formatID, "alpha\nbeta\n")},
-			textProbeVariant{name: "unterminated", content: lineVariant(formatID, "alpha\nbeta")},
-		)
-	case "latex":
+	case "txt", "markdown", "go", "python", "javascript", "rst", "latex":
 		variants = append(variants,
 			textProbeVariant{name: "terminated", content: lineVariant(formatID, "alpha\nbeta\n")},
 			textProbeVariant{name: "unterminated", content: lineVariant(formatID, "alpha\nbeta")},
@@ -106,11 +98,22 @@ func textProbeVariants(formatID string, msgFixture []byte) ([]textProbeVariant, 
 		)
 	case "json":
 		variants = append(variants,
-			textProbeVariant{name: "pretty", content: []byte("{\n  \"items\": [1, 2, 3],\n  \"sentinel\": \"" + sentinel + "\"\n}\n")},
+			textProbeVariant{name: "pretty",
+				content: []byte("{\n  \"items\": [1, 2, 3],\n  \"sentinel\": \"" +
+					sentinel + "\"\n}\n"),
+			},
 			textProbeVariant{name: "array", content: []byte("[\"" + sentinel + "\", 1, true, null]\n")},
 			textProbeVariant{name: "scalar", content: []byte("7319\n")},
-			textProbeVariant{name: "large", content: []byte("{\"sentinel\":\"" + sentinel + "\",\"body\":\"" + strings.Repeat("x", 100_000) + "\"}\n")},
-			textProbeVariant{name: "deep", content: []byte(strings.Repeat("[", 64) + "\"" + sentinel + "\"" + strings.Repeat("]", 64) + "\n")},
+			textProbeVariant{name: "large",
+				content: []byte("{\"sentinel\":\"" +
+					sentinel + "\",\"body\":\"" +
+					strings.Repeat("x", 100_000) + "\"}\n"),
+			},
+			textProbeVariant{name: "deep",
+				content: []byte(strings.Repeat("[", 64) + "\"" +
+					sentinel + "\"" +
+					strings.Repeat("]", 64) + "\n"),
+			},
 		)
 	case "jsonl":
 		variants = append(variants,
@@ -122,12 +125,44 @@ func textProbeVariants(formatID string, msgFixture []byte) ([]textProbeVariant, 
 		)
 	case "xml":
 		variants = append(variants,
-			textProbeVariant{name: "alternate-root", content: []byte("<?xml version=\"1.0\"?><alternate><item/></alternate>")},
+			textProbeVariant{name: "alternate-root",
+				content: []byte("<?xml version=\"1.0\"?><alternate><item/></alternate>"),
+			},
 		)
 	case "eml":
 		variants = append(variants,
-			textProbeVariant{name: "multipart", content: []byte("From: probe@example.test\r\nTo: archive@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic multipart\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=docbank\r\n\r\n--docbank\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + sentinel + "\r\n--docbank\r\nContent-Type: message/rfc822\r\n\r\nFrom: nested@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\n\r\nnested\r\n--docbank--\r\n")},
-			textProbeVariant{name: "long", content: []byte("From: probe@example.test\r\nTo: archive@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic long message\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + sentinel + "\r\n" + strings.Repeat("long synthetic body ", 5_000) + "\r\n")},
+			textProbeVariant{name: "multipart",
+				content: []byte("From: probe@example.test\r\n" +
+					"To: archive@example.test\r\n" +
+					"Date: Thu, 13 Aug 2026 00:00:00 +0000\r\n" +
+					"Subject: Synthetic multipart\r\n" +
+					"MIME-Version: 1.0\r\n" +
+					"Content-Type: multipart/mixed; boundary=docbank\r\n" +
+					"\r\n" +
+					"--docbank\r\n" +
+					"Content-Type: text/plain; charset=utf-8\r\n" +
+					"\r\n" +
+					sentinel + "\r\n" +
+					"--docbank\r\n" +
+					"Content-Type: message/rfc822\r\n" +
+					"\r\n" +
+					"From: nested@example.test\r\n" +
+					"Date: Thu, 13 Aug 2026 00:00:00 +0000\r\n" +
+					"\r\n" +
+					"nested\r\n" +
+					"--docbank--\r\n"),
+			},
+			textProbeVariant{name: "long",
+				content: []byte("From: probe@example.test\r\n" +
+					"To: archive@example.test\r\n" +
+					"Date: Thu, 13 Aug 2026 00:00:00 +0000\r\n" +
+					"Subject: Synthetic long message\r\n" +
+					"MIME-Version: 1.0\r\n" +
+					"Content-Type: text/plain; charset=utf-8\r\n" +
+					"\r\n" +
+					sentinel + "\r\n" +
+					strings.Repeat("long synthetic body ", 5_000) + "\r\n"),
+			},
 		)
 	}
 	return variants, true
@@ -163,10 +198,8 @@ func runTextProbeVariant(
 	policy Policy,
 	candidate CandidateFormat,
 	variant textProbeVariant,
-) (int, int, string) {
+) (int, string) {
 	t.Helper()
-	localUnits, err := countLocalUnits(candidate, bytes.NewReader(variant.content), int64(len(variant.content)))
-	require.NoError(t, err)
 	digest := sha256.Sum256(variant.content)
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
@@ -184,9 +217,9 @@ func runTextProbeVariant(
 	}, options, UnitBoundNone, policy.values.MaxUnits)
 	if err != nil {
 		if errors.Is(err, ErrPermanentResponse) {
-			return localUnits, 0, "reject"
+			return 0, "reject"
 		}
-		return localUnits, 0, "error"
+		return 0, "error"
 	}
-	return localUnits, result.UnitsProcessed, "pass"
+	return result.UnitsProcessed, "pass"
 }

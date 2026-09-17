@@ -196,17 +196,23 @@ units. It records
 primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL, YAML, Go,
 Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider acceptance.
 
-The text counters run before upload. TXT, Markdown, Go, Python, JavaScript,
-RST, and LaTeX count lines. CSV and JSONL count records. JSON and XML count one
-document, YAML counts YAML documents, and EML and MSG count one outer message.
-Each local count must be positive and within `MaxUnits`. Mistral may return a
-different number of pages for text input, so Docbank checks that its returned
-pages and `pages_processed` agree and stay within `MaxUnits` without comparing
-them with the local source count.
+Text formats use `provider_response` enforcement. Docbank does not count lines,
+records, or messages as pages. It checks that Mistral returns at least one page,
+that the number of returned pages equals `pages_processed`, and that both stay
+within `MaxUnits`. A CSV with more than 5,000 rows can therefore be submitted
+when it fits the input byte limits.
 
-If manifest validation reports that a registered format "does not explain its
-unverified bound", rerun the authenticated capability probe to replace the
-manifest.
+Before upload, `MaxDocumentBytes` limits every file. Text detection also rejects
+text inputs above 50 MiB. These byte limits do not establish a provider page or
+spending limit. Mistral may process and charge for a document before Docbank
+rejects an over-limit response. Applications that require a pre-upload page or
+spending bound must not authorize text formats through this route.
+
+Capability manifests use schema v4. Existing v3 manifests are rejected for all
+formats, including PDF and PPTX. Rerun the authenticated capability probe and
+replace the manifest before processing documents. Also rerun the probe if
+validation reports that a registered format "does not explain its unverified
+bound". Review application consent against the resulting policy fingerprint.
 
 For each production document:
 
@@ -228,9 +234,7 @@ The rendition adapter counts source units locally before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
 the listed PresentationML slides, rejects invalid slide references or
 over-limit decks before upload, and compares the provider's processed count with
-that local count. The text counters enforce the same `MaxUnits` limit before
-upload. Text source counts and provider page counts are separate measurements,
-while the two provider counts must agree. See
+that local count. Text formats use the response checks described above. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 

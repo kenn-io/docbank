@@ -161,25 +161,6 @@ func TestPPTXProbeFixtureCountsThroughPrepare(t *testing.T) {
 	t.Logf("prepared_pptx local_units=%d", snapshot.localUnits)
 }
 
-func TestTextProbeFixturesCountThroughPrepare(t *testing.T) {
-	fixtureConfig := generatedProbeFixtureConfig(t)
-	policy := testPolicy(t, 1<<20, 10)
-	fixtures, err := loadProbeFixtures(t.Context(), policy, fixtureConfig)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, releaseProbeFixtures(fixtures)) })
-	wantUnits := map[string]int{
-		"txt": 1, "markdown": 3, "csv": 2, "json": 1, "jsonl": 1,
-		"yaml": 1, "go": 3, "python": 1, "javascript": 1, "rst": 4,
-		"latex": 1, "xml": 1, "eml": 1, "msg": 1,
-	}
-	for formatID, want := range wantUnits {
-		snapshot, err := fixtures[formatID].snapshot()
-		require.NoError(t, err)
-		assert.Equal(t, want, snapshot.localUnits, formatID)
-		t.Logf("prepared_%s local_units=%d", formatID, snapshot.localUnits)
-	}
-}
-
 func writeNativeSeeds(t *testing.T) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "seeds")

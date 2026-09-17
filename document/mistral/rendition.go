@@ -221,7 +221,7 @@ func (client *RenditionClient) verifySource(
 		localUnits, err = formatdetect.CountPDFPages(source)
 		countFailure = "Mistral PDF page count could not be verified"
 		limitFailure = "Mistral PDF exceeds the complete unit limit"
-	case expectedUnitBound(candidate.ID).usesLocalCounter():
+	case expectedUnitBound(candidate.ID) == UnitBoundLocalExact:
 		var units int
 		units, err = countLocalUnits(candidate, bytes.NewReader(source), int64(len(source)))
 		localUnits = int64(units)

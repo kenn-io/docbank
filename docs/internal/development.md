@@ -20,15 +20,12 @@ lists the checks contributors must preserve.
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
-The Mistral text lane uses `UnitBoundLocalCounted` for TXT, Markdown, CSV,
-JSON, JSONL, YAML, Go, Python, JavaScript, RST, LaTeX, XML, EML, and MSG. Line
-formats count lines, CSV and JSONL count records, JSON and XML count one
-document, YAML counts documents, and mail formats count one outer message. The
-local count must be positive and within `MaxUnits` before upload. Provider pages
-must agree with `pages_processed` and stay within the limit, but may differ from
-the local source count. `UnitBoundLocalExact` still requires equality and
-remains the PPTX contract. The authenticated capability probe supplies
-primary-fixture evidence for each registered text format.
+The Mistral text lane uses `UnitBoundProviderResponse`. The authenticated probe
+records provider acceptance and page usage for each format; text results have
+no `LocalUnits`. This method is part of the policy fingerprint and authorizes
+response checks, not a pre-upload page bound. `UnitBoundLocalExact` remains the
+PPTX contract. See [Run Mistral OCR safely](../document-understanding.md#run-mistral-ocr-safely)
+for the supported text formats, byte limits, response checks, and manifest upgrade.
 
 ## Common change paths
 

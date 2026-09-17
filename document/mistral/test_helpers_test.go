@@ -69,7 +69,7 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 				// Unverified non-local methods remain unbounded in synthetic manifests.
 			case UnitBoundLocalExact:
 				result.ReasonCode = reasonBoundUnitsMismatch
-			case UnitBoundLocalCounted:
+			case UnitBoundProviderResponse:
 				result.ReasonCode = reasonBoundRequestFailed
 			}
 		}

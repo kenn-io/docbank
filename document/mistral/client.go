@@ -304,7 +304,7 @@ func (c *Client) validatePreparedSnapshot(
 		return fmt.Errorf("mistral OCR document is %d bytes, policy limit %d",
 			snapshot.size, c.policy.values.MaxDocumentBytes)
 	}
-	if authorization.method.usesLocalCounter() &&
+	if authorization.method == UnitBoundLocalExact &&
 		(snapshot.localUnits <= 0 || snapshot.localUnits > c.policy.values.MaxUnits) {
 		return fmt.Errorf("mistral OCR local unit count exceeds authorized limit: %w", ErrCapabilityContract)
 	}

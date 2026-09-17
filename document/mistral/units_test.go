@@ -31,10 +31,13 @@ func TestLocalUnitCounterRegistryIsMistralOwnedAndBounded(t *testing.T) {
 		if _, ok := CandidateFormatByID(formatID); !ok {
 			t.Fatalf("localUnitCounters[%q] has no candidate", formatID)
 		}
+		if expectedUnitBound(formatID) != UnitBoundLocalExact {
+			t.Fatalf("localUnitCounters[%q] has no local-exact authority", formatID)
+		}
 	}
 	for formatID, method := range expectedUnitBounds {
-		if method.usesLocalCounter() && localUnitCounters[formatID] == nil {
-			t.Fatalf("local counted format %q has no local counter", formatID)
+		if method == UnitBoundLocalExact && localUnitCounters[formatID] == nil {
+			t.Fatalf("local-exact format %q has no local counter", formatID)
 		}
 	}
 }

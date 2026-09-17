@@ -157,10 +157,10 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 			manifest.Results[1].UnitBoundMethod = UnitBoundLocalExact
 			manifest.Results[1].LocalUnits = manifest.Results[1].UnitsProcessed
 		}, want: "local-exact bound evidence"},
-		{name: "local counted without claim", mutate: func(manifest *CapabilityManifest) {
-			manifest.Results[1].UnitBoundMethod = UnitBoundLocalCounted
+		{name: "provider response without claim", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[1].UnitBoundMethod = UnitBoundProviderResponse
 			manifest.Results[1].LocalUnits = manifest.Results[1].UnitsProcessed
-		}, want: "local-counted bound evidence"},
+		}, want: "provider-response evidence"},
 		{name: "provider bound without claim", mutate: func(manifest *CapabilityManifest) {
 			manifest.Results[1].UnitBoundMethod = UnitBoundProviderRequest
 			manifest.Results[1].FixtureUnits = 2
@@ -190,62 +190,40 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 	}
 }
 
-func TestLocalCountedManifestValidation(t *testing.T) {
+func TestProviderResponseManifestValidation(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)
-	manifest := textAuthorityManifest(t, policy, "json")
-	for index := range manifest.Results {
-		if manifest.Results[index].FormatID == "json" {
-			manifest.Results[index].UnitCount = 2
-			manifest.Results[index].UnitsProcessed = 2
-			manifest.Results[index].LocalUnits = 3
-		}
-	}
-	require.NoError(t, manifest.ValidateComplete())
-
 	for _, test := range []struct {
 		name   string
-		mutate func(*CapabilityManifest)
+		mutate func(*CapabilityResult)
+		want   string
 	}{
-		{name: "zero provider units", mutate: func(value *CapabilityManifest) {
-			value.Results[17].UnitCount = 0
-		}},
-		{name: "provider fields differ", mutate: func(value *CapabilityManifest) {
-			value.Results[17].UnitsProcessed = 1
-		}},
-		{name: "provider units exceed limit", mutate: func(value *CapabilityManifest) {
-			value.Results[17].UnitCount = value.MaxUnits + 1
-			value.Results[17].UnitsProcessed = value.MaxUnits + 1
-		}},
-		{name: "local units exceed limit", mutate: func(value *CapabilityManifest) {
-			for index := range value.Results {
-				if value.Results[index].FormatID == "json" {
-					value.Results[index].LocalUnits = value.MaxUnits + 1
-				}
-			}
-		}},
-		{name: "zero local units", mutate: func(value *CapabilityManifest) {
-			for index := range value.Results {
-				if value.Results[index].FormatID == "json" {
-					value.Results[index].LocalUnits = 0
-				}
-			}
-		}},
+		{name: "zero provider units", mutate: func(value *CapabilityResult) {
+			value.UnitCount = 0
+		}, want: "passing result \"json\" is incomplete"},
+		{name: "provider fields differ", mutate: func(value *CapabilityResult) {
+			value.UnitsProcessed++
+		}, want: "passing result \"json\" is incomplete"},
+		{name: "provider units exceed limit", mutate: func(value *CapabilityResult) {
+			value.UnitCount = policy.values.MaxUnits + 1
+			value.UnitsProcessed = value.UnitCount
+		}, want: "invalid provider-response evidence"},
+		{name: "unexpected local units", mutate: func(value *CapabilityResult) {
+			value.LocalUnits = 1
+		}, want: "invalid provider-response evidence"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			candidate := manifest
-			candidate.Results = append([]CapabilityResult(nil), manifest.Results...)
-			test.mutate(&candidate)
-			require.Error(t, candidate.ValidateComplete())
+			manifest := textAuthorityManifest(t, policy, "json")
+			for index := range manifest.Results {
+				if manifest.Results[index].FormatID == "json" {
+					test.mutate(&manifest.Results[index])
+				}
+			}
+			require.ErrorContains(t, manifest.ValidateComplete(), test.want)
 		})
 	}
 }
 
-func TestProbeReasonConstants(t *testing.T) {
-	assert.Equal(t, "bound_request_failed", reasonBoundRequestFailed)
-	assert.Equal(t, "bound_units_mismatch", reasonBoundUnitsMismatch)
-}
-
-func TestTextManifestRequiresFreshLocalCountedEvidence(t *testing.T) {
+func TestTextManifestRequiresProviderResponseEvidence(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)
 	manifest := syntheticManifest(t, policy, true)
 	_, err := policy.Authorize(manifest, "json")
@@ -254,8 +232,7 @@ func TestTextManifestRequiresFreshLocalCountedEvidence(t *testing.T) {
 	for index := range manifest.Results {
 		if manifest.Results[index].FormatID == "json" {
 			manifest.Results[index].ReasonCode = ""
-			manifest.Results[index].UnitBoundMethod = UnitBoundLocalCounted
-			manifest.Results[index].LocalUnits = 1
+			manifest.Results[index].UnitBoundMethod = UnitBoundProviderResponse
 		}
 	}
 	require.NoError(t, manifest.ValidateComplete())
@@ -263,11 +240,11 @@ func TestTextManifestRequiresFreshLocalCountedEvidence(t *testing.T) {
 	require.NoError(t, err)
 
 	stale := manifest
+	stale.Results = append([]CapabilityResult(nil), manifest.Results...)
 	for index := range stale.Results {
 		if stale.Results[index].FormatID == "json" {
 			stale.Results[index].UnitBoundMethod = UnitBoundNone
 			stale.Results[index].ReasonCode = reasonBoundUnitsMismatch
-			stale.Results[index].LocalUnits = 0
 		}
 	}
 	require.NoError(t, stale.ValidateComplete())
