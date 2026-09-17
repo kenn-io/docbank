@@ -3748,6 +3748,145 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 	return responseParser(ctx, resp)
 }
 
+// CreatePackagePreflight Preview a load-file package
+func (c *Client) CreatePackagePreflight(ctx context.Context, options *CreatePackagePreflightRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePackagePreflightResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/preflights",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePackagePreflightResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreatePackagePreflightResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePackagePreflightResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePackagePreflightErrorResponse](resp, "CreatePackagePreflightErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/preflights")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadPackagePreflight Read an expiring package preview
+func (c *Client) ReadPackagePreflight(ctx context.Context, options *ReadPackagePreflightRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPackagePreflightResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/preflights/{preflight_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPackagePreflightResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadPackagePreflightResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadPackagePreflightResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadPackagePreflightErrorResponse](resp, "ReadPackagePreflightErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/preflights/{preflight_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadPackagePreflightDiagnostics Read one bounded page of package diagnostics
+func (c *Client) ReadPackagePreflightDiagnostics(ctx context.Context, options *ReadPackagePreflightDiagnosticsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPackagePreflightDiagnosticsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/preflights/{preflight_id}/diagnostics",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPackagePreflightDiagnosticsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadPackagePreflightDiagnosticsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadPackagePreflightDiagnosticsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadPackagePreflightDiagnosticsErrorResponse](resp, "ReadPackagePreflightDiagnosticsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/preflights/{preflight_id}/diagnostics")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -9342,6 +9481,103 @@ func (o *PruneNodeContentVersionsRequestOptions) GetHeader() (map[string]string,
 	return headers, err
 }
 
+// CreatePackagePreflightRequestOptions is the options needed to make a request to CreatePackagePreflight.
+type CreatePackagePreflightRequestOptions struct {
+	Body *CreatePackagePreflightBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePackagePreflightRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePackagePreflightRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePackagePreflightRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePackagePreflightRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadPackagePreflightRequestOptions is the options needed to make a request to ReadPackagePreflight.
+type ReadPackagePreflightRequestOptions struct {
+	PathParams *ReadPackagePreflightPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPackagePreflightRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPackagePreflightRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPackagePreflightRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPackagePreflightRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadPackagePreflightDiagnosticsRequestOptions is the options needed to make a request to ReadPackagePreflightDiagnostics.
+type ReadPackagePreflightDiagnosticsRequestOptions struct {
+	PathParams *ReadPackagePreflightDiagnosticsPath
+	Query      *ReadPackagePreflightDiagnosticsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPackagePreflightDiagnosticsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPackagePreflightDiagnosticsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPackagePreflightDiagnosticsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPackagePreflightDiagnosticsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -11589,6 +11825,14 @@ type PruneNodeContentVersionsPath struct {
 	ID int64 `json:"id"`
 }
 
+type ReadPackagePreflightPath struct {
+	PreflightID uuid.UUID `json:"preflight_id"`
+}
+
+type ReadPackagePreflightDiagnosticsPath struct {
+	PreflightID uuid.UUID `json:"preflight_id"`
+}
+
 type UnassignTagPathPath struct {
 	TagID string `json:"tag_id"`
 }
@@ -11767,6 +12011,8 @@ type AppendNodeProvenanceBody = ProvenanceAppendRequest
 type RevertNodeContentBody = RevertNodeContentRequest
 
 type PruneNodeContentVersionsBody = VersionPruneRequest
+
+type CreatePackagePreflightBody = PackagePreflightRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -11956,6 +12202,14 @@ type ListNodeTagsQuery struct {
 type ListContentVersionsQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ReadPackagePreflightDiagnosticsQuery struct {
+	// Limit Maximum diagnostics to return
+	Limit *int `json:"limit,omitempty"`
+
+	// Cursor Opaque next_cursor returned by this preflight's previous diagnostic page
+	Cursor *string `json:"cursor,omitempty"`
 }
 
 type ResolvePathQuery struct {
@@ -12315,6 +12569,44 @@ type ListContentVersionsErrorResponse = Error
 type PruneNodeContentVersionsResponse = api.VersionPruneReport
 
 type PruneNodeContentVersionsErrorResponse = Error
+
+type CreatePackagePreflightResponse = api.PackagePreflight
+
+type CreatePackagePreflightErrorResponse api.Error
+
+type CreatePackagePreflightErrorResponseApplicationProblemPlusJSON api.Error
+
+type CreatePackagePreflightErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type CreatePackagePreflightErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type CreatePackagePreflightErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type CreatePackagePreflightErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ReadPackagePreflightResponse = api.PackagePreflight
+
+type ReadPackagePreflightErrorResponse api.Error
+
+type ReadPackagePreflightErrorResponseApplicationProblemPlusJSON api.Error
+
+type ReadPackagePreflightErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ReadPackagePreflightErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ReadPackagePreflightDiagnosticsResponse = api.PackageDiagnosticPage
+
+type ReadPackagePreflightDiagnosticsErrorResponse api.Error
+
+type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON api.Error
+
+type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ReadPackagePreflightDiagnosticsErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type ResolvePathResponse = api.Node
 
@@ -13040,6 +13332,16 @@ type MovePathRequest struct {
 type Node = api.Node
 
 type NodePage = api.NodePage
+
+type PackageDiagnostic = api.PackageDiagnostic
+
+type PackageDiagnosticPage = api.PackageDiagnosticPage
+
+type PackagePreflight = api.PackagePreflight
+
+type PackagePreflightRequest = api.PackagePreflightRequest
+
+type PackageVolume = api.PackageVolume
 
 type PendingFormatV1 = document.PendingFormatV1
 

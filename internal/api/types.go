@@ -6,6 +6,7 @@ import (
 )
 
 const openAPIStringType = "string"
+const openAPIQueryLocation = "query"
 
 const (
 	// BlobHashHeader carries docbank's canonical lowercase SHA-256 identity.

@@ -90,9 +90,9 @@ func registerPackageOpenAPI(api huma.API) {
 			Summary: "Read one bounded page of package diagnostics",
 			Parameters: []*huma.Param{
 				preflightID,
-				{Name: "limit", In: "query", Description: "Maximum diagnostics to return",
+				{Name: "limit", In: openAPIQueryLocation, Description: "Maximum diagnostics to return",
 					Schema: &huma.Schema{Type: "integer", Default: 100, Minimum: new(float64(1)), Maximum: new(float64(maxPackageDiagnosticSummary))}},
-				{Name: "cursor", In: "query", Description: "Opaque next_cursor returned by this preflight's previous diagnostic page",
+				{Name: "cursor", In: openAPIQueryLocation, Description: "Opaque next_cursor returned by this preflight's previous diagnostic page",
 					Schema: &huma.Schema{Type: openAPIStringType}},
 			},
 			Responses: map[string]*huma.Response{"200": diagnostics, "404": errorResponse, "422": errorResponse, "503": errorResponse}},

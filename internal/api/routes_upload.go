@@ -44,9 +44,9 @@ func registerUploadOpenAPI(api huma.API) {
 			"X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, " +
 			"not the multipart envelope. Success grants node/blob authority only after both match.",
 		Parameters: []*huma.Param{
-			{Name: "parent_id", In: "query", Required: true,
+			{Name: "parent_id", In: openAPIQueryLocation, Required: true,
 				Description: "Stable destination directory node ID", Schema: &huma.Schema{Type: "integer", Format: "int64"}},
-			{Name: "name", In: "query", Required: true,
+			{Name: "name", In: openAPIQueryLocation, Required: true,
 				Description: "Virtual filename; must equal the multipart filename", Schema: &huma.Schema{Type: openAPIStringType, MinLength: new(1)}},
 			{Name: BlobHashHeader, In: "header", Required: true,
 				Description: "Expected lowercase hexadecimal SHA-256 of the file payload",

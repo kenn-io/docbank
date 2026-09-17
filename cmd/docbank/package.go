@@ -9,7 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var (
@@ -50,11 +51,11 @@ var packagePreflightCmd = &cobra.Command{
 			return err
 		}
 		request.SourceKind, request.SourceRef = "root", reference
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		result, err := c.PreflightPackage(cmd.Context(), request)
+		result, err := c.API().CreatePackagePreflight(cmd.Context(), &apiclient.CreatePackagePreflightRequestOptions{Body: &request})
 		if err != nil {
 			return err
 		}
