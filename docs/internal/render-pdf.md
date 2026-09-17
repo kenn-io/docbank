@@ -4,6 +4,12 @@
 PDFs through an operator-pinned LibreOffice installation. It owns conversion
 provenance and grants no upload authority.
 
+See [renderer setup](../document-understanding.md#set-up-the-renderer) for
+Linux and AppArmor requirements, installation, executable pinning, runtime
+discovery, and a complete policy example. The
+[conversion guide](../document-understanding.md#convert-a-source) describes
+format restrictions and the XML token limit, including embedded image data.
+
 ## Conversion stages
 
 The converter reads the source once, checks its declared size and SHA-256, and
@@ -31,13 +37,15 @@ failure.
 Trafilatura uses strict exec mode with its baseline narrow Landlock paths and
 complete socket deny list. Render stages use private-root-v1.
 
-Private-root-v1 discovers the declared runtime during operator setup. Each
-regular runtime file is opened, hashed, copied to a sealed memfd, and attached
-at its declared guest path. Special files and runtime identity mismatches fail
-before launch. The old root is detached with `pivot_root` before the
-renderer can create an AF_UNIX socket. Supervised private-root mode permits
-AF_UNIX as a fixed launcher policy. IP and netlink socket creation remains
-denied.
+Private-root-v1 discovers the declared runtime during operator setup. The
+parent creates a unique temporary root and removes it after the launcher
+exits. Inside its mount namespace, the launcher mounts tmpfs at that root,
+copies each regular runtime file once to its declared guest path, and checks
+the copied bytes against the manifest. Special files and runtime identity
+mismatches fail before the renderer starts. The old root is detached with
+`pivot_root` before the renderer can create an AF_UNIX socket. LibreOffice
+mode permits AF_UNIX as a fixed launcher policy. IP and netlink socket
+creation remains denied.
 
 The root contains only generated configuration, declared runtime files, a
 bounded `/work` tmpfs, private `/tmp`, and proc and device entries.
@@ -45,7 +53,7 @@ Runtime data mounts are noexec. ELF executables and shared objects, including
 mode-0644 `libmergedlo.so`, keep executable mappings. The private
 profile disables macros and active content and prevents link updates.
 
-The launcher verifies the sealed executable and bounds runtime descriptors and
+The launcher verifies the sealed executable and bounds runtime entries and
 bytes. Before caller bytes enter `/work`, each stage converts a fixed,
 digest-pinned trusted fixture with the exact stage arguments. A trusted
 fixture conversion may retry exit 81 once in the same profile. The launcher
