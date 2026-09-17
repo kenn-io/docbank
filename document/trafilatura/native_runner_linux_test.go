@@ -37,7 +37,7 @@ func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	request := nativeTestRequest(t, runner, executable, stdin)
 
 	result, err := runner.Run(t.Context(), request)
-	skipUnavailableNativeIsolation(t, err)
+	skipUnavailable(t, err)
 	require.NoError(t, err)
 
 	var response struct {
@@ -67,7 +67,7 @@ func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
 	request := nativeTestRequest(t, runner, executable, []byte("network probe"))
 
 	result, err := runner.Run(t.Context(), request)
-	skipUnavailableNativeIsolation(t, err)
+	skipUnavailable(t, err)
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
 }
@@ -83,7 +83,7 @@ func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 	request := nativeTestRequest(t, runner, executable, []byte("unix network probe"))
 
 	result, err := runner.Run(t.Context(), request)
-	skipUnavailableNativeIsolation(t, err)
+	skipUnavailable(t, err)
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
 }
@@ -104,7 +104,7 @@ func TestNativeRunnerCannotReadOrModifyHostFiles(t *testing.T) {
 	request := nativeTestRequest(t, runner, executable, []byte("filesystem probe"))
 
 	result, err := runner.Run(t.Context(), request)
-	skipUnavailableNativeIsolation(t, err)
+	skipUnavailable(t, err)
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
 	content, err := os.ReadFile(hostPath)
@@ -153,9 +153,12 @@ func buildIsolatedHelper(t *testing.T, mode, networkAddress string) string {
 	return target
 }
 
-func skipUnavailableNativeIsolation(t *testing.T, err error) {
+func skipUnavailable(t *testing.T, err error) {
 	t.Helper()
 	if errors.Is(err, ErrIsolationUnavailable) {
+		if os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") == "1" {
+			require.FailNow(t, "native sandbox unavailable", "%v", err)
+		}
 		t.Skipf("native Linux namespace isolation unavailable: %v", err)
 	}
 }

@@ -284,7 +284,18 @@ jobs:
         env:
           CGO_ENABLED: "0"
           DOCBANK_TEST_LIBREOFFICE_EXECUTABLE: /usr/lib/libreoffice/program/soffice.bin
+          DOCBANK_TEST_REQUIRE_SANDBOX: "1"
         run: |
+          set -eu
+          if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          fi
+          if [ -e /proc/sys/user/max_user_namespaces ]; then
+            sudo sysctl -w user.max_user_namespaces=15000 || true
+          fi
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          fi
           test -x "$DOCBANK_TEST_LIBREOFFICE_EXECUTABLE"
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
