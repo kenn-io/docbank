@@ -312,6 +312,7 @@ func TestSupervisedRunnerClassifiesChildExit125(t *testing.T) {
 	requireNativeNoError(t, err)
 	_, err = runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "exit-125", "", "result.bin")))
+	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrChildFailed)
 }
 
@@ -320,6 +321,7 @@ func TestSupervisedRunnerClassifiesChildExit124(t *testing.T) {
 	requireNativeNoError(t, err)
 	_, err = runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "exit-124", "", "result.bin")))
+	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrChildFailed)
 }
 
@@ -329,6 +331,7 @@ func TestSupervisedRunnerClassifiesOutputOverflowSeparately(t *testing.T) {
 	request := privateTestRequest(t, buildSandboxHelper(t, "file-overflow", "", "result.bin"))
 	request.Policy.PrivateRoot.MaxOutputBytes = 1 << 10
 	_, err = runner.Run(t.Context(), request)
+	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrOutputTooLarge)
 }
 
@@ -337,6 +340,7 @@ func TestStrictExecClassifiesChildExit124AsFailure(t *testing.T) {
 	requireNativeNoError(t, err)
 	_, err = runner.Run(t.Context(), sandboxTestRequest(t,
 		buildSandboxHelper(t, "exit-124", "", ""), []byte("probe"), 1<<20))
+	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrChildFailed)
 }
 
@@ -369,6 +373,7 @@ func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
 	go func() { _, runErr := runner.Run(ctx, request); finished <- runErr }()
 	select {
 	case err := <-finished:
+		skipUnavailable(t, err)
 		require.FailNow(t, "isolated runner exited before cancellation", "%v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
@@ -382,6 +387,7 @@ func TestNativeRunnerTerminatesPromptlyOnStdoutOverflow(t *testing.T) {
 	started := time.Now()
 	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
 		buildSandboxHelper(t, "overflow", "", ""), []byte("probe"), 1024))
+	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrOutputTooLarge)
 	assert.Less(t, time.Since(started), 2*time.Second)
 	assert.LessOrEqual(t, int64(len(result.Stdout)), int64(1024))
